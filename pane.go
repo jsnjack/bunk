@@ -128,7 +128,9 @@ func NewPane(id, x, y, w, h int, spawnArgs []string, redraw chan struct{}, paneD
 			filtered = append(filtered, e)
 		}
 	}
-	cmd.Env = append(filtered, "TERM=xterm-256color", "COLORTERM=truecolor")
+	// BUNK=1 lets shell rc files detect they're running inside bunk and skip
+	// auto-launching it again (prevents recursive invocation).
+	cmd.Env = append(filtered, "TERM=xterm-256color", "COLORTERM=truecolor", "BUNK=1")
 
 	// Create the PTY pair first so we can pass the master as vt10x's response
 	// writer.  vt10x uses the writer to send replies to OSC 10/11/4 colour
