@@ -76,27 +76,26 @@ func (app *App) render() {
 		return
 	}
 
+	rt := app.theme
+
 	// Step 1 – draw pane contents.
-	drawPaneContents(app.screen, root)
+	drawPaneContents(app.screen, root, rt)
 
-	// Step 2 – draw inter-pane separator lines (gray).
-	drawBorders(app.screen, root)
+	// Step 2 – draw inter-pane separator lines.
+	drawBorders(app.screen, root, rt)
 
-	// Step 3 – re-draw borders adjacent to the active pane in green so the
-	//           user can see which pane has focus at a glance.
+	// Step 3 – re-draw borders adjacent to the active pane in accent color.
 	if active != nil {
 		activeStyle := tcell.StyleDefault.
-			Foreground(tcell.ColorGreen).
-			Background(tcell.ColorBlack)
+			Foreground(rt.activeBorder).
+			Background(rt.bg)
 		paintActiveBorders(app.screen, root, active, activeStyle)
 	}
 
-	// Step 3.5 – scrollbars (drawn after borders, in the permanently reserved
-	// last column of each pane — content is one column narrower than p.w).
-	drawScrollbars(app.screen, root)
+	// Step 3.5 – scrollbars.
+	drawScrollbars(app.screen, root, rt)
 
-	// Step 3.6 – status badges (container name, ssh/sudo indicator).
-	// Drawn AFTER borders so the badge always appears on top.
+	// Step 3.6 – status badges.
 	drawAllPaneStatus(app.screen, root, active)
 
 	// Step 4 – place the hardware cursor inside the active pane.
@@ -147,13 +146,13 @@ drainOSC:
 // ---------------------------------------------------------------------------
 
 // drawPaneContents recursively renders every leaf's virtual terminal grid.
-func drawPaneContents(scr tcell.Screen, n *Node) {
+func drawPaneContents(scr tcell.Screen, n *Node, rt resolvedTheme) {
 	if n.isLeaf() {
-		renderPane(scr, n.pane)
+		renderPane(scr, n.pane, rt)
 		return
 	}
-	drawPaneContents(scr, n.left)
-	drawPaneContents(scr, n.right)
+	drawPaneContents(scr, n.left, rt)
+	drawPaneContents(scr, n.right, rt)
 }
 
 // renderPane paints a single pane's vt10x Glyph grid onto the tcell screen,
@@ -171,7 +170,7 @@ func drawPaneContents(scr tcell.Screen, n *Node) {
 //	Virtual line p.sb.count+h-1  = live term row h-1 (current bottom)
 //
 // With sbOff = N we display virtual lines [p.sb.count-N, p.sb.count-N+h).
-func renderPane(scr tcell.Screen, p *Pane) {
+func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -213,8 +212,8 @@ func renderPane(scr tcell.Screen, p *Pane) {
 			}
 
 			style := tcell.StyleDefault.
-				Foreground(vtColor(cell.FG, tcell.ColorDefault)).
-				Background(vtColor(cell.BG, tcell.ColorDefault))
+				Foreground(vtColor(cell.FG, rt.fg, rt)).
+				Background(vtColor(cell.BG, rt.bg, rt))
 
 			if cell.Mode&vtAttrBold != 0 {
 				style = style.Bold(true)
@@ -266,7 +265,7 @@ func renderPane(scr tcell.Screen, p *Pane) {
 // column of the pane's node region (p.x+p.w-1), which is permanently reserved
 // — the PTY terminal is created one column narrower (w-1) so content never
 // reaches that column.
-func drawScrollbars(scr tcell.Screen, n *Node) {
+func drawScrollbars(scr tcell.Screen, n *Node, rt resolvedTheme) {
 	if n.isLeaf() {
 		p := n.pane
 		p.mu.Lock()
@@ -275,13 +274,12 @@ func drawScrollbars(scr tcell.Screen, n *Node) {
 		_, rows := p.term.Size()
 		p.mu.Unlock()
 		if sbCount > 0 {
-			// The last column of the node area is always free (PTY is w-1 wide).
-			drawScrollbar(scr, p.x+p.w-1, p.y, rows, sbCount, sbOff)
+			drawScrollbar(scr, p.x+p.w-1, p.y, rows, sbCount, sbOff, rt)
 		}
 		return
 	}
-	drawScrollbars(scr, n.left)
-	drawScrollbars(scr, n.right)
+	drawScrollbars(scr, n.left, rt)
+	drawScrollbars(scr, n.right, rt)
 }
 
 // drawScrollbar draws a narrow one-column scrollbar at screen column bx.
@@ -290,7 +288,7 @@ func drawScrollbars(scr tcell.Screen, n *Node) {
 //
 //	'▕'  U+2595  RIGHT ONE EIGHTH BLOCK – empty track
 //	'▐'  U+2590  RIGHT HALF BLOCK       – scrollbar thumb
-func drawScrollbar(scr tcell.Screen, bx, by, h, sbCount, sbOff int) {
+func drawScrollbar(scr tcell.Screen, bx, by, h, sbCount, sbOff int, rt resolvedTheme) {
 	total := sbCount + h // total virtual lines
 
 	// Handle height: proportional to the visible fraction, minimum 1 row.
@@ -310,11 +308,11 @@ func drawScrollbar(scr tcell.Screen, bx, by, h, sbCount, sbOff int) {
 	}
 
 	trackStyle := tcell.StyleDefault.
-		Foreground(tcell.NewRGBColor(60, 60, 60)).
-		Background(tcell.ColorBlack)
+		Foreground(rt.scrollTrack).
+		Background(rt.bg)
 	thumbStyle := tcell.StyleDefault.
-		Foreground(tcell.NewRGBColor(160, 160, 160)).
-		Background(tcell.ColorBlack)
+		Foreground(rt.scrollThumb).
+		Background(rt.bg)
 
 	for row := 0; row < h; row++ {
 		ch := '▕'
@@ -394,30 +392,28 @@ func drawSearchBar(scr tcell.Screen, p *Pane, query string, matchIdx, matchCount
 // ---------------------------------------------------------------------------
 
 // drawBorders draws a gray separator line at every internal node split point.
-func drawBorders(scr tcell.Screen, n *Node) {
+func drawBorders(scr tcell.Screen, n *Node, rt resolvedTheme) {
 	if n.isLeaf() {
 		return
 	}
 	borderStyle := tcell.StyleDefault.
-		Foreground(tcell.ColorGray).
-		Background(tcell.ColorBlack)
+		Foreground(rt.inactiveBorder).
+		Background(rt.bg)
 
 	if n.dir == splitVertical {
-		// Vertical split: border is a column one cell past the left child.
 		bx := n.left.x + n.left.w
 		for y := n.y; y < n.y+n.h; y++ {
 			scr.SetContent(bx, y, tcell.RuneVLine, nil, borderStyle)
 		}
 	} else {
-		// Horizontal split: border is a row one cell below the top child.
 		by := n.left.y + n.left.h
 		for x := n.x; x < n.x+n.w; x++ {
 			scr.SetContent(x, by, tcell.RuneHLine, nil, borderStyle)
 		}
 	}
 
-	drawBorders(scr, n.left)
-	drawBorders(scr, n.right)
+	drawBorders(scr, n.left, rt)
+	drawBorders(scr, n.right, rt)
 }
 
 // paintActiveBorders re-colours every separator that is directly adjacent to
@@ -460,24 +456,19 @@ func nodeContains(n *Node, p *Pane) bool {
 // Colour conversion
 // ---------------------------------------------------------------------------
 
-// vtColor converts a vt10x Color to the nearest tcell Color.
-//
-// vt10x colour encoding:
-//
-//	0–255        standard ANSI/xterm-256 palette (palette index)
-//	256–16777215 true-color RGB encoded as (r<<16 | g<<8 | b)
-//	≥ 1<<24      DefaultFG / DefaultBG / DefaultCursor → return def
-//
-// The caller passes tcell.ColorDefault as def so that cells using the
-// terminal's default foreground/background render with the host terminal's
-// own theme colours rather than hardcoded values.
-func vtColor(c vt10x.Color, def tcell.Color) tcell.Color {
+// vtColor converts a vt10x Color to the nearest tcell Color, applying the
+// theme palette for ANSI colors 0–15 and the theme's fg/bg for defaults.
+func vtColor(c vt10x.Color, def tcell.Color, rt resolvedTheme) tcell.Color {
 	switch c {
 	case vt10x.DefaultFG, vt10x.DefaultBG, vt10x.DefaultCursor:
 		return def
 	}
+	if c < 16 {
+		// ANSI colors 0–15: use theme palette.
+		return rt.palette[c]
+	}
 	if c < 256 {
-		// Standard 256-color palette (ANSI 0-15 + xterm 16-255).
+		// xterm-256 colors 16–255: standard palette.
 		return tcell.PaletteColor(int(c))
 	}
 	if c < vt10x.DefaultFG {

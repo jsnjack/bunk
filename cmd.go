@@ -13,6 +13,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	flagConfig string
+	flagTheme  string
+)
+
+func init() {
+	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: ~/.config/bunk/config.toml)")
+	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: default, solarized-dark, dracula, nord")
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "bunk",
 	Short: "A lightweight terminal multiplexer",
@@ -28,7 +38,7 @@ Key bindings:
   Ctrl+Q        Quit`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return run()
+		return run(flagConfig, flagTheme)
 	},
 }
 
@@ -42,7 +52,9 @@ func Execute() {
 // run initialises the screen, spawns the first pane, and blocks until the
 // user quits.  All terminal cleanup happens synchronously after the event
 // loop returns so it is guaranteed to run before the process exits.
-func run() error {
+func run(configPath, themeName string) error {
+	rt := LoadConfig(configPath, themeName)
+
 	// Log to a file so diagnostics don't corrupt the TUI.
 	if lf, err := os.OpenFile("/tmp/bunk.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 		log.SetOutput(lf)
@@ -56,12 +68,13 @@ func run() error {
 	if err := screen.Init(); err != nil {
 		return err
 	}
-	screen.SetStyle(tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
+	screen.SetStyle(tcell.StyleDefault.Background(rt.bg).Foreground(rt.fg))
 	screen.HideCursor()
 	screen.Clear()
 
 	app := &App{
 		screen:   screen,
+		theme:    rt,
 		redraw:   make(chan struct{}, 1),
 		paneDead: make(chan *Pane, 8),
 		done:     make(chan struct{}),

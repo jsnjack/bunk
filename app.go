@@ -18,7 +18,8 @@ const oscChanSize = 64
 // App holds every piece of global state and mediates between the event loop,
 // the render loop, and the layout tree.
 type App struct {
-screen tcell.Screen
+	screen tcell.Screen
+	theme  resolvedTheme // active colour theme, set at startup
 
 // mu guards root, active, and nextID.  All layout mutations must hold it.
 mu     sync.Mutex
