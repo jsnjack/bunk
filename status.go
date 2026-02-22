@@ -348,6 +348,7 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 		if name == lastName && ct == lastCT && cn == lastCN {
 			continue
 		}
+		L.Debug("trackFgProcess: status change", "pane", p.id, "name", name, "container_type", ct, "container_id", cn)
 		lastName, lastCT, lastCN = name, ct, cn
 
 		p.mu.Lock()

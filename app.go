@@ -2,7 +2,6 @@
 package main
 
 import (
-	"log"
 	"math"
 	"os"
 	"sync"
@@ -20,6 +19,12 @@ const oscChanSize = 64
 type App struct {
 	screen tcell.Screen
 	theme  resolvedTheme // active colour theme, set at startup
+
+	// cellAspect is the pixel height-to-width ratio of a single terminal cell
+	// (cellH / cellW).  Typical fonts give ~1.8–2.2.  Used by splitActive to
+	// decide whether a pane is wider or taller in actual pixels.
+	// Set at startup from TIOCGWINSZ ws_xpixel/ws_ypixel; falls back to 2.0.
+	cellAspect float64
 
 	// mu guards root, active, and nextID.  All layout mutations must hold it.
 	mu     sync.Mutex
@@ -72,6 +77,7 @@ type App struct {
 // intentionally done in run() AFTER app.eventLoop() returns, not here.
 func (app *App) shutdown() {
 	app.shutOnce.Do(func() {
+		L.Info("shutdown: closing all panes")
 		app.closeAllPanes()
 		close(app.done)
 
@@ -121,19 +127,26 @@ func (app *App) eventLoop() {
 	for {
 		ev := app.screen.PollEvent()
 		if ev == nil {
+			L.Debug("eventLoop: PollEvent returned nil, exiting")
 			return // screen.Fini() was called
 		}
 		switch ev := ev.(type) {
 		case *tcell.EventResize:
+			L.Debug("event: resize")
 			app.handleResize()
 		case *tcell.EventKey:
+			L.Debug("event: key", "key", ev.Name(), "mod", ev.Modifiers(), "rune", ev.Rune())
 			if !app.handleKey(ev) {
+				L.Info("eventLoop: shutdown requested via key")
 				app.shutdown()
 				return
 			}
 		case *tcell.EventMouse:
+			x, y := ev.Position()
+			L.Debug("event: mouse", "btn", ev.Buttons(), "x", x, "y", y, "mod", ev.Modifiers())
 			app.handleMouse(ev)
 		case *tcell.EventPaste:
+			L.Debug("event: paste", "start", ev.Start())
 			app.handlePaste(ev)
 		}
 	}
@@ -143,6 +156,7 @@ func (app *App) eventLoop() {
 func (app *App) handleResize() {
 	app.screen.Sync()
 	w, h := app.screen.Size()
+	L.Debug("handleResize", "w", w, "h", h)
 	app.mu.Lock()
 	if app.root != nil {
 		app.root.resize(0, 0, w, h)
@@ -179,14 +193,18 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 
 	switch ev.Key() {
 	case tcell.KeyF1:
+		L.Debug("handleKey: split F1")
 		app.splitActive()
 		return true
 	case tcell.KeyCtrlQ:
+		L.Debug("handleKey: Ctrl+Q quit")
 		return false
 	case tcell.KeyCtrlF:
+		L.Debug("handleKey: Ctrl+F enter search")
 		app.enterSearch()
 		return true
 	case tcell.KeyCtrlV:
+		L.Debug("handleKey: Ctrl+V paste")
 		app.pasteFromClipboard()
 		return true
 	}
@@ -195,15 +213,19 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 	if ev.Modifiers()&tcell.ModAlt != 0 {
 		switch ev.Key() {
 		case tcell.KeyUp:
+			L.Debug("handleKey: navigate up")
 			app.navigate(dirUp)
 			return true
 		case tcell.KeyDown:
+			L.Debug("handleKey: navigate down")
 			app.navigate(dirDown)
 			return true
 		case tcell.KeyLeft:
+			L.Debug("handleKey: navigate left")
 			app.navigate(dirLeft)
 			return true
 		case tcell.KeyRight:
+			L.Debug("handleKey: navigate right")
 			app.navigate(dirRight)
 			return true
 		}
@@ -221,12 +243,14 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		switch ev.Key() {
 		case tcell.KeyPgUp:
 			if active != nil {
+				L.Debug("handleKey: scrollback up", "pane", active.id, "amount", max(1, h/2))
 				active.scrollUp(max(1, h/2))
 				app.triggerRedraw()
 			}
 			return true
 		case tcell.KeyPgDn:
 			if active != nil {
+				L.Debug("handleKey: scrollback down", "pane", active.id, "amount", max(1, h/2))
 				active.scrollDown(max(1, h/2))
 				app.triggerRedraw()
 			}
@@ -241,6 +265,7 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 	if active != nil && !active.isDead() {
 		needRedraw := false
 		if active.inScrollback() {
+			L.Debug("handleKey: leaving scrollback on keypress", "pane", active.id)
 			active.scrollReset()
 			needRedraw = true
 		}
@@ -254,6 +279,7 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 			app.triggerRedraw()
 		}
 		if data := keyToBytes(ev); len(data) > 0 {
+			L.Debug("handleKey: forwarding to PTY", "pane", active.id, "bytes", len(data))
 			active.writeInput(data)
 		}
 	}
@@ -269,19 +295,27 @@ func (app *App) splitActive() {
 	defer app.mu.Unlock()
 
 	if app.active == nil || app.root == nil {
+		L.Debug("splitActive: no active pane or root, skipping")
 		return
 	}
 	node := app.root.findPane(app.active)
 	if node == nil {
+		L.Debug("splitActive: active pane not found in tree")
 		return
 	}
 
 	var d splitDir
-	if node.w >= node.h*2 {
+	// Compare pane dimensions in pixels using the measured cell aspect ratio
+	// so the split direction matches what the user actually sees.
+	// cellAspect = cellPixelH / cellPixelW; pane is wider-in-pixels when
+	// node.w * cellW > node.h * cellH  →  node.w > node.h * cellAspect.
+	if float64(node.w) >= float64(node.h)*app.cellAspect {
 		d = splitVertical
 	} else {
 		d = splitHorizontal
 	}
+	L.Debug("splitActive: splitting", "pane", app.active.id, "dir", d,
+		"node_w", node.w, "node_h", node.h, "cell_aspect", app.cellAspect)
 
 	var lw, lh, rx, ry, nw, nh int
 	if d == splitVertical {
@@ -296,6 +330,7 @@ func (app *App) splitActive() {
 		nw, nh = node.w, node.h-half-1
 	}
 	if lw < 4 || lh < 2 || nw < 4 || nh < 2 {
+		L.Debug("splitActive: panes too small to split", "lw", lw, "lh", lh, "nw", nw, "nh", nh)
 		return
 	}
 	nx, ny := rx, ry
@@ -315,9 +350,10 @@ func (app *App) splitActive() {
 
 	newPane, err := NewPane(app.nextID, nx, ny, nw, nh, spawnArgs, app.redraw, app.paneDead, app.done, app.oscCh)
 	if err != nil {
-		log.Printf("splitActive: NewPane: %v", err)
+		L.Error("splitActive: NewPane", "err", err)
 		return
 	}
+	L.Debug("splitActive: new pane created", "new_pane", newPane.id, "x", nx, "y", ny, "w", nw, "h", nh)
 	app.nextID++
 
 	node.split(newPane, d)
@@ -374,8 +410,11 @@ func (app *App) navigate(d dir) {
 
 	if best != nil {
 		prev = app.active
+		L.Debug("navigate: focus change", "dir", d, "from_pane", prev.id, "to_pane", best.id)
 		app.active = best
 		app.triggerRedraw()
+	} else {
+		L.Debug("navigate: no target found", "dir", d)
 	}
 	app.mu.Unlock()
 
@@ -399,6 +438,7 @@ func (app *App) deathWatcher() {
 
 // removePane removes a dead pane from the layout and re-focuses if needed.
 func (app *App) removePane(p *Pane) {
+	L.Debug("removePane: removing pane", "pane", p.id)
 	app.mu.Lock()
 
 	if app.root == nil {
@@ -409,6 +449,12 @@ func (app *App) removePane(p *Pane) {
 	var newActive *Pane
 	if app.active == p {
 		newActive = bestFocusAfterRemove(app.root, p)
+		L.Debug("removePane: refocusing", "from_pane", p.id, "to_pane", func() int {
+			if newActive != nil {
+				return newActive.id
+			}
+			return -1
+		}())
 		app.active = newActive
 	}
 
@@ -417,6 +463,7 @@ func (app *App) removePane(p *Pane) {
 	app.mu.Unlock()
 
 	if shutdown {
+		L.Info("removePane: last pane removed, shutting down")
 		go app.shutdown()
 		return
 	}

@@ -39,6 +39,7 @@ func (app *App) enterSearch() {
 		app.mu.Unlock()
 		return
 	}
+	L.Debug("search: entering search mode", "pane", p.id)
 	app.searchMode = true
 	app.searchQuery = ""
 	app.searchPane = p
@@ -57,6 +58,7 @@ func (app *App) enterSearch() {
 func (app *App) exitSearch() {
 	app.mu.Lock()
 	p := app.searchPane
+	L.Debug("search: exiting search mode")
 	app.searchMode = false
 	app.searchQuery = ""
 	app.searchPane = nil
@@ -177,6 +179,7 @@ func (app *App) updateSearch() {
 	app.searchIdx = idx
 	app.mu.Unlock()
 
+	L.Debug("search: updateSearch done", "query", query, "matches", len(matches), "idx", idx)
 	app.triggerRedraw()
 }
 
@@ -193,6 +196,8 @@ func (app *App) searchNavigate(delta int) {
 	m := matches[app.searchIdx]
 	p := app.searchPane
 	app.mu.Unlock()
+
+	L.Debug("search: navigate", "delta", delta, "idx", app.searchIdx, "total", len(matches), "vrow", m.vRow)
 
 	if p == nil {
 		return

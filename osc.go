@@ -128,10 +128,12 @@ func (s *oscScanner) dispatch(oscCh chan<- []byte) {
 	if err != nil || !oscForwardNums[n] {
 		return
 	}
+	L.Debug("osc: forwarding sequence", "osc_num", n, "len", len(s.buf))
 	out := make([]byte, len(s.buf))
 	copy(out, s.buf)
 	select {
 	case oscCh <- out:
 	default: // channel full – this frame's OSC is dropped, shell will re-emit
+		L.Debug("osc: channel full, dropping sequence", "osc_num", n)
 	}
 }

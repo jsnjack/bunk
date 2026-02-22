@@ -158,8 +158,11 @@ func NewPane(id, x, y, w, h int, spawnArgs []string, redraw chan struct{}, paneD
 				p.containerID = name
 				p.baseContainerID = name
 			}
+			L.Debug("pane: container detected", "id", p.id, "type", p.containerType, "name", p.containerID)
 		}
 	}
+
+	L.Debug("pane spawned", "id", p.id, "x", x, "y", y, "w", w, "h", h)
 
 	go p.readPTY(redraw, oscCh)       // VT100 parsing bridge (write side)
 	go p.waitForExit(paneDead, done)  // monitors shell lifecycle
@@ -182,6 +185,7 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 		n, err := p.ptmx.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
+			L.Debug("readPTY: received bytes", "pane", p.id, "bytes", n)
 
 			// Step 1 – OSC passthrough (CWD, hyperlinks, clipboard).
 			p.oscScan.Scan(chunk, oscCh)
@@ -209,6 +213,7 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			}
 		}
 		if err != nil {
+			L.Debug("readPTY: PTY read error (shell exited)", "pane", p.id, "err", err)
 			break
 		}
 	}
@@ -252,6 +257,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			for i := 0; i < shift; i++ {
 				p.sb.push(prevGrid[i])
 			}
+			L.Debug("captureAndWrite: scrollback push", "pane", p.id, "rows", shift, "total", p.sb.count)
 		} else if shift == len(prevGrid) {
 			// Large-burst sentinel: the output scrolled more than one full
 			// terminal height, so all of prevGrid has rolled off.
@@ -267,6 +273,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			for i := 0; i <= lastNonBlank; i++ {
 				p.sb.push(prevGrid[i])
 			}
+			L.Debug("captureAndWrite: large-burst scrollback push", "pane", p.id, "rows", lastNonBlank+1, "total", p.sb.count)
 		}
 	}
 }
@@ -275,6 +282,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 // then marks the pane dead and notifies the app so it can remove the pane.
 func (p *Pane) waitForExit(paneDead chan *Pane, done chan struct{}) {
 	p.cmd.Wait() //nolint:errcheck
+	L.Debug("pane process exited", "id", p.id)
 	p.mu.Lock()
 	p.dead = true
 	p.mu.Unlock()
@@ -295,26 +303,33 @@ func (p *Pane) writeInput(data []byte) {
 func (p *Pane) scrollUp(n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	before := p.sbOff
 	p.sbOff += n
 	if p.sbOff > p.sb.count {
 		p.sbOff = p.sb.count
 	}
+	L.Debug("scrollUp", "pane", p.id, "from", before, "to", p.sbOff, "max", p.sb.count)
 }
 
 // scrollDown scrolls the view n lines toward the present (decreases sbOff).
 func (p *Pane) scrollDown(n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	before := p.sbOff
 	p.sbOff -= n
 	if p.sbOff < 0 {
 		p.sbOff = 0
 	}
+	L.Debug("scrollDown", "pane", p.id, "from", before, "to", p.sbOff)
 }
 
 // scrollReset snaps back to the live view (sbOff = 0).
 func (p *Pane) scrollReset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.sbOff != 0 {
+		L.Debug("scrollReset", "pane", p.id, "was", p.sbOff)
+	}
 	p.sbOff = 0
 }
 
@@ -338,6 +353,7 @@ func (p *Pane) isDead() bool {
 // to the PTY (causing the shell to receive SIGWINCH), and resizes the vt10x
 // grid.
 func (p *Pane) resize(x, y, w, h int) {
+	L.Debug("pane resize", "pane", p.id, "x", x, "y", y, "w", w, "h", h)
 	p.x, p.y, p.w, p.h = x, y, w, h
 	if p.ptmx != nil {
 		pty.Setsize(p.ptmx, &pty.Winsize{ //nolint:errcheck
@@ -353,6 +369,7 @@ func (p *Pane) resize(x, y, w, h int) {
 // close shuts down the PTY and sends SIGHUP to the shell so it exits cleanly.
 // Safe to call multiple times.
 func (p *Pane) close() {
+	L.Debug("pane close", "pane", p.id)
 	p.closePTX()
 	if p.cmd.Process != nil {
 		p.cmd.Process.Signal(syscall.SIGHUP) //nolint:errcheck

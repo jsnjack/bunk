@@ -5,7 +5,6 @@
 package main
 
 import (
-	"log"
 	"os"
 	"os/exec"
 
@@ -16,11 +15,13 @@ import (
 var (
 	flagConfig string
 	flagTheme  string
+	flagDebug  bool
 )
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: ~/.config/bunk/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: default, solarized-dark, dracula, nord")
+	rootCmd.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable debug-level logging")
 }
 
 var rootCmd = &cobra.Command{
@@ -38,7 +39,7 @@ Key bindings:
   Ctrl+Q        Quit`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return run(flagConfig, flagTheme)
+		return run(flagConfig, flagTheme, flagDebug)
 	},
 }
 
@@ -52,14 +53,23 @@ func Execute() {
 // run initialises the screen, spawns the first pane, and blocks until the
 // user quits.  All terminal cleanup happens synchronously after the event
 // loop returns so it is guaranteed to run before the process exits.
-func run(configPath, themeName string) error {
-	rt := LoadConfig(configPath, themeName)
+func run(configPath, themeName string, debug bool) error {
+	cfg := LoadConfig(configPath, themeName)
 
-	// Log to a file so diagnostics don't corrupt the TUI.
-	if lf, err := os.OpenFile("/tmp/bunk.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
-		log.SetOutput(lf)
-		defer lf.Close()
+	// --debug overrides config log level.
+	logLevel := cfg.LogLevel
+	if debug {
+		logLevel = "debug"
 	}
+	cleanup := initLogger(cfg.LogFile, logLevel)
+	defer cleanup()
+
+	L.Info("bunk starting", "theme", themeName, "log_level", logLevel)
+
+	// Query cell aspect ratio BEFORE screen.Init() — after Init tcell owns
+	// stdin and we must not read from it directly.
+	cellAspect := queryCellAspect(cfg.CellAspect)
+	L.Debug("startup: cell aspect ratio", "aspect", cellAspect)
 
 	screen, err := tcell.NewScreen()
 	if err != nil {
@@ -68,23 +78,29 @@ func run(configPath, themeName string) error {
 	if err := screen.Init(); err != nil {
 		return err
 	}
-	screen.SetStyle(tcell.StyleDefault.Background(rt.bg).Foreground(rt.fg))
+	screen.SetStyle(tcell.StyleDefault.Background(cfg.Theme.bg).Foreground(cfg.Theme.fg))
 	screen.HideCursor()
 	screen.Clear()
 
 	app := &App{
-		screen:   screen,
-		theme:    rt,
-		redraw:   make(chan struct{}, 1),
-		paneDead: make(chan *Pane, 8),
-		done:     make(chan struct{}),
-		oscCh:    make(chan []byte, oscChanSize),
+		screen:     screen,
+		theme:      cfg.Theme,
+		cellAspect: cellAspect,
+		redraw:     make(chan struct{}, 1),
+		paneDead:   make(chan *Pane, 8),
+		done:       make(chan struct{}),
+		oscCh:      make(chan []byte, oscChanSize),
 	}
 
 	screen.EnableMouse(tcell.MouseMotionEvents)
 	screen.EnablePaste()
 
+	// Sync before querying size: Init() may capture a stale TIOCGWINSZ
+	// snapshot if the terminal just went fullscreen.
+	screen.Sync()
 	w, h := screen.Size()
+	L.Debug("startup: screen size", "w", w, "h", h)
+
 	p, err := NewPane(app.nextID, 0, 0, w, h, nil, app.redraw, app.paneDead, app.done, app.oscCh)
 	if err != nil {
 		screen.Fini()

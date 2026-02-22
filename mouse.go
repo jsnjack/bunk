@@ -83,6 +83,12 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		btn != tcell.WheelLeft && btn != tcell.WheelRight &&
 		target != app.active && !target.isDead() {
 		prevActive = app.active
+		L.Debug("mouse: click-to-focus", "from_pane", func() int {
+			if prevActive != nil {
+				return prevActive.id
+			}
+			return -1
+		}(), "to_pane", target.id, "x", x, "y", y)
 		app.active = target
 		app.triggerRedraw()
 	}
@@ -113,6 +119,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	if btn == tcell.WheelUp || btn == tcell.WheelDown {
 		if !wantsMouse {
 			scrollAmt := max(1, target.h/4)
+			L.Debug("mouse: wheel scroll", "pane", target.id, "btn", btn, "amount", scrollAmt)
 			if btn == tcell.WheelUp {
 				target.scrollUp(scrollAmt)
 			} else {
@@ -148,12 +155,14 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			app.lastClickPane = target
 
 			if isDouble {
+				L.Debug("mouse: double-click word select", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
 				selectWord(target, vPos)
 				app.dblClickActive = true
 				app.triggerRedraw()
 				return
 			}
 
+			L.Debug("mouse: button1 press (clear selection)", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
 			// Clear any existing selection immediately on press.
 			// Selection is only activated once the user starts dragging.
 			target.mu.Lock()
@@ -166,6 +175,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 
 		case isDrag:
 			vPos := screenToVirtual(target, x, y)
+			L.Debug("mouse: drag select", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
 			target.mu.Lock()
 			target.selActive = true // engage selection on real drag
 			target.selCursor = vPos
@@ -190,6 +200,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				row := y - target.y
 				vRow := (target.sb.count - target.sbOff) + row
 				target.selCursor = selPos{row: vRow, col: col}
+				L.Debug("mouse: drag-select released", "pane", target.id, "vrow", vRow, "vcol", col)
 			}
 			// If selActive is false this was a plain click – selection
 			// was already cleared on press, nothing more to do.
@@ -267,6 +278,8 @@ func (app *App) handlePaste(ev *tcell.EventPaste) {
 	active.mu.Lock()
 	bracketed := active.wantsBracketedPaste
 	active.mu.Unlock()
+
+	L.Debug("handlePaste", "pane", active.id, "start", ev.Start(), "bracketed", bracketed)
 
 	if !bracketed {
 		// Pane hasn't requested bracketed paste; content arrives as key events
@@ -357,6 +370,7 @@ func sendFocusIn(p *Pane) {
 	wants := p.term.Mode()&vt10x.ModeFocus != 0
 	p.mu.Unlock()
 	if wants {
+		L.Debug("sendFocusIn", "pane", p.id)
 		p.writeInput([]byte("\x1b[I"))
 	}
 }
@@ -370,6 +384,7 @@ func sendFocusOut(p *Pane) {
 	wants := p.term.Mode()&vt10x.ModeFocus != 0
 	p.mu.Unlock()
 	if wants {
+		L.Debug("sendFocusOut", "pane", p.id)
 		p.writeInput([]byte("\x1b[O"))
 	}
 }
@@ -396,11 +411,13 @@ func selectWord(p *Pane, vPos selPos) {
 		cells = captureRow(p.term, tr, cols)
 	}
 	if cells == nil {
+		L.Debug("selectWord: no cells at position", "pane", p.id, "vrow", vPos.row, "vcol", vPos.col)
 		return
 	}
 
 	// If clicked on whitespace, clear selection.
 	if vPos.col >= len(cells) || !isWordChar(cells[vPos.col].Char) {
+		L.Debug("selectWord: whitespace, clearing selection", "pane", p.id)
 		p.selActive = false
 		return
 	}
@@ -416,6 +433,7 @@ func selectWord(p *Pane, vPos selPos) {
 		end++
 	}
 
+	L.Debug("selectWord: selected", "pane", p.id, "row", vPos.row, "start_col", start, "end_col", end)
 	p.selActive = true
 	p.selAnchor = selPos{row: vPos.row, col: start}
 	p.selCursor = selPos{row: vPos.row, col: end}

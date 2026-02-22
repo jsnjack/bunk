@@ -26,8 +26,11 @@ import (
 // ---------------------------------------------------------------------------
 
 type fileConfig struct {
-	Theme string     `toml:"theme"`
-	UI    uiOverride `toml:"ui"`
+	Theme      string     `toml:"theme"`
+	LogFile    string     `toml:"log_file"`
+	LogLevel   string     `toml:"log_level"`
+	CellAspect float64    `toml:"cell_aspect"` // cell pixel H/W ratio; 0 = auto-detect
+	UI         uiOverride `toml:"ui"`
 }
 
 type uiOverride struct {
@@ -61,6 +64,14 @@ type resolvedTheme struct {
 	inactiveBorder tcell.Color
 	scrollThumb    tcell.Color
 	scrollTrack    tcell.Color
+}
+
+// Config is the fully resolved application configuration.
+type Config struct {
+	Theme      resolvedTheme
+	LogFile    string
+	LogLevel   string
+	CellAspect float64 // 0 = auto-detect via TIOCGWINSZ
 }
 
 // ---------------------------------------------------------------------------
@@ -149,14 +160,18 @@ func DefaultConfigPath() string {
 }
 
 // LoadConfig reads the TOML config at path (empty = default), applies the
-// optional themeOverride, and returns a resolved theme ready for rendering.
+// optional themeOverride, and returns a resolved Config ready for use.
 // Missing or unreadable config files are silently ignored.
-func LoadConfig(path, themeOverride string) resolvedTheme {
+func LoadConfig(path, themeOverride string) Config {
 	if path == "" {
 		path = DefaultConfigPath()
 	}
 
-	fc := fileConfig{Theme: "default"}
+	fc := fileConfig{
+		Theme:    "default",
+		LogFile:  "/tmp/bunk.log",
+		LogLevel: "info",
+	}
 	if _, err := os.Stat(path); err == nil {
 		toml.DecodeFile(path, &fc) //nolint:errcheck
 	}
@@ -184,7 +199,12 @@ func LoadConfig(path, themeOverride string) resolvedTheme {
 		def.ScrollTrack = fc.UI.ScrollTrack
 	}
 
-	return resolveTheme(def)
+	return Config{
+		Theme:      resolveTheme(def),
+		LogFile:    fc.LogFile,
+		LogLevel:   fc.LogLevel,
+		CellAspect: fc.CellAspect,
+	}
 }
 
 // resolveTheme parses all hex strings in a ThemeDef into tcell.Colors.
@@ -230,6 +250,17 @@ func DefaultConfigTOML() string {
 
 # Built-in themes: default, solarized-dark, dracula, nord
 theme = "default"
+
+# Logging.  Set log_file = "" to disable logging entirely.
+log_file  = "/tmp/bunk.log"
+log_level = "info"  # debug | info | warn | error
+
+# Cell pixel aspect ratio (cell height / cell width).
+# Used to decide split direction (vertical vs horizontal) based on real pixels.
+# Default 2.25 suits Noto Sans Mono 11pt on Ptyxis; adjust for your font.
+# Examples: JetBrains Mono 12pt ≈ 2.2  |  Fira Code 11pt ≈ 2.15
+#
+# cell_aspect = 2.25   # uncomment and adjust if splits feel wrong
 
 # Optional UI color overrides – leave blank to use the theme's defaults.
 # Values must be "#RRGGBB" hex strings.
