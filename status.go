@@ -1,0 +1,478 @@
+// status.go – foreground process tracking and container/context detection.
+//
+// For each pane we poll the foreground process group of its PTY every second
+// by reading /proc/<shellPid>/stat (field tpgid = terminal foreground PGID),
+// then reading /proc/<tpgid>/comm for the process name.
+//
+// Container context is detected at pane startup by reading the shell process's
+// /proc/<pid>/environ.  Toolbox, Distrobox, Podman, and LXD each leave
+// distinctive markers in the environment or filesystem.
+//
+// The status badge is rendered last in each render pass (on top of everything
+// else) in the top-right corner of each pane.  It shows:
+//
+//	⬡ <container-name>  – Toolbox / Podman container
+//	▣ <container-name>  – Distrobox container
+//	ssh / sudo / su / root – notable foreground process
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gdamore/tcell/v2"
+)
+
+// ---------------------------------------------------------------------------
+// /proc helpers
+// ---------------------------------------------------------------------------
+
+// termFgPGID returns the foreground process group ID (tpgid) of the terminal
+// controlling the given process.  It parses field 8 of /proc/<pid>/stat.
+// Returns 0 on any error.
+func termFgPGID(pid int) int {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0
+	}
+	s := string(data)
+	// The comm field is wrapped in parentheses and may itself contain parens/
+	// spaces; find the LAST ')' so we always skip the full comm field.
+	rp := strings.LastIndex(s, ")")
+	if rp < 0 {
+		return 0
+	}
+	// After ')': state ppid pgrp session tty_nr tpgid ...
+	fields := strings.Fields(s[rp+1:])
+	if len(fields) < 6 {
+		return 0
+	}
+	pgid, err := strconv.Atoi(fields[5]) // index 5 = tpgid
+	if err != nil || pgid <= 0 {
+		return 0
+	}
+	return pgid
+}
+
+// procComm returns the name of the process with the given PID by reading
+// /proc/<pid>/comm.  Returns "" on error.
+func procComm(pid int) string {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// detectFromEnvSlice checks a slice of "KEY=VALUE" strings for known
+// container markers.  Returns "toolbox", "distrobox", "podman", or "".
+func detectFromEnvSlice(env []string) string {
+	for _, entry := range env {
+		switch {
+		case strings.HasPrefix(entry, "TOOLBOX_PATH="):
+			return "toolbox"
+		case strings.HasPrefix(entry, "DISTROBOX_ENTER_PATH="):
+			return "distrobox"
+		case entry == "container=podman" || strings.HasPrefix(entry, "container=podman"):
+			return "podman"
+		}
+	}
+	return ""
+}
+
+// detectContainerFromPID returns the container type for the environment of the
+// given PID.  It uses three sources in order:
+//
+//  1. os.Environ() of the running bunk process.  The child shell inherits
+//     its environment from bunk via cmd.Env, so this is always correct for
+//     the initial pane and any split that spawns a bare shell.
+//
+//  2. /proc/<pid>/environ – for cases where the child might differ (e.g. an
+//     async OSC 176 callback firing for a process spawned differently).
+//     This may fail with EACCES if the caller is not the process owner.
+//
+//  3. Filesystem markers that are world-readable:
+//     - /run/.containerenv  – Podman creates this 0-byte file in every container
+//     - /dev/lxd/sock       – LXD mounts this guest API socket into every container
+//     - /proc/1/cgroup      – world-readable; cgroupsv1 paths contain "/lxc/"
+//     - /proc/1/environ     – only readable as root; tried last
+func detectContainerFromPID(pid int) string {
+	// 1. Own environment (most reliable, no permission issues).
+	if ct := detectFromEnvSlice(os.Environ()); ct != "" {
+		return ct
+	}
+
+	// 2. Target process /proc environ.
+	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid)); err == nil {
+		if ct := detectFromEnvSlice(strings.Split(string(data), "\x00")); ct != "" {
+			return ct
+		}
+	}
+
+	// 3b. Podman fallback: /run/.containerenv is created by Podman in every
+	//     container, world-readable, even when container=podman is not
+	//     propagated to the child process.
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return "podman"
+	}
+
+	// 3c. LXD/LXC detection (multiple methods, all non-root-friendly).
+	// Method 1: /dev/lxd/sock – LXD mounts this into every container.
+	if _, err := os.Stat("/dev/lxd/sock"); err == nil {
+		return "lxc"
+	}
+	// Method 2: /run/systemd/container – systemd inside an LXD container
+	//           writes "lxc" here; world-readable.
+	if data, err := os.ReadFile("/run/systemd/container"); err == nil {
+		if strings.TrimSpace(string(data)) == "lxc" {
+			return "lxc"
+		}
+	}
+	// Method 3: /proc/1/cgroup – world-readable; cgroupsv1 paths have "/lxc/".
+	if cg, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		if strings.Contains(string(cg), "/lxc/") {
+			return "lxc"
+		}
+	}
+	// Method 4: /proc/1/environ – only readable as root.
+	if pid != 1 {
+		if init1, err := os.ReadFile("/proc/1/environ"); err == nil {
+			for _, entry := range strings.Split(string(init1), "\x00") {
+				if entry == "container=lxc" {
+					return "lxc"
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// lxdContainerName returns the LXD container name using two methods:
+//
+//  1. cgroupsv1: parse "/lxc/<name>/" from /proc/1/cgroup (world-readable).
+//  2. Fallback:  hostname — LXD sets the container hostname to its name.
+func lxdContainerName() string {
+	if cg, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		for _, line := range strings.Split(string(cg), "\n") {
+			if idx := strings.Index(line, "/lxc/"); idx >= 0 {
+				rest := line[idx+5:] // skip "/lxc/"
+				if end := strings.IndexByte(rest, '/'); end > 0 {
+					return rest[:end]
+				}
+				if name := strings.TrimSpace(rest); name != "" {
+					return name
+				}
+			}
+		}
+	}
+	if name, err := os.Hostname(); err == nil {
+		return name
+	}
+	return ""
+}
+
+// containerSpawnArgs returns the argv for spawning `shell` inside the named
+// container.  Returns nil for an unrecognised containerType or for "lxc"
+// (LXD/LXC) where bunk is already running inside the container and new
+// panes will naturally inherit the container context without special wrapping.
+func containerSpawnArgs(containerID, containerType, shell string) []string {
+	switch containerType {
+	case "toolbox":
+		return []string{"toolbox", "run", "--container", containerID, shell}
+	case "distrobox":
+		return []string{"distrobox", "enter", "-n", containerID, "--", shell}
+	case "podman":
+		return []string{"podman", "exec", "-it", containerID, shell}
+	case "lxc":
+		// bunk is running inside the LXD container; child panes inherit
+		// the container context automatically.  No wrapper needed.
+		return nil
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Goroutine: poll foreground process
+// ---------------------------------------------------------------------------
+
+// detectFromCgroup reads /proc/<pid>/cgroup (world-readable) and checks for
+// Podman's libpod cgroup path pattern.  This works even when the process is
+// owned by a different UID (e.g. rootless Podman with user namespaces), where
+// /proc/<pid>/environ would return EACCES.
+//
+// Returns ("podman", containerID) if a libpod cgroup is found, ("","") otherwise.
+// The containerID is the full hex container ID, not the friendly name.
+func detectFromCgroup(pid int) (ctype, containerID string) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return "", ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		// cgroupsv2: "0::<path>"
+		// cgroupsv1: "<n>:<subsystem>:<path>"
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		path := parts[2]
+		for _, sep := range []string{"libpod_payload-", "libpod-"} {
+			if idx := strings.Index(path, sep); idx >= 0 {
+				rest := path[idx+len(sep):]
+				end := strings.IndexAny(rest, "./\n")
+				if end > 0 {
+					return "podman", rest[:end]
+				}
+				if id := strings.TrimSpace(rest); id != "" {
+					return "podman", id
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
+// podmanContainerName resolves a Podman container ID to its friendly name by
+// running "podman inspect".  Returns the ID itself (first 12 chars) on failure.
+func podmanContainerName(containerID string) string {
+	if containerID == "" {
+		return ""
+	}
+	out, err := exec.Command("podman", "inspect", "--format", "{{.Name}}", containerID).Output()
+	if err != nil || len(out) == 0 {
+		if len(containerID) > 12 {
+			return containerID[:12]
+		}
+		return containerID
+	}
+	return strings.TrimSpace(string(out))
+}
+// container type and container name for that specific process.
+// Unlike detectContainerFromPID it does NOT check os.Environ() or filesystem
+// markers — it only looks at the given process's own environment.
+//
+// If /proc/<pid>/environ is unreadable (e.g. rootless Podman user namespaces
+// where container processes appear as sub-UIDs), falls back to cgroup-based
+// detection, which is always world-readable.
+func detectContainerInfoFromProcEnv(pid int) (ctype, cname string) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	if err == nil {
+		for _, entry := range strings.Split(string(data), "\x00") {
+			switch {
+			case strings.HasPrefix(entry, "TOOLBOX_PATH="):
+				ctype = "toolbox"
+			case strings.HasPrefix(entry, "DISTROBOX_ENTER_PATH="):
+				ctype = "distrobox"
+			case entry == "container=podman" || strings.HasPrefix(entry, "container=podman"):
+				ctype = "podman"
+			case strings.HasPrefix(entry, "HOSTNAME="):
+				cname = entry[9:]
+			case strings.HasPrefix(entry, "CONTAINER_ID="):
+				if cname == "" {
+					cname = entry[13:]
+				}
+			}
+		}
+		if ctype != "" {
+			return
+		}
+	}
+
+	// Cgroup fallback: /proc/<pid>/cgroup is world-readable.
+	// Rootless Podman puts container processes under a libpod cgroup path
+	// even when their UID differs (making environ unreadable by bunk).
+	if ct, cid := detectFromCgroup(pid); ct != "" {
+		ctype = ct
+		// Resolve the hex container ID to a friendly name via `podman inspect`.
+		// Called only when the foreground process changes (~1s polling), so
+		// the ~30ms subprocess cost is acceptable.
+		cname = podmanContainerName(cid)
+		return
+	}
+	return
+}
+
+// trackFgProcess polls the foreground process group of this pane's PTY once
+// per second.  When the process name or container context changes it updates
+// the Pane fields and signals the render loop to repaint.
+// Stops when done is closed or the pane dies.
+func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
+	if p.cmd.Process == nil {
+		return
+	}
+	shellPid := p.cmd.Process.Pid
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	var lastName, lastCT, lastCN string
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+
+		p.mu.Lock()
+		dead := p.dead
+		baseCT := p.baseContainerType
+		baseCN := p.baseContainerID
+		p.mu.Unlock()
+		if dead {
+			return
+		}
+
+		name := ""
+		var pgid int
+		if pgid = termFgPGID(shellPid); pgid > 0 {
+			name = procComm(pgid)
+		}
+
+		// Detect container context of the current foreground process.
+		// If the user ran `podman exec`, `toolbox enter`, etc., the
+		// foreground PGID's /proc environ will carry the container markers.
+		// Fall back to the pane's startup-detected base context when the
+		// foreground process has no container markers.
+		ct, cn := "", ""
+		if pgid > 0 {
+			ct, cn = detectContainerInfoFromProcEnv(pgid)
+		}
+		if ct == "" {
+			ct, cn = baseCT, baseCN
+		}
+
+		if name == lastName && ct == lastCT && cn == lastCN {
+			continue
+		}
+		lastName, lastCT, lastCN = name, ct, cn
+
+		p.mu.Lock()
+		p.fgProcess = name
+		p.containerType = ct
+		p.containerID = cn
+		p.mu.Unlock()
+
+		select {
+		case redraw <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Status badge rendering
+// ---------------------------------------------------------------------------
+
+// drawAllPaneStatus renders the status badge for every pane in the subtree.
+// Must be called AFTER all other drawing so the badge paints on top.
+func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane) {
+	if n.isLeaf() {
+		drawPaneStatus(scr, n.pane, n.pane == active)
+		return
+	}
+	drawAllPaneStatus(scr, n.left, active)
+	drawAllPaneStatus(scr, n.right, active)
+}
+
+// drawPaneStatus draws a compact status badge in the top-right corner of
+// pane p.  Nothing is drawn when there is no notable state to display.
+//
+// Badge format examples:
+//
+//	[⬡ my-toolbox]          – inside a Toolbox/Podman container
+//	[▣ my-box]              – inside a Distrobox container
+//	[⬡ my-toolbox · ssh]    – container + SSH session
+//	[sudo]                  – sudo or su running
+func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool) {
+	p.mu.Lock()
+	fgProc := p.fgProcess
+	containerID := p.containerID
+	containerType := p.containerType
+	px, py, pw := p.x, p.y, p.w
+	hasSB := p.sb.count > 0
+	p.mu.Unlock()
+
+	// Build badge segments.
+	var parts []string
+	if containerType != "" {
+		icon := "⬡"
+		if containerType == "distrobox" {
+			icon = "▣"
+		}
+		label := containerType
+		if containerType == "lxc" {
+			label = "lxd" // display as "lxd" since LXD is the user-facing brand
+		}
+		if containerID != "" {
+			label = containerID
+		}
+		parts = append(parts, icon+" "+label)
+	}
+	switch fgProc {
+	case "ssh":
+		parts = append(parts, "ssh")
+	case "sudo":
+		parts = append(parts, "sudo")
+	case "su":
+		parts = append(parts, "su")
+	}
+	if len(parts) == 0 {
+		return
+	}
+
+	badge := "[" + strings.Join(parts, " · ") + "]"
+
+	// Right edge: leave one cell for the scrollbar when it is visible.
+	rightEdge := px + pw
+	if hasSB {
+		rightEdge--
+	}
+	maxW := rightEdge - px
+	if maxW < 6 {
+		return // pane too narrow for a useful badge
+	}
+
+	runes := []rune(badge)
+	if len(runes) > maxW {
+		runes = runes[:maxW]
+	}
+	startX := rightEdge - len(runes)
+	if startX < px {
+		startX = px
+	}
+
+// Badge colour priority: sudo/su (red) > ssh (blue) > container (teal).
+	// Coloured backgrounds are used regardless of focus so the indicator is
+	// always conspicuous at a glance.
+	var style tcell.Style
+	switch {
+	case fgProc == "sudo" || fgProc == "su":
+		style = tcell.StyleDefault.
+			Foreground(tcell.ColorWhite).
+			Background(tcell.NewRGBColor(180, 30, 30)).
+			Bold(true)
+	case fgProc == "ssh":
+		style = tcell.StyleDefault.
+			Foreground(tcell.ColorWhite).
+			Background(tcell.NewRGBColor(30, 80, 160)).
+			Bold(true)
+	case containerType != "":
+		style = tcell.StyleDefault.
+			Foreground(tcell.ColorWhite).
+			Background(tcell.NewRGBColor(20, 120, 100)).
+			Bold(true)
+	default:
+		style = tcell.StyleDefault.
+			Foreground(tcell.ColorWhite).
+			Background(tcell.NewRGBColor(60, 60, 60))
+	}
+
+	for i, ch := range runes {
+		if startX+i < px+pw {
+			scr.SetContent(startX+i, py, ch, nil, style)
+		}
+	}
+}
