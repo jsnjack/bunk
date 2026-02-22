@@ -24,6 +24,11 @@ import (
 	"github.com/hinshun/vt10x"
 )
 
+// rawBufMax is the maximum number of bytes retained in the per-pane raw PTY
+// byte buffer.  At typical shell output rates (≈80 chars/line, 2000 lines)
+// this is ~160 KB — comfortable for replay-based reflow on resize.
+const rawBufMax = 256 * 1024 // 256 KB
+
 // selPos identifies a cell in the pane's unified virtual coordinate space.
 //
 //	row 0 … sb.count-1  → scrollback ring entries (oldest … newest)
@@ -84,6 +89,11 @@ type Pane struct {
 	// process is not inside any container.  Protected by mu.
 	baseContainerType string
 	baseContainerID   string
+
+	// rawBuf stores the raw PTY byte stream (capped at rawBufMax) so that the
+	// terminal content can be replayed into a fresh vt10x on resize, giving
+	// correct line-wrap reflow at the new column width.  Protected by mu.
+	rawBuf []byte
 }
 
 // NewPane spawns a shell inside a new PTY with the given geometry, starts the
@@ -238,6 +248,23 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	cols, rows := p.term.Size()
 	altScreen := p.term.Mode()&vt10x.ModeAltScreen != 0
 
+	// Accumulate raw bytes for replay-based reflow on resize.
+	// Skip while alternate screen is active (vim, htop, etc.) — those apps
+	// paint absolute-position content that doesn't replay meaningfully.
+	if !altScreen {
+		p.rawBuf = append(p.rawBuf, chunk...)
+		if len(p.rawBuf) > rawBufMax {
+			// Trim from the front at a clean newline boundary so we don't
+			// start playback in the middle of an ANSI escape sequence.
+			excess := len(p.rawBuf) - rawBufMax
+			if nl := bytes.IndexByte(p.rawBuf[excess:], '\n'); nl >= 0 {
+				p.rawBuf = p.rawBuf[excess+nl+1:]
+			} else {
+				p.rawBuf = p.rawBuf[excess:]
+			}
+		}
+	}
+
 	var prevGrid [][]vt10x.Glyph
 	if !altScreen {
 		prevGrid = captureGrid(p.term, cols, rows)
@@ -351,19 +378,92 @@ func (p *Pane) isDead() bool {
 
 // resize updates the pane's screen position and dimensions, sends TIOCSWINSZ
 // to the PTY (causing the shell to receive SIGWINCH), and resizes the vt10x
-// grid.
+// grid.  If the width changes, the existing terminal content is captured and
+// re-injected so it reflows naturally to the new column width instead of being
+// silently truncated.
 func (p *Pane) resize(x, y, w, h int) {
 	L.Debug("pane resize", "pane", p.id, "x", x, "y", y, "w", w, "h", h)
 	p.x, p.y, p.w, p.h = x, y, w, h
+	p.mu.Lock()
+	p.resizeAndReflow(w-1, h)
+	p.mu.Unlock()
 	if p.ptmx != nil {
 		pty.Setsize(p.ptmx, &pty.Winsize{ //nolint:errcheck
 			Rows: uint16(h),
 			Cols: uint16(w - 1), // last column reserved for scrollbar
 		})
 	}
-	p.mu.Lock()
-	p.term.Resize(w-1, h)
-	p.mu.Unlock()
+}
+
+// resizeAndReflow resizes the pane terminal to (newCols × newRows).
+//
+// When raw PTY bytes are available, the entire output history is replayed
+// into a temporary vt10x at the new width so lines wrap correctly at the
+// new column count.  The resulting state is split into a new glyph scrollback
+// (rows that don't fit in newRows) and a fresh live terminal (the rest).
+//
+// For alt-screen apps (vim, htop, …) reflow is skipped — they redraw
+// themselves after SIGWINCH.
+//
+// Must be called with p.mu held.
+func (p *Pane) resizeAndReflow(newCols, newRows int) {
+	oldCols, oldRows := p.term.Size()
+	if oldCols == newCols && oldRows == newRows {
+		return
+	}
+
+	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
+		p.term.Resize(newCols, newRows)
+		return
+	}
+
+	if len(p.rawBuf) == 0 {
+		// No history yet (brand-new pane); plain resize is sufficient.
+		p.term.Resize(newCols, newRows)
+		return
+	}
+
+	// Replay raw bytes into a tall scratch terminal so nothing scrolls off
+	// during replay and we can read back all rows.
+	replayH := sbMaxLines + newRows
+	scratch := vt10x.New(vt10x.WithSize(newCols, replayH))
+	// Prepend a full SGR reset so trimmed attribute state doesn't bleed.
+	scratch.Write(append([]byte("\x1b[0m"), p.rawBuf...)) //nolint:errcheck
+
+	// Content extent: the cursor row is the last line the shell wrote to.
+	cur := scratch.Cursor()
+	contentRows := cur.Y + 1
+
+	// Split: rows [0, firstVisible) → scrollback; [firstVisible, contentRows) → live terminal.
+	firstVisible := contentRows - newRows
+	if firstVisible < 0 {
+		firstVisible = 0
+	}
+
+	// Rebuild scrollback from the replay.
+	p.sb = sbRing{}
+	for r := 0; r < firstVisible; r++ {
+		p.sb.push(captureRow(scratch, r, newCols))
+	}
+	p.sbOff = 0
+
+	// Rebuild the live terminal by injecting only the visible rows.
+	visibleRows := make([][]vt10x.Glyph, newRows)
+	for r := 0; r < newRows; r++ {
+		srcRow := firstVisible + r
+		if srcRow < contentRows {
+			visibleRows[r] = captureRow(scratch, srcRow, newCols)
+		} else {
+			visibleRows[r] = make([]vt10x.Glyph, newCols) // blank padding
+		}
+	}
+	p.term = vt10x.New(vt10x.WithSize(newCols, newRows))
+	reflowInject(p.term, visibleRows)
+
+	L.Debug("resizeAndReflow: raw replay done", "pane", p.id,
+		"old", fmt.Sprintf("%dx%d", oldCols, oldRows),
+		"new", fmt.Sprintf("%dx%d", newCols, newRows),
+		"content_rows", contentRows, "sb_rows", firstVisible)
 }
 
 // close shuts down the PTY and sends SIGHUP to the shell so it exits cleanly.
