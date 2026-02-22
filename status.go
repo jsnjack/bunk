@@ -123,19 +123,19 @@ func detectContainerFromPID(pid int) string {
 	// 3c. LXD/LXC detection (multiple methods, all non-root-friendly).
 	// Method 1: /dev/lxd/sock – LXD mounts this into every container.
 	if _, err := os.Stat("/dev/lxd/sock"); err == nil {
-		return "lxc"
+		return "lxd"
 	}
 	// Method 2: /run/systemd/container – systemd inside an LXD container
 	//           writes "lxc" here; world-readable.
 	if data, err := os.ReadFile("/run/systemd/container"); err == nil {
 		if strings.TrimSpace(string(data)) == "lxc" {
-			return "lxc"
+			return "lxd"
 		}
 	}
 	// Method 3: /proc/1/cgroup – world-readable; cgroupsv1 paths have "/lxc/".
 	if cg, err := os.ReadFile("/proc/1/cgroup"); err == nil {
 		if strings.Contains(string(cg), "/lxc/") {
-			return "lxc"
+			return "lxd"
 		}
 	}
 	// Method 4: /proc/1/environ – only readable as root.
@@ -143,7 +143,7 @@ func detectContainerFromPID(pid int) string {
 		if init1, err := os.ReadFile("/proc/1/environ"); err == nil {
 			for _, entry := range strings.Split(string(init1), "\x00") {
 				if entry == "container=lxc" {
-					return "lxc"
+					return "lxd"
 				}
 			}
 		}
@@ -177,7 +177,7 @@ func lxdContainerName() string {
 }
 
 // containerSpawnArgs returns the argv for spawning `shell` inside the named
-// container.  Returns nil for an unrecognised containerType or for "lxc"
+// container.  Returns nil for an unrecognised containerType or for "lxd"
 // (LXD/LXC) where bunk is already running inside the container and new
 // panes will naturally inherit the container context without special wrapping.
 func containerSpawnArgs(containerID, containerType, shell string) []string {
@@ -188,7 +188,7 @@ func containerSpawnArgs(containerID, containerType, shell string) []string {
 		return []string{"distrobox", "enter", "-n", containerID, "--", shell}
 	case "podman":
 		return []string{"podman", "exec", "-it", containerID, shell}
-	case "lxc":
+	case "lxd":
 		// bunk is running inside the LXD container; child panes inherit
 		// the container context automatically.  No wrapper needed.
 		return nil
@@ -220,6 +220,8 @@ func detectFromCgroup(pid int) (ctype, containerID string) {
 			continue
 		}
 		path := parts[2]
+
+		// Podman: libpod_payload-<id> or libpod-<id>
 		for _, sep := range []string{"libpod_payload-", "libpod-"} {
 			if idx := strings.Index(path, sep); idx >= 0 {
 				rest := path[idx+len(sep):]
@@ -230,6 +232,18 @@ func detectFromCgroup(pid int) (ctype, containerID string) {
 				if id := strings.TrimSpace(rest); id != "" {
 					return "podman", id
 				}
+			}
+		}
+
+		// LXD/LXC: cgroup path contains "/lxc/<name>/"
+		if idx := strings.Index(path, "/lxc/"); idx >= 0 {
+			rest := path[idx+5:] // skip "/lxc/"
+			end := strings.IndexAny(rest, "/\n")
+			if end > 0 {
+				return "lxd", rest[:end]
+			}
+			if name := strings.TrimSpace(rest); name != "" {
+				return "lxd", name
 			}
 		}
 	}
@@ -325,6 +339,7 @@ func detectContainerInfoFromProcEnv(pid int) (ctype, cname string) {
 //	docker exec  [options] CONTAINER COMMAND [ARG...]
 //	kubectl exec [options] POD [-c CONTAINER] -- COMMAND [ARG...]
 //	oc exec      [options] POD [-c CONTAINER] -- COMMAND [ARG...]
+//	lxc exec     CONTAINER -- COMMAND [ARG...]
 func detectExecSession(pid int) (ctype, cname string) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil || len(data) == 0 {
@@ -379,6 +394,21 @@ func detectExecSession(pid int) (ctype, cname string) {
 			return "", ""
 		}
 		return "kubectl", name
+
+	case "lxc":
+		// lxc exec CONTAINER -- COMMAND [ARG...]
+		// The subcommand IS the container name when the first non-flag arg
+		// is not a known lxc subcommand.  lxc uses positional: first arg is
+		// always the subcommand, second is the container.
+		if subcmd != "exec" && subcmd != "shell" {
+			return "", ""
+		}
+		// After "exec", first positional arg is the container name.
+		name := firstPositionalCLIArg(rest)
+		if name == "" {
+			return "", ""
+		}
+		return "lxd", name
 	}
 
 	return "", ""
@@ -526,9 +556,6 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool) {
 			icon = "▣"
 		}
 		label := containerType
-		if containerType == "lxc" {
-			label = "lxd" // display as "lxd" since LXD is the user-facing brand
-		}
 		if containerID != "" {
 			label = containerID
 		}
