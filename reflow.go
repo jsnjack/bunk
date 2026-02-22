@@ -55,11 +55,26 @@ func rowVisualHeight(row []vt10x.Glyph, cols int) int {
 }
 
 // reflowInject writes rows into term (already resized) as ANSI-coded text.
-// Each row ends with \r\n except the last; long rows auto-wrap at the new
-// terminal width.  Must be called with p.mu held.
+// Each row ends with \r\n except the last content row; long rows auto-wrap at
+// the new terminal width.  Trailing blank rows are skipped so the cursor lands
+// right after the last visible content, not at the bottom of the terminal.
+// Must be called with p.mu held.
 func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 	if len(rows) == 0 {
 		return
+	}
+
+	// Find the last row that has any visible content so we don't emit
+	// trailing \r\n sequences that would push the cursor to the bottom.
+	lastContent := -1
+	for r := len(rows) - 1; r >= 0; r-- {
+		if rowContentEnd(rows[r]) > 0 {
+			lastContent = r
+			break
+		}
+	}
+	if lastContent < 0 {
+		return // nothing to inject
 	}
 
 	var buf bytes.Buffer
@@ -68,7 +83,8 @@ func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 	var prevFG, prevBG vt10x.Color = vt10x.DefaultFG, vt10x.DefaultBG
 	var prevMode int16
 
-	for r, row := range rows {
+	for r := 0; r <= lastContent; r++ {
+		row := rows[r]
 		end := rowContentEnd(row)
 		for c := 0; c < end; c++ {
 			g := row[c]
@@ -82,7 +98,7 @@ func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 			}
 			buf.WriteRune(ch)
 		}
-		if r < len(rows)-1 {
+		if r < lastContent {
 			buf.WriteString("\x1b[0m\r\n")
 			prevFG, prevBG, prevMode = vt10x.DefaultFG, vt10x.DefaultBG, 0
 		}
