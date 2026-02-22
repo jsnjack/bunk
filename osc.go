@@ -6,11 +6,11 @@
 // Modern terminal emulators (foot, kitty, iTerm2, Ptyxis/VTE, …) understand
 // these sequences, which must reach the host terminal directly:
 //
-//   OSC 7   – shell CWD notification; lets the terminal open new tabs in the
-//              same directory ("open here"), update tab titles with the path, etc.
-//   OSC 8   – inline hyperlinks; terminals can open URLs on Ctrl+click.
-//   OSC 52  – clipboard read/write; lets programs access the system clipboard
-//              without needing xclip/xdotool.
+//	OSC 7   – shell CWD notification; lets the terminal open new tabs in the
+//	           same directory ("open here"), update tab titles with the path, etc.
+//	OSC 8   – inline hyperlinks; terminals can open URLs on Ctrl+click.
+//	OSC 52  – clipboard read/write; lets programs access the system clipboard
+//	           without needing xclip/xdotool.
 //
 // The oscScanner runs over each raw PTY chunk BEFORE it is fed to vt10x.
 // When it finds a complete OSC in the forward-set it sends a copy to a

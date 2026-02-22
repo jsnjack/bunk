@@ -161,9 +161,9 @@ func NewPane(id, x, y, w, h int, spawnArgs []string, redraw chan struct{}, paneD
 		}
 	}
 
-	go p.readPTY(redraw, oscCh)        // VT100 parsing bridge (write side)
-	go p.waitForExit(paneDead, done)   // monitors shell lifecycle
-	go p.trackFgProcess(redraw, done)  // polls foreground process name
+	go p.readPTY(redraw, oscCh)       // VT100 parsing bridge (write side)
+	go p.waitForExit(paneDead, done)  // monitors shell lifecycle
+	go p.trackFgProcess(redraw, done) // polls foreground process name
 
 	return p, nil
 }
@@ -445,4 +445,3 @@ func (p *Pane) selText() string {
 	}
 	return buf.String()
 }
-

@@ -2,27 +2,27 @@
 //
 // The screen is divided recursively using a BSP tree:
 //
-//   Node (internal):
-//     Owns a rectangular region (x, y, w, h).
-//     Divided into two children by a single split line.
-//     splitVertical   → left child | border | right child
-//     splitHorizontal → top child  / border / bottom child
+//	Node (internal):
+//	  Owns a rectangular region (x, y, w, h).
+//	  Divided into two children by a single split line.
+//	  splitVertical   → left child | border | right child
+//	  splitHorizontal → top child  / border / bottom child
 //
-//   Node (leaf):
-//     Owns a rectangular region (x, y, w, h).
-//     Contains exactly one Pane that fills that region.
+//	Node (leaf):
+//	  Owns a rectangular region (x, y, w, h).
+//	  Contains exactly one Pane that fills that region.
 //
 // Layout math (border is always 1 cell wide/tall):
 //
-//   Vertical split of (x, y, w, h), half = w/2:
-//     left  child: (x,        y, half,      h)
-//     right child: (x+half+1, y, w-half-1,  h)
-//     border column: x + half
+//	Vertical split of (x, y, w, h), half = w/2:
+//	  left  child: (x,        y, half,      h)
+//	  right child: (x+half+1, y, w-half-1,  h)
+//	  border column: x + half
 //
-//   Horizontal split of (x, y, w, h), half = h/2:
-//     top    child: (x, y,        w, half)
-//     bottom child: (x, y+half+1, w, h-half-1)
-//     border row: y + half
+//	Horizontal split of (x, y, w, h), half = h/2:
+//	  top    child: (x, y,        w, half)
+//	  bottom child: (x, y+half+1, w, h-half-1)
+//	  border row: y + half
 //
 // When a leaf is removed the sibling is promoted into the parent's slot and
 // resized to fill the parent's full region.
@@ -39,8 +39,8 @@ const (
 // Node is one element of the BSP tree.
 // If pane != nil it is a leaf; otherwise left and right are set.
 type Node struct {
-	x, y, w, h int     // bounding box this node owns (inclusive of border columns/rows)
-	dir         splitDir
+	x, y, w, h int // bounding box this node owns (inclusive of border columns/rows)
+	dir        splitDir
 
 	// Leaf fields.
 	pane *Pane

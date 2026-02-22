@@ -251,6 +251,7 @@ func podmanContainerName(containerID string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
 // container type and container name for that specific process.
 // Unlike detectContainerFromPID it does NOT check os.Environ() or filesystem
 // markers — it only looks at the given process's own environment.
@@ -444,7 +445,7 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool) {
 		startX = px
 	}
 
-// Badge colour priority: sudo/su (red) > ssh (blue) > container (teal).
+	// Badge colour priority: sudo/su (red) > ssh (blue) > container (teal).
 	// Coloured backgrounds are used regardless of focus so the indicator is
 	// always conspicuous at a glance.
 	var style tcell.Style

@@ -7,11 +7,11 @@
 // exposes no hook for this event, so we must detect it ourselves.
 //
 // Detection algorithm (called from readPTY, under Pane.mu):
-//   1. Before term.Write(chunk): if the cursor is in the BOTTOM HALF of the
-//      screen, take a full snapshot of every row.
-//   2. After  term.Write(chunk): compare the new row-0 to every row in the
-//      snapshot.  If old row[N] matches new row[0], exactly N rows scrolled
-//      off the top.  Push those N rows into the ring buffer.
+//  1. Before term.Write(chunk): if the cursor is in the BOTTOM HALF of the
+//     screen, take a full snapshot of every row.
+//  2. After  term.Write(chunk): compare the new row-0 to every row in the
+//     snapshot.  If old row[N] matches new row[0], exactly N rows scrolled
+//     off the top.  Push those N rows into the ring buffer.
 //
 // The comparison uses the first non-blank row as a "fingerprint" for the
 // scroll shift.  This is approximate (false positives possible if rows happen
@@ -30,9 +30,10 @@
 // oldest line is silently evicted.
 //
 // User navigation (Shift+PgUp / Shift+PgDn):
-//   sbOff == 0     → live view (normal)
-//   sbOff == N     → display starting N lines above the live view
-//   Any non-scroll key → snap back to live view automatically
+//
+//	sbOff == 0     → live view (normal)
+//	sbOff == N     → display starting N lines above the live view
+//	Any non-scroll key → snap back to live view automatically
 package main
 
 import "github.com/hinshun/vt10x"
