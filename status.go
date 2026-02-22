@@ -252,6 +252,7 @@ func podmanContainerName(containerID string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// detectContainerInfoFromProcEnv returns the
 // container type and container name for that specific process.
 // Unlike detectContainerFromPID it does NOT check os.Environ() or filesystem
 // markers — it only looks at the given process's own environment.
@@ -259,6 +260,11 @@ func podmanContainerName(containerID string) string {
 // If /proc/<pid>/environ is unreadable (e.g. rootless Podman user namespaces
 // where container processes appear as sub-UIDs), falls back to cgroup-based
 // detection, which is always world-readable.
+//
+// If cgroup detection also fails, tries detectExecSession to handle the case
+// where the foreground process is a container runtime CLI (podman exec, docker
+// exec, kubectl exec) whose own environ is on the host, not inside the
+// container.
 func detectContainerInfoFromProcEnv(pid int) (ctype, cname string) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if err == nil {
@@ -279,6 +285,7 @@ func detectContainerInfoFromProcEnv(pid int) (ctype, cname string) {
 			}
 		}
 		if ctype != "" {
+			L.Debug("detectContainerInfoFromProcEnv: found via environ", "pid", pid, "type", ctype, "name", cname)
 			return
 		}
 	}
@@ -292,9 +299,122 @@ func detectContainerInfoFromProcEnv(pid int) (ctype, cname string) {
 		// Called only when the foreground process changes (~1s polling), so
 		// the ~30ms subprocess cost is acceptable.
 		cname = podmanContainerName(cid)
+		L.Debug("detectContainerInfoFromProcEnv: found via cgroup", "pid", pid, "type", ctype, "name", cname)
 		return
 	}
+
+	// CLI exec session fallback: handles "podman exec <name>", "docker exec",
+	// "kubectl exec" — the CLI process runs on the HOST so its environ and
+	// cgroup won't show container markers; we parse the cmdline instead.
+	if ct, cn := detectExecSession(pid); ct != "" {
+		L.Debug("detectContainerInfoFromProcEnv: found via exec cmdline", "pid", pid, "type", ct, "name", cn)
+		return ct, cn
+	}
+
 	return
+}
+
+// detectExecSession detects when the foreground process is a container runtime
+// CLI executing a command inside a container (podman exec, docker exec,
+// kubectl exec / oc exec).  It parses /proc/<pid>/cmdline to extract the
+// subcommand and container/pod name.
+//
+// Layout of the relevant subcommands:
+//
+//	podman exec  [options] CONTAINER COMMAND [ARG...]
+//	docker exec  [options] CONTAINER COMMAND [ARG...]
+//	kubectl exec [options] POD [-c CONTAINER] -- COMMAND [ARG...]
+//	oc exec      [options] POD [-c CONTAINER] -- COMMAND [ARG...]
+func detectExecSession(pid int) (ctype, cname string) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil || len(data) == 0 {
+		return "", ""
+	}
+	// cmdline is NUL-separated; drop trailing NUL.
+	args := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
+	if len(args) < 2 {
+		return "", ""
+	}
+
+	bin := args[0]
+	// Trim path prefix: "/usr/bin/podman" → "podman"
+	if idx := strings.LastIndexByte(bin, '/'); idx >= 0 {
+		bin = bin[idx+1:]
+	}
+
+	// Find the subcommand (first non-flag arg).
+	subcmdIdx := -1
+	for i := 1; i < len(args); i++ {
+		if args[i] != "" && !strings.HasPrefix(args[i], "-") {
+			subcmdIdx = i
+			break
+		}
+	}
+	if subcmdIdx < 0 {
+		return "", ""
+	}
+	subcmd := args[subcmdIdx]
+	rest := args[subcmdIdx+1:]
+
+	switch bin {
+	case "podman", "docker":
+		if subcmd != "exec" && subcmd != "run" {
+			return "", ""
+		}
+		// First positional arg after flags is the container name.
+		name := firstPositionalCLIArg(rest)
+		if name == "" {
+			return "", ""
+		}
+		return bin, name
+
+	case "kubectl", "oc":
+		if subcmd != "exec" {
+			return "", ""
+		}
+		// kubectl exec [options] POD [-c CONTAINER] -- cmd
+		// First positional arg is the pod name.
+		name := firstPositionalCLIArg(rest)
+		if name == "" {
+			return "", ""
+		}
+		return "kubectl", name
+	}
+
+	return "", ""
+}
+
+// firstPositionalCLIArg returns the first positional (non-flag) argument from
+// a CLI arg list, skipping flags and their values.
+//
+// For flags that take a value (e.g. --user root, -e VAR=val) we use a simple
+// heuristic: long flags (--foo) without "=" skip the next arg; short flags
+// (-f) that are not in a known set of boolean flags also skip the next arg.
+// This handles the common cases without needing per-runtime flag tables.
+func firstPositionalCLIArg(args []string) string {
+	// Boolean short flags common to podman/docker exec; don't consume next arg.
+	boolShort := map[string]bool{
+		"-i": true, "-t": true, "-d": true,
+		"--interactive": true, "--tty": true, "--detach": true, "--privileged": true,
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "" || arg == "--" {
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") {
+			return arg // positional found
+		}
+		if boolShort[arg] {
+			continue // boolean flag, no value
+		}
+		if strings.Contains(arg, "=") {
+			continue // --flag=value form, value already consumed
+		}
+		// Assume flag takes a separate value → skip next arg.
+		i++
+	}
+	return ""
 }
 
 // trackFgProcess polls the foreground process group of this pane's PTY once
@@ -340,6 +460,7 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 		ct, cn := "", ""
 		if pgid > 0 {
 			ct, cn = detectContainerInfoFromProcEnv(pgid)
+			L.Debug("trackFgProcess: detection", "pane", p.id, "pgid", pgid, "name", name, "ct", ct, "cn", cn)
 		}
 		if ct == "" {
 			ct, cn = baseCT, baseCN
