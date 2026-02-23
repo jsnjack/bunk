@@ -309,13 +309,21 @@ func (app *App) splitActive() {
 	// so the split direction matches what the user actually sees.
 	// cellAspect = cellPixelH / cellPixelW; pane is wider-in-pixels when
 	// node.w * cellW > node.h * cellH  →  node.w > node.h * cellAspect.
-	if float64(node.w) >= float64(node.h)*app.cellAspect {
+	pixelW := float64(node.w)
+	pixelH := float64(node.h) * app.cellAspect
+	if pixelW >= pixelH+5 { // if almost square, prefer horizontal split to avoid very narrow panes
 		d = splitVertical
 	} else {
 		d = splitHorizontal
 	}
-	L.Debug("splitActive: splitting", "pane", app.active.id, "dir", d,
-		"node_w", node.w, "node_h", node.h, "cell_aspect", app.cellAspect)
+	L.Debug("splitActive: direction decision",
+		"pane", app.active.id,
+		"node_cols", node.w, "node_rows", node.h,
+		"cell_aspect", app.cellAspect,
+		"pixel_w", int(pixelW), "pixel_h", int(pixelH),
+		"wider_in_pixels", pixelW >= pixelH,
+		"dir", map[splitDir]string{splitVertical: "vertical (side-by-side)", splitHorizontal: "horizontal (top-bottom)"}[d],
+	)
 
 	var lw, lh, rx, ry, nw, nh int
 	if d == splitVertical {
