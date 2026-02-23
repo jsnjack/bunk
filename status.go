@@ -120,9 +120,12 @@ func detectContainerFromPID(pid int) string {
 		return "podman"
 	}
 
-	// 3c. LXD/LXC detection (multiple methods, all non-root-friendly).
-	// Method 1: /dev/lxd/sock – LXD mounts this into every container.
+	// 3c. LXD/LXC/Incus detection (multiple methods, all non-root-friendly).
+	// Method 1: guest API socket – LXD mounts /dev/lxd/sock, Incus /dev/incus/sock.
 	if _, err := os.Stat("/dev/lxd/sock"); err == nil {
+		return "lxd"
+	}
+	if _, err := os.Stat("/dev/incus/sock"); err == nil {
 		return "lxd"
 	}
 	// Method 2: /run/systemd/container – systemd inside an LXD container
@@ -395,10 +398,11 @@ func detectExecSession(pid int) (ctype, cname string) {
 		}
 		return "kubectl", name
 
-	case "lxc":
+	case "lxc", "incus":
 		// lxc exec CONTAINER -- COMMAND [ARG...]
+		// incus exec CONTAINER -- COMMAND [ARG...]
 		// The subcommand IS the container name when the first non-flag arg
-		// is not a known lxc subcommand.  lxc uses positional: first arg is
+		// is not a known lxc subcommand.  lxc/incus uses positional: first arg is
 		// always the subcommand, second is the container.
 		if subcmd != "exec" && subcmd != "shell" {
 			return "", ""
