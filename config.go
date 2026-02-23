@@ -91,7 +91,7 @@ var BuiltinThemes = map[string]ThemeDef{
 			"#5E5C64", "#ED333B", "#57E389", "#F8E45C",
 			"#51A1FF", "#C061CB", "#4FD2FD", "#F6F5F4",
 		},
-		ActiveBorder:   "#4FD2FD", // bright cyan
+		ActiveBorder:   "#C0BFBC", // light gray (same as scroll thumb)
 		InactiveBorder: "#5E5C64",
 		ScrollThumb:    "#C0BFBC",
 		ScrollTrack:    "#3D3D40",
@@ -107,7 +107,7 @@ var BuiltinThemes = map[string]ThemeDef{
 			"#002B36", "#CB4B16", "#586E75", "#657B83",
 			"#839496", "#6C71C4", "#93A1A1", "#FDF6E3",
 		},
-		ActiveBorder:   "#268BD2", // blue
+		ActiveBorder:   "#93A1A1", // light gray-cyan
 		InactiveBorder: "#073642",
 		ScrollThumb:    "#657B83",
 		ScrollTrack:    "#073642",
@@ -123,7 +123,7 @@ var BuiltinThemes = map[string]ThemeDef{
 			"#6272A4", "#FF6E6E", "#69FF94", "#FFFFA5",
 			"#D6ACFF", "#FF92DF", "#A4FFFF", "#FFFFFF",
 		},
-		ActiveBorder:   "#BD93F9", // purple
+		ActiveBorder:   "#6272A4", // comment gray-blue
 		InactiveBorder: "#44475A",
 		ScrollThumb:    "#6272A4",
 		ScrollTrack:    "#21222C",
@@ -139,7 +139,7 @@ var BuiltinThemes = map[string]ThemeDef{
 			"#4C566A", "#BF616A", "#A3BE8C", "#EBCB8B",
 			"#81A1C1", "#B48EAD", "#8FBCBB", "#ECEFF4",
 		},
-		ActiveBorder:   "#88C0D0", // frost blue
+		ActiveBorder:   "#D8DEE9", // snow storm light gray
 		InactiveBorder: "#4C566A",
 		ScrollThumb:    "#D8DEE9",
 		ScrollTrack:    "#3B4252",
