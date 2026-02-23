@@ -216,12 +216,17 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			// Steps 3+4 – scrollback capture + vt10x write (all under Pane.mu).
 			p.mu.Lock()
 			p.captureAndWrite(chunk)
+			scrolling := p.sbOff > 0
 			p.mu.Unlock()
 
 			// Step 5 – wake the render loop (coalesced).
-			select {
-			case redraw <- struct{}{}:
-			default:
+			// Skip when the user is reading scrollback: new output is buffered
+			// silently so the visible view doesn't jump while they are reading.
+			if !scrolling {
+				select {
+				case redraw <- struct{}{}:
+				default:
+				}
 			}
 		}
 		if err != nil {
