@@ -1,9 +1,16 @@
-// reflow.go – terminal content reflow on pane resize.
+// reflow.go – terminal content reflow on pane resize and scrollback rebuild.
 //
 // On any pane resize (split or close), the full terminal history — scrollback
 // ring plus the current visible vt10x grid — is collected, the scrollback is
 // rebuilt, and the portion that fits in the new terminal is re-injected so
 // content reflows naturally at the new column width.
+//
+// The same rawBuf replay is also used when the user first enters scrollback
+// mode (Shift+PgUp).  detectShift can only record rows that were visible
+// *before* each PTY chunk arrived; a single large TCP burst (common over SSH)
+// can scroll through many screenfuls in one read, silently dropping every
+// intermediate line.  Replaying rawBuf into a tall scratch terminal captures
+// all of them in one shot.
 //
 // The key insight: each captured row is a []vt10x.Glyph whose length is the
 // column count at capture time.  When a row is wider than the new terminal,

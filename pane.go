@@ -274,6 +274,16 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 
 	p.term.Write(chunk) //nolint:errcheck
 
+	// When alt screen exits, rawBuf has the entry sequence (\x1b[?1049h) but
+	// NOT the exit — the exit chunk arrived while altScreen=true and was
+	// skipped.  If rawBuf is later replayed in resizeAndReflow the scratch
+	// terminal would enter alt screen and never leave it, putting cursor at
+	// row 0 of the alt screen and producing a blank reconstructed pane.
+	// Appending the exit sequence here keeps rawBuf self-consistent.
+	if altScreen && p.term.Mode()&vt10x.ModeAltScreen == 0 {
+		p.rawBuf = append(p.rawBuf, "\x1b[?1049l"...)
+	}
+
 	if prevGrid != nil {
 		newRow0 := captureRow(p.term, 0, cols)
 		var newRow1 []vt10x.Glyph
@@ -332,6 +342,15 @@ func (p *Pane) writeInput(data []byte) {
 func (p *Pane) scrollUp(n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.sbOff == 0 {
+		// Entering scrollback for the first time: rebuild the ring from the
+		// raw PTY byte buffer.  detectShift can only capture rows that were
+		// visible *before* a chunk arrived; a single large TCP burst (common
+		// over SSH) can scroll through many screenfuls in one read, dropping
+		// every intermediate line.  The rawBuf replay into a tall scratch
+		// terminal captures all of them at once.
+		p.rebuildScrollbackFromRawBuf()
+	}
 	before := p.sbOff
 	p.sbOff += n
 	if p.sbOff > p.sb.count {
@@ -465,6 +484,42 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	L.Debug("resizeAndReflow: raw replay done", "pane", p.id,
 		"old", fmt.Sprintf("%dx%d", oldCols, oldRows),
 		"new", fmt.Sprintf("%dx%d", newCols, newRows),
+		"content_rows", contentRows, "sb_rows", firstVisible)
+}
+
+// rebuildScrollbackFromRawBuf replays the raw PTY byte buffer into a tall
+// scratch terminal at the current column width and rebuilds the scrollback
+// ring from rows that don't fit in the live view.
+//
+// Unlike the real-time detectShift path, this captures every line that ever
+// passed through the terminal — including lines that scrolled off mid-chunk
+// in a single large TCP burst (the common SSH case where a remote "cat" sends
+// many screenfuls of data in one read).
+//
+// Only the scrollback ring is updated; p.term is left untouched so the live
+// view is not disturbed.
+//
+// Must be called with p.mu held.
+func (p *Pane) rebuildScrollbackFromRawBuf() {
+	cols, rows := p.term.Size()
+	if len(p.rawBuf) == 0 || p.term.Mode()&vt10x.ModeAltScreen != 0 {
+		return
+	}
+	replayH := sbMaxLines + rows
+	scratch := vt10x.New(vt10x.WithSize(cols, replayH))
+	scratch.Write(append([]byte("\x1b[0m"), p.rawBuf...)) //nolint:errcheck
+
+	cur := scratch.Cursor()
+	contentRows := cur.Y + 1
+	firstVisible := contentRows - rows
+	if firstVisible < 0 {
+		firstVisible = 0
+	}
+	p.sb = sbRing{}
+	for r := 0; r < firstVisible; r++ {
+		p.sb.push(captureRow(scratch, r, cols))
+	}
+	L.Debug("rebuildScrollbackFromRawBuf", "pane", p.id,
 		"content_rows", contentRows, "sb_rows", firstVisible)
 }
 

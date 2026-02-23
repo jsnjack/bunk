@@ -165,8 +165,16 @@ func detectShift(prev [][]vt10x.Glyph, newRow0, newRow1 []vt10x.Glyph) int {
 	// Row 0 changed and doesn't match any previous row: the output burst
 	// scrolled more than one full terminal height.  Push all of prev.
 	// (We already know prev[0] != newRow0 from the early-return above.)
-	if !isBlankRow(prev[0]) {
-		return len(prev) // sentinel: entire prev has scrolled off
+	//
+	// The original guard was isBlankRow(prev[0]) but that misses the common
+	// case where a fresh terminal (SSH session just started, or a new pane)
+	// has blank rows at the top: a large burst of output can scroll off all
+	// the previous non-blank rows without prev[0] ever being non-blank.
+	// Use any non-blank row in prev as the guard instead.
+	for _, row := range prev {
+		if !isBlankRow(row) {
+			return len(prev) // sentinel: entire prev has scrolled off
+		}
 	}
 	return 0
 }
