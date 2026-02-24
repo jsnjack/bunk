@@ -24,10 +24,12 @@ import (
 	"github.com/hinshun/vt10x"
 )
 
-// rawBufMax is the maximum number of bytes retained in the per-pane raw PTY
-// byte buffer.  At typical shell output rates (≈80 chars/line, 2000 lines)
-// this is ~160 KB — comfortable for replay-based reflow on resize.
-const rawBufMax = 256 * 1024 // 256 KB
+// scrollbackLines is the maximum number of scrollback lines retained per pane.
+// It controls both the raw PTY replay buffer (rawBufMax) and the glyph ring
+// (sbMaxLines).  Increasing this number uses more memory per pane:
+//   - rawBuf:  scrollbackLines × ~200 bytes/line (raw ANSI, varies by content)
+//   - sbRing:  scrollbackLines × cols × ~24 bytes (rendered glyphs, on demand)
+const scrollbackLines = 10_000
 
 // selPos identifies a cell in the pane's unified virtual coordinate space.
 //
@@ -260,10 +262,10 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	// paint absolute-position content that doesn't replay meaningfully.
 	if !altScreen {
 		p.rawBuf = append(p.rawBuf, chunk...)
-		if len(p.rawBuf) > rawBufMax {
+		if len(p.rawBuf) > scrollbackLines*200 {
 			// Trim from the front at a clean newline boundary so we don't
 			// start playback in the middle of an ANSI escape sequence.
-			excess := len(p.rawBuf) - rawBufMax
+			excess := len(p.rawBuf) - scrollbackLines*200
 			if nl := bytes.IndexByte(p.rawBuf[excess:], '\n'); nl >= 0 {
 				p.rawBuf = p.rawBuf[excess+nl+1:]
 			} else {

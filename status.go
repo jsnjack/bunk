@@ -550,6 +550,7 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool) {
 	containerType := p.containerType
 	px, py, pw := p.x, p.y, p.w
 	hasSB := p.sb.count > 0
+	sbOff := p.sbOff
 	p.mu.Unlock()
 
 	// Build badge segments.
@@ -579,10 +580,15 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool) {
 
 	badge := "[" + strings.Join(parts, " · ") + "]"
 
-	// Right edge: leave one cell for the scrollbar when it is visible.
+	// Right edge: leave one cell for the scrollbar when it is visible, plus
+	// enough room for the scrolled-line counter ("-N") that drawScrollbar
+	// overlays on row 0 when sbOff > 0.
 	rightEdge := px + pw
 	if hasSB {
-		rightEdge--
+		rightEdge-- // scrollbar column
+		if sbOff > 0 {
+			rightEdge -= len(fmt.Sprintf("-%d", sbOff))
+		}
 	}
 	maxW := rightEdge - px
 	if maxW < 6 {

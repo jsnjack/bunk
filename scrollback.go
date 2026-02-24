@@ -38,9 +38,9 @@ package main
 
 import "github.com/hinshun/vt10x"
 
-// sbMaxLines is the maximum number of scrollback lines retained per pane.
-// At 220 columns, 2000 lines ≈ 2000 × 220 × ~24 bytes ≈ 10 MB.
-const sbMaxLines = 2000
+// sbMaxLines aliases scrollbackLines for the glyph ring capacity.
+// Defined here (rather than in pane.go) so scrollback.go stays self-contained.
+const sbMaxLines = scrollbackLines
 
 // sbRing is a fixed-capacity circular buffer of captured Glyph rows.
 // The zero value is ready to use (lazily allocated on first push).
