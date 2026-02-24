@@ -464,8 +464,12 @@ func vtColor(c vt10x.Color, def tcell.Color, rt resolvedTheme) tcell.Color {
 		return def
 	}
 	if c < 16 {
-		// ANSI colors 0–15: use theme palette.
-		return rt.palette[c]
+		// ANSI colors 0–15: use theme palette, or fall through to the
+		// terminal's own palette when the theme leaves the slot unset.
+		if rt.palette[c] != tcell.ColorDefault {
+			return rt.palette[c]
+		}
+		return tcell.PaletteColor(int(c))
 	}
 	if c < 256 {
 		// xterm-256 colors 16–255: standard palette.

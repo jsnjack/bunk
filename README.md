@@ -11,7 +11,7 @@ Splits your terminal into panes, reflows content on resize, and stays out of you
 - **Scrollback** — per-pane history with Shift+PgUp / Shift+PgDn
 - **Incremental search** — Ctrl+F searches across scrollback and live terminal
 - **Mouse support** — click to focus, drag to select, double-click to select word, scroll wheel
-- **Theming** — built-in themes: default, solarized-dark, dracula, nord
+- **Theming** — built-in themes: terminal, default, solarized-dark, dracula, nord
 - **Container badges** — detects Toolbox, Distrobox, Podman, Docker, LXD, kubectl sessions
 - **SSH / sudo badges** — visible indicator when elevated or remote
 
@@ -53,7 +53,8 @@ bunk config init
 Example:
 
 ```toml
-# Built-in themes: default, solarized-dark, dracula, nord
+# Built-in themes: terminal, default, solarized-dark, dracula, nord
+# Use "terminal" to inherit colours from your terminal emulator.
 theme = "default"
 
 # Logging (set log_file = "" to disable)

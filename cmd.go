@@ -20,7 +20,7 @@ var (
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: ~/.config/bunk/config.toml)")
-	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: default, solarized-dark, dracula, nord")
+	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
 	rootCmd.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable debug-level logging")
 }
 
