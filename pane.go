@@ -303,7 +303,16 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			for i := 0; i < shift; i++ {
 				p.sb.push(prevGrid[i])
 			}
-			L.Debug("captureAndWrite: scrollback push", "pane", p.id, "rows", shift, "total", p.sb.count)
+			// If the user is reading scrollback, keep the view anchored by
+			// advancing sbOff by the same amount.  Without this the view drifts
+			// forward as new content pushes old lines into the ring.
+			if p.sbOff > 0 {
+				p.sbOff += shift
+				if p.sbOff > p.sb.count {
+					p.sbOff = p.sb.count
+				}
+			}
+			L.Debug("captureAndWrite: scrollback push", "pane", p.id, "rows", shift, "total", p.sb.count, "sbOff", p.sbOff)
 		} else if shift == len(prevGrid) {
 			// Large-burst sentinel: the output scrolled more than one full
 			// terminal height, so all of prevGrid has rolled off.
@@ -316,10 +325,17 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 					lastNonBlank = i
 				}
 			}
-			for i := 0; i <= lastNonBlank; i++ {
+			pushed := lastNonBlank + 1
+			for i := 0; i < pushed; i++ {
 				p.sb.push(prevGrid[i])
 			}
-			L.Debug("captureAndWrite: large-burst scrollback push", "pane", p.id, "rows", lastNonBlank+1, "total", p.sb.count)
+			if p.sbOff > 0 {
+				p.sbOff += pushed
+				if p.sbOff > p.sb.count {
+					p.sbOff = p.sb.count
+				}
+			}
+			L.Debug("captureAndWrite: large-burst scrollback push", "pane", p.id, "rows", pushed, "total", p.sb.count, "sbOff", p.sbOff)
 		}
 	}
 }
