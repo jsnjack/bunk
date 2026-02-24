@@ -215,20 +215,30 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 				Foreground(vtColor(cell.FG, rt.fg, rt)).
 				Background(vtColor(cell.BG, rt.bg, rt))
 
-			if cell.Mode&vtAttrBold != 0 {
-				style = style.Bold(true)
-			}
-			if cell.Mode&vtAttrUnderline != 0 {
-				style = style.Underline(true)
-			}
-			if cell.Mode&vtAttrBlink != 0 {
-				style = style.Blink(true)
+			// Only apply text-decoration attributes to non-blank cells.
+			// vt10x's clear() (called for \033[K etc.) copies the full cursor
+			// attribute — including underline — to erased cells.  Per ECMA-48,
+			// erase operations should only carry the background colour, not text
+			// attributes.  Applying underline/bold/etc. to a space character
+			// would visually show an underline under blank areas, which vim
+			// triggers whenever it erases to EOL while underline is active.
+			isBlank := ch == ' '
+			if !isBlank {
+				if cell.Mode&vtAttrBold != 0 {
+					style = style.Bold(true)
+				}
+				if cell.Mode&vtAttrUnderline != 0 {
+					style = style.Underline(true)
+				}
+				if cell.Mode&vtAttrBlink != 0 {
+					style = style.Blink(true)
+				}
+				if cell.Mode&vtAttrItalic != 0 {
+					style = style.Italic(true)
+				}
 			}
 			if cell.Mode&vtAttrReverse != 0 {
 				style = style.Reverse(true)
-			}
-			if cell.Mode&vtAttrItalic != 0 {
-				style = style.Italic(true)
 			}
 
 			// Selection highlight: toggle reverse video so selected text is
