@@ -4,10 +4,11 @@
 //
 // Built-in themes:
 //
-//	default       – yauhen.cc Tilix palette (dark, cyan accent)
+//	terminal       – uses your terminal's native colors (no overrides)
+//	default        – yauhen.cc Tilix palette (dark, cyan accent)
 //	solarized-dark – Solarized Dark by Ethan Schoonover
-//	dracula       – Dracula by Zeno Rocha
-//	nord          – Nord by Arctic Ice Studio
+//	dracula        – Dracula by Zeno Rocha
+//	nord           – Nord by Arctic Ice Studio
 package main
 
 import (
@@ -81,6 +82,10 @@ type Config struct {
 // BuiltinThemes is the registry of shipped themes.
 // Keys are the names accepted by --theme and the config "theme" field.
 var BuiltinThemes = map[string]ThemeDef{
+	// Terminal: inherit every colour from the host terminal.
+	// All fields are empty → hexColor returns tcell.ColorDefault for each.
+	"terminal": {},
+
 	// Default: the author's personal Tilix palette from yauhen.cc/posts/my-tillix
 	"default": {
 		Background: "#1C1C1F",
@@ -248,7 +253,8 @@ func DefaultConfigTOML() string {
 	return fmt.Sprintf(`# bunk configuration
 # %s
 
-# Built-in themes: default, solarized-dark, dracula, nord
+# Built-in themes: terminal, default, solarized-dark, dracula, nord
+# Use "terminal" to inherit colours from your terminal emulator.
 theme = "default"
 
 # Logging.  Set log_file = "" to disable logging entirely.
