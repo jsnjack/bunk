@@ -283,7 +283,7 @@ func drawScrollbars(scr tcell.Screen, n *Node, rt resolvedTheme) {
 		sbOff := p.sbOff
 		_, rows := p.term.Size()
 		p.mu.Unlock()
-		if sbCount > 0 {
+		if sbOff > 0 {
 			drawScrollbar(scr, p.x+p.w-1, p.y, rows, sbCount, sbOff, rt)
 		}
 		return

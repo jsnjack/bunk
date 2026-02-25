@@ -549,7 +549,7 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool) {
 	containerID := p.containerID
 	containerType := p.containerType
 	px, py, pw := p.x, p.y, p.w
-	hasSB := p.sb.count > 0
+	hasSB := p.sbOff > 0 // only reserve scrollbar column when bar is actually visible
 	sbOff := p.sbOff
 	p.mu.Unlock()
 
