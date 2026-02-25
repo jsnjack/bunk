@@ -61,7 +61,13 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	shiftHeld := ev.Modifiers()&tcell.ModShift != 0
 
 	prevBtn := app.prevMouseBtn
-	app.prevMouseBtn = btn
+	// Don't update prevBtn for wheel events — they don't represent a button
+	// state change and would corrupt drag-select detection (making the next
+	// Button1 motion look like a fresh press, clearing the selection).
+	if btn != tcell.WheelUp && btn != tcell.WheelDown &&
+		btn != tcell.WheelLeft && btn != tcell.WheelRight {
+		app.prevMouseBtn = btn
+	}
 
 	// ── Identify the pane at the cursor position ──────────────────────────
 	app.mu.Lock()
@@ -125,6 +131,27 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			} else {
 				target.scrollDown(scrollAmt)
 			}
+
+			// If button1 is currently held (drag-select in progress), extend
+			// the selection to the newly visible edge so the user can select
+			// content beyond the visible viewport by scrolling.
+			target.mu.Lock()
+			if target.selActive && prevBtn == tcell.Button1 {
+				rows := target.h
+				if btn == tcell.WheelUp {
+					// Scrolled toward the past: extend cursor to top-left of new view.
+					vRow := target.sb.count - target.sbOff
+					target.selCursor = selPos{row: vRow, col: 0}
+				} else {
+					// Scrolled toward present: extend cursor to bottom-right.
+					vRow := (target.sb.count - target.sbOff) + rows - 1
+					cols, _ := target.term.Size()
+					target.selCursor = selPos{row: vRow, col: cols - 1}
+				}
+				L.Debug("mouse: wheel-extend selection", "pane", target.id, "vrow", target.selCursor.row)
+			}
+			target.mu.Unlock()
+
 			app.triggerRedraw()
 			return
 		}

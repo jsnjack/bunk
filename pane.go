@@ -538,12 +538,21 @@ func (p *Pane) rebuildScrollbackFromRawBuf() {
 	if firstVisible < 0 {
 		firstVisible = 0
 	}
+	oldCount := p.sb.count
 	p.sb = sbRing{}
 	for r := 0; r < firstVisible; r++ {
 		p.sb.push(captureRow(scratch, r, cols))
 	}
+
+	// If the ring grew, adjust selection virtual-row coordinates by the same
+	// delta so they still point at the same content after the rebuild.
+	if delta := p.sb.count - oldCount; delta > 0 && p.selActive {
+		p.selAnchor.row += delta
+		p.selCursor.row += delta
+	}
+
 	L.Debug("rebuildScrollbackFromRawBuf", "pane", p.id,
-		"content_rows", contentRows, "sb_rows", firstVisible)
+		"content_rows", contentRows, "sb_rows", firstVisible, "delta", p.sb.count-oldCount)
 }
 
 // close shuts down the PTY and sends SIGHUP to the shell so it exits cleanly.
