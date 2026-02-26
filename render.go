@@ -426,9 +426,14 @@ func drawBorders(scr tcell.Screen, n *Node, rt resolvedTheme) {
 	drawBorders(scr, n.right, rt)
 }
 
-// paintActiveBorders re-colours every separator that is directly adjacent to
-// the active pane (i.e. both siblings of that split include or are the active
-// pane) using the provided style.
+// paintActiveBorders re-colours only the segment of each separator that is
+// directly adjacent to the active pane.
+//
+// For a vertical separator at column bx the active segment spans the rows
+// [active.y, active.y+active.h).  For a horizontal separator at row by the
+// active segment spans the columns [active.x, active.x+active.w).
+// This means that in a 2×2 grid only the half of each divider that borders the
+// active pane is highlighted; the other half stays in the inactive colour.
 func paintActiveBorders(scr tcell.Screen, n *Node, active *Pane, style tcell.Style) {
 	if n.isLeaf() {
 		return
@@ -439,12 +444,16 @@ func paintActiveBorders(scr tcell.Screen, n *Node, active *Pane, style tcell.Sty
 	if nodeContains(n.left, active) || nodeContains(n.right, active) {
 		if n.dir == splitVertical {
 			bx := n.left.x + n.left.w
-			for y := n.y; y < n.y+n.h; y++ {
+			yStart := max(n.y, active.y)
+			yEnd := min(n.y+n.h, active.y+active.h)
+			for y := yStart; y < yEnd; y++ {
 				scr.SetContent(bx, y, tcell.RuneVLine, nil, style)
 			}
 		} else {
 			by := n.left.y + n.left.h
-			for x := n.x; x < n.x+n.w; x++ {
+			xStart := max(n.x, active.x)
+			xEnd := min(n.x+n.w, active.x+active.w)
+			for x := xStart; x < xEnd; x++ {
 				scr.SetContent(x, by, tcell.RuneHLine, nil, style)
 			}
 		}
