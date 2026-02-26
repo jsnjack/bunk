@@ -496,19 +496,23 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	// Replay raw bytes into a tall scratch terminal so nothing scrolls off
 	// during replay and we can read back all rows.
 	//
-	// Start from after the last alt-screen exit (\x1b[?1049l) when one is
-	// present.  Everything before that point was the old primary-screen state
-	// that was restored by the alt-screen swap; re-injecting it into the new
-	// p.term brings back old shell history into rows the active program (e.g.
-	// gh copilot) didn't write, making those rows look dirty after resize.
-	// Starting after the exit means the scratch terminal is always fresh for
-	// the post-alt-screen content, which is the only content that matters for
-	// the live terminal view.
+	// Start from after the last alt-screen exit when one is present.
+	// Everything before that point was the old primary-screen state that was
+	// restored by the alt-screen swap; re-injecting it brings back old shell
+	// history into rows the active program didn't write, making those rows
+	// look dirty after resize.  We look for all three alt-screen exit forms
+	// that vt10x recognises: \x1b[?1049l (modern), \x1b[?1047l, \x1b[?47l.
 	replayH := sbMaxLines + newRows
 	scratch := vt10x.New(vt10x.WithSize(newCols, replayH))
 	replay := p.rawBuf
-	if pos := bytes.LastIndex(replay, []byte("\x1b[?1049l")); pos >= 0 {
-		replay = replay[pos+len("\x1b[?1049l"):]
+	lastExit := -1
+	for _, seq := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
+		if pos := bytes.LastIndex(replay, []byte(seq)); pos > lastExit {
+			lastExit = pos + len(seq)
+		}
+	}
+	if lastExit >= 0 {
+		replay = replay[lastExit:]
 	}
 	// Prepend a full SGR reset so trimmed attribute state doesn't bleed.
 	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
