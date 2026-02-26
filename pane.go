@@ -282,13 +282,25 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	p.term.Write(chunk) //nolint:errcheck
 
 	// When alt screen exits, rawBuf has the entry sequence (\x1b[?1049h) but
-	// NOT the exit — the exit chunk arrived while altScreen=true and was
-	// skipped.  If rawBuf is later replayed in resizeAndReflow the scratch
-	// terminal would enter alt screen and never leave it, putting cursor at
-	// row 0 of the alt screen and producing a blank reconstructed pane.
-	// Appending the exit sequence here keeps rawBuf self-consistent.
+	// not the exit — the exit chunk arrived while altScreen=true and was
+	// skipped.  We must append the entire exit chunk (not just \x1b[?1049l])
+	// because the program typically bundles the exit, a screen-clear, and new
+	// primary-screen content into one write.  Appending only the escape would
+	// leave the clear and new content out of rawBuf, causing resizeAndReflow to
+	// replay into a blank primary screen (old content visible, new UI lost).
+	// Any alt-screen bytes before \x1b[?1049l in the chunk are harmless on
+	// replay — they land in the scratch's alt-screen and are discarded when
+	// the primary screen is restored.
 	if altScreen && p.term.Mode()&vt10x.ModeAltScreen == 0 {
-		p.rawBuf = append(p.rawBuf, "\x1b[?1049l"...)
+		p.rawBuf = append(p.rawBuf, chunk...)
+		if len(p.rawBuf) > scrollbackLines*200 {
+			excess := len(p.rawBuf) - scrollbackLines*200
+			if nl := bytes.IndexByte(p.rawBuf[excess:], '\n'); nl >= 0 {
+				p.rawBuf = p.rawBuf[excess+nl+1:]
+			} else {
+				p.rawBuf = p.rawBuf[excess:]
+			}
+		}
 	}
 
 	if prevGrid != nil {
@@ -469,10 +481,23 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 
 	// Replay raw bytes into a tall scratch terminal so nothing scrolls off
 	// during replay and we can read back all rows.
+	//
+	// Start from after the last alt-screen exit (\x1b[?1049l) when one is
+	// present.  Everything before that point was the old primary-screen state
+	// that was restored by the alt-screen swap; re-injecting it into the new
+	// p.term brings back old shell history into rows the active program (e.g.
+	// gh copilot) didn't write, making those rows look dirty after resize.
+	// Starting after the exit means the scratch terminal is always fresh for
+	// the post-alt-screen content, which is the only content that matters for
+	// the live terminal view.
 	replayH := sbMaxLines + newRows
 	scratch := vt10x.New(vt10x.WithSize(newCols, replayH))
+	replay := p.rawBuf
+	if pos := bytes.LastIndex(replay, []byte("\x1b[?1049l")); pos >= 0 {
+		replay = replay[pos+len("\x1b[?1049l"):]
+	}
 	// Prepend a full SGR reset so trimmed attribute state doesn't bleed.
-	scratch.Write(append([]byte("\x1b[0m"), p.rawBuf...)) //nolint:errcheck
+	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
 
 	// Content extent: the cursor row is the last line the shell wrote to.
 	cur := scratch.Cursor()
