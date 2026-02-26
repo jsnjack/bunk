@@ -301,6 +301,20 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				p.rawBuf = p.rawBuf[excess:]
 			}
 		}
+
+		// vt10x uses ONE saved-cursor slot (t.saved) for both ESC 7 (DECSC)
+		// and \x1b[?1049h/l (alt-screen entry/exit).  Programs like vim call
+		// DECSC/DECRC constantly to save/restore their internal cursor, which
+		// clobbers t.saved.  When \x1b[?1049l calls restoreCursor(), it gets
+		// the program's last DECSC state (possibly with underline/bold/italic
+		// or a non-default colour) rather than the cursor from before the
+		// program started.  All subsequent primary-screen output is then
+		// rendered with those leaked attributes — underscoring, wrong colours,
+		// etc. — making the terminal look broken after the program exits.
+		// Reset SGR attributes now so the primary screen starts clean.
+		const sgrReset = "\x1b[0m"
+		p.term.Write([]byte(sgrReset)) //nolint:errcheck
+		p.rawBuf = append(p.rawBuf, sgrReset...)
 	}
 
 	if prevGrid != nil {
