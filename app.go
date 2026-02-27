@@ -188,8 +188,14 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 			active.mu.Unlock()
 			if text != "" {
 				app.copyToClipboard(text)
-				active.SetStatus("COPIED", time.Second)
+				active.SetStatus("COPIED", 3*time.Second)
 				app.triggerRedraw()
+				// Schedule a redraw after the badge expires so it clears
+				// even if the terminal is idle.
+				go func() {
+					time.Sleep(3 * time.Second)
+					app.triggerRedraw()
+				}()
 				return true
 			}
 		}

@@ -525,131 +525,137 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 
 // drawAllPaneStatus renders the status badge for every pane in the subtree.
 // Must be called AFTER all other drawing so the badge paints on top.
-func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane) {
+func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane, rt resolvedTheme) {
 	if n.isLeaf() {
-		drawPaneStatus(scr, n.pane, n.pane == active)
+		drawPaneStatus(scr, n.pane, n.pane == active, rt)
 		return
 	}
-	drawAllPaneStatus(scr, n.left, active)
-	drawAllPaneStatus(scr, n.right, active)
+	drawAllPaneStatus(scr, n.left, active, rt)
+	drawAllPaneStatus(scr, n.right, active, rt)
 }
 
-// drawPaneStatus draws a compact status badge in the top-right corner of
-// pane p.  Nothing is drawn when there is no notable state to display.
+// drawPaneStatus draws compact status badges in the top-right corner of
+// pane p.  Badges are drawn right-to-left so the highest-priority badge
+// (scroll count) is closest to the edge and always visible.
 //
-// Badge format examples:
+// Badge order (right to left):
 //
-//	[⬡ my-toolbox]          – inside a Toolbox/Podman container
-//	[▣ my-box]              – inside a Distrobox container
-//	[⬡ my-toolbox · ssh]    – container + SSH session
-//	[sudo]                  – sudo or su running
-func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool) {
+//	[-N]                    – scrollback line count (yellow on black)
+//	[ COPIED ]              – temporary flash message (white on green)
+//	[⬡ my-toolbox]          – container/sudo/ssh context badge
+func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme) {
 	p.mu.Lock()
 	fgProc := p.fgProcess
 	containerID := p.containerID
 	containerType := p.containerType
 	px, py, pw := p.x, p.y, p.w
-	hasSB := p.sbOff > 0 // only reserve scrollbar column when bar is actually visible
 	sbOff := p.sbOff
 	tempMsg := p.statusMsg
 	tempActive := !p.statusMsgEnd.IsZero() && time.Now().Before(p.statusMsgEnd)
 	p.mu.Unlock()
 
-	// Temporary status overlay (e.g. "COPIED") takes priority.
+	// Badge colors derived from the theme palette so they adapt automatically.
+	// See the palette index table in config.go (ThemeDef).
+	// Backgrounds are blended 40% toward the theme bg to soften intensity.
+	dim := func(c tcell.Color) tcell.Color {
+		r1, g1, b1 := c.RGB()
+		r2, g2, b2 := rt.bg.RGB()
+		mix := func(a, b int32) int32 { return (a*60 + b*40) / 100 }
+		return tcell.NewRGBColor(mix(r1, r2), mix(g1, g2), mix(b1, b2))
+	}
+	badgeText := rt.palette[7]       // white — badge foreground
+	colorRed := dim(rt.palette[1])   // sudo / su
+	colorGreen := dim(rt.palette[2]) // success (COPIED)
+	colorYellow := rt.palette[3]     // scroll count foreground (not dimmed)
+	colorBlue := dim(rt.palette[4])  // ssh
+	colorCyan := dim(rt.palette[6])  // container
+	colorDark := rt.palette[0]       // scroll count background
+
+	// A badge is a styled run of text.
+	type badge struct {
+		text  string
+		style tcell.Style
+	}
+	// Collect badges left-to-right in display order (rightmost drawn last,
+	// closest to the edge).
+	var badges []badge
+
+	// 1. Temporary flash message (e.g. "COPIED") – leftmost badge.
 	if tempActive && tempMsg != "" {
-		badge := " " + tempMsg + " "
-		style := tcell.StyleDefault.
-			Foreground(tcell.ColorWhite).
-			Background(tcell.NewRGBColor(30, 130, 60)).
-			Bold(true)
-		for i, ch := range []rune(badge) {
-			if px+i < px+pw {
-				scr.SetContent(px+i, py, ch, nil, style)
+		badges = append(badges, badge{
+			" " + tempMsg + " ",
+			tcell.StyleDefault.Foreground(badgeText).Background(colorGreen).Bold(true),
+		})
+	}
+
+	// 2. Container / SSH / sudo context badge.
+	{
+		var parts []string
+		if containerType != "" {
+			icon := "⬡"
+			if containerType == "distrobox" {
+				icon = "▣"
 			}
+			label := containerType
+			if containerID != "" {
+				label = containerID
+			}
+			parts = append(parts, icon+" "+label)
 		}
+		switch fgProc {
+		case "ssh":
+			parts = append(parts, "ssh")
+		case "sudo":
+			parts = append(parts, "sudo")
+		case "su":
+			parts = append(parts, "su")
+		}
+		if len(parts) > 0 {
+			var bg tcell.Color
+			switch {
+			case fgProc == "sudo" || fgProc == "su":
+				bg = colorRed
+			case fgProc == "ssh":
+				bg = colorBlue
+			case containerType != "":
+				bg = colorCyan
+			default:
+				bg = colorDark
+			}
+			badges = append(badges, badge{
+				" " + strings.Join(parts, " · ") + " ",
+				tcell.StyleDefault.Foreground(badgeText).Background(bg).Bold(true),
+			})
+		}
+	}
+
+	// 3. Scroll line count (rightmost, always visible when scrolled back).
+	if sbOff > 0 {
+		badges = append(badges, badge{
+			fmt.Sprintf(" -%d ", sbOff),
+			tcell.StyleDefault.Foreground(colorYellow).Background(colorDark).Bold(true),
+		})
+	}
+
+	if len(badges) == 0 {
 		return
 	}
 
-	// Build badge segments.
-	var parts []string
-	if containerType != "" {
-		icon := "⬡"
-		if containerType == "distrobox" {
-			icon = "▣"
-		}
-		label := containerType
-		if containerID != "" {
-			label = containerID
-		}
-		parts = append(parts, icon+" "+label)
-	}
-	switch fgProc {
-	case "ssh":
-		parts = append(parts, "ssh")
-	case "sudo":
-		parts = append(parts, "sudo")
-	case "su":
-		parts = append(parts, "su")
-	}
-	if len(parts) == 0 {
-		return
-	}
-
-	badge := "[" + strings.Join(parts, " · ") + "]"
-
-	// Right edge: leave one cell for the scrollbar when it is visible, plus
-	// enough room for the scrolled-line counter ("-N") that drawScrollbar
-	// overlays on row 0 when sbOff > 0.
+	// Draw right-to-left: last badge in the slice goes closest to the edge.
 	rightEdge := px + pw
-	if hasSB {
-		rightEdge-- // scrollbar column
-		if sbOff > 0 {
-			rightEdge -= len(fmt.Sprintf("-%d", sbOff))
+	if sbOff > 0 {
+		rightEdge-- // reserve scrollbar column
+	}
+	for i := len(badges) - 1; i >= 0; i-- {
+		runes := []rune(badges[i].text)
+		w := len(runes)
+		startX := rightEdge - w
+		if startX < px {
+			break // no more room
 		}
-	}
-	maxW := rightEdge - px
-	if maxW < 6 {
-		return // pane too narrow for a useful badge
-	}
-
-	runes := []rune(badge)
-	if len(runes) > maxW {
-		runes = runes[:maxW]
-	}
-	startX := rightEdge - len(runes)
-	if startX < px {
-		startX = px
-	}
-
-	// Badge colour priority: sudo/su (red) > ssh (blue) > container (teal).
-	// Coloured backgrounds are used regardless of focus so the indicator is
-	// always conspicuous at a glance.
-	var style tcell.Style
-	switch {
-	case fgProc == "sudo" || fgProc == "su":
-		style = tcell.StyleDefault.
-			Foreground(tcell.ColorWhite).
-			Background(tcell.NewRGBColor(180, 30, 30)).
-			Bold(true)
-	case fgProc == "ssh":
-		style = tcell.StyleDefault.
-			Foreground(tcell.ColorWhite).
-			Background(tcell.NewRGBColor(30, 80, 160)).
-			Bold(true)
-	case containerType != "":
-		style = tcell.StyleDefault.
-			Foreground(tcell.ColorWhite).
-			Background(tcell.NewRGBColor(20, 120, 100)).
-			Bold(true)
-	default:
-		style = tcell.StyleDefault.
-			Foreground(tcell.ColorWhite).
-			Background(tcell.NewRGBColor(60, 60, 60))
-	}
-
-	for i, ch := range runes {
-		if startX+i < px+pw {
-			scr.SetContent(startX+i, py, ch, nil, style)
+		for j, ch := range runes {
+			scr.SetContent(startX+j, py, ch, nil, badges[i].style)
 		}
+		rightEdge = startX
 	}
 }

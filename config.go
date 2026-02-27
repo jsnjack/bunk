@@ -224,12 +224,31 @@ func resolveKeybindings(kf map[string]string) Keybindings {
 type ThemeDef struct {
 	Background     string
 	Foreground     string
-	Palette        [16]string // ANSI colors 0–15
+	Palette        [16]string // ANSI colors 0–15 (see below)
 	ActiveBorder   string     // accent for the focused pane border
 	InactiveBorder string
 	ScrollThumb    string
 	ScrollTrack    string
 }
+
+// The 16-color ANSI palette is a universal convention across all terminal
+// themes.  Each theme picks its own specific hex values, but the *semantic
+// meaning* of each slot is standardised:
+//
+//	Index  Name        Typical usage
+//	─────  ──────────  ──────────────────────────────
+//	  0    Black       dark background, empty space
+//	  1    Red         errors, danger, destructive ops
+//	  2    Green       success, OK, confirmations
+//	  3    Yellow      warnings, attention, highlights
+//	  4    Blue        informational, links, navigation
+//	  5    Magenta     special, syntax accents
+//	  6    Cyan        secondary info, labels
+//	  7    White       foreground text
+//	 8–15  Bright      brighter variants of 0–7
+//
+// Badge colors in status.go use palette indices (e.g. palette[1] for the
+// sudo badge) so they automatically adapt when the user switches themes.
 
 // resolvedTheme holds the same colors pre-parsed as tcell.Color values.
 // Created once at startup; passed through render functions by value.

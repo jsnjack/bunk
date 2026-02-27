@@ -96,7 +96,7 @@ func (app *App) render() {
 	drawScrollbars(app.screen, root, rt)
 
 	// Step 3.6 – status badges.
-	drawAllPaneStatus(app.screen, root, active)
+	drawAllPaneStatus(app.screen, root, active, rt)
 
 	// Step 4 – place the hardware cursor inside the active pane.
 	// Hidden when the pane is in scrollback mode (cursor is in live view,
@@ -332,20 +332,6 @@ func drawScrollbar(scr tcell.Screen, bx, by, h, sbCount, sbOff int, rt resolvedT
 			style = thumbStyle
 		}
 		scr.SetContent(bx, by+row, ch, nil, style)
-	}
-
-	// When scrolled back, show a compact line-count badge at the top.
-	if sbOff > 0 {
-		label := fmt.Sprintf("-%d", sbOff)
-		labelStyle := tcell.StyleDefault.
-			Foreground(tcell.ColorYellow).
-			Background(tcell.ColorBlack).
-			Bold(true)
-		col := bx
-		for i := len(label) - 1; i >= 0 && col >= 0; i-- {
-			scr.SetContent(col, by, rune(label[i]), nil, labelStyle)
-			col--
-		}
 	}
 }
 
