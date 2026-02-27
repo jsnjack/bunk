@@ -4,7 +4,7 @@
 // used throughout the codebase.  The logger writes to a file (never stdout/
 // stderr, which are owned by the TUI).
 //
-// Log levels: debug | info | warn | error
+// Log levels: trace | debug | info | warn | error
 // Log format: text (key=value pairs, human-readable)
 package main
 
@@ -14,6 +14,9 @@ import (
 	"os"
 )
 
+// LevelTrace is below Debug — logs raw PTY byte chunks for deep inspection.
+const LevelTrace = slog.Level(-8)
+
 // L is the package-level structured logger.
 // Initialised by initLogger(); safe to use as soon as main() calls run().
 var L *slog.Logger = slog.Default() // fallback: discard until initLogger runs
@@ -22,7 +25,7 @@ var L *slog.Logger = slog.Default() // fallback: discard until initLogger runs
 // Returns a cleanup function that closes the file.
 //
 // If path is empty, logging is disabled (output goes to io.Discard).
-// level must be one of: "debug", "info", "warn", "error".
+// level must be one of: "trace", "debug", "info", "warn", "error".
 func initLogger(path, level string) (cleanup func()) {
 	var w io.Writer = io.Discard
 	var f *os.File
@@ -40,6 +43,8 @@ func initLogger(path, level string) (cleanup func()) {
 
 	var lvl slog.Level
 	switch level {
+	case "trace":
+		lvl = LevelTrace
 	case "debug":
 		lvl = slog.LevelDebug
 	case "warn":

@@ -16,12 +16,14 @@ var (
 	flagConfig string
 	flagTheme  string
 	flagDebug  bool
+	flagTrace  bool
 )
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: ~/.config/bunk/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
 	rootCmd.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable debug-level logging")
+	rootCmd.PersistentFlags().BoolVar(&flagTrace, "trace", false, "enable trace-level logging (logs raw PTY byte chunks)")
 }
 
 var rootCmd = &cobra.Command{
@@ -39,7 +41,7 @@ Key bindings:
   Ctrl+Q        Quit`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return run(flagConfig, flagTheme, flagDebug)
+		return run(flagConfig, flagTheme, flagDebug, flagTrace)
 	},
 }
 
@@ -53,12 +55,15 @@ func Execute() {
 // run initialises the screen, spawns the first pane, and blocks until the
 // user quits.  All terminal cleanup happens synchronously after the event
 // loop returns so it is guaranteed to run before the process exits.
-func run(configPath, themeName string, debug bool) error {
+func run(configPath, themeName string, debug, trace bool) error {
 	cfg := LoadConfig(configPath, themeName)
 
-	// --debug overrides config log level.
+	// --trace / --debug override config log level.
 	logLevel := cfg.LogLevel
-	if debug {
+	switch {
+	case trace:
+		logLevel = "trace"
+	case debug:
 		logLevel = "debug"
 	}
 	cleanup := initLogger(cfg.LogFile, logLevel)

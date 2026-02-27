@@ -259,7 +259,7 @@ theme = "default"
 
 # Logging.  Set log_file = "" to disable logging entirely.
 log_file  = "/tmp/bunk.log"
-log_level = "info"  # debug | info | warn | error
+log_level = "info"  # trace | debug | info | warn | error
 
 # Cell pixel aspect ratio (cell height / cell width).
 # Used to decide split direction (vertical vs horizontal) based on real pixels.

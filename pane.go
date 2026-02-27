@@ -96,6 +96,15 @@ type Pane struct {
 	// terminal content can be replayed into a fresh vt10x on resize, giving
 	// correct line-wrap reflow at the new column width.  Protected by mu.
 	rawBuf []byte
+
+	// altEntryCursor remembers the primary-screen cursor position at the moment
+	// the pane entered the alternate screen.  vt10x shares a single saved-cursor
+	// slot for both ESC-7/8 (DECSC/DECRC) and \x1b[?1049h/l, so the primary
+	// cursor is not reliably preserved across an alt-screen round-trip.
+	// We restore it manually after \x1b[?1049l so programs like gh-copilot
+	// (which render inline at the current cursor position) start in the right
+	// place.  Protected by mu.
+	altEntryCursorX, altEntryCursorY int
 }
 
 // NewPane spawns a shell inside a new PTY with the given geometry, starts the
@@ -200,6 +209,7 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 		if n > 0 {
 			chunk := buf[:n]
 			L.Debug("readPTY: received bytes", "pane", p.id, "bytes", n)
+			L.Log(nil, LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
 
 			// Step 1 – OSC passthrough (CWD, hyperlinks, clipboard).
 			p.oscScan.Scan(chunk, oscCh)
@@ -256,6 +266,44 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 func (p *Pane) captureAndWrite(chunk []byte) {
 	cols, rows := p.term.Size()
 	altScreen := p.term.Mode()&vt10x.ModeAltScreen != 0
+	if L.Enabled(nil, LevelTrace) {
+		cur := p.term.Cursor()
+		L.Log(nil, LevelTrace, "captureAndWrite: start", "pane", p.id, "cursor_y", cur.Y, "cursor_x", cur.X, "alt", altScreen, "chunk_len", len(chunk))
+	}
+
+	// Respond to terminal capability queries emitted by local programs
+	// (e.g. BubbleTea inline apps like gh-copilot).  Answering immediately
+	// eliminates multi-second startup delays caused by unanswered-query
+	// timeouts.  Skip for SSH/mosh panes: writing to ptmx there forwards
+	// bytes to the remote server as user input, corrupting the session.
+	if p.fgProcess != "ssh" && p.fgProcess != "mosh" {
+		// CPR – cursor position report: ESC [ 6 n → ESC [ row ; col R
+		// BubbleTea sends this at startup to know where to render inline UI.
+		// Reply with the actual cursor position so the app renders right after
+		// the command line, matching normal terminal behaviour.
+		if bytes.Contains(chunk, []byte("\x1b[6n")) && !altScreen {
+			cur := p.term.Cursor()
+			resp := fmt.Sprintf("\x1b[%d;%dR", cur.Y+1, cur.X+1)
+			p.ptmx.Write([]byte(resp)) //nolint:errcheck
+			L.Log(nil, LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
+		}
+		// Kitty keyboard protocol query: ESC [ ? u → respond "not supported".
+		// vt10x misinterprets this as DECRC (restore cursor), which would jump
+		// the cursor to a stale saved position — corrupting inline apps.
+		// Strip it from the chunk so vt10x never sees it.
+		if bytes.Contains(chunk, []byte("\x1b[?u")) {
+			p.ptmx.Write([]byte("\x1b[?0u")) //nolint:errcheck
+			chunk = bytes.ReplaceAll(chunk, []byte("\x1b[?u"), nil)
+		}
+		// OSC 10/11 – fg/bg colour queries.  BubbleTea uses these to detect
+		// light vs dark terminal.  Reply with neutral dark-theme colours.
+		if bytes.Contains(chunk, []byte("\x1b]11;?")) {
+			p.ptmx.Write([]byte("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\")) //nolint:errcheck
+		}
+		if bytes.Contains(chunk, []byte("\x1b]10;?")) {
+			p.ptmx.Write([]byte("\x1b]10;rgb:d8d8/d8d8/d8d8\x1b\\")) //nolint:errcheck
+		}
+	}
 
 	// Accumulate raw bytes for replay-based reflow on resize.
 	// Skip while alternate screen is active (vim, htop, etc.) — those apps
@@ -279,19 +327,47 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		prevGrid = captureGrid(p.term, cols, rows)
 	}
 
-	p.term.Write(chunk) //nolint:errcheck
+	// If this chunk crosses an alt-screen entry point:
+	//   1. Save the primary cursor so we can restore it on exit (vt10x shares
+	//      a single saved-cursor slot for ESC-7/8 and \x1b[?1049h/l, so the
+	//      real primary position is lost once the alt-screen swap happens).
+	//   2. Split processing and inject \x1b[2J\x1b[H right after the entry so
+	//      the alt-screen starts with a clean slate (it may contain stale
+	//      content if a previous TUI program crashed without sending \x1b[?1049l).
+	wrote := false
+	if !altScreen {
+		for _, seq := range []string{"\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"} {
+			b := []byte(seq)
+			if i := bytes.Index(chunk, b); i >= 0 {
+				// Save primary cursor BEFORE the swap.
+				cur := p.term.Cursor()
+				p.altEntryCursorX, p.altEntryCursorY = cur.X, cur.Y
+				L.Log(nil, LevelTrace, "captureAndWrite: alt-screen entry", "pane", p.id, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
 
-	// When alt screen exits, rawBuf has the entry sequence (\x1b[?1049h) but
-	// not the exit — the exit chunk arrived while altScreen=true and was
-	// skipped.  We must append the entire exit chunk (not just \x1b[?1049l])
-	// because the program typically bundles the exit, a screen-clear, and new
-	// primary-screen content into one write.  Appending only the escape would
-	// leave the clear and new content out of rawBuf, causing resizeAndReflow to
-	// replay into a blank primary screen (old content visible, new UI lost).
-	// Any alt-screen bytes before \x1b[?1049l in the chunk are harmless on
-	// replay — they land in the scratch's alt-screen and are discarded when
-	// the primary screen is restored.
+				end := i + len(b)
+				p.term.Write(chunk[:end])              //nolint:errcheck
+				p.term.Write([]byte("\x1b[2J\x1b[H")) //nolint:errcheck
+				if end < len(chunk) {
+					p.term.Write(chunk[end:]) //nolint:errcheck
+				}
+				prevGrid = nil // alt-screen now active; skip primary-row scrollback push
+				wrote = true
+				break
+			}
+		}
+	}
+	if !wrote {
+		p.term.Write(chunk) //nolint:errcheck
+	}
+
+	// When alt screen exits, append the chunk to rawBuf (it was skipped above
+	// because altScreen=true), inject a SGR reset to fix the cursor-attribute
+	// leak (vt10x DECSC/alt-screen slot collision), and restore the primary
+	// cursor to where it was before the alt-screen was entered.  Without the
+	// cursor restore, inline programs like gh-copilot render at row 0 instead
+	// of at the shell prompt position.
 	if altScreen && p.term.Mode()&vt10x.ModeAltScreen == 0 {
+		L.Log(nil, LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
 		p.rawBuf = append(p.rawBuf, chunk...)
 		if len(p.rawBuf) > scrollbackLines*200 {
 			excess := len(p.rawBuf) - scrollbackLines*200
@@ -301,17 +377,16 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				p.rawBuf = p.rawBuf[excess:]
 			}
 		}
-		// Append a SGR reset so rawBuf replay always starts with clean attrs.
-		p.rawBuf = append(p.rawBuf, "\x1b[0m"...)
+		const sgrReset = "\x1b[0m"
+		p.term.Write([]byte(sgrReset)) //nolint:errcheck
+		p.rawBuf = append(p.rawBuf, sgrReset...)
 
-		// vt10x's \x1b[?1049l restores the saved primary screen — which
-		// contains the old shell history from before the program started.
-		// p.term now has that old history in all rows the program didn't
-		// overwrite, making the pane look dirty (old content visible below
-		// the program's output).  Rebuild p.term from a clean rawBuf replay
-		// starting from after the exit sequence, identical to what a manual
-		// resize would produce.  p.sb (scrollback ring) is left intact.
-		p.rebuildTermFromRawBuf()
+		// Restore the primary cursor to the position it had before the
+		// alt-screen was entered.  We use CUP (\x1b[row;colH, 1-based).
+		curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
+		L.Log(nil, LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
+		p.term.Write([]byte(curRestore)) //nolint:errcheck
+		p.rawBuf = append(p.rawBuf, curRestore...)
 	}
 
 	if prevGrid != nil {
@@ -593,55 +668,6 @@ func (p *Pane) rebuildScrollbackFromRawBuf() {
 
 	L.Debug("rebuildScrollbackFromRawBuf", "pane", p.id,
 		"content_rows", contentRows, "sb_rows", firstVisible, "delta", p.sb.count-oldCount)
-}
-
-// rebuildTermFromRawBuf replays rawBuf from after the last alt-screen exit and
-// replaces p.term with the result.  p.sb (scrollback ring) is left intact.
-//
-// This is called immediately after an alt-screen exit to remove old primary-
-// screen content that vt10x restores from its saved buffer.  Without this,
-// rows the exiting program didn't overwrite stay filled with pre-altscreen
-// shell history, making the pane look dirty until the next resize.
-//
-// Must be called with p.mu held.
-func (p *Pane) rebuildTermFromRawBuf() {
-	cols, rows := p.term.Size()
-	if len(p.rawBuf) == 0 {
-		return
-	}
-	replayH := sbMaxLines + rows
-	scratch := vt10x.New(vt10x.WithSize(cols, replayH))
-	replay := p.rawBuf
-	lastExit := -1
-	for _, seq := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
-		if pos := bytes.LastIndex(replay, []byte(seq)); pos+len(seq) > lastExit {
-			lastExit = pos + len(seq)
-		}
-	}
-	if lastExit >= 0 {
-		replay = replay[lastExit:]
-	}
-	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
-
-	cur := scratch.Cursor()
-	contentRows := cur.Y + 1
-	firstVisible := contentRows - rows
-	if firstVisible < 0 {
-		firstVisible = 0
-	}
-	visibleRows := make([][]vt10x.Glyph, rows)
-	for r := 0; r < rows; r++ {
-		srcRow := firstVisible + r
-		if srcRow < contentRows {
-			visibleRows[r] = captureRow(scratch, srcRow, cols)
-		} else {
-			visibleRows[r] = make([]vt10x.Glyph, cols)
-		}
-	}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows))
-	reflowInject(p.term, visibleRows)
-	L.Debug("rebuildTermFromRawBuf", "pane", p.id,
-		"content_rows", contentRows, "visible_rows", rows-firstVisible)
 }
 
 // close shuts down the PTY and sends SIGHUP to the shell so it exits cleanly.
