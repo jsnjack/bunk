@@ -208,7 +208,6 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 		n, err := p.ptmx.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
-			L.Debug("readPTY: received bytes", "pane", p.id, "bytes", n)
 			L.Log(nil, LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
 
 			// Step 1 – OSC passthrough (CWD, hyperlinks, clipboard).
@@ -287,14 +286,6 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			p.ptmx.Write([]byte(resp)) //nolint:errcheck
 			L.Log(nil, LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
 		}
-		// Kitty keyboard protocol query: ESC [ ? u → respond "not supported".
-		// vt10x misinterprets this as DECRC (restore cursor), which would jump
-		// the cursor to a stale saved position — corrupting inline apps.
-		// Strip it from the chunk so vt10x never sees it.
-		if bytes.Contains(chunk, []byte("\x1b[?u")) {
-			p.ptmx.Write([]byte("\x1b[?0u")) //nolint:errcheck
-			chunk = bytes.ReplaceAll(chunk, []byte("\x1b[?u"), nil)
-		}
 		// OSC 10/11 – fg/bg colour queries.  BubbleTea uses these to detect
 		// light vs dark terminal.  Reply with neutral dark-theme colours.
 		if bytes.Contains(chunk, []byte("\x1b]11;?")) {
@@ -303,6 +294,18 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		if bytes.Contains(chunk, []byte("\x1b]10;?")) {
 			p.ptmx.Write([]byte("\x1b]10;rgb:d8d8/d8d8/d8d8\x1b\\")) //nolint:errcheck
 		}
+	}
+
+	// Kitty keyboard protocol query: ESC [ ? u → strip before vt10x sees it.
+	// vt10x misinterprets this as DECRC (restore cursor), which would jump
+	// the cursor to a stale saved position — corrupting inline apps.
+	// This is a vt10x workaround, not a response — must apply to ALL panes
+	// including SSH, where the remote app may also emit this query.
+	if bytes.Contains(chunk, []byte("\x1b[?u")) {
+		if p.fgProcess != "ssh" && p.fgProcess != "mosh" {
+			p.ptmx.Write([]byte("\x1b[?0u")) //nolint:errcheck
+		}
+		chunk = bytes.ReplaceAll(chunk, []byte("\x1b[?u"), nil)
 	}
 
 	// Accumulate raw bytes for replay-based reflow on resize.
