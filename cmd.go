@@ -92,6 +92,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		theme:      cfg.Theme,
 		cellAspect: cellAspect,
 		keys:       cfg.Keybindings,
+		scrollback: cfg.Scrollback,
 		redraw:     make(chan struct{}, 1),
 		paneDead:   make(chan *Pane, 8),
 		done:       make(chan struct{}),
@@ -107,7 +108,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 	w, h := screen.Size()
 	L.Debug("startup: screen size", "w", w, "h", h)
 
-	p, err := NewPane(app.nextID, 0, 0, w, h, nil, app.redraw, app.paneDead, app.done, app.oscCh)
+	p, err := NewPane(app.nextID, 0, 0, w, h, app.scrollback, nil, app.redraw, app.paneDead, app.done, app.oscCh)
 	if err != nil {
 		screen.Fini()
 		return err

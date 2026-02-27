@@ -21,6 +21,8 @@ type App struct {
 	theme  resolvedTheme // active colour theme, set at startup
 	keys   Keybindings  // resolved hotkey configuration
 
+	scrollback int // max scrollback lines per pane (from config)
+
 	// cellAspect is the pixel height-to-width ratio of a single terminal cell
 	// (cellH / cellW).  Typical fonts give ~1.8–2.2.  Used by splitActive to
 	// decide whether a pane is wider or taller in actual pixels.
@@ -379,7 +381,7 @@ func (app *App) splitActive() {
 		spawnArgs = containerSpawnArgs(cid, ct, shell)
 	}
 
-	newPane, err := NewPane(app.nextID, nx, ny, nw, nh, spawnArgs, app.redraw, app.paneDead, app.done, app.oscCh)
+	newPane, err := NewPane(app.nextID, nx, ny, nw, nh, app.scrollback, spawnArgs, app.redraw, app.paneDead, app.done, app.oscCh)
 	if err != nil {
 		L.Error("splitActive: NewPane", "err", err)
 		return

@@ -30,9 +30,10 @@ type fileConfig struct {
 	Theme      string            `toml:"theme"`
 	LogFile    string            `toml:"log_file"`
 	LogLevel   string            `toml:"log_level"`
-	CellAspect float64           `toml:"cell_aspect"` // cell pixel H/W ratio; 0 = auto-detect
+	CellAspect float64           `toml:"cell_aspect"`  // cell pixel H/W ratio; 0 = auto-detect
+	Scrollback int               `toml:"scrollback"`   // max scrollback lines per pane; 0 = default
 	UI         uiOverride        `toml:"ui"`
-	Keys       map[string]string `toml:"keys"` // action → key string, e.g. "split" → "f1"
+	Keys       map[string]string `toml:"keys"`          // action → key string, e.g. "split" → "f1"
 }
 
 type uiOverride struct {
@@ -269,6 +270,7 @@ type Config struct {
 	LogFile     string
 	LogLevel    string
 	CellAspect  float64 // 0 = auto-detect via TIOCGWINSZ
+	Scrollback  int     // max scrollback lines per pane
 	Keybindings Keybindings
 }
 
@@ -401,11 +403,17 @@ func LoadConfig(path, themeOverride string) Config {
 		def.ScrollTrack = fc.UI.ScrollTrack
 	}
 
+	scrollback := fc.Scrollback
+	if scrollback <= 0 {
+		scrollback = defaultScrollbackLines
+	}
+
 	return Config{
 		Theme:       resolveTheme(def),
 		LogFile:     fc.LogFile,
 		LogLevel:    fc.LogLevel,
 		CellAspect:  fc.CellAspect,
+		Scrollback:  scrollback,
 		Keybindings: resolveKeybindings(fc.Keys),
 	}
 }
@@ -465,6 +473,11 @@ log_level = "info"  # trace | debug | info | warn | error
 # Examples: JetBrains Mono 12pt ≈ 2.2  |  Fira Code 11pt ≈ 2.15
 #
 # cell_aspect = 2.25   # uncomment and adjust if splits feel wrong
+
+# Maximum scrollback lines per pane.  Higher values use more memory.
+# Note: scrollback stores screen rows, not logical lines — narrower panes
+# consume more rows per line of output due to wrapping.
+# scrollback = 10000
 
 # Optional UI color overrides – leave blank to use the theme's defaults.
 # Values must be "#RRGGBB" hex strings.

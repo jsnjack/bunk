@@ -25,12 +25,12 @@ import (
 	"github.com/hinshun/vt10x"
 )
 
-// scrollbackLines is the maximum number of scrollback lines retained per pane.
-// It controls both the raw PTY replay buffer (rawBufMax) and the glyph ring
-// (sbMaxLines).  Increasing this number uses more memory per pane:
+// defaultScrollbackLines is the default maximum number of scrollback lines
+// retained per pane.  Overridden by the "scrollback" config field.
+// Memory cost per pane:
 //   - rawBuf:  scrollbackLines × ~200 bytes/line (raw ANSI, varies by content)
 //   - sbRing:  scrollbackLines × cols × ~24 bytes (rendered glyphs, on demand)
-const scrollbackLines = 10_000
+const defaultScrollbackLines = 10_000
 
 // selPos identifies a cell in the pane's unified virtual coordinate space.
 //
@@ -63,8 +63,9 @@ type Pane struct {
 
 	// Scrollback buffer – lines that have scrolled off the vt10x grid top.
 	// Protected by mu.
-	sb    sbRing // ring buffer of captured rows
-	sbOff int    // 0 = live view; N = N lines above live view
+	sb             sbRing // ring buffer of captured rows
+	sbOff          int    // 0 = live view; N = N lines above live view
+	scrollbackLines int   // max scrollback rows (from config)
 
 	// Text selection state.  Protected by mu.
 	// selAnchor is where Button1 was pressed; selCursor tracks the drag endpoint.
@@ -123,7 +124,7 @@ type Pane struct {
 //	paneDead  – receives p when the shell exits
 //	done      – closed by the app on shutdown
 //	oscCh     – receives OSC 7/8/52 sequences to forward to the host terminal
-func NewPane(id, x, y, w, h int, spawnArgs []string, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
+func NewPane(id, x, y, w, h, scrollback int, spawnArgs []string, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"
@@ -175,6 +176,8 @@ func NewPane(id, x, y, w, h int, spawnArgs []string, redraw chan struct{}, paneD
 	p := &Pane{
 		id: id, x: x, y: y, w: w, h: h,
 		ptmx: ptmx, cmd: cmd, term: term,
+		scrollbackLines: scrollback,
+		sb:               sbRing{maxLines: scrollback},
 	}
 
 	// One-time container detection: read the shell process's own environ.
@@ -319,10 +322,11 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	// paint absolute-position content that doesn't replay meaningfully.
 	if !altScreen {
 		p.rawBuf = append(p.rawBuf, chunk...)
-		if len(p.rawBuf) > scrollbackLines*200 {
+		rawMax := p.scrollbackLines * 200
+		if len(p.rawBuf) > rawMax {
 			// Trim from the front at a clean newline boundary so we don't
 			// start playback in the middle of an ANSI escape sequence.
-			excess := len(p.rawBuf) - scrollbackLines*200
+			excess := len(p.rawBuf) - rawMax
 			if nl := bytes.IndexByte(p.rawBuf[excess:], '\n'); nl >= 0 {
 				p.rawBuf = p.rawBuf[excess+nl+1:]
 			} else {
@@ -378,8 +382,9 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	if altScreen && p.term.Mode()&vt10x.ModeAltScreen == 0 {
 		L.Log(nil, LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
 		p.rawBuf = append(p.rawBuf, chunk...)
-		if len(p.rawBuf) > scrollbackLines*200 {
-			excess := len(p.rawBuf) - scrollbackLines*200
+		rawMax := p.scrollbackLines * 200
+		if len(p.rawBuf) > rawMax {
+			excess := len(p.rawBuf) - rawMax
 			if nl := bytes.IndexByte(p.rawBuf[excess:], '\n'); nl >= 0 {
 				p.rawBuf = p.rawBuf[excess+nl+1:]
 			} else {
@@ -591,7 +596,7 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	// history into rows the active program didn't write, making those rows
 	// look dirty after resize.  We look for all three alt-screen exit forms
 	// that vt10x recognises: \x1b[?1049l (modern), \x1b[?1047l, \x1b[?47l.
-	replayH := sbMaxLines + newRows
+	replayH := p.scrollbackLines + newRows
 	scratch := vt10x.New(vt10x.WithSize(newCols, replayH))
 	replay := p.rawBuf
 	lastExit := -1
@@ -617,7 +622,7 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	}
 
 	// Rebuild scrollback from the replay.
-	p.sb = sbRing{}
+	p.sb = sbRing{maxLines: p.scrollbackLines}
 	for r := 0; r < firstVisible; r++ {
 		p.sb.push(captureRow(scratch, r, newCols))
 	}
@@ -660,7 +665,7 @@ func (p *Pane) rebuildScrollbackFromRawBuf() {
 	if len(p.rawBuf) == 0 || p.term.Mode()&vt10x.ModeAltScreen != 0 {
 		return
 	}
-	replayH := sbMaxLines + rows
+	replayH := p.scrollbackLines + rows
 	scratch := vt10x.New(vt10x.WithSize(cols, replayH))
 	scratch.Write(append([]byte("\x1b[0m"), p.rawBuf...)) //nolint:errcheck
 
@@ -671,7 +676,7 @@ func (p *Pane) rebuildScrollbackFromRawBuf() {
 		firstVisible = 0
 	}
 	oldCount := p.sb.count
-	p.sb = sbRing{}
+	p.sb = sbRing{maxLines: p.scrollbackLines}
 	for r := 0; r < firstVisible; r++ {
 		p.sb.push(captureRow(scratch, r, cols))
 	}

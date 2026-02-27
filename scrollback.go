@@ -38,31 +38,31 @@ package main
 
 import "github.com/hinshun/vt10x"
 
-// sbMaxLines aliases scrollbackLines for the glyph ring capacity.
-// Defined here (rather than in pane.go) so scrollback.go stays self-contained.
-const sbMaxLines = scrollbackLines
-
 // sbRing is a fixed-capacity circular buffer of captured Glyph rows.
-// The zero value is ready to use (lazily allocated on first push).
+// maxLines must be set before the first push (typically from the config).
 type sbRing struct {
-	lines [][]vt10x.Glyph // pre-allocated slice of length sbMaxLines
-	head  int             // index of the oldest entry
-	count int             // number of valid entries (0 … sbMaxLines)
+	maxLines int               // ring capacity (from config scrollback setting)
+	lines    [][]vt10x.Glyph   // allocated on first push, length = maxLines
+	head     int               // index of the oldest entry
+	count    int               // number of valid entries (0 … maxLines)
 }
 
 // push appends one captured row to the ring.  When the ring is full, the
 // oldest entry is evicted and its backing memory is reused to avoid GC churn.
 func (s *sbRing) push(row []vt10x.Glyph) {
-	if s.lines == nil {
-		s.lines = make([][]vt10x.Glyph, sbMaxLines)
+	if s.maxLines <= 0 {
+		return
 	}
-	if s.count < sbMaxLines {
-		s.lines[(s.head+s.count)%sbMaxLines] = row
+	if s.lines == nil {
+		s.lines = make([][]vt10x.Glyph, s.maxLines)
+	}
+	if s.count < s.maxLines {
+		s.lines[(s.head+s.count)%s.maxLines] = row
 		s.count++
 	} else {
 		// Ring is full: overwrite oldest slot (head), advance head.
 		s.lines[s.head] = row
-		s.head = (s.head + 1) % sbMaxLines
+		s.head = (s.head + 1) % s.maxLines
 	}
 }
 
@@ -73,7 +73,7 @@ func (s *sbRing) get(i int) []vt10x.Glyph {
 	if i < 0 || i >= s.count {
 		return nil
 	}
-	return s.lines[(s.head+i)%sbMaxLines]
+	return s.lines[(s.head+i)%s.maxLines]
 }
 
 // ---------------------------------------------------------------------------
