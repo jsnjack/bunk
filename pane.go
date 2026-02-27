@@ -301,20 +301,17 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				p.rawBuf = p.rawBuf[excess:]
 			}
 		}
+		// Append a SGR reset so rawBuf replay always starts with clean attrs.
+		p.rawBuf = append(p.rawBuf, "\x1b[0m"...)
 
-		// vt10x uses ONE saved-cursor slot (t.saved) for both ESC 7 (DECSC)
-		// and \x1b[?1049h/l (alt-screen entry/exit).  Programs like vim call
-		// DECSC/DECRC constantly to save/restore their internal cursor, which
-		// clobbers t.saved.  When \x1b[?1049l calls restoreCursor(), it gets
-		// the program's last DECSC state (possibly with underline/bold/italic
-		// or a non-default colour) rather than the cursor from before the
-		// program started.  All subsequent primary-screen output is then
-		// rendered with those leaked attributes — underscoring, wrong colours,
-		// etc. — making the terminal look broken after the program exits.
-		// Reset SGR attributes now so the primary screen starts clean.
-		const sgrReset = "\x1b[0m"
-		p.term.Write([]byte(sgrReset)) //nolint:errcheck
-		p.rawBuf = append(p.rawBuf, sgrReset...)
+		// vt10x's \x1b[?1049l restores the saved primary screen — which
+		// contains the old shell history from before the program started.
+		// p.term now has that old history in all rows the program didn't
+		// overwrite, making the pane look dirty (old content visible below
+		// the program's output).  Rebuild p.term from a clean rawBuf replay
+		// starting from after the exit sequence, identical to what a manual
+		// resize would produce.  p.sb (scrollback ring) is left intact.
+		p.rebuildTermFromRawBuf()
 	}
 
 	if prevGrid != nil {
@@ -596,6 +593,55 @@ func (p *Pane) rebuildScrollbackFromRawBuf() {
 
 	L.Debug("rebuildScrollbackFromRawBuf", "pane", p.id,
 		"content_rows", contentRows, "sb_rows", firstVisible, "delta", p.sb.count-oldCount)
+}
+
+// rebuildTermFromRawBuf replays rawBuf from after the last alt-screen exit and
+// replaces p.term with the result.  p.sb (scrollback ring) is left intact.
+//
+// This is called immediately after an alt-screen exit to remove old primary-
+// screen content that vt10x restores from its saved buffer.  Without this,
+// rows the exiting program didn't overwrite stay filled with pre-altscreen
+// shell history, making the pane look dirty until the next resize.
+//
+// Must be called with p.mu held.
+func (p *Pane) rebuildTermFromRawBuf() {
+	cols, rows := p.term.Size()
+	if len(p.rawBuf) == 0 {
+		return
+	}
+	replayH := sbMaxLines + rows
+	scratch := vt10x.New(vt10x.WithSize(cols, replayH))
+	replay := p.rawBuf
+	lastExit := -1
+	for _, seq := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
+		if pos := bytes.LastIndex(replay, []byte(seq)); pos+len(seq) > lastExit {
+			lastExit = pos + len(seq)
+		}
+	}
+	if lastExit >= 0 {
+		replay = replay[lastExit:]
+	}
+	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
+
+	cur := scratch.Cursor()
+	contentRows := cur.Y + 1
+	firstVisible := contentRows - rows
+	if firstVisible < 0 {
+		firstVisible = 0
+	}
+	visibleRows := make([][]vt10x.Glyph, rows)
+	for r := 0; r < rows; r++ {
+		srcRow := firstVisible + r
+		if srcRow < contentRows {
+			visibleRows[r] = captureRow(scratch, srcRow, cols)
+		} else {
+			visibleRows[r] = make([]vt10x.Glyph, cols)
+		}
+	}
+	p.term = vt10x.New(vt10x.WithSize(cols, rows))
+	reflowInject(p.term, visibleRows)
+	L.Debug("rebuildTermFromRawBuf", "pane", p.id,
+		"content_rows", contentRows, "visible_rows", rows-firstVisible)
 }
 
 // close shuts down the PTY and sends SIGHUP to the shell so it exits cleanly.
