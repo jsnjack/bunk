@@ -90,12 +90,18 @@ func captureRow(term vt10x.Terminal, r, cols int) []vt10x.Glyph {
 	return row
 }
 
-// captureGrid snapshots all rows of the vt10x grid.  Must be called with
+// captureGrid snapshots all rows of the vt10x grid.  Uses a single contiguous
+// allocation for all glyph data to reduce GC pressure.  Must be called with
 // Pane.mu held.
 func captureGrid(term vt10x.Terminal, cols, rows int) [][]vt10x.Glyph {
+	slab := make([]vt10x.Glyph, rows*cols)
 	grid := make([][]vt10x.Glyph, rows)
 	for r := 0; r < rows; r++ {
-		grid[r] = captureRow(term, r, cols)
+		row := slab[r*cols : (r+1)*cols]
+		for c := 0; c < cols; c++ {
+			row[c] = term.Cell(c, r)
+		}
+		grid[r] = row
 	}
 	return grid
 }

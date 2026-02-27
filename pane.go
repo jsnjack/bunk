@@ -212,7 +212,7 @@ func NewPane(id, x, y, w, h, scrollback int, spawnArgs []string, redraw chan str
 //  4. Feeds the bytes into vt10x.
 //  5. Signals the render loop to repaint.
 func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
-	buf := make([]byte, 4096)
+	buf := make([]byte, 32768)
 	for {
 		n, err := p.ptmx.Read(buf)
 		if n > 0 {

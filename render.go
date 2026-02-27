@@ -25,6 +25,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/hinshun/vt10x"
@@ -44,12 +45,25 @@ const (
 // ---------------------------------------------------------------------------
 
 // renderLoop drains the redraw channel and repaints the screen.
+// A minimum interval of ~8ms (~120 fps cap) prevents burning CPU when PTY
+// output arrives faster than the terminal can display it (e.g. cat /dev/urandom).
 func (app *App) renderLoop() {
 	defer app.renderWg.Done()
+	const minInterval = 8 * time.Millisecond
+	var lastRender time.Time
 	for {
 		select {
 		case <-app.redraw:
+			if dt := time.Since(lastRender); dt < minInterval {
+				time.Sleep(minInterval - dt)
+				// Drain any signals that arrived during sleep.
+				select {
+				case <-app.redraw:
+				default:
+				}
+			}
 			app.render()
+			lastRender = time.Now()
 		case <-app.done:
 			return
 		}
@@ -203,24 +217,25 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	cols, rows := p.term.Size()
 	sbOff := p.sbOff
 	sbCount := p.sb.count
+	hasSel := p.selActive
+	hasSearch := p.searchHL != nil
 
 	for row := 0; row < rows; row++ {
 		// Unified virtual row: stable across scrolls (see selPos in pane.go).
 		vRow := (sbCount - sbOff) + row
 
 		var cells []vt10x.Glyph
+		useTermDirect := true // read from p.term.Cell() directly
 		if sbOff > 0 {
+			useTermDirect = false
 			switch {
 			case vRow < 0:
 				// Before the oldest captured line – render blank.
 			case vRow < sbCount:
 				cells = p.sb.get(vRow)
 			default:
-				// In the live grid.
-				termRow := vRow - sbCount
-				if termRow < rows {
-					cells = captureRow(p.term, termRow, cols)
-				}
+				// In the live grid — read via Cell() to avoid allocation.
+				useTermDirect = true
 			}
 		}
 
@@ -228,7 +243,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			var cell vt10x.Glyph
 			if cells != nil && col < len(cells) {
 				cell = cells[col]
-			} else if sbOff == 0 {
+			} else if useTermDirect {
 				cell = p.term.Cell(col, row)
 			}
 
@@ -269,7 +284,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 
 			// Selection highlight: toggle reverse video so selected text is
 			// always visually distinct regardless of the cell's original style.
-			if p.selContainsUnlocked(vRow, col) {
+			if hasSel && p.selContainsUnlocked(vRow, col) {
 				if cell.Mode&vtAttrReverse != 0 {
 					style = style.Reverse(false)
 				} else {
@@ -278,7 +293,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			}
 
 			// Search highlight: amber for regular matches, orange for current.
-			if p.searchHL != nil {
+			if hasSearch {
 				key := int64(vRow)<<16 | int64(col)
 				switch p.searchHL[key] {
 				case 1:
@@ -446,14 +461,18 @@ func drawBorders(scr tcell.Screen, n *Node, rt resolvedTheme) {
 // active segment spans the columns [active.x, active.x+active.w).
 // This means that in a 2×2 grid only the half of each divider that borders the
 // active pane is highlighted; the other half stays in the inactive colour.
-func paintActiveBorders(scr tcell.Screen, n *Node, active *Pane, style tcell.Style) {
+//
+// Returns true if the active pane is found in the subtree rooted at n, which
+// avoids redundant tree walks (O(n) instead of O(n²)).
+func paintActiveBorders(scr tcell.Screen, n *Node, active *Pane, style tcell.Style) bool {
 	if n.isLeaf() {
-		return
+		return n.pane == active
 	}
 
-	// If either child subtree contains the active pane, that split line is
-	// adjacent to the active pane and should be highlighted.
-	if nodeContains(n.left, active) || nodeContains(n.right, active) {
+	leftHas := paintActiveBorders(scr, n.left, active, style)
+	rightHas := paintActiveBorders(scr, n.right, active, style)
+
+	if leftHas || rightHas {
 		if n.dir == splitVertical {
 			bx := n.left.x + n.left.w
 			yStart := max(n.y, active.y)
@@ -471,16 +490,7 @@ func paintActiveBorders(scr tcell.Screen, n *Node, active *Pane, style tcell.Sty
 		}
 	}
 
-	paintActiveBorders(scr, n.left, active, style)
-	paintActiveBorders(scr, n.right, active, style)
-}
-
-// nodeContains reports whether any leaf in subtree n holds pane p.
-func nodeContains(n *Node, p *Pane) bool {
-	if n.isLeaf() {
-		return n.pane == p
-	}
-	return nodeContains(n.left, p) || nodeContains(n.right, p)
+	return leftHas || rightHas
 }
 
 // ---------------------------------------------------------------------------

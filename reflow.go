@@ -28,7 +28,7 @@ package main
 
 import (
 	"bytes"
-	"fmt"
+	"strconv"
 
 	"github.com/hinshun/vt10x"
 )
@@ -146,32 +146,40 @@ func emitColorCode(buf *bytes.Buffer, c vt10x.Color, isFG bool) {
 	}
 	switch {
 	case c < 8:
+		buf.WriteByte(';')
 		if isFG {
-			fmt.Fprintf(buf, ";%d", 30+int(c))
+			buf.Write(strconv.AppendInt(nil, int64(30+c), 10))
 		} else {
-			fmt.Fprintf(buf, ";%d", 40+int(c))
+			buf.Write(strconv.AppendInt(nil, int64(40+c), 10))
 		}
 	case c < 16:
+		buf.WriteByte(';')
 		if isFG {
-			fmt.Fprintf(buf, ";%d", 90+int(c)-8)
+			buf.Write(strconv.AppendInt(nil, int64(90+c-8), 10))
 		} else {
-			fmt.Fprintf(buf, ";%d", 100+int(c)-8)
+			buf.Write(strconv.AppendInt(nil, int64(100+c-8), 10))
 		}
 	case c < 256:
 		if isFG {
-			fmt.Fprintf(buf, ";38;5;%d", int(c))
+			buf.WriteString(";38;5;")
 		} else {
-			fmt.Fprintf(buf, ";48;5;%d", int(c))
+			buf.WriteString(";48;5;")
 		}
+		buf.Write(strconv.AppendInt(nil, int64(c), 10))
 	default: // truecolor: r<<16|g<<8|b
 		r := (c >> 16) & 0xff
 		g := (c >> 8) & 0xff
 		b := c & 0xff
 		if isFG {
-			fmt.Fprintf(buf, ";38;2;%d;%d;%d", r, g, b)
+			buf.WriteString(";38;2;")
 		} else {
-			fmt.Fprintf(buf, ";48;2;%d;%d;%d", r, g, b)
+			buf.WriteString(";48;2;")
 		}
+		buf.Write(strconv.AppendInt(nil, int64(r), 10))
+		buf.WriteByte(';')
+		buf.Write(strconv.AppendInt(nil, int64(g), 10))
+		buf.WriteByte(';')
+		buf.Write(strconv.AppendInt(nil, int64(b), 10))
 	}
 }
 
