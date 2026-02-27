@@ -91,6 +91,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		screen:     screen,
 		theme:      cfg.Theme,
 		cellAspect: cellAspect,
+		keys:       cfg.Keybindings,
 		redraw:     make(chan struct{}, 1),
 		paneDead:   make(chan *Pane, 8),
 		done:       make(chan struct{}),

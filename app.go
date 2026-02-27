@@ -19,6 +19,7 @@ const oscChanSize = 64
 type App struct {
 	screen tcell.Screen
 	theme  resolvedTheme // active colour theme, set at startup
+	keys   Keybindings  // resolved hotkey configuration
 
 	// cellAspect is the pixel height-to-width ratio of a single terminal cell
 	// (cellH / cellW).  Typical fonts give ~1.8–2.2.  Used by splitActive to
@@ -171,8 +172,10 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		return app.handleSearchKey(ev)
 	}
 
-	// Ctrl+C: copy selection if active, otherwise forward ^C to PTY.
-	if ev.Key() == tcell.KeyCtrlC {
+	kb := &app.keys
+
+	// Copy key: copy selection if active, otherwise forward raw bytes to PTY.
+	if kb.Copy.Matches(ev) {
 		app.mu.Lock()
 		active := app.active
 		app.mu.Unlock()
@@ -185,82 +188,76 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 			active.mu.Unlock()
 			if text != "" {
 				app.copyToClipboard(text)
+				active.SetStatus("COPIED", time.Second)
 				app.triggerRedraw()
 				return true
 			}
 		}
+		// No selection – fall through so the key is forwarded to the PTY.
 	}
 
-	switch ev.Key() {
-	case tcell.KeyF1:
-		L.Debug("handleKey: split F1")
+	switch {
+	case kb.Split.Matches(ev):
+		L.Debug("handleKey: split", "key", kb.Split)
 		app.splitActive()
 		return true
-	case tcell.KeyCtrlQ:
-		L.Debug("handleKey: Ctrl+Q quit")
+	case kb.Quit.Matches(ev):
+		L.Debug("handleKey: quit", "key", kb.Quit)
 		return false
-	case tcell.KeyCtrlF:
-		L.Debug("handleKey: Ctrl+F enter search")
+	case kb.Search.Matches(ev):
+		L.Debug("handleKey: enter search", "key", kb.Search)
 		app.enterSearch()
 		return true
-	case tcell.KeyCtrlV:
-		L.Debug("handleKey: Ctrl+V paste")
+	case kb.Paste.Matches(ev):
+		L.Debug("handleKey: paste", "key", kb.Paste)
 		app.pasteFromClipboard()
+		return true
+	case kb.NavUp.Matches(ev):
+		L.Debug("handleKey: navigate up")
+		app.navigate(dirUp)
+		return true
+	case kb.NavDown.Matches(ev):
+		L.Debug("handleKey: navigate down")
+		app.navigate(dirDown)
+		return true
+	case kb.NavLeft.Matches(ev):
+		L.Debug("handleKey: navigate left")
+		app.navigate(dirLeft)
+		return true
+	case kb.NavRight.Matches(ev):
+		L.Debug("handleKey: navigate right")
+		app.navigate(dirRight)
 		return true
 	}
 
-	// Alt+Arrow: pane navigation.
-	if ev.Modifiers()&tcell.ModAlt != 0 {
-		switch ev.Key() {
-		case tcell.KeyUp:
-			L.Debug("handleKey: navigate up")
-			app.navigate(dirUp)
-			return true
-		case tcell.KeyDown:
-			L.Debug("handleKey: navigate down")
-			app.navigate(dirDown)
-			return true
-		case tcell.KeyLeft:
-			L.Debug("handleKey: navigate left")
-			app.navigate(dirLeft)
-			return true
-		case tcell.KeyRight:
-			L.Debug("handleKey: navigate right")
-			app.navigate(dirRight)
-			return true
-		}
+	// Scrollback keys.
+	app.mu.Lock()
+	active := app.active
+	h := 0
+	if active != nil {
+		h = active.h
 	}
-
-	// Shift+PgUp / Shift+PgDn: scrollback.
-	if ev.Modifiers()&tcell.ModShift != 0 {
-		app.mu.Lock()
-		active := app.active
-		h := 0
+	app.mu.Unlock()
+	switch {
+	case kb.ScrollUp.Matches(ev):
 		if active != nil {
-			h = active.h
+			L.Debug("handleKey: scrollback up", "pane", active.id, "amount", max(1, h/2))
+			active.scrollUp(max(1, h/2))
+			app.triggerRedraw()
 		}
-		app.mu.Unlock()
-		switch ev.Key() {
-		case tcell.KeyPgUp:
-			if active != nil {
-				L.Debug("handleKey: scrollback up", "pane", active.id, "amount", max(1, h/2))
-				active.scrollUp(max(1, h/2))
-				app.triggerRedraw()
-			}
-			return true
-		case tcell.KeyPgDn:
-			if active != nil {
-				L.Debug("handleKey: scrollback down", "pane", active.id, "amount", max(1, h/2))
-				active.scrollDown(max(1, h/2))
-				app.triggerRedraw()
-			}
-			return true
+		return true
+	case kb.ScrollDown.Matches(ev):
+		if active != nil {
+			L.Debug("handleKey: scrollback down", "pane", active.id, "amount", max(1, h/2))
+			active.scrollDown(max(1, h/2))
+			app.triggerRedraw()
 		}
+		return true
 	}
 
 	// Forward everything else to the focused pane's PTY.
 	app.mu.Lock()
-	active := app.active
+	active = app.active
 	app.mu.Unlock()
 	if active != nil && !active.isDead() {
 		needRedraw := false

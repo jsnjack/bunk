@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 	"syscall"
 
 	"github.com/creack/pty"
@@ -105,6 +106,11 @@ type Pane struct {
 	// (which render inline at the current cursor position) start in the right
 	// place.  Protected by mu.
 	altEntryCursorX, altEntryCursorY int
+
+	// Temporary status message (e.g. "COPIED") shown in the status bar.
+	// Clears automatically after statusMsgEnd.  Protected by mu.
+	statusMsg    string
+	statusMsgEnd time.Time
 }
 
 // NewPane spawns a shell inside a new PTY with the given geometry, starts the
@@ -519,6 +525,14 @@ func (p *Pane) isDead() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.dead
+}
+
+// SetStatus shows msg in the pane's status bar for dur, then clears it.
+func (p *Pane) SetStatus(msg string, dur time.Duration) {
+	p.mu.Lock()
+	p.statusMsg = msg
+	p.statusMsgEnd = time.Now().Add(dur)
+	p.mu.Unlock()
 }
 
 // resize updates the pane's screen position and dimensions, sends TIOCSWINSZ

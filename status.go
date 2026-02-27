@@ -551,7 +551,24 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool) {
 	px, py, pw := p.x, p.y, p.w
 	hasSB := p.sbOff > 0 // only reserve scrollbar column when bar is actually visible
 	sbOff := p.sbOff
+	tempMsg := p.statusMsg
+	tempActive := !p.statusMsgEnd.IsZero() && time.Now().Before(p.statusMsgEnd)
 	p.mu.Unlock()
+
+	// Temporary status overlay (e.g. "COPIED") takes priority.
+	if tempActive && tempMsg != "" {
+		badge := " " + tempMsg + " "
+		style := tcell.StyleDefault.
+			Foreground(tcell.ColorWhite).
+			Background(tcell.NewRGBColor(30, 130, 60)).
+			Bold(true)
+		for i, ch := range []rune(badge) {
+			if px+i < px+pw {
+				scr.SetContent(px+i, py, ch, nil, style)
+			}
+		}
+		return
+	}
 
 	// Build badge segments.
 	var parts []string

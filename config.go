@@ -27,11 +27,12 @@ import (
 // ---------------------------------------------------------------------------
 
 type fileConfig struct {
-	Theme      string     `toml:"theme"`
-	LogFile    string     `toml:"log_file"`
-	LogLevel   string     `toml:"log_level"`
-	CellAspect float64    `toml:"cell_aspect"` // cell pixel H/W ratio; 0 = auto-detect
-	UI         uiOverride `toml:"ui"`
+	Theme      string            `toml:"theme"`
+	LogFile    string            `toml:"log_file"`
+	LogLevel   string            `toml:"log_level"`
+	CellAspect float64           `toml:"cell_aspect"` // cell pixel H/W ratio; 0 = auto-detect
+	UI         uiOverride        `toml:"ui"`
+	Keys       map[string]string `toml:"keys"` // action → key string, e.g. "split" → "f1"
 }
 
 type uiOverride struct {
@@ -39,6 +40,180 @@ type uiOverride struct {
 	InactiveBorder string `toml:"inactive_border"`
 	ScrollThumb    string `toml:"scrollbar_thumb"`
 	ScrollTrack    string `toml:"scrollbar_track"`
+}
+
+// keybindingNames maps lowercase TOML key names to their tcell.Key constant.
+// Package-level so it is allocated once.
+var keybindingNames = map[string]tcell.Key{
+	"f1": tcell.KeyF1, "f2": tcell.KeyF2, "f3": tcell.KeyF3,
+	"f4": tcell.KeyF4, "f5": tcell.KeyF5, "f6": tcell.KeyF6,
+	"f7": tcell.KeyF7, "f8": tcell.KeyF8, "f9": tcell.KeyF9,
+	"f10": tcell.KeyF10, "f11": tcell.KeyF11, "f12": tcell.KeyF12,
+	"up": tcell.KeyUp, "down": tcell.KeyDown,
+	"left": tcell.KeyLeft, "right": tcell.KeyRight,
+	"pgup": tcell.KeyPgUp, "pageup": tcell.KeyPgUp,
+	"pgdn": tcell.KeyPgDn, "pagedown": tcell.KeyPgDn,
+	"home": tcell.KeyHome, "end": tcell.KeyEnd,
+	"enter": tcell.KeyEnter, "return": tcell.KeyEnter,
+	"escape": tcell.KeyEsc, "esc": tcell.KeyEsc,
+	"backspace": tcell.KeyBackspace2,
+	"delete": tcell.KeyDelete, "del": tcell.KeyDelete,
+	"tab": tcell.KeyTab,
+	"insert": tcell.KeyInsert,
+}
+
+// ---------------------------------------------------------------------------
+// Keybinding type
+// ---------------------------------------------------------------------------
+
+// Keybinding represents one resolved key combination (key code + modifiers).
+type Keybinding struct {
+	key tcell.Key
+	mod tcell.ModMask
+	raw string // original string, for display
+}
+
+// Matches returns true if ev matches this keybinding.
+func (kb Keybinding) Matches(ev *tcell.EventKey) bool {
+	if ev.Key() != kb.key {
+		return false
+	}
+	// For modifier-less ctrl keys (ctrl+a … ctrl+z), modifiers are baked into
+	// the key code by tcell; no separate ModCtrl bit is set.
+	return ev.Modifiers()&kb.mod == kb.mod
+}
+
+// String returns the human-readable key description.
+func (kb Keybinding) String() string { return kb.raw }
+
+// parseKey converts a key description string such as "f1", "ctrl+q",
+// "alt+up", or "shift+pgup" into a Keybinding.
+//
+// Modifier prefixes (case-insensitive): ctrl, alt, shift.
+// Key names (case-insensitive):
+//
+//	f1–f12, up, down, left, right, pgup/pageup, pgdn/pagedown,
+//	home, end, enter/return, escape/esc, backspace, delete/del, tab, insert.
+//
+// Ctrl+letter combinations (e.g. ctrl+c) are represented as tcell.KeyCtrlC
+// with no extra modifier bits, matching what tcell actually produces.
+func parseKey(s string) (Keybinding, error) {
+	orig := s
+	s = strings.ToLower(strings.TrimSpace(s))
+
+	parts := strings.Split(s, "+")
+	if len(parts) == 0 || (len(parts) == 1 && parts[0] == "") {
+		return Keybinding{}, fmt.Errorf("empty key binding")
+	}
+
+	var mod tcell.ModMask
+	keyName := parts[len(parts)-1]
+	for _, p := range parts[:len(parts)-1] {
+		switch p {
+		case "ctrl":
+			mod |= tcell.ModCtrl
+		case "alt":
+			mod |= tcell.ModAlt
+		case "shift":
+			mod |= tcell.ModShift
+		default:
+			return Keybinding{}, fmt.Errorf("unknown modifier %q in keybinding %q", p, orig)
+		}
+	}
+
+	// ctrl+<letter>: tcell represents these as KeyCtrlA–KeyCtrlZ with no
+	// separate ModCtrl bit.
+	if mod&tcell.ModCtrl != 0 && len(keyName) == 1 && keyName[0] >= 'a' && keyName[0] <= 'z' {
+		key := tcell.Key(keyName[0]-'a') + tcell.KeyCtrlA
+		return Keybinding{key: key, mod: mod &^ tcell.ModCtrl, raw: orig}, nil
+	}
+
+	key, ok := keybindingNames[keyName]
+	if !ok {
+		return Keybinding{}, fmt.Errorf("unknown key name %q in keybinding %q", keyName, orig)
+	}
+	return Keybinding{key: key, mod: mod, raw: orig}, nil
+}
+
+// mustParseKey parses a key string and panics on error (used only for
+// built-in defaults which are always valid).
+func mustParseKey(s string) Keybinding {
+	kb, err := parseKey(s)
+	if err != nil {
+		panic("bunk: bad built-in keybinding: " + err.Error())
+	}
+	return kb
+}
+
+// Keybindings holds one resolved Keybinding per named action.
+type Keybindings struct {
+	Split      Keybinding
+	Quit       Keybinding
+	Copy       Keybinding
+	Paste      Keybinding
+	Search     Keybinding
+	NavUp      Keybinding
+	NavDown    Keybinding
+	NavLeft    Keybinding
+	NavRight   Keybinding
+	ScrollUp   Keybinding
+	ScrollDown Keybinding
+	SearchNext Keybinding
+	SearchPrev Keybinding
+	SearchExit Keybinding
+}
+
+// keybindingDefaults is the single source of truth for action names, their
+// struct field pointers, and default key strings. Used by both
+// defaultKeybindings() and resolveKeybindings() — add new actions here only.
+type kbEntry struct {
+	action string
+	field  func(*Keybindings) *Keybinding
+	def    string
+}
+
+var keybindingDefaults = []kbEntry{
+	{"split", func(k *Keybindings) *Keybinding { return &k.Split }, "f1"},
+	{"quit", func(k *Keybindings) *Keybinding { return &k.Quit }, "ctrl+q"},
+	{"copy", func(k *Keybindings) *Keybinding { return &k.Copy }, "ctrl+c"},
+	{"paste", func(k *Keybindings) *Keybinding { return &k.Paste }, "ctrl+v"},
+	{"search", func(k *Keybindings) *Keybinding { return &k.Search }, "ctrl+f"},
+	{"nav_up", func(k *Keybindings) *Keybinding { return &k.NavUp }, "alt+up"},
+	{"nav_down", func(k *Keybindings) *Keybinding { return &k.NavDown }, "alt+down"},
+	{"nav_left", func(k *Keybindings) *Keybinding { return &k.NavLeft }, "alt+left"},
+	{"nav_right", func(k *Keybindings) *Keybinding { return &k.NavRight }, "alt+right"},
+	{"scroll_up", func(k *Keybindings) *Keybinding { return &k.ScrollUp }, "shift+pgup"},
+	{"scroll_down", func(k *Keybindings) *Keybinding { return &k.ScrollDown }, "shift+pgdn"},
+	{"search_next", func(k *Keybindings) *Keybinding { return &k.SearchNext }, "ctrl+n"},
+	{"search_prev", func(k *Keybindings) *Keybinding { return &k.SearchPrev }, "ctrl+p"},
+	{"search_exit", func(k *Keybindings) *Keybinding { return &k.SearchExit }, "escape"},
+}
+
+// resolveKeybindings builds a Keybindings from built-in defaults, then applies
+// user overrides from the [keys] TOML map. Unknown or invalid entries are
+// logged and ignored.
+func resolveKeybindings(kf map[string]string) Keybindings {
+	var kb Keybindings
+	known := make(map[string]struct{}, len(keybindingDefaults))
+	for _, e := range keybindingDefaults {
+		known[e.action] = struct{}{}
+		s := e.def
+		if override, ok := kf[e.action]; ok && override != "" {
+			s = override
+		}
+		parsed, err := parseKey(s)
+		if err != nil {
+			L.Warn("keybinding: parse error, using default", "action", e.action, "value", s, "err", err)
+			parsed = mustParseKey(e.def)
+		}
+		*e.field(&kb) = parsed
+	}
+	for action := range kf {
+		if _, ok := known[action]; !ok {
+			L.Warn("keybinding: unknown action, ignoring", "action", action)
+		}
+	}
+	return kb
 }
 
 // ---------------------------------------------------------------------------
@@ -69,10 +244,11 @@ type resolvedTheme struct {
 
 // Config is the fully resolved application configuration.
 type Config struct {
-	Theme      resolvedTheme
-	LogFile    string
-	LogLevel   string
-	CellAspect float64 // 0 = auto-detect via TIOCGWINSZ
+	Theme       resolvedTheme
+	LogFile     string
+	LogLevel    string
+	CellAspect  float64 // 0 = auto-detect via TIOCGWINSZ
+	Keybindings Keybindings
 }
 
 // ---------------------------------------------------------------------------
@@ -205,10 +381,11 @@ func LoadConfig(path, themeOverride string) Config {
 	}
 
 	return Config{
-		Theme:      resolveTheme(def),
-		LogFile:    fc.LogFile,
-		LogLevel:   fc.LogLevel,
-		CellAspect: fc.CellAspect,
+		Theme:       resolveTheme(def),
+		LogFile:     fc.LogFile,
+		LogLevel:    fc.LogLevel,
+		CellAspect:  fc.CellAspect,
+		Keybindings: resolveKeybindings(fc.Keys),
 	}
 }
 
@@ -275,5 +452,29 @@ active_border   = ""  # border colour for the focused pane
 inactive_border = ""  # border colour for unfocused panes
 scrollbar_thumb = ""  # scrollbar handle
 scrollbar_track = ""  # scrollbar background
+
+# ---------------------------------------------------------------------------
+# Key bindings
+# ---------------------------------------------------------------------------
+# Format: "f1", "ctrl+c", "alt+up", "shift+pgup", "escape", etc.
+# Modifiers: ctrl, alt, shift.  Key names are case-insensitive.
+# Leave a value empty (or remove the line) to keep the built-in default.
+[keys]
+split        = "f1"          # auto-split the active pane
+quit         = "ctrl+q"      # quit bunk
+copy         = "ctrl+c"      # copy selection (if active); otherwise forwards to shell
+paste        = "ctrl+v"      # paste from clipboard
+search       = "ctrl+f"      # enter incremental search
+nav_up       = "alt+up"      # move focus to the pane above
+nav_down     = "alt+down"    # move focus to the pane below
+nav_left     = "alt+left"    # move focus to the pane on the left
+nav_right    = "alt+right"   # move focus to the pane on the right
+scroll_up    = "shift+pgup"  # scroll up in scrollback buffer
+scroll_down  = "shift+pgdn"  # scroll down / return toward live output
+
+# Search mode keys (active only while Ctrl+F search bar is open).
+search_next  = "ctrl+n"   # jump to next match  (Enter always works too)
+search_prev  = "ctrl+p"   # jump to previous match
+search_exit  = "escape"   # close search bar
 `, DefaultConfigPath())
 }

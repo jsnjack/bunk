@@ -224,17 +224,18 @@ func (app *App) searchNavigate(delta int) {
 // handleSearchKey processes a key event while search mode is active.
 // It returns true to continue the event loop (search mode never triggers shutdown).
 func (app *App) handleSearchKey(ev *tcell.EventKey) bool {
-	switch ev.Key() {
-	case tcell.KeyEsc:
+	kb := &app.keys
+	switch {
+	case kb.SearchExit.Matches(ev):
 		app.exitSearch()
 
-	case tcell.KeyEnter, tcell.KeyCtrlN:
+	case ev.Key() == tcell.KeyEnter, kb.SearchNext.Matches(ev):
 		app.searchNavigate(+1)
 
-	case tcell.KeyCtrlP:
+	case kb.SearchPrev.Matches(ev):
 		app.searchNavigate(-1)
 
-	case tcell.KeyBackspace, tcell.KeyBackspace2:
+	case ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2:
 		app.mu.Lock()
 		q := app.searchQuery
 		app.mu.Unlock()
@@ -246,7 +247,7 @@ func (app *App) handleSearchKey(ev *tcell.EventKey) bool {
 			app.updateSearch()
 		}
 
-	case tcell.KeyRune:
+	case ev.Key() == tcell.KeyRune:
 		app.mu.Lock()
 		app.searchQuery += string(ev.Rune())
 		app.mu.Unlock()
