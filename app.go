@@ -68,6 +68,11 @@ type App struct {
 	searchPane    *Pane
 	searchMatches []searchMatch
 	searchIdx     int
+
+	// Zoom state.  Protected by mu.
+	// When zoomedPane is non-nil, only that pane is drawn (fullscreen).
+	zoomedPane *Pane
+	zoomGeom   [4]int // saved {x, y, w, h} to restore on unzoom
 }
 
 // shutdown is safe to call multiple times.  It closes every pane (sending
@@ -162,6 +167,12 @@ func (app *App) handleResize() {
 	if app.root != nil {
 		app.root.resize(0, 0, w, h)
 	}
+	// If zoomed, the tree recalculated the zoomed pane's BSP position —
+	// save it as the new restore geometry, then re-apply fullscreen.
+	if p := app.zoomedPane; p != nil {
+		app.zoomGeom = [4]int{p.x, p.y, p.w, p.h}
+		p.resize(0, 0, w, h)
+	}
 	app.mu.Unlock()
 	app.triggerRedraw()
 }
@@ -205,6 +216,7 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 	switch {
 	case kb.Split.Matches(ev):
 		L.Debug("handleKey: split", "key", kb.Split)
+		app.zoomOut() // unzoom before splitting
 		app.splitActive()
 		return true
 	case kb.Quit.Matches(ev):
@@ -214,24 +226,32 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		L.Debug("handleKey: enter search", "key", kb.Search)
 		app.enterSearch()
 		return true
+	case kb.Zoom.Matches(ev):
+		L.Debug("handleKey: zoom toggle", "key", kb.Zoom)
+		app.zoomToggle()
+		return true
 	case kb.Paste.Matches(ev):
 		L.Debug("handleKey: paste", "key", kb.Paste)
 		app.pasteFromClipboard()
 		return true
 	case kb.NavUp.Matches(ev):
 		L.Debug("handleKey: navigate up")
+		app.zoomOut()
 		app.navigate(dirUp)
 		return true
 	case kb.NavDown.Matches(ev):
 		L.Debug("handleKey: navigate down")
+		app.zoomOut()
 		app.navigate(dirDown)
 		return true
 	case kb.NavLeft.Matches(ev):
 		L.Debug("handleKey: navigate left")
+		app.zoomOut()
 		app.navigate(dirLeft)
 		return true
 	case kb.NavRight.Matches(ev):
 		L.Debug("handleKey: navigate right")
+		app.zoomOut()
 		app.navigate(dirRight)
 		return true
 	}
@@ -372,6 +392,65 @@ func (app *App) splitActive() {
 	app.triggerRedraw()
 }
 
+// ---------------------------------------------------------------------------
+// Zoom (fullscreen toggle)
+// ---------------------------------------------------------------------------
+
+// zoomToggle toggles fullscreen zoom on the active pane.
+func (app *App) zoomToggle() {
+	app.mu.Lock()
+	if app.zoomedPane != nil {
+		app.mu.Unlock()
+		app.zoomOut()
+	} else {
+		app.mu.Unlock()
+		app.zoomIn()
+	}
+}
+
+// zoomIn maximises the active pane to fill the entire screen.
+// Must NOT hold app.mu on entry (acquires it internally).
+func (app *App) zoomIn() {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	p := app.active
+	if p == nil || app.root == nil {
+		return
+	}
+	// Only one pane → nothing to zoom.
+	if app.root.isLeaf() {
+		return
+	}
+
+	app.zoomedPane = p
+	app.zoomGeom = [4]int{p.x, p.y, p.w, p.h}
+
+	w, h := app.screen.Size()
+	L.Debug("zoomIn", "pane", p.id, "screen", w, "x", h)
+	p.resize(0, 0, w, h)
+	app.triggerRedraw()
+}
+
+// zoomOut restores the zoomed pane to its original geometry.
+// Safe to call when not zoomed (no-op).
+// Must NOT hold app.mu on entry (acquires it internally).
+func (app *App) zoomOut() {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	p := app.zoomedPane
+	if p == nil {
+		return
+	}
+	app.zoomedPane = nil
+
+	g := app.zoomGeom
+	L.Debug("zoomOut", "pane", p.id, "restore", g)
+	p.resize(g[0], g[1], g[2], g[3])
+	app.triggerRedraw()
+}
+
 // navigate moves focus to the nearest pane in direction d.
 func (app *App) navigate(d dir) {
 	app.mu.Lock()
@@ -455,6 +534,11 @@ func (app *App) removePane(p *Pane) {
 	if app.root == nil {
 		app.mu.Unlock()
 		return
+	}
+
+	// If the zoomed pane died, unzoom (no geometry restore needed — it's gone).
+	if app.zoomedPane == p {
+		app.zoomedPane = nil
 	}
 
 	var newActive *Pane

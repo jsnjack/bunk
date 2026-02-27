@@ -152,6 +152,7 @@ type Keybindings struct {
 	Copy       Keybinding
 	Paste      Keybinding
 	Search     Keybinding
+	Zoom       Keybinding
 	NavUp      Keybinding
 	NavDown    Keybinding
 	NavLeft    Keybinding
@@ -178,6 +179,7 @@ var keybindingDefaults = []kbEntry{
 	{"copy", func(k *Keybindings) *Keybinding { return &k.Copy }, "ctrl+c"},
 	{"paste", func(k *Keybindings) *Keybinding { return &k.Paste }, "ctrl+v"},
 	{"search", func(k *Keybindings) *Keybinding { return &k.Search }, "ctrl+f"},
+	{"zoom", func(k *Keybindings) *Keybinding { return &k.Zoom }, "f12"},
 	{"nav_up", func(k *Keybindings) *Keybinding { return &k.NavUp }, "alt+up"},
 	{"nav_down", func(k *Keybindings) *Keybinding { return &k.NavDown }, "alt+down"},
 	{"nav_left", func(k *Keybindings) *Keybinding { return &k.NavLeft }, "alt+left"},
@@ -484,6 +486,7 @@ quit         = "ctrl+q"      # quit bunk
 copy         = "ctrl+c"      # copy selection (if active); otherwise forwards to shell
 paste        = "ctrl+v"      # paste from clipboard
 search       = "ctrl+f"      # enter incremental search
+zoom         = "f12"         # toggle fullscreen zoom on the active pane
 nav_up       = "alt+up"      # move focus to the pane above
 nav_down     = "alt+down"    # move focus to the pane below
 nav_left     = "alt+left"    # move focus to the pane on the left

@@ -78,6 +78,30 @@ func (app *App) render() {
 
 	rt := app.theme
 
+	// Zoomed mode: draw only the zoomed pane, no borders.
+	if zp := app.zoomedPane; zp != nil {
+		zNode := &Node{pane: zp}
+		drawPaneContents(app.screen, zNode, rt)
+		drawScrollbars(app.screen, zNode, rt)
+		drawAllPaneStatus(app.screen, zNode, active, rt, true)
+
+		zp.mu.Lock()
+		dead := zp.dead
+		sbOff := zp.sbOff
+		cur := zp.term.Cursor()
+		visible := zp.term.CursorVisible()
+		zp.mu.Unlock()
+		if !dead && visible && sbOff == 0 {
+			app.screen.ShowCursor(zp.x+cur.X, zp.y+cur.Y)
+		} else {
+			app.screen.HideCursor()
+		}
+
+		drainOSC(app.oscCh)
+		app.screen.Show()
+		return
+	}
+
 	// Step 1 – draw pane contents.
 	drawPaneContents(app.screen, root, rt)
 
@@ -96,7 +120,7 @@ func (app *App) render() {
 	drawScrollbars(app.screen, root, rt)
 
 	// Step 3.6 – status badges.
-	drawAllPaneStatus(app.screen, root, active, rt)
+	drawAllPaneStatus(app.screen, root, active, rt, false)
 
 	// Step 4 – place the hardware cursor inside the active pane.
 	// Hidden when the pane is in scrollback mode (cursor is in live view,
@@ -124,21 +148,23 @@ func (app *App) render() {
 	}
 
 	// Step 5 – drain OSC passthrough sequences.
-	// Written directly to os.Stdout BEFORE tcell.Show() so the host terminal
-	// receives OSC 7 (CWD), OSC 8 (hyperlinks), and OSC 52 (clipboard) in
-	// the correct order relative to screen content.  Safe because the render
-	// goroutine is the only writer to os.Stdout.
-drainOSC:
-	for {
-		select {
-		case seq := <-app.oscCh:
-			os.Stdout.Write(seq) //nolint:errcheck
-		default:
-			break drainOSC
-		}
-	}
+	drainOSC(app.oscCh)
 
 	app.screen.Show()
+}
+
+// drainOSC flushes any queued OSC sequences to os.Stdout.
+// Written before tcell.Show() so the host terminal receives OSC 7/8/52
+// in the correct order relative to screen content.
+func drainOSC(ch <-chan []byte) {
+	for {
+		select {
+		case seq := <-ch:
+			os.Stdout.Write(seq) //nolint:errcheck
+		default:
+			return
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

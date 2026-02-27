@@ -525,13 +525,13 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 
 // drawAllPaneStatus renders the status badge for every pane in the subtree.
 // Must be called AFTER all other drawing so the badge paints on top.
-func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane, rt resolvedTheme) {
+func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane, rt resolvedTheme, zoomed bool) {
 	if n.isLeaf() {
-		drawPaneStatus(scr, n.pane, n.pane == active, rt)
+		drawPaneStatus(scr, n.pane, n.pane == active, rt, zoomed)
 		return
 	}
-	drawAllPaneStatus(scr, n.left, active, rt)
-	drawAllPaneStatus(scr, n.right, active, rt)
+	drawAllPaneStatus(scr, n.left, active, rt, zoomed)
+	drawAllPaneStatus(scr, n.right, active, rt, zoomed)
 }
 
 // drawPaneStatus draws compact status badges in the top-right corner of
@@ -543,7 +543,7 @@ func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane, rt resolvedTheme
 //	[-N]                    – scrollback line count (yellow on black)
 //	[ COPIED ]              – temporary flash message (white on green)
 //	[⬡ my-toolbox]          – container/sudo/ssh context badge
-func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme) {
+func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, zoomed bool) {
 	p.mu.Lock()
 	fgProc := p.fgProcess
 	containerID := p.containerID
@@ -585,6 +585,14 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme) 
 		badges = append(badges, badge{
 			" " + tempMsg + " ",
 			tcell.StyleDefault.Foreground(badgeText).Background(colorGreen).Bold(true),
+		})
+	}
+
+	// 1b. Zoom indicator.
+	if zoomed {
+		badges = append(badges, badge{
+			" ZOOM ",
+			tcell.StyleDefault.Foreground(colorYellow).Background(colorDark).Bold(true),
 		})
 	}
 

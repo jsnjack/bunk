@@ -72,7 +72,10 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	// ── Identify the pane at the cursor position ──────────────────────────
 	app.mu.Lock()
 	var target *Pane
-	if app.root != nil {
+	if app.zoomedPane != nil {
+		// In zoom mode the zoomed pane covers the entire screen.
+		target = app.zoomedPane
+	} else if app.root != nil {
 		for _, leaf := range app.root.leaves() {
 			p := leaf.pane
 			if x >= p.x && x < p.x+p.w && y >= p.y && y < p.y+p.h {
