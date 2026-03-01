@@ -789,9 +789,11 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 		}
 		switch fgProc {
 		case "ssh", "mosh":
-			label := fgProc
+			label := "⇄"
 			if sshHost != "" {
 				label += " " + sshHost
+			} else {
+				label += " " + fgProc
 			}
 			parts = append(parts, label)
 		case "sudo":
