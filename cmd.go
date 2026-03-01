@@ -66,7 +66,12 @@ func run(configPath, themeName string, debug, trace bool) error {
 	case debug:
 		logLevel = "debug"
 	}
-	cleanup := initLogger(cfg.LogFile, logLevel)
+	// Only write to the log file when debug/trace is explicitly requested.
+	logFile := ""
+	if debug || trace {
+		logFile = cfg.LogFile
+	}
+	cleanup := initLogger(logFile, logLevel)
 	defer cleanup()
 
 	L.Info("bunk starting", "theme", themeName, "log_level", logLevel)
