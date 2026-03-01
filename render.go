@@ -222,6 +222,22 @@ func (app *App) emitTitle(active *Pane) {
 		}
 	}
 
+	// Append [active/total] when there are multiple panes.
+	if app.root != nil {
+		leaves := app.root.leaves()
+		total := len(leaves)
+		if total > 1 {
+			idx := 1
+			for i, n := range leaves {
+				if n.pane == active {
+					idx = i + 1
+					break
+				}
+			}
+			title = fmt.Sprintf("%s [%d/%d]", title, idx, total)
+		}
+	}
+
 	if title == app.lastEmittedTitle {
 		return
 	}
