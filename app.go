@@ -69,6 +69,11 @@ type App struct {
 	// selection into a different pane.  Cleared on Button1 release.
 	dragPane *Pane
 
+	// dragEdgeStop stops the edge-auto-scroll goroutine when a drag moves
+	// away from the edge or the button is released.  Nil when no goroutine
+	// is running.  Access only from the event-loop goroutine.
+	dragEdgeStop chan struct{}
+
 	// Search state.  All fields are protected by mu (read by the render loop,
 	// written by the event loop via enterSearch/exitSearch/updateSearch).
 	searchMode    bool

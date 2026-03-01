@@ -219,6 +219,16 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			if sel == nil {
 				sel = target
 			}
+			// Auto-scroll when the cursor is at the top or bottom edge of the
+			// pane.  The goroutine keeps scrolling at a fixed rate while the
+			// cursor stays at the edge (mouse motion events stop when stationary).
+			atTop := y <= sel.y
+			atBot := y >= sel.y+sel.h-1
+			if atTop || atBot {
+				app.startDragEdgeScroll(sel, atTop)
+			} else {
+				app.stopDragEdgeScroll()
+			}
 			vPos := screenToVirtual(sel, x, y)
 			L.Debug("mouse: drag select", "pane", sel.id, "vrow", vPos.row, "vcol", vPos.col)
 			sel.mu.Lock()
@@ -229,6 +239,8 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			return
 
 		case isRelease:
+			// Stop any edge auto-scroll goroutine.
+			app.stopDragEdgeScroll()
 			// After a double-click the word selection is already correct;
 			// don't overwrite selCursor with the release position.
 			app.mu.Lock()
@@ -523,4 +535,60 @@ func isWordChar(r rune) bool {
 		return true
 	}
 	return false
+}
+
+// startDragEdgeScroll starts (or restarts) a goroutine that scrolls sel in the
+// given direction while the cursor stays at the pane edge during a drag-select.
+// scrollUp=true scrolls toward the past; false scrolls toward the present.
+// If a goroutine is already running in the same direction nothing changes;
+// if the direction changed the old goroutine is stopped first.
+func (app *App) startDragEdgeScroll(sel *Pane, scrollUp bool) {
+	// If already scrolling in the same direction, leave it running.
+	if app.dragEdgeStop != nil {
+		return
+	}
+	stop := make(chan struct{})
+	app.dragEdgeStop = stop
+	go func() {
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				if scrollUp {
+					sel.scrollUp(1)
+				} else {
+					sel.scrollDown(1)
+				}
+				// Extend selCursor to the visible edge after scrolling.
+				sel.mu.Lock()
+				if sel.selActive {
+					cols, _ := sel.term.Size()
+					sbCount := sel.sb.count
+					sbOff := sel.sbOff
+					if scrollUp {
+						// Extend to the new top-left of the view.
+						vRow := sbCount - sbOff
+						sel.selCursor = selPos{row: vRow, col: 0}
+					} else {
+						// Extend to the new bottom-right of the view.
+						vRow := (sbCount - sbOff) + sel.h - 1
+						sel.selCursor = selPos{row: vRow, col: cols - 1}
+					}
+				}
+				sel.mu.Unlock()
+				app.triggerRedraw()
+			}
+		}
+	}()
+}
+
+// stopDragEdgeScroll stops the edge-auto-scroll goroutine if one is running.
+func (app *App) stopDragEdgeScroll() {
+	if app.dragEdgeStop != nil {
+		close(app.dragEdgeStop)
+		app.dragEdgeStop = nil
+	}
 }
