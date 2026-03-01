@@ -79,10 +79,15 @@ func (kb Keybinding) Matches(ev *tcell.EventKey) bool {
 	if ev.Key() != kb.key {
 		return false
 	}
-	// For modifier-less ctrl keys (ctrl+a … ctrl+z), modifiers are baked into
-	// the key code by tcell; no separate ModCtrl bit is set.  Compare the
-	// full modifier mask so that e.g. F1 does not match Alt+F1.
-	return ev.Modifiers() == kb.mod
+	evMod := ev.Modifiers()
+	// ctrl+letter keys (ctrl+a … ctrl+z) have the Ctrl baked into the key
+	// code by tcell; the ModCtrl bit may still be set in Modifiers() depending
+	// on the platform/terminal.  Strip it before comparing so that the stored
+	// mod=0 (set by parseKey) still matches.
+	if kb.key >= tcell.KeyCtrlA && kb.key <= tcell.KeyCtrlZ {
+		evMod &^= tcell.ModCtrl
+	}
+	return evMod == kb.mod
 }
 
 // String returns the human-readable key description.
