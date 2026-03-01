@@ -7,6 +7,7 @@ Splits your terminal into panes, reflows content on resize, and stays out of you
 
 - **Smart auto-split** (F1) — splits vertically or horizontally based on actual pixel dimensions
 - **Context-aware split** (Alt+F1) — re-opens the same container / SSH / sudo session in the new pane
+- **Zoom** (F12) — toggles fullscreen on the active pane without closing others
 - **Pane navigation** — Alt+Arrow keys move focus between panes
 - **Inherited working directory** — new panes open in the same directory as the active pane
 - **Content reflow** — text rewraps at the new column width on every split or close
@@ -44,6 +45,7 @@ fi
 |-----|--------|
 | `F1` | Split active pane into host shell (auto direction) |
 | `Alt+F1` | Split active pane, inheriting current context (container / SSH / sudo) |
+| `F12` | Toggle fullscreen zoom on the active pane |
 | `Ctrl+D` / `exit` | Close active pane |
 | `Ctrl+Q` | Quit bunk |
 | `Alt+←` `Alt+→` `Alt+↑` `Alt+↓` | Navigate between panes |
