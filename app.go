@@ -53,6 +53,10 @@ type App struct {
 	// the host terminal receives OSC 7/8/52 (CWD, hyperlinks, clipboard).
 	oscCh chan []byte
 
+	// lastEmittedTitle is the most recent title we wrote to the host terminal
+	// via OSC 0.  Compared each frame to avoid redundant writes.
+	lastEmittedTitle string
+
 	// prevMouseBtn remembers the last pressed mouse button so mouseToBytes can
 	// generate release events (only used in the event loop goroutine).
 	prevMouseBtn tcell.ButtonMask

@@ -25,6 +25,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -112,6 +113,7 @@ func (app *App) render() {
 		}
 
 		drainOSC(app.oscCh)
+		app.emitTitle(active)
 		app.screen.Show()
 		return
 	}
@@ -161,8 +163,9 @@ func (app *App) render() {
 			app.searchIdx, len(app.searchMatches))
 	}
 
-	// Step 5 – drain OSC passthrough sequences.
+	// Step 5 – drain OSC passthrough sequences and update host tab title.
 	drainOSC(app.oscCh)
+	app.emitTitle(active)
 
 	app.screen.Show()
 }
@@ -179,6 +182,52 @@ func drainOSC(ch <-chan []byte) {
 			return
 		}
 	}
+}
+
+// emitTitle writes an OSC 0 window-title sequence to the host terminal if the
+// active pane's title has changed since the last call.  This keeps the tab
+// title in Blackbox, Ptyxis, and other tabbed terminals up to date.
+//
+// Title priority:
+//  1. The title set by the pane's shell via OSC 0/1/2 (e.g. bash PROMPT_COMMAND).
+//  2. Fallback: "<fgProcess>: <cwd base>" when the shell emits no title.
+func (app *App) emitTitle(active *Pane) {
+	if active == nil {
+		return
+	}
+	active.mu.Lock()
+	title := active.term.Title()
+	fgProc := active.fgProcess
+	active.mu.Unlock()
+
+	if title == "" {
+		// Construct a basic title from process + cwd.
+		cwd := active.cwd()
+		if cwd != "" {
+			// Show only the last two path components to keep it short.
+			parts := strings.Split(strings.TrimRight(cwd, "/"), "/")
+			if len(parts) > 2 {
+				cwd = "…/" + parts[len(parts)-2] + "/" + parts[len(parts)-1]
+			}
+		}
+		switch {
+		case fgProc != "" && cwd != "":
+			title = fgProc + ": " + cwd
+		case cwd != "":
+			title = cwd
+		case fgProc != "":
+			title = fgProc
+		default:
+			title = "bunk"
+		}
+	}
+
+	if title == app.lastEmittedTitle {
+		return
+	}
+	app.lastEmittedTitle = title
+	// OSC 0 sets both icon name and window title; BEL-terminated.
+	os.Stdout.Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
 }
 
 // ---------------------------------------------------------------------------
