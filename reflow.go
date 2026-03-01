@@ -33,6 +33,65 @@ import (
 	"github.com/hinshun/vt10x"
 )
 
+// stripAltScreen removes alt-screen content from buf, keeping pre-entry and
+// post-exit bytes.  This prevents the scratch terminal from allocating a huge
+// alt-screen buffer during replay, and ensures pre-vim shell history is
+// preserved across resize (the previous approach of discarding everything
+// before the last exit sequence lost all pre-vim content).
+func stripAltScreen(buf []byte) []byte {
+	entrySeqs := [][]byte{
+		[]byte("\x1b[?1049h"),
+		[]byte("\x1b[?1047h"),
+		[]byte("\x1b[?47h"),
+	}
+	exitSeqs := [][]byte{
+		[]byte("\x1b[?1049l"),
+		[]byte("\x1b[?1047l"),
+		[]byte("\x1b[?47l"),
+	}
+
+	var result []byte
+	pos := 0
+	found := false
+	for pos < len(buf) {
+		entryPos := -1
+		for _, seq := range entrySeqs {
+			if p := bytes.Index(buf[pos:], seq); p >= 0 {
+				absPos := pos + p
+				if entryPos < 0 || absPos < entryPos {
+					entryPos = absPos
+				}
+			}
+		}
+		if entryPos < 0 {
+			if found {
+				result = append(result, buf[pos:]...)
+			}
+			break
+		}
+		found = true
+		result = append(result, buf[pos:entryPos]...)
+
+		exitEnd := -1
+		for _, seq := range exitSeqs {
+			if p := bytes.Index(buf[entryPos:], seq); p >= 0 {
+				absEnd := entryPos + p + len(seq)
+				if exitEnd < 0 || absEnd < exitEnd {
+					exitEnd = absEnd
+				}
+			}
+		}
+		if exitEnd < 0 {
+			break // entry with no exit — discard from entry onward
+		}
+		pos = exitEnd
+	}
+	if !found {
+		return buf
+	}
+	return result
+}
+
 // rowContentEnd returns the index one past the last non-blank cell in row.
 // Only cells with an actual visible character (non-NUL, non-space) are
 // considered content.  Trailing spaces are ignored regardless of their

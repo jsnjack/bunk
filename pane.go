@@ -397,10 +397,14 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 
 		// Restore the primary cursor to the position it had before the
 		// alt-screen was entered.  We use CUP (\x1b[row;colH, 1-based).
+		// Only apply to the live terminal, NOT rawBuf: the CUP row number
+		// is relative to the original (scrolling) terminal.  During replay
+		// into a tall scratch terminal (resizeAndReflow), the row numbering
+		// differs because nothing scrolled, so the CUP would position the
+		// cursor in the middle of content, causing contentRows to be wrong.
 		curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
 		L.Log(nil, LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
 		p.term.Write([]byte(curRestore)) //nolint:errcheck
-		p.rawBuf = append(p.rawBuf, curRestore...)
 	}
 
 	if prevGrid != nil {
@@ -590,30 +594,35 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	// Replay raw bytes into a tall scratch terminal so nothing scrolls off
 	// during replay and we can read back all rows.
 	//
-	// Start from after the last alt-screen exit when one is present.
-	// Everything before that point was the old primary-screen state that was
-	// restored by the alt-screen swap; re-injecting it brings back old shell
-	// history into rows the active program didn't write, making those rows
-	// look dirty after resize.  We look for all three alt-screen exit forms
-	// that vt10x recognises: \x1b[?1049l (modern), \x1b[?1047l, \x1b[?47l.
+	// Alt-screen sessions (vim, htop, etc.) are stripped from the replay
+	// buffer — their absolute-position content doesn't replay meaningfully,
+	// and stripping avoids allocating a large alt-screen buffer in the
+	// scratch terminal.  Pre-vim shell history is preserved.
 	replayH := p.scrollbackLines + newRows
 	scratch := vt10x.New(vt10x.WithSize(newCols, replayH))
-	replay := p.rawBuf
-	lastExit := -1
-	for _, seq := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
-		if pos := bytes.LastIndex(replay, []byte(seq)); pos > lastExit {
-			lastExit = pos + len(seq)
-		}
-	}
-	if lastExit >= 0 {
-		replay = replay[lastExit:]
-	}
+	replay := stripAltScreen(p.rawBuf)
 	// Prepend a full SGR reset so trimmed attribute state doesn't bleed.
 	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
 
-	// Content extent: the cursor row is the last line the shell wrote to.
+	// Content extent: use the cursor row, but also scan for the last
+	// non-blank row.  Take the maximum: CUP sequences (cursor position)
+	// in the replay can move the cursor backwards, making cur.Y too small.
 	cur := scratch.Cursor()
 	contentRows := cur.Y + 1
+	for r := replayH - 1; r >= contentRows; r-- {
+		blank := true
+		for c := 0; c < newCols; c++ {
+			g := scratch.Cell(c, r)
+			if g.Char != 0 && g.Char != ' ' {
+				blank = false
+				break
+			}
+		}
+		if !blank {
+			contentRows = r + 1
+			break
+		}
+	}
 
 	// Split: rows [0, firstVisible) → scrollback; [firstVisible, contentRows) → live terminal.
 	firstVisible := contentRows - newRows
@@ -667,10 +676,25 @@ func (p *Pane) rebuildScrollbackFromRawBuf() {
 	}
 	replayH := p.scrollbackLines + rows
 	scratch := vt10x.New(vt10x.WithSize(cols, replayH))
-	scratch.Write(append([]byte("\x1b[0m"), p.rawBuf...)) //nolint:errcheck
+	replay := stripAltScreen(p.rawBuf)
+	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
 
 	cur := scratch.Cursor()
 	contentRows := cur.Y + 1
+	for r := replayH - 1; r >= contentRows; r-- {
+		blank := true
+		for c := 0; c < cols; c++ {
+			g := scratch.Cell(c, r)
+			if g.Char != 0 && g.Char != ' ' {
+				blank = false
+				break
+			}
+		}
+		if !blank {
+			contentRows = r + 1
+			break
+		}
+	}
 	firstVisible := contentRows - rows
 	if firstVisible < 0 {
 		firstVisible = 0
