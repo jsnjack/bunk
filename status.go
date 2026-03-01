@@ -22,10 +22,15 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 )
+
+// podmanNameCache maps hex container IDs to friendly names so that
+// `podman inspect` is only spawned once per container across all panes.
+var podmanNameCache sync.Map // key: string containerID, value: string name
 
 // ---------------------------------------------------------------------------
 // /proc helpers
@@ -427,14 +432,22 @@ func podmanContainerName(containerID string) string {
 	if containerID == "" {
 		return ""
 	}
+	if v, ok := podmanNameCache.Load(containerID); ok {
+		return v.(string)
+	}
 	out, err := exec.Command("podman", "inspect", "--format", "{{.Name}}", containerID).Output()
+	var name string
 	if err != nil || len(out) == 0 {
 		if len(containerID) > 12 {
-			return containerID[:12]
+			name = containerID[:12]
+		} else {
+			name = containerID
 		}
-		return containerID
+	} else {
+		name = strings.TrimSpace(string(out))
 	}
-	return strings.TrimSpace(string(out))
+	podmanNameCache.Store(containerID, name)
+	return name
 }
 
 // detectContainerInfoFromProcEnv returns the
@@ -629,6 +642,7 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 	defer ticker.Stop()
 
 	var lastName, lastCT, lastCN, lastSSHHost string
+	var lastPGID int // cached to skip expensive /proc reads when unchanged
 	for {
 		select {
 		case <-done:
@@ -651,27 +665,28 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 			name = procComm(pgid)
 		}
 
-		// Detect container context of the current foreground process.
-		// If the user ran `podman exec`, `toolbox enter`, etc., the
-		// foreground PGID's /proc environ will carry the container markers.
-		// Fall back to the pane's startup-detected base context when the
-		// foreground process has no container markers.
-		ct, cn := "", ""
-		if pgid > 0 {
-			ct, cn = detectContainerInfoFromProcEnv(pgid)
-			L.Debug("trackFgProcess: detection", "pane", p.id, "pgid", pgid, "name", name, "ct", ct, "cn", cn)
-		}
-		if ct == "" {
-			ct, cn = baseCT, baseCN
-		}
-
-		// Detect SSH/mosh hostname from the foreground process cmdline.
-		sshHost := ""
-		if (name == "ssh" || name == "mosh") && pgid > 0 {
-			data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pgid))
-			if err == nil && len(data) > 0 {
-				raw := strings.TrimRight(string(data), "\x00")
-				sshHost = sshHostFromCmdline(strings.Split(raw, "\x00"))
+		// Only re-run the expensive detection (/proc/environ, cgroup, podman
+		// inspect) when the foreground PGID actually changes.  For most ticks
+		// the foreground process is idle at the shell prompt, so this skips
+		// virtually all costly reads.
+		ct, cn, sshHost := lastCT, lastCN, lastSSHHost
+		if pgid != lastPGID {
+			lastPGID = pgid
+			ct, cn = "", ""
+			sshHost = ""
+			if pgid > 0 {
+				ct, cn = detectContainerInfoFromProcEnv(pgid)
+				L.Debug("trackFgProcess: detection (pgid changed)", "pane", p.id, "pgid", pgid, "name", name, "ct", ct, "cn", cn)
+			}
+			if ct == "" {
+				ct, cn = baseCT, baseCN
+			}
+			if (name == "ssh" || name == "mosh") && pgid > 0 {
+				data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pgid))
+				if err == nil && len(data) > 0 {
+					raw := strings.TrimRight(string(data), "\x00")
+					sshHost = sshHostFromCmdline(strings.Split(raw, "\x00"))
+				}
 			}
 		}
 
