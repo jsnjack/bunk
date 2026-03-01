@@ -87,10 +87,12 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 
 	// ── Click-to-focus ────────────────────────────────────────────────────
 	var prevActive *Pane
+	// Don't switch focus while a drag-select is in progress.
 	if target != nil && btn != tcell.ButtonNone &&
 		btn != tcell.WheelUp && btn != tcell.WheelDown &&
 		btn != tcell.WheelLeft && btn != tcell.WheelRight &&
-		target != app.active && !target.isDead() {
+		target != app.active && !target.isDead() &&
+		app.dragPane == nil {
 		prevActive = app.active
 		L.Debug("mouse: click-to-focus", "from_pane", func() int {
 			if prevActive != nil {
@@ -106,6 +108,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	if target != nil {
 		tx, ty = target.x, target.y
 	}
+	dragPane := app.dragPane
 	app.mu.Unlock()
 
 	// ── Focus events ──────────────────────────────────────────────────────
@@ -188,11 +191,18 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				L.Debug("mouse: double-click word select", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
 				selectWord(target, vPos)
 				app.dblClickActive = true
+				app.mu.Lock()
+				app.dragPane = target
+				app.mu.Unlock()
 				app.triggerRedraw()
 				return
 			}
 
 			L.Debug("mouse: button1 press (clear selection)", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
+			// Record the pane where the drag starts.
+			app.mu.Lock()
+			app.dragPane = target
+			app.mu.Unlock()
 			// Clear any existing selection immediately on press.
 			// Selection is only activated once the user starts dragging.
 			target.mu.Lock()
@@ -204,45 +214,76 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			return
 
 		case isDrag:
-			vPos := screenToVirtual(target, x, y)
-			L.Debug("mouse: drag select", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
-			target.mu.Lock()
-			target.selActive = true // engage selection on real drag
-			target.selCursor = vPos
-			target.mu.Unlock()
+			// Clamp to the pane where the drag started.
+			sel := dragPane
+			if sel == nil {
+				sel = target
+			}
+			vPos := screenToVirtual(sel, x, y)
+			L.Debug("mouse: drag select", "pane", sel.id, "vrow", vPos.row, "vcol", vPos.col)
+			sel.mu.Lock()
+			sel.selActive = true // engage selection on real drag
+			sel.selCursor = vPos
+			sel.mu.Unlock()
 			app.triggerRedraw()
 			return
 
 		case isRelease:
 			// After a double-click the word selection is already correct;
 			// don't overwrite selCursor with the release position.
+			app.mu.Lock()
+			app.dragPane = nil
+			app.mu.Unlock()
 			if app.dblClickActive {
 				app.dblClickActive = false
 				app.triggerRedraw()
 				return
 			}
+			// Clamp release to the pane where the drag started.
+			sel := dragPane
+			if sel == nil {
+				sel = target
+			}
 			// For a drag-select: finalise the cursor position.
-			// We hold target.mu here, so inline the virtual-coord math
-			// instead of calling screenToVirtual (which also locks target.mu).
-			target.mu.Lock()
-			if target.selActive {
-				col := x - target.x
-				row := y - target.y
-				vRow := (target.sb.count - target.sbOff) + row
-				target.selCursor = selPos{row: vRow, col: col}
-				L.Debug("mouse: drag-select released", "pane", target.id, "vrow", vRow, "vcol", col)
+			// We hold sel.mu here, so inline the virtual-coord math
+			// instead of calling screenToVirtual (which also locks sel.mu).
+			sel.mu.Lock()
+			if sel.selActive {
+				col := x - sel.x
+				row := y - sel.y
+				// Clamp coordinates to the pane bounds.
+				if col < 0 {
+					col = 0
+				} else if col >= sel.w {
+					col = sel.w - 1
+				}
+				if row < 0 {
+					row = 0
+				} else if row >= sel.h {
+					row = sel.h - 1
+				}
+				vRow := (sel.sb.count - sel.sbOff) + row
+				sel.selCursor = selPos{row: vRow, col: col}
+				L.Debug("mouse: drag-select released", "pane", sel.id, "vrow", vRow, "vcol", col)
 			}
 			// If selActive is false this was a plain click – selection
 			// was already cleared on press, nothing more to do.
-			target.mu.Unlock()
+			sel.mu.Unlock()
 			app.triggerRedraw()
 			return
 		}
 	} else if isPress {
 		// App has mouse mode and shift not held: clear any existing selection.
+		app.mu.Lock()
+		app.dragPane = nil
+		app.mu.Unlock()
 		target.mu.Lock()
 		target.selActive = false
 		target.mu.Unlock()
+	} else if isRelease {
+		app.mu.Lock()
+		app.dragPane = nil
+		app.mu.Unlock()
 	}
 
 	// ── Mouse passthrough to PTY ──────────────────────────────────────────

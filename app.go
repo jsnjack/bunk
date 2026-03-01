@@ -63,6 +63,12 @@ type App struct {
 	lastClickPane  *Pane
 	dblClickActive bool // release should not overwrite word selection
 
+	// dragPane is the pane where the current Button1 drag started.
+	// All drag-select and release events are clamped to this pane so that
+	// moving the cursor outside the originating pane doesn't extend the
+	// selection into a different pane.  Cleared on Button1 release.
+	dragPane *Pane
+
 	// Search state.  All fields are protected by mu (read by the render loop,
 	// written by the event loop via enterSearch/exitSearch/updateSearch).
 	searchMode    bool
