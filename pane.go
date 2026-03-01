@@ -730,7 +730,8 @@ func (p *Pane) close() {
 }
 
 // cwd returns the working directory of the pane's foreground process (or the
-// shell itself).  Returns "" if the information is unavailable.
+// shell itself).  Returns "" if the information is unavailable or the path
+// doesn't exist on the host (e.g. a container-internal path).
 func (p *Pane) cwd() string {
 	if p.cmd.Process == nil {
 		return ""
@@ -739,14 +740,19 @@ func (p *Pane) cwd() string {
 	// Try the foreground process first, fall back to the shell itself.
 	if pgid := termFgPGID(pid); pgid > 0 {
 		if d, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pgid)); err == nil {
-			return d
+			if info, err := os.Stat(d); err == nil && info.IsDir() {
+				return d
+			}
 		}
 	}
 	d, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
 	if err != nil {
 		return ""
 	}
-	return d
+	if info, err := os.Stat(d); err == nil && info.IsDir() {
+		return d
+	}
+	return ""
 }
 
 // closePTX closes the PTY master exactly once.  Closing the master causes the

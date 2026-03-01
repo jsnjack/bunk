@@ -68,6 +68,118 @@ func procComm(pid int) string {
 	return strings.TrimSpace(string(data))
 }
 
+// fgProcessCmdline returns the full argv of the foreground process group
+// of the shell with the given PID.  Used by Alt+F1 to clone ssh/sudo sessions.
+func fgProcessCmdline(shellPid int) []string {
+	pgid := termFgPGID(shellPid)
+	if pgid <= 0 {
+		return nil
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pgid))
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	raw := strings.TrimRight(string(data), "\x00")
+	return strings.Split(raw, "\x00")
+}
+
+// findContainerByAncestor asks the container runtime to list running containers
+// whose image matches imageName.  Returns the first container ID found, or "".
+// Used as a fallback when process-tree walking cannot find the container.
+func findContainerByAncestor(imageName, containerType string) string {
+	ct := containerType
+	if ct == "" {
+		ct = "podman"
+	}
+	out, err := exec.Command(ct, "ps", "-q", "--filter", "ancestor="+imageName, "--format", "{{.ID}}").Output()
+	if err != nil || len(out) == 0 {
+		// docker uses a slightly different --format syntax; try without it
+		out, err = exec.Command(ct, "ps", "-q", "--filter", "ancestor="+imageName).Output()
+		if err != nil || len(out) == 0 {
+			return ""
+		}
+	}
+	// take the first ID on the first line
+	line := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	return line
+}
+
+// findRunningContainerFromPID walks the child process tree rooted at pid
+// looking for a process whose cgroup matches a libpod container (podman/docker).
+// Returns the container ID (hex) on success, "" on failure.
+// Used to resolve the actual container ID when "podman run" is the foreground
+// process — in that case the image name is known but not the container ID.
+func findRunningContainerFromPID(pid int) string {
+	var walk func(pid int, depth int) string
+	walk = func(pid int, depth int) string {
+		if depth > 6 || pid <= 1 {
+			return ""
+		}
+		if ct, cid := detectFromCgroup(pid); ct == "podman" && cid != "" {
+			return cid
+		}
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", pid, pid))
+		if err != nil {
+			return ""
+		}
+		for _, s := range strings.Fields(string(data)) {
+			child, _ := strconv.Atoi(s)
+			if child > 1 {
+				if id := walk(child, depth+1); id != "" {
+					return id
+				}
+			}
+		}
+		return ""
+	}
+	return walk(pid, 0)
+}
+// an lxc/incus exec ancestor.  Returns the full argv of that process, which
+// includes the container name and the command that was used to enter it
+// (e.g. ["lxc", "exec", "xx", "--", "su", "--login", "jsn"]).
+// Returns nil if no such ancestor is found within 20 levels.
+func findLXCAncestorCmdline(pid int) []string {
+	visited := map[int]bool{}
+	current := pid
+	for depth := 0; depth < 20; depth++ {
+		if visited[current] || current <= 1 {
+			break
+		}
+		visited[current] = true
+
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", current))
+		if err == nil && len(data) > 0 {
+			args := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
+			if len(args) > 0 {
+				bin := args[0]
+				if idx := strings.LastIndexByte(bin, '/'); idx >= 0 {
+					bin = bin[idx+1:]
+				}
+				if (bin == "lxc" || bin == "incus") && len(args) > 1 && args[1] == "exec" {
+					return args
+				}
+			}
+		}
+
+		statusData, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", current))
+		if err != nil {
+			break
+		}
+		ppid := 0
+		for _, line := range strings.Split(string(statusData), "\n") {
+			if strings.HasPrefix(line, "PPid:") {
+				fmt.Sscanf(strings.TrimPrefix(line, "PPid:"), "%d", &ppid)
+				break
+			}
+		}
+		if ppid <= 1 {
+			break
+		}
+		current = ppid
+	}
+	return nil
+}
+
 // detectFromEnvSlice checks a slice of "KEY=VALUE" strings for known
 // container markers.  Returns "toolbox", "distrobox", "podman", or "".
 func detectFromEnvSlice(env []string) string {
@@ -191,12 +303,35 @@ func containerSpawnArgs(containerID, containerType, shell string) []string {
 		return []string{"distrobox", "enter", "-n", containerID, "--", shell}
 	case "podman":
 		return []string{"podman", "exec", "-it", containerID, shell}
+	case "lxc", "incus":
+		return []string{containerType, "exec", containerID, "--", shell}
 	case "lxd":
 		// bunk is running inside the LXD container; child panes inherit
 		// the container context automatically.  No wrapper needed.
 		return nil
 	}
 	return nil
+}
+
+// isRunningContainer checks whether containerID refers to a running container
+// that we can exec into.  Returns false for image names (from "podman run")
+// or stopped containers.
+func isRunningContainer(containerID, containerType string) bool {
+	switch containerType {
+	case "podman", "docker":
+		out, err := exec.Command(containerType, "inspect", "--format", "{{.State.Running}}", containerID).Output()
+		return err == nil && strings.TrimSpace(string(out)) == "true"
+	case "toolbox":
+		out, err := exec.Command("podman", "inspect", "--format", "{{.State.Running}}", containerID).Output()
+		return err == nil && strings.TrimSpace(string(out)) == "true"
+	case "distrobox":
+		out, err := exec.Command("podman", "inspect", "--format", "{{.State.Running}}", containerID).Output()
+		return err == nil && strings.TrimSpace(string(out)) == "true"
+	case "lxc", "incus":
+		out, err := exec.Command(containerType, "info", containerID).Output()
+		return err == nil && strings.Contains(string(out), "Status: RUNNING")
+	}
+	return true // unknown types: assume OK
 }
 
 // ---------------------------------------------------------------------------
@@ -401,9 +536,6 @@ func detectExecSession(pid int) (ctype, cname string) {
 	case "lxc", "incus":
 		// lxc exec CONTAINER -- COMMAND [ARG...]
 		// incus exec CONTAINER -- COMMAND [ARG...]
-		// The subcommand IS the container name when the first non-flag arg
-		// is not a known lxc subcommand.  lxc/incus uses positional: first arg is
-		// always the subcommand, second is the container.
 		if subcmd != "exec" && subcmd != "shell" {
 			return "", ""
 		}
@@ -412,7 +544,7 @@ func detectExecSession(pid int) (ctype, cname string) {
 		if name == "" {
 			return "", ""
 		}
-		return "lxd", name
+		return bin, name // "lxc" or "incus" as type
 	}
 
 	return "", ""

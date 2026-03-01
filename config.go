@@ -80,8 +80,9 @@ func (kb Keybinding) Matches(ev *tcell.EventKey) bool {
 		return false
 	}
 	// For modifier-less ctrl keys (ctrl+a … ctrl+z), modifiers are baked into
-	// the key code by tcell; no separate ModCtrl bit is set.
-	return ev.Modifiers()&kb.mod == kb.mod
+	// the key code by tcell; no separate ModCtrl bit is set.  Compare the
+	// full modifier mask so that e.g. F1 does not match Alt+F1.
+	return ev.Modifiers() == kb.mod
 }
 
 // String returns the human-readable key description.
@@ -148,21 +149,22 @@ func mustParseKey(s string) Keybinding {
 
 // Keybindings holds one resolved Keybinding per named action.
 type Keybindings struct {
-	Split      Keybinding
-	Quit       Keybinding
-	Copy       Keybinding
-	Paste      Keybinding
-	Search     Keybinding
-	Zoom       Keybinding
-	NavUp      Keybinding
-	NavDown    Keybinding
-	NavLeft    Keybinding
-	NavRight   Keybinding
-	ScrollUp   Keybinding
-	ScrollDown Keybinding
-	SearchNext Keybinding
-	SearchPrev Keybinding
-	SearchExit Keybinding
+	Split        Keybinding
+	SplitContext Keybinding
+	Quit         Keybinding
+	Copy         Keybinding
+	Paste        Keybinding
+	Search       Keybinding
+	Zoom         Keybinding
+	NavUp        Keybinding
+	NavDown      Keybinding
+	NavLeft      Keybinding
+	NavRight     Keybinding
+	ScrollUp     Keybinding
+	ScrollDown   Keybinding
+	SearchNext   Keybinding
+	SearchPrev   Keybinding
+	SearchExit   Keybinding
 }
 
 // keybindingDefaults is the single source of truth for action names, their
@@ -176,6 +178,7 @@ type kbEntry struct {
 
 var keybindingDefaults = []kbEntry{
 	{"split", func(k *Keybindings) *Keybinding { return &k.Split }, "f1"},
+	{"split_context", func(k *Keybindings) *Keybinding { return &k.SplitContext }, "alt+f1"},
 	{"quit", func(k *Keybindings) *Keybinding { return &k.Quit }, "ctrl+q"},
 	{"copy", func(k *Keybindings) *Keybinding { return &k.Copy }, "ctrl+c"},
 	{"paste", func(k *Keybindings) *Keybinding { return &k.Paste }, "ctrl+v"},
@@ -494,7 +497,8 @@ scrollbar_track = ""  # scrollbar background
 # Modifiers: ctrl, alt, shift.  Key names are case-insensitive.
 # Leave a value empty (or remove the line) to keep the built-in default.
 [keys]
-split        = "f1"          # auto-split the active pane
+split         = "f1"          # auto-split the active pane (host shell)
+split_context = "alt+f1"     # auto-split inheriting container/ssh/sudo context
 quit         = "ctrl+q"      # quit bunk
 copy         = "ctrl+c"      # copy selection (if active); otherwise forwards to shell
 paste        = "ctrl+v"      # paste from clipboard
