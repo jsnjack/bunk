@@ -124,7 +124,7 @@ type Pane struct {
 //	paneDead  – receives p when the shell exits
 //	done      – closed by the app on shutdown
 //	oscCh     – receives OSC 7/8/52 sequences to forward to the host terminal
-func NewPane(id, x, y, w, h, scrollback int, spawnArgs []string, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
+func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"
@@ -134,6 +134,9 @@ func NewPane(id, x, y, w, h, scrollback int, spawnArgs []string, redraw chan str
 	}
 
 	cmd := exec.Command(spawnArgs[0], spawnArgs[1:]...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 
 	// Build the child environment.
 	// Filter out TERM and COLORTERM from the host before setting our own.
@@ -724,6 +727,26 @@ func (p *Pane) close() {
 	if p.cmd.Process != nil {
 		p.cmd.Process.Signal(syscall.SIGHUP) //nolint:errcheck
 	}
+}
+
+// cwd returns the working directory of the pane's foreground process (or the
+// shell itself).  Returns "" if the information is unavailable.
+func (p *Pane) cwd() string {
+	if p.cmd.Process == nil {
+		return ""
+	}
+	pid := p.cmd.Process.Pid
+	// Try the foreground process first, fall back to the shell itself.
+	if pgid := termFgPGID(pid); pgid > 0 {
+		if d, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pgid)); err == nil {
+			return d
+		}
+	}
+	d, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+	if err != nil {
+		return ""
+	}
+	return d
 }
 
 // closePTX closes the PTY master exactly once.  Closing the master causes the

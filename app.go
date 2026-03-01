@@ -368,6 +368,9 @@ func (app *App) splitActive() {
 	}
 	nx, ny := rx, ry
 
+	// Inherit the working directory from the active pane's foreground process.
+	dir := app.active.cwd()
+
 	app.active.mu.Lock()
 	cid := app.active.containerID
 	ct := app.active.containerType
@@ -381,7 +384,7 @@ func (app *App) splitActive() {
 		spawnArgs = containerSpawnArgs(cid, ct, shell)
 	}
 
-	newPane, err := NewPane(app.nextID, nx, ny, nw, nh, app.scrollback, spawnArgs, app.redraw, app.paneDead, app.done, app.oscCh)
+	newPane, err := NewPane(app.nextID, nx, ny, nw, nh, app.scrollback, dir, spawnArgs, app.redraw, app.paneDead, app.done, app.oscCh)
 	if err != nil {
 		L.Error("splitActive: NewPane", "err", err)
 		return
