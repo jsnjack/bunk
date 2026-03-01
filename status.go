@@ -83,7 +83,40 @@ func fgProcessCmdline(shellPid int) []string {
 	return strings.Split(raw, "\x00")
 }
 
-// findContainerByAncestor asks the container runtime to list running containers
+// sshHostFromCmdline parses the remote hostname from an ssh/mosh argv slice.
+// It skips the program name and any flag arguments (those starting with "-"
+// and their values), then returns the first bare argument — the destination.
+// The user@ prefix is stripped so only the hostname is returned.
+func sshHostFromCmdline(args []string) string {
+	// Flags that consume the next argument as a value.
+	valueFlags := map[string]bool{
+		"-b": true, "-c": true, "-D": true, "-e": true, "-E": true,
+		"-F": true, "-i": true, "-J": true, "-l": true, "-L": true,
+		"-m": true, "-o": true, "-p": true, "-Q": true, "-R": true,
+		"-S": true, "-w": true, "-W": true,
+	}
+	skip := false
+	for _, a := range args[1:] {
+		if skip {
+			skip = false
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			if valueFlags[a] {
+				skip = true
+			}
+			continue
+		}
+		// First non-flag arg is user@host or host.
+		if idx := strings.Index(a, "@"); idx >= 0 {
+			return a[idx+1:]
+		}
+		return a
+	}
+	return ""
+}
+
+
 // whose image matches imageName.  Returns the first container ID found, or "".
 // Used as a fallback when process-tree walking cannot find the container.
 func findContainerByAncestor(imageName, containerType string) string {
@@ -595,7 +628,7 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
-	var lastName, lastCT, lastCN string
+	var lastName, lastCT, lastCN, lastSSHHost string
 	for {
 		select {
 		case <-done:
@@ -632,16 +665,27 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 			ct, cn = baseCT, baseCN
 		}
 
-		if name == lastName && ct == lastCT && cn == lastCN {
+		// Detect SSH/mosh hostname from the foreground process cmdline.
+		sshHost := ""
+		if (name == "ssh" || name == "mosh") && pgid > 0 {
+			data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pgid))
+			if err == nil && len(data) > 0 {
+				raw := strings.TrimRight(string(data), "\x00")
+				sshHost = sshHostFromCmdline(strings.Split(raw, "\x00"))
+			}
+		}
+
+		if name == lastName && ct == lastCT && cn == lastCN && sshHost == lastSSHHost {
 			continue
 		}
-		L.Debug("trackFgProcess: status change", "pane", p.id, "name", name, "container_type", ct, "container_id", cn)
-		lastName, lastCT, lastCN = name, ct, cn
+		L.Debug("trackFgProcess: status change", "pane", p.id, "name", name, "container_type", ct, "container_id", cn, "ssh_host", sshHost)
+		lastName, lastCT, lastCN, lastSSHHost = name, ct, cn, sshHost
 
 		p.mu.Lock()
 		p.fgProcess = name
 		p.containerType = ct
 		p.containerID = cn
+		p.sshHost = sshHost
 		p.mu.Unlock()
 
 		select {
@@ -684,6 +728,7 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 	sbOff := p.sbOff
 	tempMsg := p.statusMsg
 	tempActive := !p.statusMsgEnd.IsZero() && time.Now().Before(p.statusMsgEnd)
+	sshHost := p.sshHost
 	p.mu.Unlock()
 
 	// Badge colors derived from the theme palette so they adapt automatically.
@@ -743,8 +788,12 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 			parts = append(parts, icon+" "+label)
 		}
 		switch fgProc {
-		case "ssh":
-			parts = append(parts, "ssh")
+		case "ssh", "mosh":
+			label := fgProc
+			if sshHost != "" {
+				label += " " + sshHost
+			}
+			parts = append(parts, label)
 		case "sudo":
 			parts = append(parts, "sudo")
 		case "su":

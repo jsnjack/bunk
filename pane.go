@@ -86,6 +86,7 @@ type Pane struct {
 	fgProcess     string // name of the current foreground process (e.g. "ssh", "sudo")
 	containerID   string // active container name (updated live by trackFgProcess)
 	containerType string // "toolbox", "distrobox", "podman", "lxc", or ""
+	sshHost       string // remote hostname when fgProcess is "ssh" or "mosh"
 
 	// baseContainerType/ID are set once at startup and represent the static
 	// container context of the pane itself (e.g. bunk running inside a
