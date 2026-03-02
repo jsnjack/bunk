@@ -81,7 +81,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 
 	// Prevent nested sessions: BUNK=1 is set in every pane's environment.
 	if os.Getenv("BUNK") != "" {
-		fmt.Fprintf(os.Stderr, "%s\nAlready inside a bunk session — nested sessions are not supported.\n\n%s\n",
+		fmt.Fprintf(os.Stderr, "%s\nAlready inside a bunk session (BUNK environment variable is set).\n\n%s\n",
 			bunkLogo(), keybindingsHelpText(&cfg.Keybindings))
 		os.Exit(1)
 	}
