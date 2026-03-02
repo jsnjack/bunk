@@ -1,4 +1,4 @@
-// render.go – screen painting.
+// render.go - screen painting.
 //
 // The render loop waits for redraw signals, then:
 //  1. Iterates every leaf's vt10x virtual grid and copies cells to tcell.
@@ -118,13 +118,13 @@ func (app *App) render() {
 		return
 	}
 
-	// Step 1 – draw pane contents.
+	// Step 1 - draw pane contents.
 	drawPaneContents(app.screen, root, rt)
 
-	// Step 2 – draw inter-pane separator lines.
+	// Step 2 - draw inter-pane separator lines.
 	drawBorders(app.screen, root, rt)
 
-	// Step 3 – re-draw borders adjacent to the active pane in accent color.
+	// Step 3 - re-draw borders adjacent to the active pane in accent color.
 	if active != nil {
 		activeStyle := tcell.StyleDefault.
 			Foreground(rt.activeBorder).
@@ -132,13 +132,13 @@ func (app *App) render() {
 		paintActiveBorders(app.screen, root, active, activeStyle)
 	}
 
-	// Step 3.5 – scrollbars.
+	// Step 3.5 - scrollbars.
 	drawScrollbars(app.screen, root, rt)
 
-	// Step 3.6 – status badges.
+	// Step 3.6 - status badges.
 	drawAllPaneStatus(app.screen, root, active, rt, false)
 
-	// Step 4 – place the hardware cursor inside the active pane.
+	// Step 4 - place the hardware cursor inside the active pane.
 	// Hidden when the pane is in scrollback mode (cursor is in live view,
 	// not in the scrolled-back view the user is reading).
 	if active != nil {
@@ -157,13 +157,13 @@ func (app *App) render() {
 		app.screen.HideCursor()
 	}
 
-	// Step 4.5 – search bar overlay (drawn on top of pane content).
+	// Step 4.5 - search bar overlay (drawn on top of pane content).
 	if app.searchMode && app.searchPane != nil {
 		drawSearchBar(app.screen, app.searchPane, app.searchQuery,
 			app.searchIdx, len(app.searchMatches))
 	}
 
-	// Step 5 – drain OSC passthrough sequences and update host tab title.
+	// Step 5 - drain OSC passthrough sequences and update host tab title.
 	drainOSC(app.oscCh)
 	app.emitTitle(active)
 
@@ -295,7 +295,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			useTermDirect = false
 			switch {
 			case vRow < 0:
-				// Before the oldest captured line – render blank.
+				// Before the oldest captured line - render blank.
 			case vRow < sbCount:
 				cells = p.sb.get(vRow)
 			default:
@@ -402,8 +402,8 @@ func drawScrollbars(scr tcell.Screen, n *Node, rt resolvedTheme) {
 //
 // Characters (thin, minimal):
 //
-//	'▕'  U+2595  RIGHT ONE EIGHTH BLOCK – empty track
-//	'▐'  U+2590  RIGHT HALF BLOCK       – scrollbar thumb
+//	'▕'  U+2595  RIGHT ONE EIGHTH BLOCK - empty track
+//	'▐'  U+2590  RIGHT HALF BLOCK       - scrollbar thumb
 func drawScrollbar(scr tcell.Screen, bx, by, h, sbCount, sbOff int, rt resolvedTheme) {
 	total := sbCount + h // total virtual lines
 
@@ -563,14 +563,14 @@ func paintActiveBorders(scr tcell.Screen, n *Node, active *Pane, style tcell.Sty
 // ---------------------------------------------------------------------------
 
 // vtColor converts a vt10x Color to the nearest tcell Color, applying the
-// theme palette for ANSI colors 0–15 and the theme's fg/bg for defaults.
+// theme palette for ANSI colors 0-15 and the theme's fg/bg for defaults.
 func vtColor(c vt10x.Color, def tcell.Color, rt resolvedTheme) tcell.Color {
 	switch c {
 	case vt10x.DefaultFG, vt10x.DefaultBG, vt10x.DefaultCursor:
 		return def
 	}
 	if c < 16 {
-		// ANSI colors 0–15: use theme palette, or fall through to the
+		// ANSI colors 0-15: use theme palette, or fall through to the
 		// terminal's own palette when the theme leaves the slot unset.
 		if rt.palette[c] != tcell.ColorDefault {
 			return rt.palette[c]
@@ -578,7 +578,7 @@ func vtColor(c vt10x.Color, def tcell.Color, rt resolvedTheme) tcell.Color {
 		return tcell.PaletteColor(int(c))
 	}
 	if c < 256 {
-		// xterm-256 colors 16–255: standard palette.
+		// xterm-256 colors 16-255: standard palette.
 		return tcell.PaletteColor(int(c))
 	}
 	if c < vt10x.DefaultFG {

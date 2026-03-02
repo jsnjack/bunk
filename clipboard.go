@@ -1,17 +1,17 @@
-// clipboard.go – write text to the system clipboard.
+// clipboard.go - write text to the system clipboard.
 //
 // Strategy (in order):
 //  1. OSC 52: the host terminal sets its own clipboard directly.  Works in
 //     Kitty, Alacritty, foot, WezTerm, xterm (with allowWindowOps), and many
 //     others.  Routed through the render loop's oscCh so it is emitted to
-//     os.Stdout just before tcell.Show() – the only safe write window.
-//  2. wl-copy  – Wayland clipboard tool (wl-clipboard package).
-//  3. xclip    – X11 clipboard tool.
-//  4. xsel     – X11 clipboard tool (alternative).
+//     os.Stdout just before tcell.Show() - the only safe write window.
+//  2. wl-copy  - Wayland clipboard tool (wl-clipboard package).
+//  3. xclip    - X11 clipboard tool.
+//  4. xsel     - X11 clipboard tool (alternative).
 //
 // The native tools are attempted in a background goroutine so they never block
 // the event loop.  Failures are silently ignored; if none of the tools exist
-// and the terminal doesn't support OSC 52, the user simply won't get a copy –
+// and the terminal doesn't support OSC 52, the user simply won't get a copy -
 // which is better than crashing.
 package main
 
@@ -85,11 +85,11 @@ func readClipboard() string {
 	if out, err := exec.Command("wl-paste", "--no-newline").Output(); err == nil {
 		return string(out)
 	}
-	// X11 – xclip
+	// X11 - xclip
 	if out, err := exec.Command("xclip", "-selection", "clipboard", "-o").Output(); err == nil {
 		return string(out)
 	}
-	// X11 – xsel
+	// X11 - xsel
 	if out, err := exec.Command("xsel", "--clipboard", "--output").Output(); err == nil {
 		return string(out)
 	}

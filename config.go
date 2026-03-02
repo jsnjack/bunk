@@ -1,14 +1,14 @@
-// config.go – configuration loading and theme registry.
+// config.go - configuration loading and theme registry.
 //
 // Config file location: ~/.config/bunk/config.toml (XDG_CONFIG_HOME respected).
 //
 // Built-in themes:
 //
-//	terminal       – uses your terminal's native colors (no overrides)
-//	default        – yauhen.cc Tilix palette (dark, cyan accent)
-//	solarized-dark – Solarized Dark by Ethan Schoonover
-//	dracula        – Dracula by Zeno Rocha
-//	nord           – Nord by Arctic Ice Studio
+//	terminal       - uses your terminal's native colors (no overrides)
+//	default        - yauhen.cc Tilix palette (dark, cyan accent)
+//	solarized-dark - Solarized Dark by Ethan Schoonover
+//	dracula        - Dracula by Zeno Rocha
+//	nord           - Nord by Arctic Ice Studio
 package main
 
 import (
@@ -99,7 +99,7 @@ func (kb Keybinding) String() string { return kb.raw }
 // Modifier prefixes (case-insensitive): ctrl, alt, shift.
 // Key names (case-insensitive):
 //
-//	f1–f12, up, down, left, right, pgup/pageup, pgdn/pagedown,
+//	f1-f12, up, down, left, right, pgup/pageup, pgdn/pagedown,
 //	home, end, enter/return, escape/esc, backspace, delete/del, tab, insert.
 //
 // Ctrl+letter combinations (e.g. ctrl+c) are represented as tcell.KeyCtrlC
@@ -128,7 +128,7 @@ func parseKey(s string) (Keybinding, error) {
 		}
 	}
 
-	// ctrl+<letter>: tcell represents these as KeyCtrlA–KeyCtrlZ with no
+	// ctrl+<letter>: tcell represents these as KeyCtrlA-KeyCtrlZ with no
 	// separate ModCtrl bit.
 	if mod&tcell.ModCtrl != 0 && len(keyName) == 1 && keyName[0] >= 'a' && keyName[0] <= 'z' {
 		key := tcell.Key(keyName[0]-'a') + tcell.KeyCtrlA
@@ -201,13 +201,19 @@ var keybindingDefaults = []kbEntry{
 	{"quit", func(k *Keybindings) *Keybinding { return &k.Quit }, "ctrl+q", "Quit bunk"},
 }
 
-// keybindingsHelpText returns a formatted key-bindings table for --help,
-// using the current defaults (overrides applied at startup, not here).
-func keybindingsHelpText() string {
+// keybindingsHelpText returns a formatted key-bindings table for --help.
+// If kb is non-nil the effective (possibly user-overridden) key strings are
+// shown; otherwise the built-in defaults are used (e.g. for --help before
+// the config is loaded).
+func keybindingsHelpText(kb *Keybindings) string {
 	var b strings.Builder
 	b.WriteString("Key bindings (configurable via ~/.config/bunk/config.toml):\n")
 	for _, e := range keybindingDefaults {
-		b.WriteString(fmt.Sprintf("  %-16s  %s\n", e.def, e.desc))
+		key := e.def
+		if kb != nil {
+			key = e.field(kb).raw
+		}
+		b.WriteString(fmt.Sprintf("  %-16s  %s\n", key, e.desc))
 	}
 	return b.String()
 }
@@ -247,7 +253,7 @@ func resolveKeybindings(kf map[string]string) Keybindings {
 type ThemeDef struct {
 	Background     string
 	Foreground     string
-	Palette        [16]string // ANSI colors 0–15 (see below)
+	Palette        [16]string // ANSI colors 0-15 (see below)
 	ActiveBorder   string     // accent for the focused pane border
 	InactiveBorder string
 	ScrollThumb    string
@@ -268,7 +274,7 @@ type ThemeDef struct {
 //	  5    Magenta     special, syntax accents
 //	  6    Cyan        secondary info, labels
 //	  7    White       foreground text
-//	 8–15  Bright      brighter variants of 0–7
+//	 8-15  Bright      brighter variants of 0-7
 //
 // Badge colors in status.go use palette indices (e.g. palette[1] for the
 // sudo badge) so they automatically adapt when the user switches themes.
@@ -321,7 +327,7 @@ var BuiltinThemes = map[string]ThemeDef{
 		ScrollTrack:    "#3D3D40",
 	},
 
-	// Solarized Dark – Ethan Schoonover
+	// Solarized Dark - Ethan Schoonover
 	"solarized-dark": {
 		Background: "#002B36",
 		Foreground: "#839496",
@@ -337,7 +343,7 @@ var BuiltinThemes = map[string]ThemeDef{
 		ScrollTrack:    "#073642",
 	},
 
-	// Dracula – Zeno Rocha
+	// Dracula - Zeno Rocha
 	"dracula": {
 		Background: "#282A36",
 		Foreground: "#F8F8F2",
@@ -353,7 +359,7 @@ var BuiltinThemes = map[string]ThemeDef{
 		ScrollTrack:    "#21222C",
 	},
 
-	// Nord – Arctic Ice Studio
+	// Nord - Arctic Ice Studio
 	"nord": {
 		Background: "#2E3440",
 		Foreground: "#D8DEE9",
@@ -499,7 +505,7 @@ log_level = "info"  # trace | debug | info | warn | error
 # consume more rows per line of output due to wrapping.
 # scrollback = 10000
 
-# Optional UI color overrides – leave blank to use the theme's defaults.
+# Optional UI color overrides - leave blank to use the theme's defaults.
 # Values must be "#RRGGBB" hex strings.
 [ui]
 active_border   = ""  # border colour for the focused pane

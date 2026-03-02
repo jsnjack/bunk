@@ -1,4 +1,4 @@
-// pane.go – PTY spawning and VT100/ANSI emulation bridge.
+// pane.go - PTY spawning and VT100/ANSI emulation bridge.
 //
 // Each Pane owns:
 //   - a PTY master (os.File) connected to a shell subprocess
@@ -18,8 +18,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"time"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/hinshun/vt10x"
@@ -50,7 +50,7 @@ type Pane struct {
 	x, y int // top-left corner on the host screen (content area, 0-indexed)
 	w, h int // width and height of the content area in cells
 
-	ptmx     *os.File  // PTY master – write keystrokes here, read shell output here
+	ptmx     *os.File  // PTY master - write keystrokes here, read shell output here
 	ptmxOnce sync.Once // ensures PTY master fd is closed exactly once
 	cmd      *exec.Cmd // the shell process
 
@@ -61,7 +61,7 @@ type Pane struct {
 	dead                bool           // true once the shell process has exited
 	wantsBracketedPaste bool           // DECSET 2004 enabled by the running app
 
-	// Scrollback buffer – lines that have scrolled off the vt10x grid top.
+	// Scrollback buffer - lines that have scrolled off the vt10x grid top.
 	// Protected by mu.
 	sb             sbRing // ring buffer of captured rows
 	sbOff          int    // 0 = live view; N = N lines above live view
@@ -127,13 +127,13 @@ type Pane struct {
 // NewPane spawns a shell inside a new PTY with the given geometry, starts the
 // VT10x emulator, and launches the background I/O goroutines.
 //
-//	spawnArgs – argv for the child process; nil or empty means use $SHELL.
+//	spawnArgs - argv for the child process; nil or empty means use $SHELL.
 //	            Pass containerSpawnArgs(...) here to open the new pane inside
 //	            the same container as the pane that was split.
-//	redraw    – signalled after each chunk of PTY output
-//	paneDead  – receives p when the shell exits
-//	done      – closed by the app on shutdown
-//	oscCh     – receives OSC 7/8/52 sequences to forward to the host terminal
+//	redraw    - signalled after each chunk of PTY output
+//	paneDead  - receives p when the shell exits
+//	done      - closed by the app on shutdown
+//	oscCh     - receives OSC 7/8/52 sequences to forward to the host terminal
 func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -151,8 +151,8 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 	// Build the child environment.
 	// Filter out TERM and COLORTERM from the host before setting our own.
 	// (Simply appending would not override them on most shells/kernels.)
-	// • TERM=xterm-256color – the emulation profile we advertise.
-	// • COLORTERM=truecolor – tells colour-aware apps 24-bit RGB works.
+	// • TERM=xterm-256color - the emulation profile we advertise.
+	// • COLORTERM=truecolor - tells colour-aware apps 24-bit RGB works.
 	filtered := make([]string, 0, len(os.Environ()))
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "TERM=") && !strings.HasPrefix(e, "COLORTERM=") {
@@ -232,10 +232,10 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			chunk := buf[:n]
 			L.Log(nil, LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
 
-			// Step 1 – OSC passthrough (CWD, hyperlinks, clipboard).
+			// Step 1 - OSC passthrough (CWD, hyperlinks, clipboard).
 			p.oscScan.Scan(chunk, oscCh)
 
-			// Step 2 – track DECSET 2004 (bracketed paste).
+			// Step 2 - track DECSET 2004 (bracketed paste).
 			if bytes.Contains(chunk, []byte("\x1b[?2004h")) {
 				p.mu.Lock()
 				p.wantsBracketedPaste = true
@@ -246,13 +246,13 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 				p.mu.Unlock()
 			}
 
-			// Steps 3+4 – scrollback capture + vt10x write (all under Pane.mu).
+			// Steps 3+4 - scrollback capture + vt10x write (all under Pane.mu).
 			p.mu.Lock()
 			p.captureAndWrite(chunk)
 			scrolling := p.sbOff > 0
 			p.mu.Unlock()
 
-			// Step 5 – wake the render loop (coalesced).
+			// Step 5 - wake the render loop (coalesced).
 			// Skip when the user is reading scrollback: new output is buffered
 			// silently so the visible view doesn't jump while they are reading.
 			if !scrolling {
@@ -298,7 +298,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	// timeouts.  Skip for SSH/mosh panes: writing to ptmx there forwards
 	// bytes to the remote server as user input, corrupting the session.
 	if p.fgProcess != "ssh" && p.fgProcess != "mosh" {
-		// CPR – cursor position report: ESC [ 6 n → ESC [ row ; col R
+		// CPR - cursor position report: ESC [ 6 n → ESC [ row ; col R
 		// BubbleTea sends this at startup to know where to render inline UI.
 		// Reply with the actual cursor position so the app renders right after
 		// the command line, matching normal terminal behaviour.
@@ -308,7 +308,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			p.ptmx.Write([]byte(resp)) //nolint:errcheck
 			L.Log(nil, LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
 		}
-		// OSC 10/11 – fg/bg colour queries.  BubbleTea uses these to detect
+		// OSC 10/11 - fg/bg colour queries.  BubbleTea uses these to detect
 		// light vs dark terminal.  Reply with neutral dark-theme colours.
 		if bytes.Contains(chunk, []byte("\x1b]11;?")) {
 			p.ptmx.Write([]byte("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\")) //nolint:errcheck
@@ -320,9 +320,9 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 
 	// Kitty keyboard protocol — bunk acts as the "terminal" for pane apps.
 	// Apps negotiate with us using three sequence types:
-	//   \x1b[?u        – query current flags  → respond with \x1b[?<flags>u
-	//   \x1b[=<n>u     – push flags onto stack
-	//   \x1b[<N>u      – pop N levels (N defaults to 1)
+	//   \x1b[?u        - query current flags  → respond with \x1b[?<flags>u
+	//   \x1b[=<n>u     - push flags onto stack
+	//   \x1b[<N>u      - pop N levels (N defaults to 1)
 	// All are stripped before vt10x sees them; vt10x interprets the bare 'u'
 	// final byte as DECRC (restore cursor), jumping the cursor to 0,0.
 	if bytes.ContainsAny(chunk, "u") && bytes.Contains(chunk, []byte("\x1b[")) {
@@ -857,9 +857,9 @@ func (p *Pane) selText() string {
 //
 // Three sequence types (all use the 'u' final byte):
 //
-//	\x1b [ ? u       – query: respond with \x1b[?<flags>u (top of stack or 0)
-//	\x1b [ = <n> u   – push: save current flags and activate <n>
-//	\x1b [ < <N> u   – pop:  pop N stack levels (N omitted → 1)
+//	\x1b [ ? u       - query: respond with \x1b[?<flags>u (top of stack or 0)
+//	\x1b [ = <n> u   - push: save current flags and activate <n>
+//	\x1b [ < <N> u   - pop:  pop N stack levels (N omitted → 1)
 //
 // Must be called with p.mu held (captureAndWrite contract).
 // Writing to p.ptmx (the PTY) does not require p.mu.

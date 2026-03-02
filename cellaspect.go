@@ -1,4 +1,4 @@
-// cellaspect.go – terminal cell pixel aspect ratio (H/W).
+// cellaspect.go - terminal cell pixel aspect ratio (H/W).
 //
 // Used by splitActive() to decide vertical vs. horizontal split based on
 // actual pixel dimensions rather than just character-cell counts.

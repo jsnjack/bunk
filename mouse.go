@@ -1,4 +1,4 @@
-// mouse.go – mouse passthrough, focus events, and bracketed-paste forwarding.
+// mouse.go - mouse passthrough, focus events, and bracketed-paste forwarding.
 //
 // Mouse passthrough
 // -----------------
@@ -278,7 +278,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				sel.selCursor = selPos{row: vRow, col: col}
 				L.Debug("mouse: drag-select released", "pane", sel.id, "vrow", vRow, "vcol", col)
 			}
-			// If selActive is false this was a plain click – selection
+			// If selActive is false this was a plain click - selection
 			// was already cleared on press, nothing more to do.
 			sel.mu.Unlock()
 			app.triggerRedraw()
@@ -433,7 +433,7 @@ func mouseToBytes(btn, prevBtn tcell.ButtonMask, mod tcell.ModMask, x, y int, sg
 		return []byte(fmt.Sprintf("\x1b[<%d;%d;%d%c", cb, x, y, final))
 	}
 
-	// X10/normal encoding – coordinates capped at 223 (byte limit).
+	// X10/normal encoding - coordinates capped at 223 (byte limit).
 	if x > 223 || y > 223 {
 		return nil
 	}
@@ -478,7 +478,7 @@ func sendFocusOut(p *Pane) {
 
 // selectWord selects the word that contains vPos in pane p.
 // Word characters: letters, digits, underscore, hyphen, dot, slash, tilde,
-// at-sign, plus, colon – covers shell identifiers, file paths, and URLs.
+// at-sign, plus, colon - covers shell identifiers, file paths, and URLs.
 func selectWord(p *Pane, vPos selPos) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

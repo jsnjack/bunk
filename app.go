@@ -1,4 +1,4 @@
-// app.go – App struct, event loop, key handling, and pane management.
+// app.go - App struct, event loop, key handling, and pane management.
 package main
 
 import (
@@ -24,7 +24,7 @@ type App struct {
 	scrollback int // max scrollback lines per pane (from config)
 
 	// cellAspect is the pixel height-to-width ratio of a single terminal cell
-	// (cellH / cellW).  Typical fonts give ~1.8–2.2.  Used by splitActive to
+	// (cellH / cellW).  Typical fonts give ~1.8-2.2.  Used by splitActive to
 	// decide whether a pane is wider or taller in actual pixels.
 	// Set at startup from TIOCGWINSZ ws_xpixel/ws_ypixel; falls back to 2.0.
 	cellAspect float64
@@ -61,7 +61,7 @@ type App struct {
 	// generate release events (only used in the event loop goroutine).
 	prevMouseBtn tcell.ButtonMask
 
-	// Double-click detection (event loop goroutine only – no lock needed).
+	// Double-click detection (event loop goroutine only - no lock needed).
 	lastClickTime  time.Time
 	lastClickPos   selPos
 	lastClickPane  *Pane
@@ -227,7 +227,7 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 				return true
 			}
 		}
-		// No selection – fall through so the key is forwarded to the PTY.
+		// No selection - fall through so the key is forwarded to the PTY.
 	}
 
 	switch {

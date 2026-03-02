@@ -1,4 +1,4 @@
-// cmd.go – cobra command definitions for bunk.
+// cmd.go - cobra command definitions for bunk.
 //
 // main() in main.go calls Execute(), which hands off to the root command.
 // The actual startup logic lives in run().
@@ -24,11 +24,22 @@ var (
 )
 
 func init() {
-	rootCmd.Long = fmt.Sprintf("bunk %s – a lightweight terminal multiplexer.\n\n%s", Version, keybindingsHelpText())
 	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: ~/.config/bunk/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
 	rootCmd.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable debug-level logging")
 	rootCmd.PersistentFlags().BoolVar(&flagTrace, "trace", false, "enable trace-level logging (logs raw PTY byte chunks)")
+
+	// Override help to load the config first so effective (user-overridden)
+	// keybindings are shown rather than built-in defaults.
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		cfg := LoadConfig(flagConfig, flagTheme)
+		fmt.Fprintf(cmd.OutOrStdout(), "bunk %s - a lightweight terminal multiplexer.\n\n%s\nUsage:\n  %s\n\nFlags:\n%s",
+			Version,
+			keybindingsHelpText(&cfg.Keybindings),
+			cmd.UseLine(),
+			cmd.Flags().FlagUsages(),
+		)
+	})
 }
 
 var rootCmd = &cobra.Command{
@@ -53,6 +64,13 @@ func Execute() {
 // loop returns so it is guaranteed to run before the process exits.
 func run(configPath, themeName string, debug, trace bool) error {
 	cfg := LoadConfig(configPath, themeName)
+
+	// Prevent nested sessions: BUNK=1 is set in every pane's environment.
+	if os.Getenv("BUNK") != "" {
+		fmt.Fprintf(os.Stderr, "bunk %s - already inside a bunk session (BUNK env variable set).\n\n%s\n",
+			Version, keybindingsHelpText(&cfg.Keybindings))
+		os.Exit(1)
+	}
 
 	// --trace / --debug override config log level.
 	logLevel := cfg.LogLevel

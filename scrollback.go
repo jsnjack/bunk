@@ -1,4 +1,4 @@
-// scrollback.go – per-pane scrollback buffer.
+// scrollback.go - per-pane scrollback buffer.
 //
 // Architecture
 // ─────────────
@@ -19,7 +19,7 @@
 // output (ls, git log, compiler output, etc.).
 //
 // Alternate screen (vim, htop, less in fullscreen) sets vt10x.ModeAltScreen.
-// We skip both snapshot and push while that flag is set – the alternate screen
+// We skip both snapshot and push while that flag is set - the alternate screen
 // doesn't scroll in the traditional sense, and its state is separate from the
 // primary screen history.
 //
@@ -155,7 +155,7 @@ func detectShift(prev [][]vt10x.Glyph, newRow0, newRow1 []vt10x.Glyph) int {
 	if rowsEqual(prev[0], newRow0) {
 		return 0
 	}
-	// Row 0 changed – find how many rows scrolled off by fingerprinting.
+	// Row 0 changed - find how many rows scrolled off by fingerprinting.
 	for shift := 1; shift < len(prev); shift++ {
 		if !rowsEqual(prev[shift], newRow0) {
 			continue

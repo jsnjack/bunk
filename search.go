@@ -1,4 +1,4 @@
-// search.go – incremental in-pane text search (Ctrl+F).
+// search.go - incremental in-pane text search (Ctrl+F).
 //
 // Usage:
 //

@@ -1,4 +1,4 @@
-// layout.go – Binary Space Partitioning (BSP) tree for pane layout.
+// layout.go - Binary Space Partitioning (BSP) tree for pane layout.
 //
 // The screen is divided recursively using a BSP tree:
 //

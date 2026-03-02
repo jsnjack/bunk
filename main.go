@@ -1,4 +1,4 @@
-// bunk – a lightweight terminal multiplexer.
+// bunk - a lightweight terminal multiplexer.
 package main
 
 func main() {

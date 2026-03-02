@@ -1,4 +1,4 @@
-// status.go – foreground process tracking and container/context detection.
+// status.go - foreground process tracking and container/context detection.
 //
 // For each pane we poll the foreground process group of its PTY every second
 // by reading /proc/<shellPid>/stat (field tpgid = terminal foreground PGID),
@@ -11,9 +11,9 @@
 // The status badge is rendered last in each render pass (on top of everything
 // else) in the top-right corner of each pane.  It shows:
 //
-//	⬡ <container-name>  – Toolbox / Podman container
-//	▣ <container-name>  – Distrobox container
-//	ssh / sudo / su / root – notable foreground process
+//	⬡ <container-name>  - Toolbox / Podman container
+//	▣ <container-name>  - Distrobox container
+//	ssh / sudo / su / root - notable foreground process
 package main
 
 import (
@@ -241,15 +241,15 @@ func detectFromEnvSlice(env []string) string {
 //     its environment from bunk via cmd.Env, so this is always correct for
 //     the initial pane and any split that spawns a bare shell.
 //
-//  2. /proc/<pid>/environ – for cases where the child might differ (e.g. an
+//  2. /proc/<pid>/environ - for cases where the child might differ (e.g. an
 //     async OSC 176 callback firing for a process spawned differently).
 //     This may fail with EACCES if the caller is not the process owner.
 //
 //  3. Filesystem markers that are world-readable:
-//     - /run/.containerenv  – Podman creates this 0-byte file in every container
-//     - /dev/lxd/sock       – LXD mounts this guest API socket into every container
-//     - /proc/1/cgroup      – world-readable; cgroupsv1 paths contain "/lxc/"
-//     - /proc/1/environ     – only readable as root; tried last
+//     - /run/.containerenv  - Podman creates this 0-byte file in every container
+//     - /dev/lxd/sock       - LXD mounts this guest API socket into every container
+//     - /proc/1/cgroup      - world-readable; cgroupsv1 paths contain "/lxc/"
+//     - /proc/1/environ     - only readable as root; tried last
 func detectContainerFromPID(pid int) string {
 	// 1. Own environment (most reliable, no permission issues).
 	if ct := detectFromEnvSlice(os.Environ()); ct != "" {
@@ -271,27 +271,27 @@ func detectContainerFromPID(pid int) string {
 	}
 
 	// 3c. LXD/LXC/Incus detection (multiple methods, all non-root-friendly).
-	// Method 1: guest API socket – LXD mounts /dev/lxd/sock, Incus /dev/incus/sock.
+	// Method 1: guest API socket - LXD mounts /dev/lxd/sock, Incus /dev/incus/sock.
 	if _, err := os.Stat("/dev/lxd/sock"); err == nil {
 		return "lxd"
 	}
 	if _, err := os.Stat("/dev/incus/sock"); err == nil {
 		return "lxd"
 	}
-	// Method 2: /run/systemd/container – systemd inside an LXD container
+	// Method 2: /run/systemd/container - systemd inside an LXD container
 	//           writes "lxc" here; world-readable.
 	if data, err := os.ReadFile("/run/systemd/container"); err == nil {
 		if strings.TrimSpace(string(data)) == "lxc" {
 			return "lxd"
 		}
 	}
-	// Method 3: /proc/1/cgroup – world-readable; cgroupsv1 paths have "/lxc/".
+	// Method 3: /proc/1/cgroup - world-readable; cgroupsv1 paths have "/lxc/".
 	if cg, err := os.ReadFile("/proc/1/cgroup"); err == nil {
 		if strings.Contains(string(cg), "/lxc/") {
 			return "lxd"
 		}
 	}
-	// Method 4: /proc/1/environ – only readable as root.
+	// Method 4: /proc/1/environ - only readable as root.
 	if pid != 1 {
 		if init1, err := os.ReadFile("/proc/1/environ"); err == nil {
 			for _, entry := range strings.Split(string(init1), "\x00") {
@@ -731,9 +731,9 @@ func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane, rt resolvedTheme
 //
 // Badge order (right to left):
 //
-//	[-N]                    – scrollback line count (yellow on black)
-//	[ COPIED ]              – temporary flash message (white on green)
-//	[⬡ my-toolbox]          – container/sudo/ssh context badge
+//	[-N]                    - scrollback line count (yellow on black)
+//	[ COPIED ]              - temporary flash message (white on green)
+//	[⬡ my-toolbox]          - container/sudo/ssh context badge
 func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, zoomed bool) {
 	p.mu.Lock()
 	fgProc := p.fgProcess
@@ -772,7 +772,7 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 	// closest to the edge).
 	var badges []badge
 
-	// 1. Temporary flash message (e.g. "COPIED") – leftmost badge.
+	// 1. Temporary flash message (e.g. "COPIED") - leftmost badge.
 	if tempActive && tempMsg != "" {
 		badges = append(badges, badge{
 			" " + tempMsg + " ",

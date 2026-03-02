@@ -1,4 +1,4 @@
-// cmd_config.go – "bunk config" subcommand tree.
+// cmd_config.go - "bunk config" subcommand tree.
 package main
 
 import (

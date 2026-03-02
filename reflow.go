@@ -1,4 +1,4 @@
-// reflow.go – terminal content reflow on pane resize and scrollback rebuild.
+// reflow.go - terminal content reflow on pane resize and scrollback rebuild.
 //
 // On any pane resize (split or close), the full terminal history — scrollback
 // ring plus the current visible vt10x grid — is collected, the scrollback is

@@ -1,4 +1,4 @@
-// osc.go – OSC (Operating System Command) sequence pre-scanner.
+// osc.go - OSC (Operating System Command) sequence pre-scanner.
 //
 // vt10x handles OSC 0/1/2 (title), 4 (colour), 10/11 (fg/bg colour query),
 // and 104 (colour reset).  Everything else is silently dropped.
@@ -6,10 +6,10 @@
 // Modern terminal emulators (foot, kitty, iTerm2, Ptyxis/VTE, …) understand
 // these sequences, which must reach the host terminal directly:
 //
-//	OSC 7   – shell CWD notification; lets the terminal open new tabs in the
+//	OSC 7   - shell CWD notification; lets the terminal open new tabs in the
 //	           same directory ("open here"), update tab titles with the path, etc.
-//	OSC 8   – inline hyperlinks; terminals can open URLs on Ctrl+click.
-//	OSC 52  – clipboard read/write; lets programs access the system clipboard
+//	OSC 8   - inline hyperlinks; terminals can open URLs on Ctrl+click.
+//	OSC 52  - clipboard read/write; lets programs access the system clipboard
 //	           without needing xclip/xdotool.
 //
 // The oscScanner runs over each raw PTY chunk BEFORE it is fed to vt10x.
@@ -35,7 +35,7 @@ var oscForwardNums = map[int]bool{
 
 // oscMaxBuf is the maximum bytes we accumulate for a single OSC sequence.
 // OSC 7 (CWD) is typically <300 bytes; OSC 8 (hyperlink) rarely exceeds 2 KB.
-// OSC 52 clipboard can be large – we cap at 64 KB and let the host handle it.
+// OSC 52 clipboard can be large - we cap at 64 KB and let the host handle it.
 const oscMaxBuf = 65536
 
 // oscParseState is the state of the oscScanner FSM.
@@ -62,7 +62,7 @@ type oscScanner struct {
 // next one from the same shell will arrive shortly).
 //
 // All bytes in chunk are also fed to vt10x by the caller regardless of what
-// Scan finds – vt10x must see the full stream to keep its state consistent.
+// Scan finds - vt10x must see the full stream to keep its state consistent.
 func (s *oscScanner) Scan(chunk []byte, oscCh chan<- []byte) {
 	for _, b := range chunk {
 		switch s.state {
@@ -121,7 +121,7 @@ func (s *oscScanner) dispatch(oscCh chan<- []byte) {
 	if semi >= 0 {
 		numBytes = body[:semi]
 	} else {
-		// Bare OSC with no semicolon (unusual but valid) – strip terminator.
+		// Bare OSC with no semicolon (unusual but valid) - strip terminator.
 		numBytes = bytes.TrimRight(body, "\x07\x1b\\")
 	}
 	n, err := strconv.Atoi(string(numBytes))
@@ -133,7 +133,7 @@ func (s *oscScanner) dispatch(oscCh chan<- []byte) {
 	copy(out, s.buf)
 	select {
 	case oscCh <- out:
-	default: // channel full – this frame's OSC is dropped, shell will re-emit
+	default: // channel full - this frame's OSC is dropped, shell will re-emit
 		L.Debug("osc: channel full, dropping sequence", "osc_num", n)
 	}
 }

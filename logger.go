@@ -1,4 +1,4 @@
-// logger.go – slog initialisation for bunk.
+// logger.go - slog initialisation for bunk.
 //
 // A single package-level *slog.Logger (L) is set up once in initLogger() and
 // used throughout the codebase.  The logger writes to a file (never stdout/
