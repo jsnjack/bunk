@@ -173,31 +173,43 @@ type Keybindings struct {
 }
 
 // keybindingDefaults is the single source of truth for action names, their
-// struct field pointers, and default key strings. Used by both
-// defaultKeybindings() and resolveKeybindings() — add new actions here only.
+// struct field pointers, default key strings, and help descriptions.
+// Used by resolveKeybindings() and keybindingsHelpText() — add new actions here only.
 type kbEntry struct {
 	action string
 	field  func(*Keybindings) *Keybinding
 	def    string
+	desc   string // shown in --help output
 }
 
 var keybindingDefaults = []kbEntry{
-	{"split", func(k *Keybindings) *Keybinding { return &k.Split }, "f1"},
-	{"split_context", func(k *Keybindings) *Keybinding { return &k.SplitContext }, "alt+f1"},
-	{"quit", func(k *Keybindings) *Keybinding { return &k.Quit }, "ctrl+q"},
-	{"copy", func(k *Keybindings) *Keybinding { return &k.Copy }, "ctrl+c"},
-	{"paste", func(k *Keybindings) *Keybinding { return &k.Paste }, "ctrl+v"},
-	{"search", func(k *Keybindings) *Keybinding { return &k.Search }, "ctrl+f"},
-	{"zoom", func(k *Keybindings) *Keybinding { return &k.Zoom }, "f12"},
-	{"nav_up", func(k *Keybindings) *Keybinding { return &k.NavUp }, "alt+up"},
-	{"nav_down", func(k *Keybindings) *Keybinding { return &k.NavDown }, "alt+down"},
-	{"nav_left", func(k *Keybindings) *Keybinding { return &k.NavLeft }, "alt+left"},
-	{"nav_right", func(k *Keybindings) *Keybinding { return &k.NavRight }, "alt+right"},
-	{"scroll_up", func(k *Keybindings) *Keybinding { return &k.ScrollUp }, "shift+pgup"},
-	{"scroll_down", func(k *Keybindings) *Keybinding { return &k.ScrollDown }, "shift+pgdn"},
-	{"search_next", func(k *Keybindings) *Keybinding { return &k.SearchNext }, "ctrl+n"},
-	{"search_prev", func(k *Keybindings) *Keybinding { return &k.SearchPrev }, "ctrl+p"},
-	{"search_exit", func(k *Keybindings) *Keybinding { return &k.SearchExit }, "escape"},
+	{"split", func(k *Keybindings) *Keybinding { return &k.Split }, "f1", "Auto-split the active pane (vertical if wide, horizontal if tall)"},
+	{"split_context", func(k *Keybindings) *Keybinding { return &k.SplitContext }, "alt+f1", "Split inheriting container / SSH / sudo context"},
+	{"zoom", func(k *Keybindings) *Keybinding { return &k.Zoom }, "f12", "Toggle fullscreen zoom on the active pane"},
+	{"nav_up", func(k *Keybindings) *Keybinding { return &k.NavUp }, "alt+up", "Move focus to the pane above"},
+	{"nav_down", func(k *Keybindings) *Keybinding { return &k.NavDown }, "alt+down", "Move focus to the pane below"},
+	{"nav_left", func(k *Keybindings) *Keybinding { return &k.NavLeft }, "alt+left", "Move focus to the pane on the left"},
+	{"nav_right", func(k *Keybindings) *Keybinding { return &k.NavRight }, "alt+right", "Move focus to the pane on the right"},
+	{"scroll_up", func(k *Keybindings) *Keybinding { return &k.ScrollUp }, "shift+pgup", "Scroll back through pane history"},
+	{"scroll_down", func(k *Keybindings) *Keybinding { return &k.ScrollDown }, "shift+pgdn", "Scroll forward / return to live output"},
+	{"search", func(k *Keybindings) *Keybinding { return &k.Search }, "ctrl+f", "Incremental search in the active pane"},
+	{"search_next", func(k *Keybindings) *Keybinding { return &k.SearchNext }, "ctrl+n", "Next search match (also: Enter)"},
+	{"search_prev", func(k *Keybindings) *Keybinding { return &k.SearchPrev }, "ctrl+p", "Previous search match"},
+	{"search_exit", func(k *Keybindings) *Keybinding { return &k.SearchExit }, "escape", "Close search bar"},
+	{"copy", func(k *Keybindings) *Keybinding { return &k.Copy }, "ctrl+c", "Copy selection; forwards Ctrl+C to shell if nothing selected"},
+	{"paste", func(k *Keybindings) *Keybinding { return &k.Paste }, "ctrl+v", "Paste from system clipboard"},
+	{"quit", func(k *Keybindings) *Keybinding { return &k.Quit }, "ctrl+q", "Quit bunk"},
+}
+
+// keybindingsHelpText returns a formatted key-bindings table for --help,
+// using the current defaults (overrides applied at startup, not here).
+func keybindingsHelpText() string {
+	var b strings.Builder
+	b.WriteString("Key bindings (configurable via ~/.config/bunk/config.toml):\n")
+	for _, e := range keybindingDefaults {
+		b.WriteString(fmt.Sprintf("  %-16s  %s\n", e.def, e.desc))
+	}
+	return b.String()
 }
 
 // resolveKeybindings builds a Keybindings from built-in defaults, then applies

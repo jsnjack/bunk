@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 
@@ -17,9 +18,13 @@ var (
 	flagTheme  string
 	flagDebug  bool
 	flagTrace  bool
+
+	// Version is set at build time via -ldflags "-X main.Version=x.y.z".
+	Version = "dev"
 )
 
 func init() {
+	rootCmd.Long = fmt.Sprintf("bunk %s – a lightweight terminal multiplexer.\n\n%s", Version, keybindingsHelpText())
 	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: ~/.config/bunk/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
 	rootCmd.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable debug-level logging")
@@ -27,18 +32,9 @@ func init() {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "bunk",
-	Short: "A lightweight terminal multiplexer",
-	Long: `bunk - a lightweight terminal multiplexer.
-
-Key bindings:
-  F1            Auto-split the focused pane (vertical if wide, horizontal if tall)
-  Alt+Arrow     Move focus to the nearest pane in that direction
-  Shift+PgUp/Dn Scroll back / forward through pane history
-  Ctrl+F        Search in the current pane
-  Ctrl+C        Copy selection (falls through to ^C if nothing is selected)
-  Ctrl+V        Paste from system clipboard
-  Ctrl+Q        Quit`,
+	Use:          "bunk",
+	Version:      Version,
+	Short:        "A lightweight terminal multiplexer",
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return run(flagConfig, flagTheme, flagDebug, flagTrace)
