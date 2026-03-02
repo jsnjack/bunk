@@ -23,6 +23,20 @@ var (
 	Version = "dev"
 )
 
+// bunkLogo returns the coloured ASCII art logo with the version appended.
+func bunkLogo() string {
+	const (
+		cyan  = "\033[96m"
+		blue  = "\033[94m"
+		reset = "\033[0m"
+	)
+	return cyan + `   __                __   ` + reset + "\n" +
+		cyan + `  / /_  __  ______  / /__ ` + reset + "\n" +
+		blue + ` / __ \/ / / / __ \/ //_/ ` + reset + "\n" +
+		blue + `/ /_/ / /_/ / / / / ,<    ` + reset + "\n" +
+		blue + `\____/\__,_/_/ /_/_/|_|   ` + reset + " " + cyan + Version + reset + "\n"
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: ~/.config/bunk/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
@@ -33,8 +47,8 @@ func init() {
 	// keybindings are shown rather than built-in defaults.
 	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		cfg := LoadConfig(flagConfig, flagTheme)
-		fmt.Fprintf(cmd.OutOrStdout(), "bunk %s - a lightweight terminal multiplexer.\n\n%s\nUsage:\n  %s\n\nFlags:\n%s",
-			Version,
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s\nUsage:\n  %s\n\nFlags:\n%s",
+			bunkLogo(),
 			keybindingsHelpText(&cfg.Keybindings),
 			cmd.UseLine(),
 			cmd.Flags().FlagUsages(),
@@ -67,8 +81,8 @@ func run(configPath, themeName string, debug, trace bool) error {
 
 	// Prevent nested sessions: BUNK=1 is set in every pane's environment.
 	if os.Getenv("BUNK") != "" {
-		fmt.Fprintf(os.Stderr, "bunk %s - already inside a bunk session (BUNK env variable set).\n\n%s\n",
-			Version, keybindingsHelpText(&cfg.Keybindings))
+		fmt.Fprintf(os.Stderr, "%s\nAlready inside a bunk session — nested sessions are not supported.\n\n%s\n",
+			bunkLogo(), keybindingsHelpText(&cfg.Keybindings))
 		os.Exit(1)
 	}
 
