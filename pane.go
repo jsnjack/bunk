@@ -109,6 +109,15 @@ type Pane struct {
 	// place.  Protected by mu.
 	altEntryCursorX, altEntryCursorY int
 
+	// kittyStack is the per-pane kitty keyboard protocol flag stack.
+	// When pane apps send \x1b[=<flags>u (push), we push onto this stack
+	// and respond with the saved value on \x1b[?u (query).
+	// On \x1b[<N>u (pop) we pop N levels.
+	// All kitty keyboard sequences are stripped before vt10x sees them —
+	// vt10x misinterprets the 'u' final byte as DECRC (restore cursor).
+	// Protected by mu.
+	kittyStack []int
+
 	// Temporary status message (e.g. "COPIED") shown in the status bar.
 	// Clears automatically after statusMsgEnd.  Protected by mu.
 	statusMsg    string
@@ -309,16 +318,15 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		}
 	}
 
-	// Kitty keyboard protocol query: ESC [ ? u → strip before vt10x sees it.
-	// vt10x misinterprets this as DECRC (restore cursor), which would jump
-	// the cursor to a stale saved position — corrupting inline apps.
-	// This is a vt10x workaround, not a response — must apply to ALL panes
-	// including SSH, where the remote app may also emit this query.
-	if bytes.Contains(chunk, []byte("\x1b[?u")) {
-		if p.fgProcess != "ssh" && p.fgProcess != "mosh" {
-			p.ptmx.Write([]byte("\x1b[?0u")) //nolint:errcheck
-		}
-		chunk = bytes.ReplaceAll(chunk, []byte("\x1b[?u"), nil)
+	// Kitty keyboard protocol — bunk acts as the "terminal" for pane apps.
+	// Apps negotiate with us using three sequence types:
+	//   \x1b[?u        – query current flags  → respond with \x1b[?<flags>u
+	//   \x1b[=<n>u     – push flags onto stack
+	//   \x1b[<N>u      – pop N levels (N defaults to 1)
+	// All are stripped before vt10x sees them; vt10x interprets the bare 'u'
+	// final byte as DECRC (restore cursor), jumping the cursor to 0,0.
+	if bytes.ContainsAny(chunk, "u") && bytes.Contains(chunk, []byte("\x1b[")) {
+		chunk = p.handleKittyKeyboard(chunk)
 	}
 
 	// Accumulate raw bytes for replay-based reflow on resize.
@@ -841,4 +849,108 @@ func (p *Pane) selText() string {
 		buf.WriteString(strings.TrimRight(line.String(), " "))
 	}
 	return buf.String()
+}
+
+// handleKittyKeyboard processes kitty keyboard protocol sequences in the
+// byte stream emitted by pane applications, strips them before vt10x sees
+// them (to prevent DECRC misinterpretation), and responds to queries.
+//
+// Three sequence types (all use the 'u' final byte):
+//
+//	\x1b [ ? u       – query: respond with \x1b[?<flags>u (top of stack or 0)
+//	\x1b [ = <n> u   – push: save current flags and activate <n>
+//	\x1b [ < <N> u   – pop:  pop N stack levels (N omitted → 1)
+//
+// Must be called with p.mu held (captureAndWrite contract).
+// Writing to p.ptmx (the PTY) does not require p.mu.
+func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
+	// We walk through chunk looking for ESC [ followed by a kitty intro byte
+	// (?, =, <). copied tracks how far we've flushed into out; out is nil
+	// until we actually strip something (avoids allocation when nothing matches).
+	var out []byte
+	copied := 0 // index up to which chunk has been appended to out
+
+	i := 0
+	for i < len(chunk) {
+		esc := bytes.Index(chunk[i:], []byte("\x1b["))
+		if esc < 0 {
+			break // no more ESC [ — remainder is flushed below
+		}
+		abs := i + esc // absolute position of ESC in chunk
+		j := abs + 2   // first byte after '['
+		if j >= len(chunk) {
+			break // truncated sequence at end of chunk — pass through
+		}
+
+		intro := chunk[j]
+		stripped := false
+		newI := abs // default: don't skip (fall through to next iteration)
+
+		switch intro {
+		case '?':
+			// \x1b[?u  (exactly 4 bytes: ESC [ ? u)
+			if j+1 < len(chunk) && chunk[j+1] == 'u' {
+				flags := 0
+				if len(p.kittyStack) > 0 {
+					flags = p.kittyStack[len(p.kittyStack)-1]
+				}
+				p.ptmx.Write([]byte(fmt.Sprintf("\x1b[?%du", flags))) //nolint:errcheck
+				newI = j + 2
+				stripped = true
+			}
+		case '=':
+			// \x1b[=<digits>u
+			k := j + 1
+			for k < len(chunk) && chunk[k] >= '0' && chunk[k] <= '9' {
+				k++
+			}
+			if k < len(chunk) && chunk[k] == 'u' {
+				flags := 0
+				fmt.Sscanf(string(chunk[j+1:k]), "%d", &flags)
+				p.kittyStack = append(p.kittyStack, flags)
+				newI = k + 1
+				stripped = true
+			}
+		case '<':
+			// \x1b[<N>u  (N is optional digits, default 1)
+			k := j + 1
+			for k < len(chunk) && chunk[k] >= '0' && chunk[k] <= '9' {
+				k++
+			}
+			if k < len(chunk) && chunk[k] == 'u' {
+				count := 1
+				fmt.Sscanf(string(chunk[j+1:k]), "%d", &count)
+				if count < 1 {
+					count = 1
+				}
+				if count >= len(p.kittyStack) {
+					p.kittyStack = p.kittyStack[:0]
+				} else {
+					p.kittyStack = p.kittyStack[:len(p.kittyStack)-count]
+				}
+				newI = k + 1
+				stripped = true
+			}
+		}
+
+		if stripped {
+			// Flush bytes before this sequence into out.
+			if out == nil {
+				out = make([]byte, 0, len(chunk))
+			}
+			out = append(out, chunk[copied:abs]...)
+			copied = newI
+			i = newI
+		} else {
+			// Not a kitty sequence; skip past ESC [ and continue.
+			i = abs + 2
+		}
+	}
+
+	if out == nil {
+		return chunk // nothing stripped
+	}
+	// Flush remaining bytes.
+	out = append(out, chunk[copied:]...)
+	return out
 }
