@@ -291,6 +291,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 
 		var cells []vt10x.Glyph
 		useTermDirect := true // read from p.term.Cell() directly
+		termRow := row        // which live-terminal row to read (== row unless scrolled)
 		if sbOff > 0 {
 			useTermDirect = false
 			switch {
@@ -299,8 +300,10 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			case vRow < sbCount:
 				cells = p.sb.get(vRow)
 			default:
-				// In the live grid — read via Cell() to avoid allocation.
+				// In the live grid.  vRow - sbCount is the actual terminal row,
+				// which is NOT the same as screen row when sbOff > 0.
 				useTermDirect = true
+				termRow = vRow - sbCount
 			}
 		}
 
@@ -309,7 +312,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			if cells != nil && col < len(cells) {
 				cell = cells[col]
 			} else if useTermDirect {
-				cell = p.term.Cell(col, row)
+				cell = p.term.Cell(col, termRow)
 			}
 
 			ch := cell.Char
