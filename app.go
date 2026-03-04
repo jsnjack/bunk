@@ -78,6 +78,14 @@ type App struct {
 	// is running.  Access only from the event-loop goroutine.
 	dragEdgeStop chan struct{}
 
+	// sbDragPane is non-nil while the user is dragging the scrollbar thumb.
+	// sbDragAnchorY is the screen row of the initial click.
+	// sbDragAnchorOff is the sbOff value at the start of the drag.
+	// All three are accessed only from the event-loop goroutine.
+	sbDragPane      *Pane
+	sbDragAnchorY   int
+	sbDragAnchorOff int
+
 	// Search state.  All fields are protected by mu (read by the render loop,
 	// written by the event loop via enterSearch/exitSearch/updateSearch).
 	searchMode    bool

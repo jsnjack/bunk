@@ -164,14 +164,69 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		// App wants mouse → fall through to passthrough below.
 	}
 
+	// ── Button state helpers (used by scrollbar drag and selection below) ────
+	isPress := btn == tcell.Button1 && prevBtn != tcell.Button1
+	isDrag := btn == tcell.Button1 && prevBtn == tcell.Button1
+	isRelease := btn == tcell.ButtonNone && prevBtn == tcell.Button1
+
+	// ── Scrollbar drag ────────────────────────────────────────────────────
+	// The scrollbar occupies the last column of a pane (p.x+p.w-1) when
+	// the pane has scrollback history.  We intercept Button1 press/drag/
+	// release on that column before the selection and passthrough logic.
+	//
+	// Drag maths (mirrors drawScrollbar in render.go):
+	//   total = sbCount + rows
+	//   visibleStart = sbCount - sbOff          (= handleTop * total / rows)
+	//   new visibleStart = (newHandleTop) * total / rows
+	//   new sbOff       = sbCount - new visibleStart
+	if app.sbDragPane != nil && isRelease {
+		app.sbDragPane = nil
+		app.triggerRedraw()
+		return
+	}
+	if app.sbDragPane != nil && isDrag {
+		p := app.sbDragPane
+		p.mu.Lock()
+		sbCount := p.sb.count
+		_, rows := p.term.Size()
+		p.mu.Unlock()
+		if rows > 0 && sbCount > 0 {
+			total := sbCount + rows
+			dy := y - app.sbDragAnchorY
+			newOff := app.sbDragAnchorOff - dy*total/rows
+			if newOff < 0 {
+				newOff = 0
+			}
+			if newOff > sbCount {
+				newOff = sbCount
+			}
+			p.mu.Lock()
+			p.sbOff = newOff
+			p.mu.Unlock()
+		}
+		app.triggerRedraw()
+		return
+	}
+	// Detect a Button1 press on the scrollbar column of any pane.
+	// Start a drag anchored at the current sbOff — no position jump on click.
+	if isPress && target != nil {
+		target.mu.Lock()
+		sbCount := target.sb.count
+		curSbOff := target.sbOff
+		target.mu.Unlock()
+		if sbCount > 0 && x == target.x+target.w-1 {
+			app.sbDragPane = target
+			app.sbDragAnchorY = y
+			app.sbDragAnchorOff = curSbOff
+			app.triggerRedraw()
+			return
+		}
+	}
+
 	// ── Text selection (Button1 drag when no app mouse mode, or Shift held) ──
 	// doSelect is true when we should handle drag as a text selection event
 	// instead of forwarding it to the pane's PTY.
 	doSelect := !wantsMouse || shiftHeld
-
-	isPress := btn == tcell.Button1 && prevBtn != tcell.Button1
-	isDrag := btn == tcell.Button1 && prevBtn == tcell.Button1
-	isRelease := btn == tcell.ButtonNone && prevBtn == tcell.Button1
 
 	if doSelect {
 		switch {
