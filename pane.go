@@ -109,6 +109,13 @@ type Pane struct {
 	// place.  Protected by mu.
 	altEntryCursorX, altEntryCursorY int
 
+	// needsSync is set when the pane exits the alternate screen so that the
+	// next render call uses screen.Sync() (full repaint) instead of
+	// screen.Show() (differential).  This clears any residual background
+	// colours that alt-screen apps like btop may have left in the terminal.
+	// Protected by mu.
+	needsSync bool
+
 	// kittyStack is the per-pane kitty keyboard protocol flag stack.
 	// When pane apps send \x1b[=<flags>u (push), we push onto this stack
 	// and respond with the saved value on \x1b[?u (query).
@@ -360,6 +367,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	//      the alt-screen starts with a clean slate (it may contain stale
 	//      content if a previous TUI program crashed without sending \x1b[?1049l).
 	wrote := false
+	exitSplitAt := 0 // byte offset into chunk just after the ?1049l/47l sequence, 0 if none
 	if !altScreen {
 		for _, seq := range []string{"\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"} {
 			b := []byte(seq)
@@ -381,19 +389,51 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			}
 		}
 	}
+	// If this chunk crosses an alt-screen EXIT point, inject \x1b[0m immediately
+	// after the ?1049l sequence — before vt10x processes any subsequent sequences
+	// (e.g. \x1b[2J) that would otherwise inherit the TUI app's background colour
+	// and paint it onto the restored primary screen.
+	if !wrote && altScreen {
+		for _, seq := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
+			b := []byte(seq)
+			if i := bytes.Index(chunk, b); i >= 0 {
+				end := i + len(b)
+				exitSplitAt = end
+				p.term.Write(chunk[:end])       //nolint:errcheck
+				p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
+				if end < len(chunk) {
+					p.term.Write(chunk[end:]) //nolint:errcheck
+				}
+				wrote = true
+				break
+			}
+		}
+	}
 	if !wrote {
 		p.term.Write(chunk) //nolint:errcheck
 	}
 
 	// When alt screen exits, append the chunk to rawBuf (it was skipped above
-	// because altScreen=true), inject a SGR reset to fix the cursor-attribute
-	// leak (vt10x DECSC/alt-screen slot collision), and restore the primary
-	// cursor to where it was before the alt-screen was entered.  Without the
-	// cursor restore, inline programs like gh-copilot render at row 0 instead
-	// of at the shell prompt position.
+	// because altScreen=true), insert the SGR reset at the split point so
+	// rawBuf replay also uses default colours for any subsequent clears, and
+	// restore the primary cursor to where it was before the alt-screen was
+	// entered.  Without the cursor restore, inline programs like gh-copilot
+	// render at row 0 instead of at the shell prompt position.
 	if altScreen && p.term.Mode()&vt10x.ModeAltScreen == 0 {
 		L.Log(nil, LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
-		p.rawBuf = append(p.rawBuf, chunk...)
+		const sgrReset = "\x1b[0m"
+		if exitSplitAt > 0 {
+			// Insert sgrReset into rawBuf right after the exit sequence so
+			// replay sees the same colour-reset behaviour as the live path.
+			p.rawBuf = append(p.rawBuf, chunk[:exitSplitAt]...)
+			p.rawBuf = append(p.rawBuf, sgrReset...)
+			p.rawBuf = append(p.rawBuf, chunk[exitSplitAt:]...)
+		} else {
+			// Fallback: exit sequence not found (e.g. came in a previous chunk).
+			p.rawBuf = append(p.rawBuf, chunk...)
+			p.term.Write([]byte(sgrReset)) //nolint:errcheck
+			p.rawBuf = append(p.rawBuf, sgrReset...)
+		}
 		rawMax := p.scrollbackLines * 200
 		if len(p.rawBuf) > rawMax {
 			excess := len(p.rawBuf) - rawMax
@@ -403,9 +443,6 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				p.rawBuf = p.rawBuf[excess:]
 			}
 		}
-		const sgrReset = "\x1b[0m"
-		p.term.Write([]byte(sgrReset)) //nolint:errcheck
-		p.rawBuf = append(p.rawBuf, sgrReset...)
 
 		// Restore the primary cursor to the position it had before the
 		// alt-screen was entered.  We use CUP (\x1b[row;colH, 1-based).
@@ -417,6 +454,10 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
 		L.Log(nil, LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
 		p.term.Write([]byte(curRestore)) //nolint:errcheck
+
+		// Signal the render loop to do a full Sync() repaint so any residual
+		// background colour from the TUI app is cleared from the terminal.
+		p.needsSync = true
 	}
 
 	if prevGrid != nil {

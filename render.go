@@ -114,7 +114,15 @@ func (app *App) render() {
 
 		drainOSC(app.oscCh)
 		app.emitTitle(active)
-		app.screen.Show()
+		zp.mu.Lock()
+		needsSync := zp.needsSync
+		zp.needsSync = false
+		zp.mu.Unlock()
+		if needsSync {
+			app.screen.Sync()
+		} else {
+			app.screen.Show()
+		}
 		return
 	}
 
@@ -167,7 +175,30 @@ func (app *App) render() {
 	drainOSC(app.oscCh)
 	app.emitTitle(active)
 
-	app.screen.Show()
+	if checkAndClearNeedsSync(root) {
+		app.screen.Sync()
+	} else {
+		app.screen.Show()
+	}
+}
+
+// checkAndClearNeedsSync walks the pane tree, clears the needsSync flag on
+// every pane that has it set, and returns true if at least one pane needed it.
+// Called once per render frame; the result decides Show() vs Sync().
+func checkAndClearNeedsSync(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.isLeaf() {
+		n.pane.mu.Lock()
+		v := n.pane.needsSync
+		n.pane.needsSync = false
+		n.pane.mu.Unlock()
+		return v
+	}
+	l := checkAndClearNeedsSync(n.left)
+	r := checkAndClearNeedsSync(n.right)
+	return l || r
 }
 
 // drainOSC flushes any queued OSC sequences to os.Stdout.
