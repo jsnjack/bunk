@@ -47,6 +47,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"time"
 	"unicode"
 
@@ -130,7 +131,8 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	// ── Mouse wheel: scrollback vs. passthrough ───────────────────────────
 	if btn == tcell.WheelUp || btn == tcell.WheelDown {
 		if !wantsMouse {
-			scrollAmt := max(1, target.h/4)
+			// 3 lines per notch — matches standard terminal / browser behaviour.
+			const scrollAmt = 3
 			L.Debug("mouse: wheel scroll", "pane", target.id, "btn", btn, "amount", scrollAmt)
 			if btn == tcell.WheelUp {
 				target.scrollUp(scrollAmt)
@@ -176,9 +178,11 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	//
 	// Drag maths (mirrors drawScrollbar in render.go):
 	//   total = sbCount + rows
-	//   visibleStart = sbCount - sbOff          (= handleTop * total / rows)
-	//   new visibleStart = (newHandleTop) * total / rows
-	//   new sbOff       = sbCount - new visibleStart
+	//   total = sbCount + rows; ratio = total/rows (lines per cell of drag)
+	//
+	// Relative drag with a capped sensitivity of 3 lines/cell (matching the
+	// wheel), accumulating the fractional part so no motion is ever lost.
+	// This avoids large jumps when scrollback is deep (many lines per cell).
 	if app.sbDragPane != nil && isRelease {
 		app.sbDragPane = nil
 		app.triggerRedraw()
@@ -186,29 +190,39 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	}
 	if app.sbDragPane != nil && isDrag {
 		p := app.sbDragPane
-		p.mu.Lock()
-		sbCount := p.sb.count
-		_, rows := p.term.Size()
-		p.mu.Unlock()
-		if rows > 0 && sbCount > 0 {
-			total := sbCount + rows
-			dy := y - app.sbDragAnchorY
-			newOff := app.sbDragAnchorOff - dy*total/rows
-			if newOff < 0 {
-				newOff = 0
-			}
-			if newOff > sbCount {
-				newOff = sbCount
-			}
+		dy := app.sbDragLastY - y // up = positive sbOff (further back in history)
+		app.sbDragLastY = y
+		if dy != 0 {
 			p.mu.Lock()
-			p.sbOff = newOff
+			sbCount := p.sb.count
+			_, rows := p.term.Size()
 			p.mu.Unlock()
+			if rows > 0 && sbCount > 0 {
+				// Natural ratio: (sbCount+rows)/rows lines per cell of drag.
+				// This ensures the full scrollback is reachable in exactly
+				// (rows) cells of drag — no cap, no dead zones.
+				total := float64(sbCount + rows)
+				sensitivity := total / float64(rows)
+				app.sbDragAccum += float64(dy) * sensitivity
+				newOff := int(math.Round(app.sbDragAccum))
+				if newOff < 0 {
+					newOff = 0
+					app.sbDragAccum = 0
+				}
+				if newOff > sbCount {
+					newOff = sbCount
+					app.sbDragAccum = float64(sbCount)
+				}
+				p.mu.Lock()
+				p.sbOff = newOff
+				p.mu.Unlock()
+			}
 		}
 		app.triggerRedraw()
 		return
 	}
 	// Detect a Button1 press on the scrollbar column of any pane.
-	// Start a drag anchored at the current sbOff — no position jump on click.
+	// Start a drag from the current sbOff — no position jump on click.
 	if isPress && target != nil {
 		target.mu.Lock()
 		sbCount := target.sb.count
@@ -216,8 +230,8 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		target.mu.Unlock()
 		if sbCount > 0 && x == target.x+target.w-1 {
 			app.sbDragPane = target
-			app.sbDragAnchorY = y
-			app.sbDragAnchorOff = curSbOff
+			app.sbDragLastY = y
+			app.sbDragAccum = float64(curSbOff)
 			app.triggerRedraw()
 			return
 		}
