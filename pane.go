@@ -469,6 +469,8 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		shift := detectShift(prevGrid, newRow0, newRow1)
 		if shift > 0 && shift < len(prevGrid) {
 			// Normal scroll: exactly `shift` rows have scrolled off the top.
+			oldCount := p.sb.count
+			oldSbOff := p.sbOff
 			for i := 0; i < shift; i++ {
 				p.sb.push(prevGrid[i])
 			}
@@ -479,6 +481,21 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				p.sbOff += shift
 				if p.sbOff > p.sb.count {
 					p.sbOff = p.sb.count
+				}
+			}
+			// Keep selection virtual-row coordinates pointing at the same
+			// content.  Virtual-top = sbCount - sbOff; when the ring is not
+			// full, sbCount and sbOff both rise by shift so virtual-top is
+			// unchanged (no adjustment needed).  When the ring IS full, sbCount
+			// stays constant but sbOff rises, so virtual-top falls and every
+			// existing virtual-row number decreases.  We track the delta and
+			// compensate so the anchor/cursor still point at the same content.
+			if p.selActive {
+				oldVT := oldCount - oldSbOff
+				newVT := p.sb.count - p.sbOff
+				if d := newVT - oldVT; d != 0 {
+					p.selAnchor.row += d
+					p.selCursor.row += d
 				}
 			}
 			L.Debug("captureAndWrite: scrollback push", "pane", p.id, "rows", shift, "total", p.sb.count, "sbOff", p.sbOff)
@@ -495,6 +512,8 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				}
 			}
 			pushed := lastNonBlank + 1
+			oldCount := p.sb.count
+			oldSbOff := p.sbOff
 			for i := 0; i < pushed; i++ {
 				p.sb.push(prevGrid[i])
 			}
@@ -502,6 +521,15 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				p.sbOff += pushed
 				if p.sbOff > p.sb.count {
 					p.sbOff = p.sb.count
+				}
+			}
+			// Same virtual-top delta adjustment as the normal-scroll path.
+			if p.selActive {
+				oldVT := oldCount - oldSbOff
+				newVT := p.sb.count - p.sbOff
+				if d := newVT - oldVT; d != 0 {
+					p.selAnchor.row += d
+					p.selCursor.row += d
 				}
 			}
 			L.Debug("captureAndWrite: large-burst scrollback push", "pane", p.id, "rows", pushed, "total", p.sb.count, "sbOff", p.sbOff)
