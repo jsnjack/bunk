@@ -372,13 +372,21 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		for _, seq := range []string{"\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"} {
 			b := []byte(seq)
 			if i := bytes.Index(chunk, b); i >= 0 {
-				// Save primary cursor BEFORE the swap.
+				// Write everything BEFORE the alt-screen entry sequence first,
+				// so any cursor-movement sequences in this chunk (e.g. vim's
+				// \r\n or \x1b[row;colH) update the vt10x cursor position.
+				// Only then read the cursor — otherwise over SSH where many
+				// sequences arrive in one chunk, the pre-entry cursor moves
+				// are missed and we save y=0 instead of the actual prompt row.
+				if i > 0 {
+					p.term.Write(chunk[:i]) //nolint:errcheck
+				}
 				cur := p.term.Cursor()
 				p.altEntryCursorX, p.altEntryCursorY = cur.X, cur.Y
 				L.Log(nil, LevelTrace, "captureAndWrite: alt-screen entry", "pane", p.id, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
 
 				end := i + len(b)
-				p.term.Write(chunk[:end])              //nolint:errcheck
+				p.term.Write(chunk[i:end])             //nolint:errcheck
 				p.term.Write([]byte("\x1b[2J\x1b[H")) //nolint:errcheck
 				if end < len(chunk) {
 					p.term.Write(chunk[end:]) //nolint:errcheck
@@ -389,10 +397,14 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			}
 		}
 	}
-	// If this chunk crosses an alt-screen EXIT point, inject \x1b[0m immediately
-	// after the ?1049l sequence — before vt10x processes any subsequent sequences
-	// (e.g. \x1b[2J) that would otherwise inherit the TUI app's background colour
-	// and paint it onto the restored primary screen.
+	// If this chunk crosses an alt-screen EXIT point:
+	//   1. Inject \x1b[0m right after the exit sequence to prevent TUI background
+	//      colour bleeding into the restored primary screen.
+	//   2. Inject curRestore BEFORE writing chunk[end:] — over SSH, bash often
+	//      sends the shell prompt in the same chunk as \x1b[?1049l.  If curRestore
+	//      were injected after chunk[end:], it would rewind the cursor to x=0 on
+	//      the prompt line (undoing the natural cursor advance from the prompt text)
+	//      causing subsequent input to overwrite PS1.
 	if !wrote && altScreen {
 		for _, seq := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
 			b := []byte(seq)
@@ -401,6 +413,13 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				exitSplitAt = end
 				p.term.Write(chunk[:end])       //nolint:errcheck
 				p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
+				// Restore primary cursor here — before any trailing output
+				// in this chunk (e.g. prompt text) — so the prompt text
+				// advances the cursor naturally to the correct position.
+				L.Log(nil, LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
+				curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
+				L.Log(nil, LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
+				p.term.Write([]byte(curRestore)) //nolint:errcheck
 				if end < len(chunk) {
 					p.term.Write(chunk[end:]) //nolint:errcheck
 				}
@@ -413,14 +432,10 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		p.term.Write(chunk) //nolint:errcheck
 	}
 
-	// When alt screen exits, append the chunk to rawBuf (it was skipped above
-	// because altScreen=true), insert the SGR reset at the split point so
-	// rawBuf replay also uses default colours for any subsequent clears, and
-	// restore the primary cursor to where it was before the alt-screen was
-	// entered.  Without the cursor restore, inline programs like gh-copilot
-	// render at row 0 instead of at the shell prompt position.
+	// When alt screen exits, append the chunk to rawBuf (skipped above because
+	// altScreen=true) and insert the SGR reset at the split point so rawBuf
+	// replay uses default colours for subsequent clears.
 	if altScreen && p.term.Mode()&vt10x.ModeAltScreen == 0 {
-		L.Log(nil, LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
 		const sgrReset = "\x1b[0m"
 		if exitSplitAt > 0 {
 			// Insert sgrReset into rawBuf right after the exit sequence so
@@ -429,10 +444,16 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			p.rawBuf = append(p.rawBuf, sgrReset...)
 			p.rawBuf = append(p.rawBuf, chunk[exitSplitAt:]...)
 		} else {
-			// Fallback: exit sequence not found (e.g. came in a previous chunk).
+			// Fallback: exit sequence not found in this chunk (e.g. split
+			// across two reads).  curRestore was not injected above, so do it
+			// now before any further output from this chunk.
 			p.rawBuf = append(p.rawBuf, chunk...)
 			p.term.Write([]byte(sgrReset)) //nolint:errcheck
 			p.rawBuf = append(p.rawBuf, sgrReset...)
+			L.Log(nil, LevelTrace, "captureAndWrite: alt-screen exit (fallback)", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
+			curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
+			L.Log(nil, LevelTrace, "captureAndWrite: injecting curRestore (fallback)", "pane", p.id, "seq", curRestore)
+			p.term.Write([]byte(curRestore)) //nolint:errcheck
 		}
 		rawMax := p.scrollbackLines * 200
 		if len(p.rawBuf) > rawMax {
@@ -443,17 +464,6 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				p.rawBuf = p.rawBuf[excess:]
 			}
 		}
-
-		// Restore the primary cursor to the position it had before the
-		// alt-screen was entered.  We use CUP (\x1b[row;colH, 1-based).
-		// Only apply to the live terminal, NOT rawBuf: the CUP row number
-		// is relative to the original (scrolling) terminal.  During replay
-		// into a tall scratch terminal (resizeAndReflow), the row numbering
-		// differs because nothing scrolled, so the CUP would position the
-		// cursor in the middle of content, causing contentRows to be wrong.
-		curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
-		L.Log(nil, LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
-		p.term.Write([]byte(curRestore)) //nolint:errcheck
 
 		// Signal the render loop to do a full Sync() repaint so any residual
 		// background colour from the TUI app is cleared from the terminal.
