@@ -173,11 +173,6 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 	// auto-launching it again (prevents recursive invocation).
 	cmd.Env = append(filtered, "TERM=xterm-256color", "COLORTERM=truecolor", "BUNK=1")
 
-	// Create the PTY pair first so we can pass the master as vt10x's response
-	// writer.  vt10x uses the writer to send replies to OSC 10/11/4 colour
-	// queries back to the shell (e.g. "what is the terminal background colour?").
-	// Without this, apps like neovim and bat that adapt their colour scheme to
-	// the terminal background see no response and fall back to defaults.
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: uint16(h),
 		Cols: uint16(w - 1), // reserve last column for the scrollbar
@@ -188,12 +183,16 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 
 	// Initialise the VT10x state machine.
 	// NOTE: we intentionally do NOT use vt10x.WithWriter(ptmx) here.
-	// WithWriter makes vt10x send OSC 10/11 colour-query responses directly to
-	// the PTY master (ptmx).  Writing to the master sends bytes to the slave
-	// process's stdin.  When the pane is running SSH, those response bytes are
-	// forwarded to the remote server as user input, corrupting the remote shell
-	// session.  The colour-query feature is a cosmetic nicety; SSH reliability
-	// is not optional.
+	// WithWriter makes vt10x write OSC 10/11 colour-query responses (and
+	// other device-report replies) directly to the PTY master — i.e. into
+	// the shell's stdin.  This causes two problems:
+	//   1. SSH panes: response bytes are forwarded to the remote server as
+	//      user input, corrupting the remote session.
+	//   2. Fast-exiting programs (gh, bat --paging=never, …) may exit
+	//      before reading the response; bash readline then echoes the
+	//      stale bytes as visible garbage on the prompt line.
+	// DA/DA2/CPR responses are handled manually in captureAndWrite where
+	// we can gate them on specific conditions (e.g. non-alt-screen).
 	term := vt10x.New(vt10x.WithSize(w-1, h))
 
 	p := &Pane{
@@ -340,14 +339,13 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			p.ptmx.Write([]byte(resp)) //nolint:errcheck
 			L.Log(nil, LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
 		}
-		// OSC 10/11 - fg/bg colour queries.  BubbleTea uses these to detect
-		// light vs dark terminal.  Reply with neutral dark-theme colours.
-		if bytes.Contains(chunk, []byte("\x1b]11;?")) {
-			p.ptmx.Write([]byte("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\")) //nolint:errcheck
-		}
-		if bytes.Contains(chunk, []byte("\x1b]10;?")) {
-			p.ptmx.Write([]byte("\x1b]10;rgb:d8d8/d8d8/d8d8\x1b\\")) //nolint:errcheck
-		}
+		// OSC 10/11 (fg/bg colour queries) — NOT answered.
+		// Writing the response to ptmx injects bytes into the shell's stdin.
+		// Fast-exiting programs (e.g. `gh` printing help) send the query via
+		// BubbleTea init and exit before the response arrives; bash's readline
+		// then picks up the stale bytes and echoes them as visible garbage.
+		// BubbleTea has a ~100 ms timeout and falls back to default colours,
+		// so not responding is safe and avoids the race entirely.
 	}
 
 	// Kitty keyboard protocol — bunk acts as the "terminal" for pane apps.

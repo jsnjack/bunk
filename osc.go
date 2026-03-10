@@ -1,7 +1,9 @@
 // osc.go - OSC (Operating System Command) sequence pre-scanner.
 //
-// vt10x handles OSC 0/1/2 (title), 4 (colour), 10/11 (fg/bg colour query),
-// and 104 (colour reset).  Everything else is silently dropped.
+// vt10x handles OSC 0/1/2 (title), 4 (colour), and 104 (colour reset).
+// OSC 10/11 (fg/bg colour queries) are consumed by vt10x but the responses
+// go to ioutil.Discard (WithWriter is intentionally disabled).
+// Everything else is silently dropped.
 //
 // Modern terminal emulators (foot, kitty, iTerm2, Ptyxis/VTE, …) understand
 // these sequences, which must reach the host terminal directly:
