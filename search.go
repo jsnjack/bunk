@@ -20,6 +20,7 @@ package main
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/hinshun/vt10x"
@@ -101,6 +102,8 @@ func (app *App) updateSearch() {
 	}
 
 	lq := strings.ToLower(query)
+	lqRunes := []rune(lq)
+	lqRuneLen := len(lqRunes)
 
 	// Scan the virtual grid under p.mu.  We hold p.mu for the entire scan to
 	// get a consistent snapshot; it is the same lock held by renderPane, so
@@ -120,30 +123,36 @@ func (app *App) updateSearch() {
 		if cells == nil {
 			continue
 		}
-		// Build lowercase line string.
-		var lb strings.Builder
-		for _, g := range cells {
+		// Build lowercase rune slice for column-accurate matching.
+		// Using runes (not bytes) ensures match positions map 1:1 to
+		// cell grid columns, which is essential for correct highlighting
+		// when the terminal content contains multi-byte UTF-8 characters.
+		lineRunes := make([]rune, len(cells))
+		for i, g := range cells {
 			ch := g.Char
 			if ch == 0 {
 				ch = ' '
 			}
-			lb.WriteRune(ch)
+			lineRunes[i] = unicode.ToLower(ch)
 		}
-		line := strings.ToLower(lb.String())
 
-		// Find all non-overlapping occurrences.
-		offset := 0
-		for {
-			i := strings.Index(line[offset:], lq)
-			if i < 0 {
-				break
+		// Find all non-overlapping occurrences using rune indices.
+		for offset := 0; offset+lqRuneLen <= len(lineRunes); offset++ {
+			match := true
+			for k := 0; k < lqRuneLen; k++ {
+				if lineRunes[offset+k] != lqRunes[k] {
+					match = false
+					break
+				}
 			}
-			matches = append(matches, searchMatch{
-				vRow:   vRow,
-				col:    offset + i,
-				length: len(lq),
-			})
-			offset += i + 1
+			if match {
+				matches = append(matches, searchMatch{
+					vRow:   vRow,
+					col:    offset,
+					length: lqRuneLen,
+				})
+				offset += lqRuneLen - 1 // skip past this match (loop increments by 1)
+			}
 		}
 	}
 
@@ -155,14 +164,14 @@ func (app *App) updateSearch() {
 	// Build highlight map: 1 = regular match, 2 = current match.
 	var hl map[int64]int8
 	if len(matches) > 0 {
-		hl = make(map[int64]int8, len(matches)*len(lq))
+		hl = make(map[int64]int8, len(matches)*lqRuneLen)
 		for i, m := range matches {
 			val := int8(1)
 			if i == idx {
 				val = 2
 			}
 			for c := m.col; c < m.col+m.length && c < cols; c++ {
-				key := int64(m.vRow)<<16 | int64(c)
+				key := int64(m.vRow)<<32 | int64(c)
 				// Don't downgrade a current-match cell to regular.
 				if hl[key] != 2 {
 					hl[key] = val

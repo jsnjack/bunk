@@ -85,8 +85,8 @@ func (app *App) render() {
 	root := app.root
 	active := app.active
 
-	app.screen.Clear()
 	if root == nil {
+		app.screen.Clear()
 		app.screen.Show()
 		return
 	}
@@ -393,7 +393,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 
 			// Search highlight: amber for regular matches, orange for current.
 			if hasSearch {
-				key := int64(vRow)<<16 | int64(col)
+				key := int64(vRow)<<32 | int64(col)
 				switch p.searchHL[key] {
 				case 1:
 					style = style.Background(tcell.NewRGBColor(0x80, 0x60, 0x00)).
@@ -423,8 +423,16 @@ func drawScrollbars(scr tcell.Screen, n *Node, rt resolvedTheme) {
 		sbOff := p.sbOff
 		_, rows := p.term.Size()
 		p.mu.Unlock()
+		bx := p.x + p.w - 1
 		if sbOff > 0 {
-			drawScrollbar(scr, p.x+p.w-1, p.y, rows, sbCount, sbOff, rt)
+			drawScrollbar(scr, bx, p.y, rows, sbCount, sbOff, rt)
+		} else {
+			// Always draw the scrollbar column so stale scrollbar glyphs
+			// don't persist when the user returns to live view.
+			blankStyle := tcell.StyleDefault.Background(rt.bg)
+			for row := 0; row < rows; row++ {
+				scr.SetContent(bx, p.y+row, ' ', nil, blankStyle)
+			}
 		}
 		return
 	}

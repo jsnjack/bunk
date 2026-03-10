@@ -151,6 +151,29 @@ func (n *Node) resize(x, y, w, h int) {
 	}
 }
 
+// resizePTYOnly is the lightweight counterpart to resize.  It propagates new
+// bounding boxes down the tree and updates each pane's PTY size (triggering
+// SIGWINCH) but skips the expensive rawBuf replay.  Used during resize
+// coalescing so the shell gets an immediate size update.
+func (n *Node) resizePTYOnly(x, y, w, h int) {
+	n.x, n.y, n.w, n.h = x, y, w, h
+
+	if n.isLeaf() {
+		n.pane.resizePTYOnly(x, y, w, h)
+		return
+	}
+
+	if n.dir == splitVertical {
+		half := w / 2
+		n.left.resizePTYOnly(x, y, half, h)
+		n.right.resizePTYOnly(x+half+1, y, w-half-1, h)
+	} else {
+		half := h / 2
+		n.left.resizePTYOnly(x, y, w, half)
+		n.right.resizePTYOnly(x, y+half+1, w, h-half-1)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Removal
 // ---------------------------------------------------------------------------

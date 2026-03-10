@@ -145,7 +145,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			// content beyond the visible viewport by scrolling.
 			target.mu.Lock()
 			if target.selActive && prevBtn == tcell.Button1 {
-				rows := target.h
+				cols, rows := target.term.Size()
 				if btn == tcell.WheelUp {
 					// Scrolled toward the past: extend cursor to top-left of new view.
 					vRow := target.sb.count - target.sbOff
@@ -153,7 +153,6 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				} else {
 					// Scrolled toward present: extend cursor to bottom-right.
 					vRow := (target.sb.count - target.sbOff) + rows - 1
-					cols, _ := target.term.Size()
 					target.selCursor = selPos{row: vRow, col: cols - 1}
 				}
 				L.Debug("mouse: wheel-extend selection", "pane", target.id, "vrow", target.selCursor.row)
@@ -330,18 +329,19 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			// instead of calling screenToVirtual (which also locks sel.mu).
 			sel.mu.Lock()
 			if sel.selActive {
+				cols, rows := sel.term.Size()
 				col := x - sel.x
 				row := y - sel.y
-				// Clamp coordinates to the pane bounds.
+				// Clamp coordinates to the terminal grid bounds (excludes scrollbar).
 				if col < 0 {
 					col = 0
-				} else if col >= sel.w {
-					col = sel.w - 1
+				} else if col >= cols {
+					col = cols - 1
 				}
 				if row < 0 {
 					row = 0
-				} else if row >= sel.h {
-					row = sel.h - 1
+				} else if row >= rows {
+					row = rows - 1
 				}
 				vRow := (sel.sb.count - sel.sbOff) + row
 				sel.selCursor = selPos{row: vRow, col: col}
@@ -391,14 +391,15 @@ func screenToVirtual(p *Pane, screenX, screenY int) selPos {
 	p.mu.Lock()
 	sbOff := p.sbOff
 	sbCount := p.sb.count
+	cols, _ := p.term.Size()
 	p.mu.Unlock()
 
 	col := screenX - p.x
 	row := screenY - p.y
 	if col < 0 {
 		col = 0
-	} else if col >= p.w {
-		col = p.w - 1
+	} else if col >= cols {
+		col = cols - 1 // clamp to terminal width, excluding scrollbar column
 	}
 	if row < 0 {
 		row = 0
@@ -634,7 +635,7 @@ func (app *App) startDragEdgeScroll(sel *Pane, scrollUp bool) {
 				// Extend selCursor to the visible edge after scrolling.
 				sel.mu.Lock()
 				if sel.selActive {
-					cols, _ := sel.term.Size()
+					cols, rows := sel.term.Size()
 					sbCount := sel.sb.count
 					sbOff := sel.sbOff
 					if scrollUp {
@@ -643,7 +644,7 @@ func (app *App) startDragEdgeScroll(sel *Pane, scrollUp bool) {
 						sel.selCursor = selPos{row: vRow, col: 0}
 					} else {
 						// Extend to the new bottom-right of the view.
-						vRow := (sbCount - sbOff) + sel.h - 1
+						vRow := (sbCount - sbOff) + rows - 1
 						sel.selCursor = selPos{row: vRow, col: cols - 1}
 					}
 				}

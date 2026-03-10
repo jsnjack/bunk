@@ -73,7 +73,7 @@ type Pane struct {
 	selAnchor, selCursor selPos
 	selActive            bool
 
-	// searchHL maps (vRow<<16|col) → match type: 1=regular, 2=current (orange).
+	// searchHL maps (vRow<<32|col) → match type: 1=regular, 2=current (orange).
 	// nil when no search is active for this pane.  Protected by mu.
 	searchHL map[int64]int8
 
@@ -142,6 +142,9 @@ type Pane struct {
 //	done      - closed by the app on shutdown
 //	oscCh     - receives OSC 7/8/52 sequences to forward to the host terminal
 func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
+	if w < 2 || h < 1 {
+		return nil, fmt.Errorf("pane too small: %dx%d", w, h)
+	}
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"
@@ -243,13 +246,17 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			p.oscScan.Scan(chunk, oscCh)
 
 			// Step 2 - track DECSET 2004 (bracketed paste).
-			if bytes.Contains(chunk, []byte("\x1b[?2004h")) {
+			// Check for both enable and disable; the last occurrence wins
+			// when a chunk contains both (e.g. an app toggles paste mode).
+			enableBP := bytes.LastIndex(chunk, []byte("\x1b[?2004h"))
+			disableBP := bytes.LastIndex(chunk, []byte("\x1b[?2004l"))
+			if enableBP >= 0 || disableBP >= 0 {
 				p.mu.Lock()
-				p.wantsBracketedPaste = true
-				p.mu.Unlock()
-			} else if bytes.Contains(chunk, []byte("\x1b[?2004l")) {
-				p.mu.Lock()
-				p.wantsBracketedPaste = false
+				if enableBP > disableBP {
+					p.wantsBracketedPaste = true
+				} else {
+					p.wantsBracketedPaste = false
+				}
 				p.mu.Unlock()
 			}
 
@@ -305,6 +312,24 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	// timeouts.  Skip for SSH/mosh panes: writing to ptmx there forwards
 	// bytes to the remote server as user input, corrupting the session.
 	if p.fgProcess != "ssh" && p.fgProcess != "mosh" {
+		// DA - Primary Device Attributes: ESC [ c or ESC [ 0 c
+		// Many TUI apps (neovim, BubbleTea, zellij) send this at startup to
+		// detect terminal capabilities.  Without a response they time out or
+		// fall back to degraded mode.  We identify as VT220 with ANSI colour,
+		// which is the minimum needed for modern apps to enable 256-colour /
+		// truecolor support.
+		if bytes.Contains(chunk, []byte("\x1b[c")) || bytes.Contains(chunk, []byte("\x1b[0c")) {
+			// Response: VT220 with ANSI colour (62), columns (1), ANSI text
+			// locator (9).  Matches what xterm-256color reports.
+			p.ptmx.Write([]byte("\x1b[?62;1;2;4;6;9;15;22c")) //nolint:errcheck
+			L.Log(nil, LevelTrace, "captureAndWrite: DA response", "pane", p.id)
+		}
+		// DA2 - Secondary Device Attributes: ESC [ > c or ESC [ > 0 c
+		// Reports terminal type and version.  We identify as xterm (type 0).
+		if bytes.Contains(chunk, []byte("\x1b[>c")) || bytes.Contains(chunk, []byte("\x1b[>0c")) {
+			p.ptmx.Write([]byte("\x1b[>0;279;0c")) //nolint:errcheck
+			L.Log(nil, LevelTrace, "captureAndWrite: DA2 response", "pane", p.id)
+		}
 		// CPR - cursor position report: ESC [ 6 n → ESC [ row ; col R
 		// BubbleTea sends this at startup to know where to render inline UI.
 		// Reply with the actual cursor position so the app renders right after
@@ -328,7 +353,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	// Kitty keyboard protocol — bunk acts as the "terminal" for pane apps.
 	// Apps negotiate with us using three sequence types:
 	//   \x1b[?u        - query current flags  → respond with \x1b[?<flags>u
-	//   \x1b[=<n>u     - push flags onto stack
+	//   \x1b[>|=<n>u   - push flags onto stack (> per spec, = legacy)
 	//   \x1b[<N>u      - pop N levels (N defaults to 1)
 	// All are stripped before vt10x sees them; vt10x interprets the bare 'u'
 	// final byte as DECRC (restore cursor), jumping the cursor to 0,0.
@@ -436,6 +461,12 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 	// altScreen=true) and insert the SGR reset at the split point so rawBuf
 	// replay uses default colours for subsequent clears.
 	if altScreen && p.term.Mode()&vt10x.ModeAltScreen == 0 {
+		// Reset kitty keyboard protocol stack.  TUI apps push onto the stack
+		// when entering alt-screen but may not pop if they crash, are killed,
+		// or exit abnormally.  Clearing here prevents stale flags from
+		// affecting the shell after the alt-screen app is gone.
+		p.kittyStack = p.kittyStack[:0]
+
 		const sgrReset = "\x1b[0m"
 		if exitSplitAt > 0 {
 			// Insert sgrReset into rawBuf right after the exit sequence so
@@ -484,30 +515,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			for i := 0; i < shift; i++ {
 				p.sb.push(prevGrid[i])
 			}
-			// If the user is reading scrollback, keep the view anchored by
-			// advancing sbOff by the same amount.  Without this the view drifts
-			// forward as new content pushes old lines into the ring.
-			if p.sbOff > 0 {
-				p.sbOff += shift
-				if p.sbOff > p.sb.count {
-					p.sbOff = p.sb.count
-				}
-			}
-			// Keep selection virtual-row coordinates pointing at the same
-			// content.  Virtual-top = sbCount - sbOff; when the ring is not
-			// full, sbCount and sbOff both rise by shift so virtual-top is
-			// unchanged (no adjustment needed).  When the ring IS full, sbCount
-			// stays constant but sbOff rises, so virtual-top falls and every
-			// existing virtual-row number decreases.  We track the delta and
-			// compensate so the anchor/cursor still point at the same content.
-			if p.selActive {
-				oldVT := oldCount - oldSbOff
-				newVT := p.sb.count - p.sbOff
-				if d := newVT - oldVT; d != 0 {
-					p.selAnchor.row += d
-					p.selCursor.row += d
-				}
-			}
+			p.adjustAfterScrollbackPush(shift, oldCount, oldSbOff)
 			L.Debug("captureAndWrite: scrollback push", "pane", p.id, "rows", shift, "total", p.sb.count, "sbOff", p.sbOff)
 		} else if shift == len(prevGrid) {
 			// Large-burst sentinel: the output scrolled more than one full
@@ -527,21 +535,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			for i := 0; i < pushed; i++ {
 				p.sb.push(prevGrid[i])
 			}
-			if p.sbOff > 0 {
-				p.sbOff += pushed
-				if p.sbOff > p.sb.count {
-					p.sbOff = p.sb.count
-				}
-			}
-			// Same virtual-top delta adjustment as the normal-scroll path.
-			if p.selActive {
-				oldVT := oldCount - oldSbOff
-				newVT := p.sb.count - p.sbOff
-				if d := newVT - oldVT; d != 0 {
-					p.selAnchor.row += d
-					p.selCursor.row += d
-				}
-			}
+			p.adjustAfterScrollbackPush(pushed, oldCount, oldSbOff)
 			L.Debug("captureAndWrite: large-burst scrollback push", "pane", p.id, "rows", pushed, "total", p.sb.count, "sbOff", p.sbOff)
 		}
 	}
@@ -642,9 +636,24 @@ func (p *Pane) SetStatus(msg string, dur time.Duration) {
 // silently truncated.
 func (p *Pane) resize(x, y, w, h int) {
 	L.Debug("pane resize", "pane", p.id, "x", x, "y", y, "w", w, "h", h)
-	p.x, p.y, p.w, p.h = x, y, w, h
 	p.mu.Lock()
+	p.x, p.y, p.w, p.h = x, y, w, h
 	p.resizeAndReflow(w-1, h)
+	p.mu.Unlock()
+	if p.ptmx != nil {
+		pty.Setsize(p.ptmx, &pty.Winsize{ //nolint:errcheck
+			Rows: uint16(h),
+			Cols: uint16(w - 1), // last column reserved for scrollbar
+		})
+	}
+}
+
+// resizePTYOnly updates the pane's screen coordinates and PTY size without
+// performing the expensive rawBuf replay.  This gives the shell an immediate
+// SIGWINCH so it can start redrawing while the full reflow is deferred.
+func (p *Pane) resizePTYOnly(x, y, w, h int) {
+	p.mu.Lock()
+	p.x, p.y, p.w, p.h = x, y, w, h
 	p.mu.Unlock()
 	if p.ptmx != nil {
 		pty.Setsize(p.ptmx, &pty.Winsize{ //nolint:errcheck
@@ -666,6 +675,9 @@ func (p *Pane) resize(x, y, w, h int) {
 //
 // Must be called with p.mu held.
 func (p *Pane) resizeAndReflow(newCols, newRows int) {
+	if newCols < 1 || newRows < 1 {
+		return // terminal too small to be usable
+	}
 	oldCols, oldRows := p.term.Size()
 	if oldCols == newCols && oldRows == newRows {
 		return
@@ -682,6 +694,14 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 		return
 	}
 
+	// Fast path: when only the height changed (cols unchanged), we don't
+	// need to re-wrap text.  Just redistribute rows between the scrollback
+	// ring and the live terminal grid.
+	if oldCols == newCols {
+		p.resizeHeightOnly(newCols, oldRows, newRows)
+		return
+	}
+
 	// Replay raw bytes into a tall scratch terminal so nothing scrolls off
 	// during replay and we can read back all rows.
 	//
@@ -689,31 +709,26 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	// buffer — their absolute-position content doesn't replay meaningfully,
 	// and stripping avoids allocating a large alt-screen buffer in the
 	// scratch terminal.  Pre-vim shell history is preserved.
-	replayH := p.scrollbackLines + newRows
-	scratch := vt10x.New(vt10x.WithSize(newCols, replayH))
 	replay := stripAltScreen(p.rawBuf)
+
+	// Estimate the replay height from the raw byte count.  A typical
+	// terminal line is ~40-80 visible characters plus ANSI escapes, but
+	// can be as short as a single newline.  Using a conservative estimate
+	// of rawBuf_bytes / newCols gives an upper bound on the number of
+	// wrapped lines.  Cap at scrollbackLines + newRows to avoid
+	// over-allocation, but also avoid the full allocation when the buffer
+	// is small (e.g. a fresh pane with only a few lines of output).
+	estimatedLines := len(replay)/max(newCols, 1) + newRows
+	replayH := min(estimatedLines, p.scrollbackLines+newRows)
+	if replayH < newRows {
+		replayH = newRows
+	}
+
+	scratch := vt10x.New(vt10x.WithSize(newCols, replayH))
 	// Prepend a full SGR reset so trimmed attribute state doesn't bleed.
 	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
 
-	// Content extent: use the cursor row, but also scan for the last
-	// non-blank row.  Take the maximum: CUP sequences (cursor position)
-	// in the replay can move the cursor backwards, making cur.Y too small.
-	cur := scratch.Cursor()
-	contentRows := cur.Y + 1
-	for r := replayH - 1; r >= contentRows; r-- {
-		blank := true
-		for c := 0; c < newCols; c++ {
-			g := scratch.Cell(c, r)
-			if g.Char != 0 && g.Char != ' ' {
-				blank = false
-				break
-			}
-		}
-		if !blank {
-			contentRows = r + 1
-			break
-		}
-	}
+	contentRows := findContentRows(scratch, newCols, replayH)
 
 	// Split: rows [0, firstVisible) → scrollback; [firstVisible, contentRows) → live terminal.
 	firstVisible := contentRows - newRows
@@ -747,6 +762,126 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 		"content_rows", contentRows, "sb_rows", firstVisible)
 }
 
+// resizeHeightOnly handles the common case where only the row count changed
+// (columns stayed the same).  No text re-wrapping is needed — we just
+// redistribute existing rows between the scrollback ring and the live grid.
+// This avoids the expensive rawBuf replay that resizeAndReflow does for
+// column-width changes.
+//
+// Must be called with p.mu held.
+func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
+	if newRows > oldRows {
+		// Terminal grew taller: pull rows from scrollback into the live grid.
+		// Capture the current live grid, resize vt10x, then inject the
+		// combined rows (pulled scrollback + old live content).
+		extra := newRows - oldRows
+		pull := extra
+		if pull > p.sb.count {
+			pull = p.sb.count
+		}
+
+		// Collect rows to inject: pulled scrollback + existing live rows.
+		combined := make([][]vt10x.Glyph, newRows)
+		for i := 0; i < pull; i++ {
+			combined[i] = p.sb.get(p.sb.count - pull + i)
+		}
+		for r := 0; r < oldRows; r++ {
+			combined[pull+r] = captureRow(p.term, r, cols)
+		}
+		// Blank padding for remaining rows.
+		for r := pull + oldRows; r < newRows; r++ {
+			combined[r] = make([]vt10x.Glyph, cols)
+		}
+
+		// Shrink scrollback by the pulled amount.
+		if pull > 0 {
+			newSB := sbRing{maxLines: p.scrollbackLines}
+			for i := 0; i < p.sb.count-pull; i++ {
+				newSB.push(p.sb.get(i))
+			}
+			p.sb = newSB
+		}
+		p.sbOff = 0
+
+		p.term = vt10x.New(vt10x.WithSize(cols, newRows))
+		reflowInject(p.term, combined)
+	} else {
+		// Terminal shrank: push excess live rows into scrollback.
+		// First find the actual content extent — trailing blank rows should
+		// be discarded rather than causing content to scroll off the top.
+		contentRows := findContentRows(p.term, cols, oldRows)
+		excess := contentRows - newRows
+		if excess < 0 {
+			excess = 0
+		}
+		for r := 0; r < excess; r++ {
+			p.sb.push(captureRow(p.term, r, cols))
+		}
+		// Capture the visible rows (starting from where content begins
+		// to fit in the new height).
+		remaining := make([][]vt10x.Glyph, newRows)
+		for r := 0; r < newRows; r++ {
+			srcRow := excess + r
+			if srcRow < oldRows {
+				remaining[r] = captureRow(p.term, srcRow, cols)
+			} else {
+				remaining[r] = make([]vt10x.Glyph, cols)
+			}
+		}
+		p.sbOff = 0
+
+		p.term = vt10x.New(vt10x.WithSize(cols, newRows))
+		reflowInject(p.term, remaining)
+	}
+
+	L.Debug("resizeHeightOnly: done", "pane", p.id,
+		"cols", cols, "oldRows", oldRows, "newRows", newRows,
+		"sb_count", p.sb.count)
+}
+
+// findContentRows scans backwards from the bottom of a scratch terminal to
+// find the last non-blank row.  Returns the number of rows with content
+// (i.e. the first blank-only row index from the top).
+func findContentRows(t vt10x.Terminal, cols, totalRows int) int {
+	cur := t.Cursor()
+	contentRows := cur.Y + 1
+	for r := totalRows - 1; r >= contentRows; r-- {
+		blank := true
+		for c := 0; c < cols; c++ {
+			g := t.Cell(c, r)
+			if g.Char != 0 && g.Char != ' ' {
+				blank = false
+				break
+			}
+		}
+		if !blank {
+			contentRows = r + 1
+			break
+		}
+	}
+	return contentRows
+}
+
+// adjustAfterScrollbackPush updates sbOff and selection coordinates after
+// `pushed` rows have been added to the scrollback ring.  oldCount and
+// oldSbOff are the values before the push.  Must be called with p.mu held.
+func (p *Pane) adjustAfterScrollbackPush(pushed, oldCount, oldSbOff int) {
+	if p.sbOff > 0 {
+		p.sbOff += pushed
+		if p.sbOff > p.sb.count {
+			p.sbOff = p.sb.count
+		}
+	}
+	if p.selActive {
+		oldVT := oldCount - oldSbOff
+		newVT := p.sb.count - p.sbOff
+		if d := newVT - oldVT; d != 0 {
+			p.selAnchor.row += d
+			p.selCursor.row += d
+		}
+	}
+}
+
 // rebuildScrollbackFromRawBuf replays the raw PTY byte buffer into a tall
 // scratch terminal at the current column width and rebuilds the scrollback
 // ring from rows that don't fit in the live view.
@@ -770,22 +905,7 @@ func (p *Pane) rebuildScrollbackFromRawBuf() {
 	replay := stripAltScreen(p.rawBuf)
 	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
 
-	cur := scratch.Cursor()
-	contentRows := cur.Y + 1
-	for r := replayH - 1; r >= contentRows; r-- {
-		blank := true
-		for c := 0; c < cols; c++ {
-			g := scratch.Cell(c, r)
-			if g.Char != 0 && g.Char != ' ' {
-				blank = false
-				break
-			}
-		}
-		if !blank {
-			contentRows = r + 1
-			break
-		}
-	}
+	contentRows := findContentRows(scratch, cols, replayH)
 	firstVisible := contentRows - rows
 	if firstVisible < 0 {
 		firstVisible = 0
@@ -936,9 +1056,10 @@ func (p *Pane) selText() string {
 //
 // Three sequence types (all use the 'u' final byte):
 //
-//	\x1b [ ? u       - query: respond with \x1b[?<flags>u (top of stack or 0)
-//	\x1b [ = <n> u   - push: save current flags and activate <n>
-//	\x1b [ < <N> u   - pop:  pop N stack levels (N omitted → 1)
+//	\x1b [ ? u         - query: respond with \x1b[?<flags>u (top of stack or 0)
+//	\x1b [ > <n> u     - push: save current flags and activate <n>  (spec)
+//	\x1b [ = <n> u     - push: same, legacy form used by some apps
+//	\x1b [ < <N> u     - pop:  pop N stack levels (N omitted → 1)
 //
 // Must be called with p.mu held (captureAndWrite contract).
 // Writing to p.ptmx (the PTY) does not require p.mu.
@@ -977,8 +1098,8 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 				newI = j + 2
 				stripped = true
 			}
-		case '=':
-			// \x1b[=<digits>u
+		case '>', '=':
+			// \x1b[><digits>u (spec) or \x1b[=<digits>u (legacy)
 			k := j + 1
 			for k < len(chunk) && chunk[k] >= '0' && chunk[k] <= '9' {
 				k++
