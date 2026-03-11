@@ -20,6 +20,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 	"github.com/hinshun/vt10x"
@@ -235,10 +236,29 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 //  5. Signals the render loop to repaint.
 func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 	buf := make([]byte, 32768)
+	var carry []byte // incomplete UTF-8 tail from previous read
 	for {
 		n, err := p.ptmx.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
+
+			// Prepend any incomplete UTF-8 bytes carried from the previous read.
+			if len(carry) > 0 {
+				chunk = append(carry, chunk...)
+				carry = nil
+			}
+
+			// If the chunk ends mid-UTF-8 sequence, split off the trailing
+			// incomplete bytes so vt10x (and the OSC scanner) only see
+			// complete runes.  Without this, a multi-byte character like ▒
+			// (3 bytes) straddling the read boundary is lost: vt10x treats
+			// each fragment as invalid and drops them.
+			if split := utf8Boundary(chunk); split < len(chunk) {
+				carry = make([]byte, len(chunk)-split)
+				copy(carry, chunk[split:])
+				chunk = chunk[:split]
+			}
+
 			L.Log(nil, LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
 
 			// Step 1 - OSC passthrough (CWD, hyperlinks, clipboard).
@@ -835,6 +855,45 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 	L.Debug("resizeHeightOnly: done", "pane", p.id,
 		"cols", cols, "oldRows", oldRows, "newRows", newRows,
 		"sb_count", p.sb.count)
+}
+
+// utf8Boundary returns the largest index i (0 ≤ i ≤ len(b)) such that b[:i]
+// contains only complete UTF-8 sequences.  b[i:] is the trailing incomplete
+// sequence (if any) that should be carried over to the next read.
+//
+// Only the last 3 bytes need to be inspected because the longest UTF-8
+// sequence is 4 bytes and a complete sequence at the end is always valid.
+func utf8Boundary(b []byte) int {
+	n := len(b)
+	if n == 0 || b[n-1] < 0x80 {
+		return n // ends with ASCII — always complete
+	}
+	// Walk backwards up to 3 bytes looking for the start byte.
+	for i := 1; i <= 3 && i <= n; i++ {
+		c := b[n-i]
+		if c < 0x80 {
+			return n // hit an ASCII byte; everything after is invalid but
+			// that can't happen in a well-formed stream — treat as complete.
+		}
+		if utf8.RuneStart(c) {
+			// Found start byte.  A start byte at n-i needs seqLen bytes.
+			var seqLen int
+			switch {
+			case c < 0xE0:
+				seqLen = 2
+			case c < 0xF0:
+				seqLen = 3
+			default:
+				seqLen = 4
+			}
+			if i < seqLen {
+				return n - i // incomplete — split here
+			}
+			return n // sequence is complete
+		}
+		// continuation byte (0x80..0xBF) — keep scanning
+	}
+	return n
 }
 
 // findContentRows scans backwards from the bottom of a scratch terminal to

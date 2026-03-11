@@ -377,18 +377,17 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 					style = style.Italic(true)
 				}
 			}
-			if cell.Mode&vtAttrReverse != 0 {
-				style = style.Reverse(true)
-			}
+			// NOTE: we do NOT apply tcell.Reverse(true) for vtAttrReverse.
+			// vt10x's setChar() pre-swaps FG/BG when attrReverse is set,
+			// so the stored cell.FG and cell.BG already reflect the
+			// reversed colours.  Applying Reverse(true) would double-swap
+			// them, cancelling the effect and producing wrong colours
+			// (visible as shifted half-block bar edges in chart TUIs).
 
 			// Selection highlight: toggle reverse video so selected text is
 			// always visually distinct regardless of the cell's original style.
 			if hasSel && p.selContainsUnlocked(vRow, col) {
-				if cell.Mode&vtAttrReverse != 0 {
-					style = style.Reverse(false)
-				} else {
-					style = style.Reverse(true)
-				}
+				style = style.Reverse(true)
 			}
 
 			// Search highlight: amber for regular matches, orange for current.
