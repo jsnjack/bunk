@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"sync"
@@ -367,7 +368,13 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		if needRedraw {
 			app.triggerRedraw()
 		}
-		if data := keyToBytes(ev); len(data) > 0 {
+		kittyFlags := 0
+		active.mu.Lock()
+		if len(active.kittyStack) > 0 {
+			kittyFlags = active.kittyStack[len(active.kittyStack)-1]
+		}
+		active.mu.Unlock()
+		if data := keyToBytes(ev, kittyFlags); len(data) > 0 {
 			L.Debug("handleKey: forwarding to PTY", "pane", active.id, "bytes", len(data))
 			active.writeInput(data)
 		}
@@ -768,11 +775,31 @@ const (
 // Key → PTY byte translation
 // ---------------------------------------------------------------------------
 
-func keyToBytes(ev *tcell.EventKey) []byte {
+func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 	mod := ev.Modifiers()
+
+	// Kitty keyboard protocol: when the child app has pushed disambiguate
+	// mode (flags bit 0), encode keys as CSI u sequences so the app can
+	// tell Alt+key from ESC+key, Ctrl+I from Tab, etc.
+	useCSIu := kittyFlags&1 != 0
+
+	// Kitty modifier parameter: 1 + bitmask (shift=1, alt=2, ctrl=4).
+	kittyMod := 1
+	if mod&tcell.ModShift != 0 {
+		kittyMod += 1
+	}
+	if mod&tcell.ModAlt != 0 {
+		kittyMod += 2
+	}
+	if mod&tcell.ModCtrl != 0 {
+		kittyMod += 4
+	}
 
 	if ev.Key() == tcell.KeyRune {
 		r := ev.Rune()
+		if useCSIu && kittyMod > 1 {
+			return fmt.Appendf(nil, "\x1b[%d;%du", r, kittyMod)
+		}
 		if mod&tcell.ModAlt != 0 {
 			return append([]byte{'\x1b'}, []byte(string(r))...)
 		}
@@ -780,6 +807,41 @@ func keyToBytes(ev *tcell.EventKey) []byte {
 	}
 
 	k := ev.Key()
+
+	// CSI u encoding for special keys whose legacy form is ambiguous.
+	if useCSIu {
+		cp := 0
+		km := kittyMod
+		switch k {
+		case tcell.KeyEnter:
+			cp = 13
+		case tcell.KeyTab:
+			cp = 9
+		case tcell.KeyBacktab:
+			cp = 9
+			km |= 2 // tcell strips Shift from mod for BackTab
+		case tcell.KeyBackspace, tcell.KeyBackspace2:
+			cp = 127
+		case tcell.KeyEsc:
+			cp = 27
+		}
+		if cp > 0 {
+			if km > 1 {
+				return fmt.Appendf(nil, "\x1b[%d;%du", cp, km)
+			}
+			return fmt.Appendf(nil, "\x1b[%du", cp)
+		}
+		// Ctrl+letter: codepoint is the lowercase letter.
+		if k >= tcell.KeyCtrlA && k <= tcell.KeyCtrlZ {
+			cp = int('a' + (k - tcell.KeyCtrlA))
+			km |= 5 // Ctrl bit
+			return fmt.Appendf(nil, "\x1b[%d;%du", cp, km)
+		}
+		// Fall through to legacy for arrows, F-keys, etc. which already
+		// have unambiguous CSI representations.
+	}
+
+	// Legacy encoding.
 	if k >= tcell.KeyCtrlA && k <= tcell.KeyCtrlZ {
 		return []byte{byte(k-tcell.KeyCtrlA) + 1}
 	}
@@ -793,6 +855,8 @@ func keyToBytes(ev *tcell.EventKey) []byte {
 		return []byte{'\r'}
 	case tcell.KeyTab:
 		return []byte{'\t'}
+	case tcell.KeyBacktab: // Shift+Tab
+		return []byte{'\x1b', '[', 'Z'}
 	case tcell.KeyEsc:
 		return []byte{'\x1b'}
 	case tcell.KeyUp:
