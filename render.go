@@ -115,6 +115,7 @@ func (app *App) render() {
 
 		drainOSC(app.oscCh)
 		app.emitTitle(active)
+		app.emitCursorStyle(zp)
 		zp.mu.Lock()
 		needsSync := zp.needsSync
 		zp.needsSync = false
@@ -175,6 +176,7 @@ func (app *App) render() {
 	// Step 5 - drain OSC passthrough sequences and update host tab title.
 	drainOSC(app.oscCh)
 	app.emitTitle(active)
+	app.emitCursorStyle(active)
 
 	if checkAndClearNeedsSync(root) {
 		app.screen.Sync()
@@ -276,6 +278,23 @@ func (app *App) emitTitle(active *Pane) {
 	app.lastEmittedTitle = title
 	// OSC 0 sets both icon name and window title; BEL-terminated.
 	os.Stdout.Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
+}
+
+// emitCursorStyle writes a DECSCUSR sequence to the host terminal when the
+// active pane's cursor style has changed since the last frame.
+func (app *App) emitCursorStyle(p *Pane) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	style := p.cursorStyle
+	p.mu.Unlock()
+	if style == app.lastCursorStyle {
+		return
+	}
+	app.lastCursorStyle = style
+	// DECSCUSR: CSI Ps SP q
+	os.Stdout.Write([]byte(fmt.Sprintf("\x1b[%d q", style))) //nolint:errcheck
 }
 
 // ---------------------------------------------------------------------------

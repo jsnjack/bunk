@@ -63,6 +63,7 @@ type Pane struct {
 	dead                bool           // true once the shell process has exited
 	wantsBracketedPaste bool           // DECSET 2004 enabled by the running app
 	inSyncUpdate        bool           // inside a DEC 2026 synchronized update
+	cursorStyle         int            // DECSCUSR cursor shape (0-6); 0 = default
 
 	// Scrollback buffer - lines that have scrolled off the vt10x grid top.
 	// Protected by mu.
@@ -275,12 +276,19 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			enableSU := bytes.LastIndex(chunk, []byte("\x1b[?2026h"))
 			disableSU := bytes.LastIndex(chunk, []byte("\x1b[?2026l"))
 
+			// Step 2.5 - track DECSCUSR (cursor shape).
+			// Sequence: ESC [ Ps SP q  (e.g. \x1b[5 q = blinking bar).
+			curStyle := scanCursorStyle(chunk)
+
 			p.mu.Lock()
 			if enableBP >= 0 || disableBP >= 0 {
 				p.wantsBracketedPaste = enableBP > disableBP
 			}
 			if enableSU >= 0 || disableSU >= 0 {
 				p.inSyncUpdate = enableSU > disableSU
+			}
+			if curStyle >= 0 {
+				p.cursorStyle = curStyle
 			}
 			p.mu.Unlock()
 
@@ -917,6 +925,20 @@ func utf8Boundary(b []byte) int {
 		// continuation byte (0x80..0xBF) — keep scanning
 	}
 	return n
+}
+
+// scanCursorStyle returns the DECSCUSR parameter (0-6) from the last
+// \x1b[N q sequence in data, or -1 if not found.
+// The DECSCUSR format is: CSI Ps SP q  (ESC [ digit space q).
+func scanCursorStyle(data []byte) int {
+	for i := len(data) - 1; i >= 4; i-- {
+		if data[i] == 'q' && data[i-1] == ' ' &&
+			data[i-2] >= '0' && data[i-2] <= '6' &&
+			data[i-3] == '[' && data[i-4] == '\x1b' {
+			return int(data[i-2] - '0')
+		}
+	}
+	return -1
 }
 
 // findContentRows scans backwards from the bottom of a scratch terminal to

@@ -58,6 +58,10 @@ type App struct {
 	// via OSC 0.  Compared each frame to avoid redundant writes.
 	lastEmittedTitle string
 
+	// lastCursorStyle is the DECSCUSR value (0-6) last written to the host
+	// terminal.  Compared each frame to avoid redundant writes.
+	lastCursorStyle int
+
 	// prevMouseBtn remembers the last pressed mouse button so mouseToBytes can
 	// generate release events (only used in the event loop goroutine).
 	prevMouseBtn tcell.ButtonMask
@@ -126,6 +130,9 @@ func (app *App) shutdown() {
 		}
 
 		app.screen.DisableMouse()
+		// Reset cursor style to default so the host terminal isn't left
+		// with a non-default shape after bunk exits.
+		os.Stdout.Write([]byte("\x1b[0 q")) //nolint:errcheck
 		app.screen.Fini()
 	})
 }
