@@ -280,8 +280,9 @@ func (app *App) emitTitle(active *Pane) {
 	os.Stdout.Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
 }
 
-// emitCursorStyle writes a DECSCUSR sequence to the host terminal when the
-// active pane's cursor style has changed since the last frame.
+// emitCursorStyle updates the tcell cursor style when the active pane's
+// DECSCUSR setting has changed.  Uses tcell's SetCursor() so the style
+// is emitted as part of Show()/Sync() rather than racing with it.
 func (app *App) emitCursorStyle(p *Pane) {
 	if p == nil {
 		return
@@ -293,8 +294,7 @@ func (app *App) emitCursorStyle(p *Pane) {
 		return
 	}
 	app.lastCursorStyle = style
-	// DECSCUSR: CSI Ps SP q
-	os.Stdout.Write([]byte(fmt.Sprintf("\x1b[%d q", style))) //nolint:errcheck
+	app.screen.SetCursorStyle(tcell.CursorStyle(style))
 }
 
 // ---------------------------------------------------------------------------
@@ -645,7 +645,11 @@ func paintActiveBorders(scr tcell.Screen, n *Node, active *Pane, style tcell.Sty
 // theme palette for ANSI colors 0-15 and the theme's fg/bg for defaults.
 func vtColor(c vt10x.Color, def tcell.Color, rt resolvedTheme) tcell.Color {
 	switch c {
-	case vt10x.DefaultFG, vt10x.DefaultBG, vt10x.DefaultCursor:
+	case vt10x.DefaultFG:
+		return rt.fg
+	case vt10x.DefaultBG:
+		return rt.bg
+	case vt10x.DefaultCursor:
 		return def
 	}
 	if c < 16 {

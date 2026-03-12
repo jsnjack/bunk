@@ -132,7 +132,7 @@ func (app *App) shutdown() {
 		app.screen.DisableMouse()
 		// Reset cursor style to default so the host terminal isn't left
 		// with a non-default shape after bunk exits.
-		os.Stdout.Write([]byte("\x1b[0 q")) //nolint:errcheck
+		app.screen.SetCursorStyle(tcell.CursorStyleDefault)
 		app.screen.Fini()
 	})
 }
