@@ -56,11 +56,13 @@ type Pane struct {
 	cmd      *exec.Cmd // the shell process
 
 	// mu serialises all access to term (both writes from readPTY and reads from
-	// the render goroutine), plus the dead and wantsBracketedPaste flags.
+	// the render goroutine), plus the dead, wantsBracketedPaste, and
+	// inSyncUpdate flags.
 	mu                  sync.Mutex
 	term                vt10x.Terminal // VT100/ANSI state machine
 	dead                bool           // true once the shell process has exited
 	wantsBracketedPaste bool           // DECSET 2004 enabled by the running app
+	inSyncUpdate        bool           // inside a DEC 2026 synchronized update
 
 	// Scrollback buffer - lines that have scrolled off the vt10x grid top.
 	// Protected by mu.
@@ -264,31 +266,37 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			// Step 1 - OSC passthrough (CWD, hyperlinks, clipboard).
 			p.oscScan.Scan(chunk, oscCh)
 
-			// Step 2 - track DECSET 2004 (bracketed paste).
+			// Step 2 - track DECSET 2004 (bracketed paste) and
+			// DEC 2026 (synchronized update).
 			// Check for both enable and disable; the last occurrence wins
-			// when a chunk contains both (e.g. an app toggles paste mode).
+			// when a chunk contains both (e.g. an app toggles the mode).
 			enableBP := bytes.LastIndex(chunk, []byte("\x1b[?2004h"))
 			disableBP := bytes.LastIndex(chunk, []byte("\x1b[?2004l"))
+			enableSU := bytes.LastIndex(chunk, []byte("\x1b[?2026h"))
+			disableSU := bytes.LastIndex(chunk, []byte("\x1b[?2026l"))
+
+			p.mu.Lock()
 			if enableBP >= 0 || disableBP >= 0 {
-				p.mu.Lock()
-				if enableBP > disableBP {
-					p.wantsBracketedPaste = true
-				} else {
-					p.wantsBracketedPaste = false
-				}
-				p.mu.Unlock()
+				p.wantsBracketedPaste = enableBP > disableBP
 			}
+			if enableSU >= 0 || disableSU >= 0 {
+				p.inSyncUpdate = enableSU > disableSU
+			}
+			p.mu.Unlock()
 
 			// Steps 3+4 - scrollback capture + vt10x write (all under Pane.mu).
 			p.mu.Lock()
 			p.captureAndWrite(chunk)
 			scrolling := p.sbOff > 0
+			syncing := p.inSyncUpdate
 			p.mu.Unlock()
 
 			// Step 5 - wake the render loop (coalesced).
 			// Skip when the user is reading scrollback: new output is buffered
 			// silently so the visible view doesn't jump while they are reading.
-			if !scrolling {
+			// Skip during synchronized updates (DEC 2026): the app is
+			// building a frame — repaint only when the end marker arrives.
+			if !scrolling && !syncing {
 				select {
 				case redraw <- struct{}{}:
 				default:
