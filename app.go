@@ -299,8 +299,10 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		return true
 	case kb.Paste.Matches(ev):
 		L.Debug("handleKey: paste", "key", kb.Paste)
-		app.pasteFromClipboard()
-		return true
+		if app.pasteFromClipboard() {
+			return true
+		}
+		// Empty clipboard — fall through so the key reaches the child app.
 	case kb.NavUp.Matches(ev):
 		L.Debug("handleKey: navigate up")
 		app.zoomOut()

@@ -18,6 +18,7 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -49,20 +50,28 @@ func (app *App) copyToClipboard(text string) {
 	}()
 }
 
-// pasteFromClipboard reads the system clipboard and writes the content to the
-// active pane's PTY, wrapping it in bracketed-paste markers if the pane has
-// opted in via DECSET 2004.  Safe to call from the event loop goroutine.
-func (app *App) pasteFromClipboard() {
+// pasteFromClipboard reads the system clipboard and writes it to the active
+// pane's PTY, wrapping in bracketed-paste markers if the pane has opted in via
+// DECSET 2004.  Text is pasted directly; images are saved to a temp file and
+// the path is pasted instead.  Returns false only when the clipboard is empty
+// or contains unsupported data, so the caller can forward the raw key.
+func (app *App) pasteFromClipboard() bool {
 	app.mu.Lock()
 	active := app.active
 	app.mu.Unlock()
 	if active == nil || active.isDead() {
-		return
+		return true // consumed, nothing useful to forward
 	}
 
 	text := readClipboard()
 	if text == "" {
-		return
+		// No text — check for image data and save to a temp file.
+		// Terminal apps can't receive raw image data; they need a file path.
+		if path := saveClipboardImage(); path != "" {
+			text = path
+		} else {
+			return false
+		}
 	}
 
 	// Normalize line endings to \r — the terminal convention for "Enter".
@@ -82,24 +91,119 @@ func (app *App) pasteFromClipboard() {
 	if bracketed {
 		active.writeInput([]byte("\x1b[201~"))
 	}
+	return true
 }
 
-// readClipboard returns the current clipboard contents using native tools.
-// Returns empty string if no tool is available or clipboard is empty.
+// readClipboard returns the current text clipboard contents using native tools.
+// Returns empty string if no tool is available, clipboard is empty, or
+// clipboard contains only non-text data (e.g. screenshot).
 func readClipboard() string {
-	// Wayland
-	if out, err := exec.Command("wl-paste", "--no-newline").Output(); err == nil {
+	// Wayland — "text" is a special type that matches any text/* MIME,
+	// so image/png data is never returned as raw binary.
+	if out, err := exec.Command("wl-paste", "--no-newline", "--type", "text").Output(); err == nil {
 		return string(out)
 	}
-	// X11 - xclip
+	// X11 - xclip (defaults to UTF8_STRING target, text only)
 	if out, err := exec.Command("xclip", "-selection", "clipboard", "-o").Output(); err == nil {
 		return string(out)
 	}
-	// X11 - xsel
+	// X11 - xsel (text-only by default)
 	if out, err := exec.Command("xsel", "--clipboard", "--output").Output(); err == nil {
 		return string(out)
 	}
 	return ""
+}
+
+// saveClipboardImage saves image data from the clipboard to a temp file and
+// returns the file path.  Returns "" if the clipboard has no image data.
+// This allows terminal apps (which can't receive raw image bytes) to handle
+// image paste via the file path.
+func saveClipboardImage() string {
+	// Wayland
+	if os.Getenv("WAYLAND_DISPLAY") != "" {
+		return saveClipboardImageWl()
+	}
+	// X11 — xclip can read image targets.
+	return saveClipboardImageX11()
+}
+
+func saveClipboardImageWl() string {
+	// Check available MIME types.
+	out, err := exec.Command("wl-paste", "--list-types").Output()
+	if err != nil {
+		return ""
+	}
+	// Find the best image type.
+	var mime string
+	for _, t := range strings.Split(string(out), "\n") {
+		t = strings.TrimSpace(t)
+		if strings.HasPrefix(t, "image/") {
+			mime = t
+			break
+		}
+	}
+	if mime == "" {
+		return ""
+	}
+
+	ext := ".png"
+	if strings.HasSuffix(mime, "/jpeg") {
+		ext = ".jpg"
+	} else if strings.HasSuffix(mime, "/webp") {
+		ext = ".webp"
+	}
+
+	f, err := os.CreateTemp("", "bunk-paste-*"+ext)
+	if err != nil {
+		return ""
+	}
+	cmd := exec.Command("wl-paste", "--no-newline", "--type", mime)
+	cmd.Stdout = f
+	runErr := cmd.Run()
+	f.Close()
+	if runErr != nil {
+		os.Remove(f.Name())
+		return ""
+	}
+	return f.Name()
+}
+
+func saveClipboardImageX11() string {
+	// Query available targets.
+	out, err := exec.Command("xclip", "-selection", "clipboard", "-o", "-target", "TARGETS").Output()
+	if err != nil {
+		return ""
+	}
+	var target string
+	for _, t := range strings.Split(string(out), "\n") {
+		t = strings.TrimSpace(t)
+		if strings.HasPrefix(t, "image/") {
+			target = t
+			break
+		}
+	}
+	if target == "" {
+		return ""
+	}
+
+	ext := ".png"
+	if strings.HasSuffix(target, "/jpeg") {
+		ext = ".jpg"
+	}
+
+	f, err := os.CreateTemp("", "bunk-paste-*"+ext)
+	if err != nil {
+		return ""
+	}
+	cmd := exec.Command("xclip", "-selection", "clipboard", "-o", "-target", target)
+	cmd.Stdout = f
+	runErr := cmd.Run()
+	f.Close()
+	if runErr != nil {
+		os.Remove(f.Name())
+		return ""
+	}
+	return f.Name()
 }
 
 // tryClipboardCmd runs cmd with text piped to stdin and returns true on success.
