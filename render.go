@@ -409,7 +409,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 		// Clear cells between the vt10x grid edge and the pane's visual edge
 		// (minus the scrollbar column). During resize coalescing the pane area
 		// may be wider than the terminal grid, leaving stale cells visible.
-		blankStyle := tcell.StyleDefault.Background(vtColor(0, rt.bg, rt))
+		blankStyle := tcell.StyleDefault.Background(rt.bg)
 		for col := cols; col < p.w-1; col++ {
 			scr.SetContent(p.x+col, p.y+row, ' ', nil, blankStyle)
 		}
@@ -418,7 +418,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	// Clear rows below the vt10x grid if the pane grew taller than the
 	// terminal during resize coalescing.
 	if rows < p.h {
-		blankStyle := tcell.StyleDefault.Background(vtColor(0, rt.bg, rt))
+		blankStyle := tcell.StyleDefault.Background(rt.bg)
 		for row := rows; row < p.h; row++ {
 			for col := 0; col < p.w-1; col++ {
 				scr.SetContent(p.x+col, p.y+row, ' ', nil, blankStyle)
