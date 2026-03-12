@@ -710,6 +710,12 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	}
 
 	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
+		// Reset cursor attributes before resize so that vt10x clears the
+		// newly created cells (in both the alt and saved normal screen)
+		// with default colours instead of the TUI app's current style.
+		// Without this, exiting the alt-screen app after a resize leaks
+		// its background colour into the normal screen's expanded area.
+		p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
 		p.term.Resize(newCols, newRows)
 		return
 	}
