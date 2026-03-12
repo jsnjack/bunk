@@ -13,7 +13,10 @@ endif
 bin/${BINARY}: bin/${BINARY}_linux_amd64
 	cp bin/${BINARY}_linux_amd64 bin/${BINARY}
 
-bin/${BINARY}_linux_amd64: version *.go
+test:
+	go test ./... -count=1
+
+bin/${BINARY}_linux_amd64: version test *.go
 	GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_linux_amd64
 
 build: bin/${BINARY} bin/${BINARY}_linux_amd64
@@ -22,4 +25,4 @@ release: build
 	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_linux_amd64.tar.gz bin/${BINARY}_linux_amd64
 	grm release jsnjack/${BINARY} -f bin/${BINARY}_linux_amd64.tar.gz -t "v`monova`"
 
-.PHONY: version release build
+.PHONY: version release build test
