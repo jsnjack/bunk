@@ -65,6 +65,12 @@ func (app *App) pasteFromClipboard() {
 		return
 	}
 
+	// Normalize line endings to \r — the terminal convention for "Enter".
+	// The PTY line discipline (icrnl) converts \r → \n for the shell.
+	// Raw \n bypasses icrnl, and \r\n produces double newlines.
+	text = strings.ReplaceAll(text, "\r\n", "\r")
+	text = strings.ReplaceAll(text, "\n", "\r")
+
 	active.mu.Lock()
 	bracketed := active.wantsBracketedPaste
 	active.mu.Unlock()

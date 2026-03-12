@@ -39,6 +39,7 @@ const (
 	vtAttrBold      int16 = 4
 	vtAttrItalic    int16 = 16
 	vtAttrBlink     int16 = 32
+	vtAttrWrap      int16 = 64 // last cell of a soft-wrapped row
 )
 
 // ---------------------------------------------------------------------------

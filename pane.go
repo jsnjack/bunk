@@ -1063,6 +1063,8 @@ func (p *Pane) selContainsUnlocked(vRow, col int) bool {
 
 // selText extracts the selected text from the virtual grid (scrollback + live).
 // Lines are newline-separated; trailing spaces on each line are trimmed.
+// Soft-wrapped rows (attrWrap on the last cell) are joined without a newline
+// so that copy-paste preserves the original logical lines.
 // Requires p.mu held.
 func (p *Pane) selText() string {
 	if !p.selActive {
@@ -1075,15 +1077,24 @@ func (p *Pane) selText() string {
 	cols, rows := p.term.Size()
 	sbCount := p.sb.count
 	var buf strings.Builder
+	var prevCells []vt10x.Glyph
 	for vRow := start.row; vRow <= end.row; vRow++ {
-		if vRow > start.row {
-			buf.WriteByte('\n')
-		}
 		var cells []vt10x.Glyph
 		if vRow < sbCount {
 			cells = p.sb.get(vRow)
 		} else if tr := vRow - sbCount; tr >= 0 && tr < rows {
 			cells = captureRow(p.term, tr, cols)
+		}
+		if vRow > start.row {
+			// Only insert \n if the previous row ended with a hard break.
+			// Soft-wrapped rows have attrWrap on their last cell.
+			softWrap := false
+			if prevCells != nil && len(prevCells) > 0 {
+				softWrap = prevCells[len(prevCells)-1].Mode&vtAttrWrap != 0
+			}
+			if !softWrap {
+				buf.WriteByte('\n')
+			}
 		}
 		fromCol, toCol := 0, cols-1
 		if vRow == start.row {
@@ -1102,7 +1113,14 @@ func (p *Pane) selText() string {
 			}
 			line.WriteRune(ch)
 		}
-		buf.WriteString(strings.TrimRight(line.String(), " "))
+		// Only trim trailing spaces on hard-break rows; soft-wrapped rows
+		// are full-width by definition.
+		s := line.String()
+		if cells == nil || len(cells) == 0 || cells[len(cells)-1].Mode&vtAttrWrap == 0 {
+			s = strings.TrimRight(s, " ")
+		}
+		buf.WriteString(s)
+		prevCells = cells
 	}
 	return buf.String()
 }
