@@ -680,6 +680,15 @@ func (p *Pane) resize(x, y, w, h int) {
 func (p *Pane) resizePTYOnly(x, y, w, h int) {
 	p.mu.Lock()
 	p.x, p.y, p.w, p.h = x, y, w, h
+	// Alt-screen apps (btop, vim, …) redraw immediately after SIGWINCH.
+	// If vt10x is still at the old size when that redraw arrives, the
+	// output is parsed at the wrong grid dimensions → corruption.
+	// The vt10x resize is cheap for alt-screen (no rawBuf replay), so
+	// do it here before sending SIGWINCH.
+	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
+		p.term.Write([]byte("\x1b[0m")) //nolint:errcheck
+		p.term.Resize(w-1, h)
+	}
 	p.mu.Unlock()
 	if p.ptmx != nil {
 		pty.Setsize(p.ptmx, &pty.Winsize{ //nolint:errcheck
