@@ -14,7 +14,7 @@ bin/${BINARY}: bin/${BINARY}_linux_amd64
 	cp bin/${BINARY}_linux_amd64 bin/${BINARY}
 
 test:
-	go test ./... -count=1
+	go test ./... -count=1 -race
 
 bin/${BINARY}_linux_amd64: version test *.go
 	GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_linux_amd64

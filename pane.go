@@ -280,6 +280,8 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			// Sequence: ESC [ Ps SP q  (e.g. \x1b[5 q = blinking bar).
 			curStyle := scanCursorStyle(chunk)
 
+			// Steps 2.5–4 under a single lock to prevent render from seeing
+			// updated flags (cursorStyle, inSyncUpdate) with stale vt10x cells.
 			p.mu.Lock()
 			if enableBP >= 0 || disableBP >= 0 {
 				p.wantsBracketedPaste = enableBP > disableBP
@@ -290,10 +292,6 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			if curStyle >= 0 {
 				p.cursorStyle = curStyle
 			}
-			p.mu.Unlock()
-
-			// Steps 3+4 - scrollback capture + vt10x write (all under Pane.mu).
-			p.mu.Lock()
 			p.captureAndWrite(chunk)
 			scrolling := p.sbOff > 0
 			syncing := p.inSyncUpdate

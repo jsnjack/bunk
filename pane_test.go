@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/hinshun/vt10x"
@@ -70,6 +71,83 @@ func TestScanCursorStyle_CursorForwarding_Embedded(t *testing.T) {
 	got := scanCursorStyle(data)
 	if got != 5 {
 		t.Errorf("scanCursorStyle embedded = %d, want 5", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// readPTY single-lock invariant
+//
+// Bug: cursor intermittently invisible in Claude/Copilot (race condition)
+//
+// readPTY previously had two separate p.mu lock sections: one to update
+// flags (cursorStyle, inSyncUpdate) and another for captureAndWrite.
+// render() could sneak between them and see the updated cursorStyle with
+// stale vt10x cells — making the reverse-video cursor invisible.
+//
+// This test verifies the merged single-lock invariant: cursorStyle and
+// vt10x cell content are always consistent when observed under p.mu.
+// ---------------------------------------------------------------------------
+
+func TestReadPTYSingleLock_ClaudeCursorRace(t *testing.T) {
+	term := vt10x.New(vt10x.WithSize(20, 5))
+	p := &Pane{
+		term:            term,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	const iterations = 5000
+	done := make(chan struct{})
+
+	// Writer goroutine: simulates readPTY's single-lock section.
+	// Each iteration atomically sets cursorStyle AND writes a paired
+	// marker character to cell(0,0).
+	// style 1 ↔ 'A', style 2 ↔ 'B', …, style 6 ↔ 'F', then wraps.
+	go func() {
+		defer close(done)
+		for i := 0; i < iterations; i++ {
+			style := (i % 6) + 1
+			marker := byte('A' + (i % 6))
+
+			p.mu.Lock()
+			p.cursorStyle = style
+			// \x1b[H = cursor home (0,0), then write the marker.
+			p.term.Write([]byte{0x1b, '[', 'H', marker}) //nolint:errcheck
+			p.mu.Unlock()
+
+			runtime.Gosched() // yield to give reader a chance to observe
+		}
+	}()
+
+	// Reader goroutine (this goroutine): simulates render() reading
+	// cursorStyle + cell content under a single lock acquisition.
+	// The invariant: style and cell must be from the SAME write.
+	violations := 0
+	checks := 0
+	for {
+		select {
+		case <-done:
+			if violations > 0 {
+				t.Errorf("%d/%d observations saw cursorStyle updated but cell stale (lock broken)",
+					violations, checks)
+			}
+			t.Logf("checked %d observations, 0 violations", checks)
+			return
+		default:
+		}
+
+		p.mu.Lock()
+		style := p.cursorStyle
+		cell := p.term.Cell(0, 0)
+		p.mu.Unlock()
+
+		checks++
+		if style > 0 && cell.Char != 0 {
+			expected := rune('A' + (style - 1))
+			if cell.Char != expected {
+				violations++
+			}
+		}
 	}
 }
 
