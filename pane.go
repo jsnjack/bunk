@@ -803,6 +803,17 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	p.term = vt10x.New(vt10x.WithSize(newCols, newRows))
 	reflowInject(p.term, visibleRows)
 
+	// If the cursor was on a blank row below the last content (i.e. after a
+	// trailing \r\n from a log stream), advance to that blank row so the next
+	// output starts on a fresh line instead of being appended to the last
+	// content row.  We check the scratch terminal's cursor: if its row in the
+	// visible portion maps to a blank row, the cursor was on a new line.
+	scratchCur := scratch.Cursor()
+	visCurRow := scratchCur.Y - firstVisible
+	if visCurRow >= 0 && visCurRow < newRows && rowContentEnd(visibleRows[visCurRow]) == 0 {
+		p.term.Write([]byte("\r\n")) //nolint:errcheck
+	}
+
 	L.Debug("resizeAndReflow: raw replay done", "pane", p.id,
 		"old", fmt.Sprintf("%dx%d", oldCols, oldRows),
 		"new", fmt.Sprintf("%dx%d", newCols, newRows),
@@ -848,10 +859,20 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 			}
 			p.sb = newSB
 		}
+
+		// Check whether the cursor was on a blank row (below content) before
+		// rebuild — if so we'll advance one line after inject.
+		origCur := p.term.Cursor()
+		combCurRow := pull + origCur.Y
+		cursorBelowContent := combCurRow >= 0 && combCurRow < len(combined) && rowContentEnd(combined[combCurRow]) == 0
+
 		p.sbOff = 0
 
 		p.term = vt10x.New(vt10x.WithSize(cols, newRows))
 		reflowInject(p.term, combined)
+		if cursorBelowContent {
+			p.term.Write([]byte("\r\n")) //nolint:errcheck
+		}
 	} else {
 		// Terminal shrank: push excess live rows into scrollback.
 		// First find the actual content extent — trailing blank rows should
@@ -875,10 +896,18 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 				remaining[r] = make([]vt10x.Glyph, cols)
 			}
 		}
+		// Check whether the cursor was on a blank row before rebuild.
+		origCur := p.term.Cursor()
+		remCurRow := origCur.Y - excess
+		cursorBelowContent := remCurRow >= 0 && remCurRow < len(remaining) && rowContentEnd(remaining[remCurRow]) == 0
+
 		p.sbOff = 0
 
 		p.term = vt10x.New(vt10x.WithSize(cols, newRows))
 		reflowInject(p.term, remaining)
+		if cursorBelowContent {
+			p.term.Write([]byte("\r\n")) //nolint:errcheck
+		}
 	}
 
 	L.Debug("resizeHeightOnly: done", "pane", p.id,

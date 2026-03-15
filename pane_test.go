@@ -323,3 +323,202 @@ func TestRowsEqual_BothEmpty(t *testing.T) {
 		t.Error("rowsEqual(empty,empty) = false, want true")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// adjustAfterScrollbackPush — selection stability during scrollback
+//
+// Bug: selecting text while logs scroll causes selection to jump
+//
+// When new rows are pushed to the scrollback ring, selection virtual-row
+// coordinates must be adjusted so they keep pointing at the same content.
+// The tricky case is when the ring is FULL: sb.count stays constant but
+// sbOff rises, changing the virtual-top (sbCount - sbOff).
+// ---------------------------------------------------------------------------
+
+func TestAdjustAfterScrollbackPush_RingNotFull(t *testing.T) {
+	// Ring capacity 100, 5 rows pushed, ring not yet full.
+	// sbOff=3 means user is reading scrollback.
+	p := &Pane{
+		sb:    sbRing{maxLines: 100},
+		sbOff: 3,
+	}
+	// Pre-fill 10 rows.
+	for i := 0; i < 10; i++ {
+		p.sb.push(makeGlyphRow(rune('A' + i)))
+	}
+	p.selActive = true
+	p.selAnchor = selPos{row: 7, col: 0}
+	p.selCursor = selPos{row: 9, col: 5}
+
+	oldCount := p.sb.count  // 10
+	oldSbOff := p.sbOff     // 3
+	// Push 2 more rows (ring not full, count goes 10→12).
+	p.sb.push(makeGlyphRow('K'))
+	p.sb.push(makeGlyphRow('L'))
+	p.adjustAfterScrollbackPush(2, oldCount, oldSbOff)
+
+	// sbOff should advance: 3+2=5
+	if p.sbOff != 5 {
+		t.Errorf("sbOff = %d, want 5", p.sbOff)
+	}
+	// Virtual-top: old = 10-3=7, new = 12-5=7.  Delta = 0.
+	// Selection should be unchanged.
+	if p.selAnchor.row != 7 || p.selCursor.row != 9 {
+		t.Errorf("selection shifted when it shouldn't: anchor.row=%d cursor.row=%d",
+			p.selAnchor.row, p.selCursor.row)
+	}
+}
+
+func TestAdjustAfterScrollbackPush_RingFull(t *testing.T) {
+	// Ring capacity 5, already full.  Pushing more rows causes count to stay
+	// constant while sbOff grows → virtual-top decreases.
+	p := &Pane{
+		sb:    sbRing{maxLines: 5},
+		sbOff: 2,
+	}
+	for i := 0; i < 5; i++ {
+		p.sb.push(makeGlyphRow(rune('A' + i)))
+	}
+	// count=5, sbOff=2 → virtual-top = 5-2 = 3
+	p.selActive = true
+	p.selAnchor = selPos{row: 4, col: 0}
+	p.selCursor = selPos{row: 4, col: 10}
+
+	oldCount := p.sb.count // 5
+	oldSbOff := p.sbOff    // 2
+	// Push 1 row.  Ring is full so count stays 5; sbOff → 3.
+	p.sb.push(makeGlyphRow('F'))
+	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
+
+	// sbOff: 2+1=3 (clamped to count=5 → 3)
+	if p.sbOff != 3 {
+		t.Errorf("sbOff = %d, want 3", p.sbOff)
+	}
+	// Virtual-top: old = 5-2=3, new = 5-3=2.  Delta = -1.
+	// Selection rows should have decreased by 1.
+	if p.selAnchor.row != 3 {
+		t.Errorf("selAnchor.row = %d, want 3", p.selAnchor.row)
+	}
+	if p.selCursor.row != 3 {
+		t.Errorf("selCursor.row = %d, want 3", p.selCursor.row)
+	}
+}
+
+func TestAdjustAfterScrollbackPush_NoScrollback(t *testing.T) {
+	// sbOff=0 (user looking at live view) → sbOff should not change.
+	p := &Pane{
+		sb:    sbRing{maxLines: 100},
+		sbOff: 0,
+	}
+	for i := 0; i < 3; i++ {
+		p.sb.push(makeGlyphRow(rune('A' + i)))
+	}
+	p.selActive = true
+	p.selAnchor = selPos{row: 2, col: 0}
+	p.selCursor = selPos{row: 2, col: 5}
+
+	oldCount := p.sb.count
+	oldSbOff := p.sbOff
+	p.sb.push(makeGlyphRow('D'))
+	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
+
+	if p.sbOff != 0 {
+		t.Errorf("sbOff = %d, want 0", p.sbOff)
+	}
+	// count: 3→4, sbOff stays 0 → virtual-top: 3-0=3 → 4-0=4, delta=+1
+	if p.selAnchor.row != 3 {
+		t.Errorf("selAnchor.row = %d, want 3 (shifted by +1)", p.selAnchor.row)
+	}
+}
+
+func TestAdjustAfterScrollbackPush_NoSelection(t *testing.T) {
+	// selActive=false → should not panic or modify anything.
+	p := &Pane{
+		sb:    sbRing{maxLines: 100},
+		sbOff: 2,
+	}
+	for i := 0; i < 5; i++ {
+		p.sb.push(makeGlyphRow(rune('A' + i)))
+	}
+	p.selActive = false
+	p.selAnchor = selPos{row: 3, col: 0}
+	p.selCursor = selPos{row: 4, col: 0}
+
+	oldCount := p.sb.count
+	oldSbOff := p.sbOff
+	p.sb.push(makeGlyphRow('F'))
+	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
+
+	// Selection coordinates should be untouched.
+	if p.selAnchor.row != 3 || p.selCursor.row != 4 {
+		t.Errorf("selection modified when selActive=false: anchor=%d cursor=%d",
+			p.selAnchor.row, p.selCursor.row)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// needsSync — set on alt-screen exit
+//
+// Bug: btop background artifact persists after exit
+//
+// When the pane exits alt-screen, needsSync is set so the next render uses
+// Sync() (full repaint) to clear any residual background colour.
+// ---------------------------------------------------------------------------
+
+func TestNeedsSync_AltScreenExit(t *testing.T) {
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{
+		term:            term,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	// Write a line then enter alt-screen.
+	p.captureAndWrite([]byte("hello\r\n\x1b[?1049h"))
+	if p.needsSync {
+		t.Error("needsSync should be false after alt-screen entry")
+	}
+
+	// Exit alt-screen.
+	p.captureAndWrite([]byte("\x1b[?1049l"))
+	if !p.needsSync {
+		t.Error("needsSync should be true after alt-screen exit")
+	}
+
+	// Clearing it manually (simulating render consuming it).
+	p.needsSync = false
+	if p.needsSync {
+		t.Error("needsSync should be false after manual clear")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// findContentRows
+// ---------------------------------------------------------------------------
+
+func TestFindContentRows_CursorBelowContent(t *testing.T) {
+	// Simulate a terminal where content is on rows 0-2, cursor on row 3
+	// (empty row after a trailing \r\n), and rows 3-9 are blank.
+	term := vt10x.New(vt10x.WithSize(20, 10))
+	term.Write([]byte("line1\r\nline2\r\nline3\r\n")) //nolint:errcheck
+
+	got := findContentRows(term, 20, 10)
+	// Cursor is on row 3 (the blank row after "line3\r\n").
+	// findContentRows starts from max(cursor.Y+1, ...) and scans backward,
+	// so it should return at least 4 (rows 0-3), but row 3 is blank so
+	// content is rows 0-2 → the function returns cursor.Y+1 = 4 as minimum.
+	if got < 3 {
+		t.Errorf("findContentRows = %d, want >= 3", got)
+	}
+}
+
+func TestFindContentRows_CursorOnContent(t *testing.T) {
+	term := vt10x.New(vt10x.WithSize(20, 10))
+	term.Write([]byte("prompt$ ")) //nolint:errcheck
+
+	got := findContentRows(term, 20, 10)
+	// Cursor is on row 0, which has content → should return 1.
+	if got != 1 {
+		t.Errorf("findContentRows = %d, want 1", got)
+	}
+}

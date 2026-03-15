@@ -324,3 +324,157 @@ func TestEmitSGR_BtopBackgroundLeak_BoldAndColor(t *testing.T) {
 		t.Errorf("emitSGR(bold+red) = %q, want %q", got, want)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// reflowInject cursor position
+//
+// Bug: log lines merge after panel resize
+//
+// reflowInject places the cursor at the end of the last content row. The
+// caller is responsible for advancing to the next line if the original
+// cursor was on a blank row (trailing \r\n).  These tests verify that
+// reflowInject leaves the cursor in the correct place so the caller can
+// make an informed decision.
+// ---------------------------------------------------------------------------
+
+func TestReflowInject_CursorAfterLastContent(t *testing.T) {
+	// 3 content rows, 2 trailing blank rows.
+	// reflowInject should put cursor at end of row 2 (last content row).
+	rows := [][]vt10x.Glyph{
+		makeGlyphRow('A', 'B', 'C'),
+		makeGlyphRow('D', 'E', 'F'),
+		makeGlyphRow('G', 'H', 'I'),
+		makeGlyphRow(0, 0, 0),
+		makeGlyphRow(0, 0, 0),
+	}
+	term := vt10x.New(vt10x.WithSize(3, 5))
+	reflowInject(term, rows)
+
+	cur := term.Cursor()
+	// Cursor should be on row 2 (the last content row), at column 3 (end).
+	if cur.Y != 2 {
+		t.Errorf("cursor Y = %d, want 2", cur.Y)
+	}
+}
+
+func TestReflowInject_AllContent(t *testing.T) {
+	// All rows have content, no trailing blanks.
+	rows := [][]vt10x.Glyph{
+		makeGlyphRow('A', 'B'),
+		makeGlyphRow('C', 'D'),
+		makeGlyphRow('E', 'F'),
+	}
+	term := vt10x.New(vt10x.WithSize(2, 3))
+	reflowInject(term, rows)
+
+	cur := term.Cursor()
+	if cur.Y != 2 {
+		t.Errorf("cursor Y = %d, want 2 (last row)", cur.Y)
+	}
+}
+
+func TestReflowInject_EmptyRows(t *testing.T) {
+	// All rows blank — nothing should be injected.
+	rows := [][]vt10x.Glyph{
+		makeGlyphRow(0, 0),
+		makeGlyphRow(0, 0),
+	}
+	term := vt10x.New(vt10x.WithSize(2, 2))
+	reflowInject(term, rows)
+
+	cur := term.Cursor()
+	// Nothing written; cursor should stay at origin.
+	if cur.Y != 0 || cur.X != 0 {
+		t.Errorf("cursor = (%d,%d), want (0,0)", cur.X, cur.Y)
+	}
+}
+
+func TestReflowInject_SingleRowContent(t *testing.T) {
+	// One content row, rest blank.
+	rows := [][]vt10x.Glyph{
+		makeGlyphRow('$', ' '),
+		makeGlyphRow(0, 0),
+	}
+	term := vt10x.New(vt10x.WithSize(5, 2))
+	reflowInject(term, rows)
+
+	cur := term.Cursor()
+	// Cursor on row 0 (last content row).
+	if cur.Y != 0 {
+		t.Errorf("cursor Y = %d, want 0", cur.Y)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Resize cursor newline injection
+//
+// Bug: log lines merge after panel resize
+//
+// After reflowInject, the caller checks if the cursor was on a blank row
+// (below content) and injects \r\n to advance.  This test verifies the
+// complete resize path preserves cursor positioning for both cases:
+//   - Log output ending with \r\n → cursor should be on new blank line
+//   - Shell prompt mid-line → cursor should stay on prompt row
+// ---------------------------------------------------------------------------
+
+func TestResizePreservesCursorOnBlankLine(t *testing.T) {
+	// Simulate a terminal with log output ending in \r\n.
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{
+		term:            term,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	// Write three log lines each ending with \r\n.
+	data := []byte("11:55:41 | log line 1\r\n11:55:42 | log line 2\r\n11:55:43 | log line 3\r\n")
+	p.captureAndWrite(data)
+	p.rawBuf = append(p.rawBuf, data...)
+
+	// Cursor should be on row 3 (the blank row after the last \r\n).
+	cur := p.term.Cursor()
+	if cur.Y != 3 {
+		t.Fatalf("pre-resize cursor Y = %d, want 3", cur.Y)
+	}
+
+	// Resize (height only change).
+	p.resizeAndReflow(40, 8)
+
+	// After resize, the cursor should NOT be on a content row.
+	// Verify the cursor row is blank (no visible characters).
+	cur = p.term.Cursor()
+	cols, _ := p.term.Size()
+	row := captureRow(p.term, cur.Y, cols)
+	if rowContentEnd(row) != 0 {
+		t.Errorf("after resize cursor is on row %d which has content; should be on blank row", cur.Y)
+	}
+}
+
+func TestResizePreservesCursorOnPrompt(t *testing.T) {
+	// Simulate a shell prompt — cursor is mid-line on a content row.
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{
+		term:            term,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	data := []byte("user@host:~$ ")
+	p.captureAndWrite(data)
+	p.rawBuf = append(p.rawBuf, data...)
+
+	// Cursor should be on row 0, column 13.
+	cur := p.term.Cursor()
+	if cur.Y != 0 {
+		t.Fatalf("pre-resize cursor Y = %d, want 0", cur.Y)
+	}
+
+	// Resize.
+	p.resizeAndReflow(40, 8)
+
+	// Cursor should still be on row 0 (the prompt row), NOT row 1.
+	cur = p.term.Cursor()
+	if cur.Y != 0 {
+		t.Errorf("after resize cursor Y = %d, want 0 (prompt row)", cur.Y)
+	}
+}

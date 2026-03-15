@@ -548,3 +548,69 @@ func TestVtColor_DefParameterIrrelevant_BtopBackgroundLeak(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// checkAndClearNeedsSync
+//
+// Bug: btop background artifact persists after exit
+//
+// After alt-screen exit, needsSync is set on the pane so that the render
+// loop uses Sync() (full repaint).  checkAndClearNeedsSync walks the BSP
+// tree, returns true if any pane had it set, and clears them all.
+// ---------------------------------------------------------------------------
+
+func TestCheckAndClearNeedsSync_NoPanes(t *testing.T) {
+	if checkAndClearNeedsSync(nil) {
+		t.Error("checkAndClearNeedsSync(nil) = true, want false")
+	}
+}
+
+func TestCheckAndClearNeedsSync_SingleLeaf_Clean(t *testing.T) {
+	p := &Pane{needsSync: false}
+	n := &Node{pane: p}
+	if checkAndClearNeedsSync(n) {
+		t.Error("checkAndClearNeedsSync(clean pane) = true, want false")
+	}
+}
+
+func TestCheckAndClearNeedsSync_SingleLeaf_Dirty(t *testing.T) {
+	p := &Pane{needsSync: true}
+	n := &Node{pane: p}
+	if !checkAndClearNeedsSync(n) {
+		t.Error("checkAndClearNeedsSync(dirty pane) = false, want true")
+	}
+	// Should have cleared the flag.
+	if p.needsSync {
+		t.Error("needsSync not cleared after checkAndClearNeedsSync")
+	}
+}
+
+func TestCheckAndClearNeedsSync_Tree_OneDirty(t *testing.T) {
+	p1 := &Pane{needsSync: false}
+	p2 := &Pane{needsSync: true}
+	root := &Node{
+		left:  &Node{pane: p1},
+		right: &Node{pane: p2},
+	}
+	if !checkAndClearNeedsSync(root) {
+		t.Error("checkAndClearNeedsSync with one dirty = false, want true")
+	}
+	if p2.needsSync {
+		t.Error("p2.needsSync not cleared")
+	}
+}
+
+func TestCheckAndClearNeedsSync_Tree_AllDirty(t *testing.T) {
+	p1 := &Pane{needsSync: true}
+	p2 := &Pane{needsSync: true}
+	root := &Node{
+		left:  &Node{pane: p1},
+		right: &Node{pane: p2},
+	}
+	if !checkAndClearNeedsSync(root) {
+		t.Error("checkAndClearNeedsSync with both dirty = false, want true")
+	}
+	if p1.needsSync || p2.needsSync {
+		t.Error("not all needsSync flags cleared")
+	}
+}
