@@ -380,7 +380,17 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	useSGR := mode&vt10x.ModeMouseSgr != 0
 
 	if data := mouseToBytes(btn, prevBtn, ev.Modifiers(), px, py, useSGR); len(data) > 0 {
-		target.writeInput(data)
+		// Re-check mouse mode under the lock immediately before writing.
+		// Between the initial mode read and here, readPTY may have processed
+		// an alt-screen exit chunk that disables mouse reporting.  Without
+		// this second check the shell receives raw SGR mouse sequences as
+		// visible garbage text (e.g. "51;80;29M51;77;28M…").
+		target.mu.Lock()
+		stillWants := target.term.Mode()&vt10x.ModeMouseMask != 0
+		target.mu.Unlock()
+		if stillWants {
+			target.writeInput(data)
+		}
 	}
 }
 
