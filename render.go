@@ -96,6 +96,16 @@ func (app *App) render() {
 
 	// Zoomed mode: draw only the zoomed pane, no borders.
 	if zp := app.zoomedPane; zp != nil {
+		// Skip rendering mid DEC 2026 sync update — avoids flushing a blank
+		// frame after \x1b[2J but before the app has drawn its content.
+		// readPTY triggers a fresh redraw when the end marker arrives.
+		zp.mu.Lock()
+		syncing := zp.inSyncUpdate
+		zp.mu.Unlock()
+		if syncing {
+			return
+		}
+
 		zNode := &Node{pane: zp}
 		drawPaneContents(app.screen, zNode, rt)
 		drawScrollbars(app.screen, zNode, rt)
@@ -126,6 +136,19 @@ func (app *App) render() {
 			app.screen.Show()
 		}
 		return
+	}
+
+	// Skip rendering mid DEC 2026 sync update — avoids flushing a blank
+	// frame after \x1b[2J but before the app has drawn its content.
+	// Non-PTY events (mouse, resize, trackFgProcess) bypass readPTY's
+	// syncing guard, so we must also gate here.
+	if active != nil {
+		active.mu.Lock()
+		syncing := active.inSyncUpdate
+		active.mu.Unlock()
+		if syncing {
+			return
+		}
 	}
 
 	// Step 1 - draw pane contents.
@@ -329,6 +352,14 @@ func drawPaneContents(scr tcell.Screen, n *Node, rt resolvedTheme) {
 func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// Second guard: close the TOCTOU window between render()'s top-level
+	// check and this vt10x read. readPTY may have started a new sync frame
+	// (blanking vt10x) in between. Returning here leaves tcell's cell buffer
+	// unchanged, so Show() sends nothing — no blank flash reaches the terminal.
+	if p.inSyncUpdate {
+		return
+	}
 
 	cols, rows := p.term.Size()
 	sbOff := p.sbOff
