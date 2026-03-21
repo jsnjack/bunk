@@ -27,6 +27,7 @@ const (
 	DefaultFG Color = 1<<24 + iota
 	DefaultBG
 	DefaultCursor
+	DefaultUL // underline color unset — inherits from FG
 )
 
 // Color maps to the ANSI colors [0, 16) and the xterm colors [16, 256).

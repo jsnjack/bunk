@@ -214,6 +214,9 @@ func emitSGR(buf *bytes.Buffer, g vt10x.Glyph) {
 	}
 	emitColorCode(buf, g.FG, true)
 	emitColorCode(buf, g.BG, false)
+	if g.Mode&vtAttrHasULColor != 0 {
+		emitULColorCode(buf, g.UL)
+	}
 	buf.WriteByte('m')
 }
 
@@ -254,6 +257,25 @@ func emitColorCode(buf *bytes.Buffer, c vt10x.Color, isFG bool) {
 		} else {
 			buf.WriteString(";48;2;")
 		}
+		buf.Write(strconv.AppendInt(nil, int64(r), 10))
+		buf.WriteByte(';')
+		buf.Write(strconv.AppendInt(nil, int64(g), 10))
+		buf.WriteByte(';')
+		buf.Write(strconv.AppendInt(nil, int64(b), 10))
+	}
+}
+
+// emitULColorCode appends SGR 58 underline-colour sub-parameters for c.
+func emitULColorCode(buf *bytes.Buffer, c vt10x.Color) {
+	switch {
+	case c < 256:
+		buf.WriteString(";58;5;")
+		buf.Write(strconv.AppendInt(nil, int64(c), 10))
+	default: // truecolor
+		r := (c >> 16) & 0xff
+		g := (c >> 8) & 0xff
+		b := c & 0xff
+		buf.WriteString(";58;2;")
 		buf.Write(strconv.AppendInt(nil, int64(r), 10))
 		buf.WriteByte(';')
 		buf.Write(strconv.AppendInt(nil, int64(g), 10))

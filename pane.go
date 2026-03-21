@@ -176,13 +176,16 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 	// • COLORTERM=truecolor - tells colour-aware apps 24-bit RGB works.
 	filtered := make([]string, 0, len(os.Environ()))
 	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "TERM=") && !strings.HasPrefix(e, "COLORTERM=") {
+		if !strings.HasPrefix(e, "TERM=") && !strings.HasPrefix(e, "COLORTERM=") &&
+			!strings.HasPrefix(e, "VTE_VERSION=") {
 			filtered = append(filtered, e)
 		}
 	}
 	// BUNK=1 lets shell rc files detect they're running inside bunk and skip
 	// auto-launching it again (prevents recursive invocation).
-	cmd.Env = append(filtered, "TERM=xterm-256color", "COLORTERM=truecolor", "BUNK=1")
+	// VTE_VERSION tells apps like Neovim that we support VTE 0.78+ features:
+	// SGR 4:3 curly underline, SGR 58 colored underline, kitty keyboard protocol.
+	cmd.Env = append(filtered, "TERM=xterm-256color", "COLORTERM=truecolor", "BUNK=1", "VTE_VERSION=8203")
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Rows: uint16(h),
@@ -369,6 +372,16 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		if bytes.Contains(chunk, []byte("\x1b[>c")) || bytes.Contains(chunk, []byte("\x1b[>0c")) {
 			p.ptmx.Write([]byte("\x1b[>0;279;0c")) //nolint:errcheck
 			L.Log(nil, LevelTrace, "captureAndWrite: DA2 response", "pane", p.id)
+		}
+		// XTVERSION - terminal name/version query: ESC [ > 0 q  or  ESC [ > q
+		// Response is a DCS string: DCS > | name(version) ST
+		// Modern apps (Claude Code, Neovim, WezTerm, foot) use this for
+		// feature detection — a missing response causes them to skip features
+		// or wait for a timeout.  We report as VTE 0.82.3 (8203) to match what
+		// GNOME Terminal and Tilix report — apps are calibrated against this number.
+		if bytes.Contains(chunk, []byte("\x1b[>0q")) || bytes.Contains(chunk, []byte("\x1b[>q")) {
+			p.ptmx.Write([]byte("\x1bP>|VTE(8203)\x1b\\")) //nolint:errcheck
+			L.Log(nil, LevelTrace, "captureAndWrite: XTVERSION response", "pane", p.id)
 		}
 		// CPR - cursor position report: ESC [ 6 n → ESC [ row ; col R
 		// BubbleTea sends this at startup to know where to render inline UI.

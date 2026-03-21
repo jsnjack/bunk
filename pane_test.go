@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"os"
 	"runtime"
 	"testing"
 
@@ -550,5 +552,55 @@ func TestXParseColor_InvalidLength(t *testing.T) {
 	got := xParseColor("ff00")
 	if got != "rgb:0000/0000/0000" {
 		t.Errorf("xParseColor invalid length: got %q, want fallback", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// XTVERSION (CSI > 0 q / CSI > q)
+//
+// Modern apps (Claude Code, Neovim, WezTerm) send \x1b[>0q at startup for
+// feature detection.  Without a response they may skip features or time out.
+// Response format: DCS > | name(version) ST
+// ---------------------------------------------------------------------------
+
+func TestXTVersion_Response(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+
+	p.captureAndWrite([]byte("\x1b[>0q"))
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	want := "\x1bP>|VTE(8203)\x1b\\"
+	if string(buf) != want {
+		t.Errorf("XTVERSION response = %q, want %q", string(buf), want)
+	}
+}
+
+func TestXTVersion_ShortForm(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+
+	p.captureAndWrite([]byte("\x1b[>q"))
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	want := "\x1bP>|VTE(8203)\x1b\\"
+	if string(buf) != want {
+		t.Errorf("XTVERSION short form response = %q, want %q", string(buf), want)
 	}
 }

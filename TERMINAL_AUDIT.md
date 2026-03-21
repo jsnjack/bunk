@@ -26,8 +26,8 @@ Date: 2026-03-12 (updated 2026-03-21)
 | 9 | Strikethrough | OK | AttrStrikethrough bit added; tcell StrikeThrough(true) applied |
 | 21 | Double underline | **MISSING** | Rare, some rich-text TUIs |
 | 53 | Overline | **MISSING** | Rare |
-| 58;5;N | Colored underline (256) | **MISSING** | Neovim LSP diagnostics, helix |
-| 58;2;R;G;B | Colored underline (RGB) | **MISSING** | Same |
+| 58;5;N | Colored underline (256) | OK | attrHasULColor flag + UL Color field; vtColor mapping; tcell style.Underline(color) |
+| 58;2;R;G;B | Colored underline (RGB) | OK | Same |
 | 30-37, 90-97 | ANSI FG colors | OK | |
 | 40-47, 100-107 | ANSI BG colors | OK | |
 | 38;5;N / 48;5;N | 256 colors | OK | |
@@ -86,7 +86,7 @@ Highest impact: OSC 12 (cursor colour) and OSC 110/111/112 (reset) still missing
 | CPR (CSI 6 n) | Cursor position report | OK | |
 | DSR (CSI 5 n) | Device status report | OK | |
 | DECRQM (CSI ? Ps $ p) | Request mode | OK | Responds for modes 2026, 2004, 1004, 1049 |
-| XTVERSION (CSI > 0 q) | Terminal version | **MISSING** | Feature detection |
+| XTVERSION (CSI > 0 q) | Terminal version | OK | Responds with DCS >|bunk(version) ST; used by Claude Code, Neovim, WezTerm for feature detection |
 | DECRQSS | Request setting | **MISSING** | Low impact |
 
 Highest impact: XTVERSION (feature detection by newer apps).

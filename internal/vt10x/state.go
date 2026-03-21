@@ -28,6 +28,7 @@ const (
 	attrUnderlineStyleBit0 // 1024
 	attrUnderlineStyleBit1 // 2048
 	attrUnderlineStyleBit2 // 4096
+	attrHasULColor         // 8192: SGR 58 was explicitly set; UL field is valid
 )
 
 // attrUnderlineStyleMask covers all three underline-style bits.
@@ -50,6 +51,7 @@ const (
 	AttrUnderlineStyleBit1 = attrUnderlineStyleBit1
 	AttrUnderlineStyleBit2 = attrUnderlineStyleBit2
 	AttrUnderlineStyleMask = attrUnderlineStyleMask
+	AttrHasULColor         = attrHasULColor
 )
 
 const (
@@ -98,9 +100,20 @@ type Glyph struct {
 	Char   rune
 	Mode   int16
 	FG, BG Color
+	UL     Color // SGR 58 underline color; DefaultUL means inherit from FG
 }
 
 type line []Glyph
+
+// makeLine allocates a line of n Glyphs with UL pre-set to DefaultUL so that
+// the zero value of Color (Black) is never confused with "no underline color".
+func makeLine(n int) line {
+	l := make(line, n)
+	for i := range l {
+		l[i].UL = DefaultUL
+	}
+	return l
+}
 
 type Cursor struct {
 	Attr  Glyph
@@ -313,6 +326,7 @@ func (t *State) defaultCursor() Cursor {
 	c := Cursor{}
 	c.Attr.FG = DefaultFG
 	c.Attr.BG = DefaultBG
+	c.Attr.UL = DefaultUL
 	return c
 }
 
@@ -357,8 +371,8 @@ func (t *State) resize(cols, rows int) bool {
 	t.changed |= ChangedScreen
 	for i := 0; i < rows; i++ {
 		t.dirty[i] = true
-		t.lines[i] = make(line, cols)
-		t.altLines[i] = make(line, cols)
+		t.lines[i] = makeLine(cols)
+		t.altLines[i] = makeLine(cols)
 	}
 	for i := 0; i < minrows; i++ {
 		copy(t.lines[i], lines[i])
@@ -652,9 +666,10 @@ func (t *State) setAttr(attr []int) {
 		switch a {
 		case 0:
 			t.cur.Attr.Mode &^= attrReverse | attrUnderline | attrBold | attrItalic | attrBlink |
-				attrDim | attrStrikethrough | attrInvisible | attrUnderlineStyleMask
+				attrDim | attrStrikethrough | attrInvisible | attrUnderlineStyleMask | attrHasULColor
 			t.cur.Attr.FG = DefaultFG
 			t.cur.Attr.BG = DefaultBG
+			t.cur.Attr.UL = DefaultUL
 		case 1:
 			t.cur.Attr.Mode |= attrBold
 		case 2:
@@ -780,6 +795,43 @@ func (t *State) setAttr(attr []int) {
 			}
 		case 49:
 			t.cur.Attr.BG = DefaultBG
+		case 58:
+			// SGR 58[:N] — underline colour (same encoding as 38/48).
+			colorMode := sub
+			if colorMode < 0 && i+1 < len(attr) {
+				colorMode = attr[i+1]
+			}
+			if colorMode == 5 {
+				if sub < 0 {
+					i++
+				}
+				i++
+				if i < len(attr) && between(attr[i], 0, 255) {
+					t.cur.Attr.UL = Color(attr[i])
+					t.cur.Attr.Mode |= attrHasULColor
+				} else {
+					t.logf("bad ulcolor\n")
+				}
+			} else if colorMode == 2 {
+				if sub < 0 {
+					i++
+				}
+				i += 3
+				if i < len(attr) {
+					r, g, b := attr[i-2], attr[i-1], attr[i]
+					if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
+						t.logf("bad ul rgb color (%d,%d,%d)\n", r, g, b)
+					} else {
+						t.cur.Attr.UL = Color(r<<16 | g<<8 | b)
+						t.cur.Attr.Mode |= attrHasULColor
+					}
+				}
+			} else {
+				t.logf("gfx attr %d unknown\n", a)
+			}
+		case 59:
+			t.cur.Attr.UL = DefaultUL
+			t.cur.Attr.Mode &^= attrHasULColor
 		default:
 			if between(a, 30, 37) {
 				t.cur.Attr.FG = Color(a - 30)
