@@ -102,16 +102,17 @@ Highest impact: DECRQM. Apps may skip sync updates without a mode-supported resp
 | Alt+key (ESC prefix) | OK | |
 | Arrow keys | OK | |
 | Shift+Tab (BackTab) | **FIXED** | Was sending `\x1b[9;3u` (Alt+Tab) in kitty mode; now correctly `\x1b[9;2u` |
-| Kitty keyboard protocol | **OK** | Push/pop/query stack; CSI u encoding for Enter, Tab, Backspace, Ctrl+letter |
-| F1 | **MISSING** | Not in the switch statement. F1 = `\x1bOP` |
-| F2-F12 | OK | |
-| F13-F24 | **MISSING** | Shift+F1-F12 should produce F13-F24 |
-| Home/End/PgUp/PgDn/Ins/Del | OK | |
-| Modified arrows (Ctrl+Up etc) | **MISSING** | Legacy `\x1b[1;5A` form not generated |
-| Modified Home/End/etc | **MISSING** | Ctrl+Home, Shift+End, Ctrl+Delete not encoded |
+| Kitty keyboard protocol | OK | Push/pop/query stack; CSI u encoding for Enter, Tab, Backspace, Ctrl+letter |
+| F1–F12 | OK | Any key bound to a bunk action (default: F1=split, F12=zoom) is consumed and not forwarded; this is config-dependent |
+| F13-F24 | OK | Shift+F1-F12; handled both via `KeyF13`–`KeyF24` and via `KeyF1`+`ModShift` modifier path |
+| Home/End/PgUp/PgDn/Ins/Del | OK | All modifiers forwarded as `\x1b[<code>;<mod>~` / `\x1b[1;<mod>H/F`; Shift+PgUp/PgDn consumed by default for scrollback (config-dependent) |
+| Modified arrows (Ctrl+Up etc) | OK | Forwarded as `\x1b[1;<mod>A/B/C/D`; Alt+arrows consumed by default for pane nav (config-dependent) |
+| Modified Home/End/etc | OK | Ctrl+Home, Shift+End, Ctrl+Delete etc. forwarded with xterm modifier parameter |
 | Keypad keys | **MISSING** | Numpad Enter, keypad digits in app keypad mode |
 
-Highest impact: Modified arrow keys (Ctrl+Left/Right for word-jump in shell readline).
+> **Note:** Any key bound to a bunk action in the user's config is intercepted and not forwarded to the PTY. Default consumed keys: F1 (split), Alt+F1 (split-context), F12 (zoom), Alt+arrows (pane nav), Shift+PgUp/PgDn (scrollback), Ctrl+C (copy/forward), Ctrl+V (paste), Ctrl+Q (quit), Ctrl+F (search), Ctrl+N (search-next). All of these are user-remappable.
+
+Highest impact: SGR 2 (dim) affects git diff, ls --color daily.
 
 ---
 
@@ -153,21 +154,18 @@ N/A in practice for cell-based multiplexer without passthrough support.
 
 1. **SGR 2 (dim)** — Needs vt10x patch or bitmask extension
 2. **SGR 9 (strikethrough)** — Same
-3. **Modified arrow keys** — Fix in keyToBytes (Ctrl+Left/Right, etc)
-4. **F1 key** — Trivial addition to keyToBytes switch
-5. **OSC 10/11 response** — Dark/light theme detection for apps
-6. **DECRQM response for mode 2026** — Tells apps sync updates are supported
+3. **OSC 10/11 response** — Dark/light theme detection for apps
+4. **DECRQM response for mode 2026** — Tells apps sync updates are supported
 
 ### Tier 2 — Medium impact, affects specific workflows
 
-7. **OSC 133 forwarding** — Shell integration / prompt marking
-8. **Modified special keys** — Ctrl+Home, Shift+End, Ctrl+Delete
-9. **SGR 8 (invisible)** — Password entry in some TUIs
+5. **OSC 133 forwarding** — Shell integration / prompt marking
+6. **SGR 8 (invisible)** — Password entry in some TUIs
 
 ### Tier 3 — Nice to have
 
-10. Colored/curly underlines (neovim LSP diagnostics)
-11. F13-F24 (Shift+F-keys)
-12. XTVERSION response
-13. Grapheme clustering (mode 2027)
-14. Graphics protocol passthrough
+7. Colored/curly underlines (neovim LSP diagnostics)
+8. XTVERSION response
+9. Grapheme clustering (mode 2027)
+10. Graphics protocol passthrough
+11. Keypad keys (numpad in app keypad mode)

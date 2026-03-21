@@ -855,6 +855,11 @@ func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 		return []byte{byte(k-tcell.KeyCtrlA) + 1}
 	}
 
+	// xtermMod returns the xterm modifier parameter (1 + shift + alt*2 + ctrl*4).
+	// Identical encoding to kittyMod — reuse the already-computed value.
+	// When kittyMod == 1 (no modifiers), omit the parameter entirely (bare seq).
+	xm := kittyMod
+
 	switch k {
 	case tcell.KeyBackspace:
 		return []byte{'\x08'}
@@ -868,60 +873,158 @@ func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 		return []byte{'\x1b', '[', 'Z'}
 	case tcell.KeyEsc:
 		return []byte{'\x1b'}
+
+	// Arrow keys — bare CSI when unmodified, CSI 1;<mod> when modified.
+	// The `return nil` guards that used to be here for Alt+arrows are removed:
+	// handleKey already consumed them as keybindings before reaching keyToBytes.
+	// Any key that arrives here must be forwarded.
 	case tcell.KeyUp:
-		if mod&tcell.ModAlt != 0 {
-			return nil
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dA", xm)
 		}
 		return []byte{'\x1b', '[', 'A'}
 	case tcell.KeyDown:
-		if mod&tcell.ModAlt != 0 {
-			return nil
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dB", xm)
 		}
 		return []byte{'\x1b', '[', 'B'}
 	case tcell.KeyRight:
-		if mod&tcell.ModAlt != 0 {
-			return nil
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dC", xm)
 		}
 		return []byte{'\x1b', '[', 'C'}
 	case tcell.KeyLeft:
-		if mod&tcell.ModAlt != 0 {
-			return nil
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dD", xm)
 		}
 		return []byte{'\x1b', '[', 'D'}
+
+	// Home / End
 	case tcell.KeyHome:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dH", xm)
+		}
 		return []byte{'\x1b', '[', 'H'}
 	case tcell.KeyEnd:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dF", xm)
+		}
 		return []byte{'\x1b', '[', 'F'}
+
+	// PgUp / PgDn / Insert / Delete
 	case tcell.KeyPgUp:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[5;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '5', '~'}
 	case tcell.KeyPgDn:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[6;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '6', '~'}
-	case tcell.KeyDelete:
-		return []byte{'\x1b', '[', '3', '~'}
 	case tcell.KeyInsert:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[2;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '2', '~'}
+	case tcell.KeyDelete:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[3;%d~", xm)
+		}
+		return []byte{'\x1b', '[', '3', '~'}
+
+	// F1–F4: SS3 form when unmodified, CSI 1;<mod> form when modified.
+	case tcell.KeyF1:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dP", xm)
+		}
+		return []byte{'\x1b', 'O', 'P'}
 	case tcell.KeyF2:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dQ", xm)
+		}
 		return []byte{'\x1b', 'O', 'Q'}
 	case tcell.KeyF3:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dR", xm)
+		}
 		return []byte{'\x1b', 'O', 'R'}
 	case tcell.KeyF4:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[1;%dS", xm)
+		}
 		return []byte{'\x1b', 'O', 'S'}
+
+	// F5–F12: tilde form when unmodified, <code>;<mod>~ when modified.
 	case tcell.KeyF5:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[15;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '1', '5', '~'}
 	case tcell.KeyF6:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[17;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '1', '7', '~'}
 	case tcell.KeyF7:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[18;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '1', '8', '~'}
 	case tcell.KeyF8:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[19;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '1', '9', '~'}
 	case tcell.KeyF9:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[20;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '2', '0', '~'}
 	case tcell.KeyF10:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[21;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '2', '1', '~'}
 	case tcell.KeyF11:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[23;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '2', '3', '~'}
 	case tcell.KeyF12:
+		if xm > 1 {
+			return fmt.Appendf(nil, "\x1b[24;%d~", xm)
+		}
 		return []byte{'\x1b', '[', '2', '4', '~'}
+
+	// F13–F24: these are the standard xterm Shift+F1–F12 encodings.
+	// tcell may report Shift+F1 as either KeyF1+ModShift (handled above via
+	// the xm>1 path) or as KeyF13 directly, depending on the host terminal's
+	// terminfo.  We handle both so apps receive the correct sequence either way.
+	case tcell.KeyF13:
+		return []byte{'\x1b', '[', '1', ';', '2', 'P'} // Shift+F1
+	case tcell.KeyF14:
+		return []byte{'\x1b', '[', '1', ';', '2', 'Q'} // Shift+F2
+	case tcell.KeyF15:
+		return []byte{'\x1b', '[', '1', ';', '2', 'R'} // Shift+F3
+	case tcell.KeyF16:
+		return []byte{'\x1b', '[', '1', ';', '2', 'S'} // Shift+F4
+	case tcell.KeyF17:
+		return []byte{'\x1b', '[', '1', '5', ';', '2', '~'} // Shift+F5
+	case tcell.KeyF18:
+		return []byte{'\x1b', '[', '1', '7', ';', '2', '~'} // Shift+F6
+	case tcell.KeyF19:
+		return []byte{'\x1b', '[', '1', '8', ';', '2', '~'} // Shift+F7
+	case tcell.KeyF20:
+		return []byte{'\x1b', '[', '1', '9', ';', '2', '~'} // Shift+F8
+	case tcell.KeyF21:
+		return []byte{'\x1b', '[', '2', '0', ';', '2', '~'} // Shift+F9
+	case tcell.KeyF22:
+		return []byte{'\x1b', '[', '2', '1', ';', '2', '~'} // Shift+F10
+	case tcell.KeyF23:
+		return []byte{'\x1b', '[', '2', '3', ';', '2', '~'} // Shift+F11
+	case tcell.KeyF24:
+		return []byte{'\x1b', '[', '2', '4', ';', '2', '~'} // Shift+F12
 	}
 	return nil
 }

@@ -429,35 +429,143 @@ func TestKeyToBytes(t *testing.T) {
 		},
 
 		// -----------------------------------------------------------------
-		// 10. Alt+arrow returns nil (consumed by bunk for pane nav)
+		// 10. Modified arrows — xterm \x1b[1;<mod>X form
+		// (Alt+arrows no longer return nil; handleKey consumes them first)
 		// -----------------------------------------------------------------
 		{
-			name:    "Alt+Up returns nil",
-			ev:      keyEv(tcell.KeyUp, tcell.ModAlt),
-			wantNil: true,
+			name: "Alt+Up → xterm modifier seq",
+			ev:   keyEv(tcell.KeyUp, tcell.ModAlt),
+			want: "\x1b[1;3A", // mod=1+alt(2)=3
 		},
 		{
-			name:    "Alt+Down returns nil",
-			ev:      keyEv(tcell.KeyDown, tcell.ModAlt),
-			wantNil: true,
+			name: "Alt+Down → xterm modifier seq",
+			ev:   keyEv(tcell.KeyDown, tcell.ModAlt),
+			want: "\x1b[1;3B",
 		},
 		{
-			name:    "Alt+Left returns nil",
-			ev:      keyEv(tcell.KeyLeft, tcell.ModAlt),
-			wantNil: true,
+			name: "Alt+Left → xterm modifier seq",
+			ev:   keyEv(tcell.KeyLeft, tcell.ModAlt),
+			want: "\x1b[1;3D",
 		},
 		{
-			name:    "Alt+Right returns nil",
-			ev:      keyEv(tcell.KeyRight, tcell.ModAlt),
-			wantNil: true,
+			name: "Alt+Right → xterm modifier seq",
+			ev:   keyEv(tcell.KeyRight, tcell.ModAlt),
+			want: "\x1b[1;3C",
+		},
+		{
+			name: "Ctrl+Up",
+			ev:   keyEv(tcell.KeyUp, tcell.ModCtrl),
+			want: "\x1b[1;5A", // mod=1+ctrl(4)=5
+		},
+		{
+			name: "Ctrl+Down",
+			ev:   keyEv(tcell.KeyDown, tcell.ModCtrl),
+			want: "\x1b[1;5B",
+		},
+		{
+			name: "Ctrl+Left",
+			ev:   keyEv(tcell.KeyLeft, tcell.ModCtrl),
+			want: "\x1b[1;5D",
+		},
+		{
+			name: "Ctrl+Right",
+			ev:   keyEv(tcell.KeyRight, tcell.ModCtrl),
+			want: "\x1b[1;5C",
+		},
+		{
+			name: "Shift+Up",
+			ev:   keyEv(tcell.KeyUp, tcell.ModShift),
+			want: "\x1b[1;2A", // mod=1+shift(1)=2
 		},
 
 		// -----------------------------------------------------------------
-		// Edge cases / nil return for unhandled keys
+		// 11. F1 + modified F-keys
+		// -----------------------------------------------------------------
+		{
+			name: "F1 legacy",
+			ev:   keyEv(tcell.KeyF1, 0),
+			want: "\x1bOP",
+		},
+		{
+			name: "Shift+F1",
+			ev:   keyEv(tcell.KeyF1, tcell.ModShift),
+			want: "\x1b[1;2P",
+		},
+		{
+			name: "Ctrl+F2",
+			ev:   keyEv(tcell.KeyF2, tcell.ModCtrl),
+			want: "\x1b[1;5Q",
+		},
+		{
+			name: "Alt+F5",
+			ev:   keyEv(tcell.KeyF5, tcell.ModAlt),
+			want: "\x1b[15;3~",
+		},
+		{
+			name: "Ctrl+F10",
+			ev:   keyEv(tcell.KeyF10, tcell.ModCtrl),
+			want: "\x1b[21;5~",
+		},
+
+		// -----------------------------------------------------------------
+		// 12. F13–F24 (Shift+F1–F12 via dedicated tcell key codes)
+		// -----------------------------------------------------------------
+		{
+			name: "F13 (Shift+F1)",
+			ev:   keyEv(tcell.KeyF13, 0),
+			want: "\x1b[1;2P",
+		},
+		{
+			name: "F14 (Shift+F2)",
+			ev:   keyEv(tcell.KeyF14, 0),
+			want: "\x1b[1;2Q",
+		},
+		{
+			name: "F17 (Shift+F5)",
+			ev:   keyEv(tcell.KeyF17, 0),
+			want: "\x1b[15;2~",
+		},
+		{
+			name: "F23 (Shift+F11)",
+			ev:   keyEv(tcell.KeyF23, 0),
+			want: "\x1b[23;2~",
+		},
+		{
+			name: "F24 (Shift+F12)",
+			ev:   keyEv(tcell.KeyF24, 0),
+			want: "\x1b[24;2~",
+		},
+
+		// -----------------------------------------------------------------
+		// 13. Modified Home/End/PgUp/PgDn/Insert/Delete
+		// -----------------------------------------------------------------
+		{
+			name: "Ctrl+Home",
+			ev:   keyEv(tcell.KeyHome, tcell.ModCtrl),
+			want: "\x1b[1;5H",
+		},
+		{
+			name: "Shift+End",
+			ev:   keyEv(tcell.KeyEnd, tcell.ModShift),
+			want: "\x1b[1;2F",
+		},
+		{
+			name: "Ctrl+Delete",
+			ev:   keyEv(tcell.KeyDelete, tcell.ModCtrl),
+			want: "\x1b[3;5~",
+		},
+		{
+			name: "Shift+Insert",
+			ev:   keyEv(tcell.KeyInsert, tcell.ModShift),
+			want: "\x1b[2;2~",
+		},
+
+		// -----------------------------------------------------------------
+		// Edge cases / nil return for genuinely unhandled keys
 		// -----------------------------------------------------------------
 		{
 			name:    "Unhandled key returns nil",
-			ev:      keyEv(tcell.KeyF1, 0),
+			ev:      keyEv(tcell.KeyF25, 0),
 			wantNil: true,
 		},
 
