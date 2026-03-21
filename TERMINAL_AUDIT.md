@@ -1,6 +1,6 @@
 # Bunk Terminal Feature Audit
 
-Date: 2026-03-12
+Date: 2026-03-12 (updated 2026-03-21)
 
 ## Legend
 - **OK** — fully handled
@@ -101,12 +101,14 @@ Highest impact: DECRQM. Apps may skip sync updates without a mode-supported resp
 | Ctrl+letter | OK | |
 | Alt+key (ESC prefix) | OK | |
 | Arrow keys | OK | |
+| Shift+Tab (BackTab) | **FIXED** | Was sending `\x1b[9;3u` (Alt+Tab) in kitty mode; now correctly `\x1b[9;2u` |
+| Kitty keyboard protocol | **OK** | Push/pop/query stack; CSI u encoding for Enter, Tab, Backspace, Ctrl+letter |
 | F1 | **MISSING** | Not in the switch statement. F1 = `\x1bOP` |
 | F2-F12 | OK | |
 | F13-F24 | **MISSING** | Shift+F1-F12 should produce F13-F24 |
 | Home/End/PgUp/PgDn/Ins/Del | OK | |
 | Modified arrows (Ctrl+Up etc) | **MISSING** | Legacy `\x1b[1;5A` form not generated |
-| Modified Home/End/etc | **MISSING** | Ctrl+Home, Shift+End, etc. not encoded |
+| Modified Home/End/etc | **MISSING** | Ctrl+Home, Shift+End, Ctrl+Delete not encoded |
 | Keypad keys | **MISSING** | Numpad Enter, keypad digits in app keypad mode |
 
 Highest impact: Modified arrow keys (Ctrl+Left/Right for word-jump in shell readline).
@@ -130,9 +132,9 @@ N/A in practice for cell-based multiplexer without passthrough support.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | UTF-8 | OK | Boundary detection prevents split-rune corruption |
-| CJK double-width | **MISSING** | No wcwidth/runewidth handling |
+| CJK double-width | **FIXED** | displayCol tracking in renderPane decouples vt10x column from screen column |
 | Combining characters | **PARTIAL** | vt10x stores one rune per cell |
-| Emoji (multi-codepoint) | **MISSING** | No grapheme clustering |
+| Emoji (multi-codepoint) | **MISSING** | No grapheme clustering (mode 2027) |
 
 ---
 
@@ -160,13 +162,12 @@ N/A in practice for cell-based multiplexer without passthrough support.
 
 7. **OSC 133 forwarding** — Shell integration / prompt marking
 8. **Modified special keys** — Ctrl+Home, Shift+End, Ctrl+Delete
-9. **CJK double-width characters** — Needs runewidth library
-10. **SGR 8 (invisible)** — Password entry in some TUIs
+9. **SGR 8 (invisible)** — Password entry in some TUIs
 
 ### Tier 3 — Nice to have
 
-11. Colored/curly underlines (neovim LSP diagnostics)
-12. F13-F24 (Shift+F-keys)
-13. XTVERSION response
-14. Grapheme clustering (mode 2027)
-15. Graphics protocol passthrough
+10. Colored/curly underlines (neovim LSP diagnostics)
+11. F13-F24 (Shift+F-keys)
+12. XTVERSION response
+13. Grapheme clustering (mode 2027)
+14. Graphics protocol passthrough

@@ -112,3 +112,17 @@ case vt10x.DefaultCursor: return def  // only here is def used
 ```
 
 The parameter name `def` implies "default fallback" but it only applies to `DefaultCursor`. For `DefaultFG`/`DefaultBG` the theme colours are always returned unconditionally. This is intentional: vt10x pre-swaps FG↔BG for reverse-video cells, and the invariant `DefaultFG → rt.fg` / `DefaultBG → rt.bg` must hold for the swap to produce visible contrast.
+
+### 5. vt10x treats all characters as single-width
+
+vt10x does not implement East Asian Width — every character (including emoji, CJK) advances the cursor by 1 column regardless of actual display width. `renderPane` compensates with a separate `displayCol` counter that uses `uniseg.StringWidth` to advance by 2 for wide chars. This means vt10x column N does **not** equal screen column N when wide chars appear earlier in the row.
+
+---
+
+## Terminal Feature Audit
+
+`TERMINAL_AUDIT.md` is the authoritative reference for which terminal features are implemented, partially implemented, or missing.
+
+**When investigating a rendering or input bug:** consult `TERMINAL_AUDIT.md` first — the bug may be a known limitation (e.g. SGR 2 dim, modified arrow keys, F1 key). This avoids re-investigating already-documented gaps.
+
+**When fixing a bug or adding a feature:** update `TERMINAL_AUDIT.md` to reflect the new status. Change `MISSING` → `OK` or `FIXED` (with a brief note), and update the Priority Plan if the item was listed there.
