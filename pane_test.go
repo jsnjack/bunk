@@ -704,3 +704,35 @@ func TestSGR53_ResetBy0(t *testing.T) {
 		t.Errorf("cell B (after SGR 0): expected AttrOverline cleared, Mode=0x%x", cellB.Mode)
 	}
 }
+
+// TestPrivateModeSGR_vim_slash4m guards against \x1b[?4m being misinterpreted
+// as SGR 4 (underline). Vim sends \x1b[?4m as a DEC private mode sequence at
+// the end of its initial render; without the c.priv guard it set underline on
+// all subsequent cells, visibly underlining command-line text like "!q".
+func TestPrivateModeSGR_vim_slash4m(t *testing.T) {
+	term := vt10x.New(vt10x.WithSize(10, 5))
+	// Plain text, then the vim sequence, then more text.
+	term.Write([]byte("A\x1b[?4mB"))
+	cellA := term.Cell(0, 0)
+	cellB := term.Cell(1, 0)
+	if cellA.Mode&vt10x.AttrUnderline != 0 {
+		t.Errorf("cell A: unexpected underline, Mode=0x%x", cellA.Mode)
+	}
+	if cellB.Mode&vt10x.AttrUnderline != 0 {
+		t.Errorf("cell B (after \\x1b[?4m): should NOT be underlined, Mode=0x%x (vim bug reproduced)", cellB.Mode)
+	}
+}
+
+// TestPrivateModeSGR_realSGR4_still_works ensures the real \x1b[4m still works.
+func TestPrivateModeSGR_realSGR4_still_works(t *testing.T) {
+	term := vt10x.New(vt10x.WithSize(10, 5))
+	term.Write([]byte("\x1b[4mU\x1b[0mN"))
+	cellU := term.Cell(0, 0)
+	cellN := term.Cell(1, 0)
+	if cellU.Mode&vt10x.AttrUnderline == 0 {
+		t.Errorf("cell U (after real \\x1b[4m): expected underline, Mode=0x%x", cellU.Mode)
+	}
+	if cellN.Mode&vt10x.AttrUnderline != 0 {
+		t.Errorf("cell N (after \\x1b[0m): expected no underline, Mode=0x%x", cellN.Mode)
+	}
+}

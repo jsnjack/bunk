@@ -190,7 +190,12 @@ func (t *State) handleCSI() {
 	case 'h': // SM - set terminal mode
 		t.setMode(c.priv, true, c.args)
 	case 'm': // SGR - terminal attribute (color)
-		t.setAttr(c.args)
+		// Ignore private-parameter SGR (e.g. \x1b[?4m from vim).
+		// Private params mean the sequence is a DEC mode control, not an
+		// attribute — passing them to setAttr would misfire (e.g. ?4 → underline).
+		if !c.priv {
+			t.setAttr(c.args)
+		}
 	case 'n':
 		switch c.arg(0, 0) {
 		case 5: // DSR - device status report
