@@ -26,6 +26,28 @@ bunk is a lightweight terminal multiplexer in Go. Each pane is a real PTY-backed
 | `logger.go` | Structured logging |
 | `cellaspect.go` | Cell pixel aspect ratio detection |
 
+### `internal/vt10x/` — vendored VT100/ANSI terminal emulator
+
+bunk vendors a fork of `github.com/hinshun/vt10x` with significant local patches. Prefer editing this package over working around it in the main code.
+
+| File | Responsibility |
+|---|---|
+| `state.go` | `State` struct, `Cursor`, `Glyph`, `ModeFlag` constants, `setAttr`, `setMode`, `QueryPrivateMode` |
+| `csi.go` | CSI escape sequence dispatcher (`handleCSI`) |
+| `str.go` | String escape handler (OSC, DCS, APC) |
+| `parse.go` | Byte-by-byte parser state machine (`put`) |
+| `vt.go` | `Terminal` / `View` interfaces, `New()` constructor |
+| `vt_posix.go` | `terminal` concrete type, `Write`, `Parse` (POSIX) |
+| `color.go` | `Color` type, named colour constants |
+| `modes_test.go` | Tests for DECSET 2004/2026, DECSCUSR, `QueryPrivateMode` |
+
+Key extensions over upstream vt10x:
+- SGR 2 (dim), 8 (invisible), 9 (strikethrough), 53 (overline), 58 (underline colour), 4:N (underline styles)
+- `Cursor.Shape` — DECSCUSR cursor shape (0–6)
+- `ModeSetPaste` (DECSET 2004), `ModeSync` (DECSET 2026)
+- `QueryPrivateMode(n)` — returns DECRQM status byte for any tracked private mode
+- Private-parameter SGR guard (`\x1b[?4m` no longer misfires as SGR 4)
+
 ---
 
 ## Concurrency
@@ -57,7 +79,7 @@ Tests run with `-race`. Tests are a prerequisite of the binary build — both mu
 term := vt10x.New(vt10x.WithSize(cols, rows))
 p := &Pane{
     term:            term,
-    cmd:             &exec.Cmd{},  // see gotcha #1
+    cmd:             &exec.Cmd{},  // non-nil prevents cwd() nil-deref in emitTitle
     x: 0, y: 0, w: cols, h: rows,
     scrollbackLines: 100,
     sb:              sbRing{maxLines: 100},
@@ -89,11 +111,7 @@ app := &App{
 
 ## Gotchas
 
-### 1. `cmd: &exec.Cmd{}` is required in render-path tests
-
-`emitTitle()` calls `p.cwd()`, which dereferences `p.cmd`. If `p.cmd` is nil the test panics. `&exec.Cmd{}` gives a non-nil pointer with `Process == nil`, which makes `cwd()` return `""` safely.
-
-### 2. PTY is created 1 column narrower than the pane
+### 1. PTY is created 1 column narrower than the pane
 
 ```go
 pty.StartWithSize(cmd, &pty.Winsize{Rows: h, Cols: w - 1})
@@ -101,21 +119,11 @@ pty.StartWithSize(cmd, &pty.Winsize{Rows: h, Cols: w - 1})
 
 The rightmost column of each pane (`p.x + p.w - 1`) is reserved for the scrollbar; the PTY never writes there. Keep this in mind when writing geometry assertions or resizing logic.
 
-### 3. `readPTY` flag updates and `captureAndWrite` must stay in one lock section
+### 2. Cursor shape and cell content must be read under the same lock
 
-`cursorStyle`, `inSyncUpdate`, and `wantsBracketedPaste` are scanned from the raw PTY chunk and then written to the pane under `p.mu` **in the same lock acquisition** as the `captureAndWrite` call. Splitting them into two lock sections lets `render()` sneak between them and observe updated flags with stale vt10x cell state — which caused an intermittent invisible cursor (reverse-video swap undone). `TestReadPTYSingleLock_ClaudeCursorRace` guards this.
+`Cursor().Shape` and `Cell(x, y)` are both stored inside `p.term` (vt10x). A single `p.term.Write(chunk)` call under `p.mu` in `readPTY` updates both atomically. `render()` must read them within the **same** `p.mu` acquisition — splitting across two lock sections lets `readPTY` sneak a new write between them, producing a cursor with a stale shape (which causes the reverse-video swap to produce an invisible cursor). `TestReadPTYSingleLock_ClaudeCursorRace` guards this invariant.
 
-### 4. `vtColor`: `def` is ignored for `DefaultFG` and `DefaultBG`
-
-```go
-case vt10x.DefaultFG: return rt.fg   // def is not used
-case vt10x.DefaultBG: return rt.bg   // def is not used
-case vt10x.DefaultCursor: return def  // only here is def used
-```
-
-The parameter name `def` implies "default fallback" but it only applies to `DefaultCursor`. For `DefaultFG`/`DefaultBG` the theme colours are always returned unconditionally. This is intentional: vt10x pre-swaps FG↔BG for reverse-video cells, and the invariant `DefaultFG → rt.fg` / `DefaultBG → rt.bg` must hold for the swap to produce visible contrast.
-
-### 5. vt10x treats all characters as single-width
+### 3. vt10x treats all characters as single-width
 
 vt10x does not implement East Asian Width — every character (including emoji, CJK) advances the cursor by 1 column regardless of actual display width. `renderPane` compensates with a separate `displayCol` counter that uses `uniseg.StringWidth` to advance by 2 for wide chars. This means vt10x column N does **not** equal screen column N when wide chars appear earlier in the row.
 
@@ -125,6 +133,6 @@ vt10x does not implement East Asian Width — every character (including emoji, 
 
 `TERMINAL_AUDIT.md` is the authoritative reference for which terminal features are implemented, partially implemented, or missing.
 
-**When investigating a rendering or input bug:** consult `TERMINAL_AUDIT.md` first — the bug may be a known limitation (e.g. SGR 2 dim, modified arrow keys, F1 key). This avoids re-investigating already-documented gaps.
+**When investigating a rendering or input bug:** consult `TERMINAL_AUDIT.md` first — the bug may be a known limitation. This avoids re-investigating already-documented gaps.
 
 **When fixing a bug or adding a feature:** update `TERMINAL_AUDIT.md` to reflect the new status. Change `MISSING` → `OK` or `FIXED` (with a brief note), and update the Priority Plan if the item was listed there.
