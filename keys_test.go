@@ -338,14 +338,32 @@ func TestKeyToBytes(t *testing.T) {
 
 		// -----------------------------------------------------------------
 		// 7. Kitty BackTab: shift bit forced even though tcell strips it
+		//
+		// Regression: the original code used `km |= 2` which sets the ALT
+		// bit (kitty modifier bit-1 = +2) instead of the SHIFT bit (bit-0
+		// = +1), causing copilot-cli to receive Alt+Tab instead of Shift+Tab.
+		// The correct fix is `km += 1`.
+		//
+		// Kitty modifier encoding: param = 1 + shift(1) + alt(2) + ctrl(4)
+		//   Shift only      → 2   (\x1b[9;2u)
+		//   Shift+Alt       → 4   (\x1b[9;4u)
+		//   Wrong (old bug) → 3   (\x1b[9;3u, decoded as Alt-only)
 		// -----------------------------------------------------------------
 		{
 			name:       "Kitty BackTab (Shift+Tab)",
 			ev:         keyEv(tcell.KeyBacktab, 0),
 			kittyFlags: 1,
-			// km starts at 1, BackTab forces |= 2 → km=3. cp=9.
-			// km > 1, so format is \x1b[9;3u
-			want: "\x1b[9;3u",
+			// km starts at 1 (no mods; tcell strips Shift from BackTab).
+			// BackTab adds shift (+1) → km=2. cp=9. → \x1b[9;2u
+			want: "\x1b[9;2u",
+		},
+		{
+			name: "Kitty BackTab with Alt (Shift+Alt+Tab)",
+			// tcell strips Shift but preserves Alt; mod=Alt.
+			ev:         keyEv(tcell.KeyBacktab, tcell.ModAlt),
+			kittyFlags: 1,
+			// kittyMod = 1 + 2(alt) = 3, then +1(shift) = 4 → \x1b[9;4u
+			want: "\x1b[9;4u",
 		},
 
 		// -----------------------------------------------------------------

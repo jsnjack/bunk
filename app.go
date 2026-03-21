@@ -828,7 +828,7 @@ func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 			cp = 9
 		case tcell.KeyBacktab:
 			cp = 9
-			km |= 2 // tcell strips Shift from mod for BackTab
+			km += 1 // tcell strips Shift from BackTab's modifiers; re-add it (shift=+1 in kitty)
 		case tcell.KeyBackspace, tcell.KeyBackspace2:
 			cp = 127
 		case tcell.KeyEsc:
