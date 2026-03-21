@@ -221,3 +221,36 @@ func TestQueryPrivateMode_Mode1049_AltScreen(t *testing.T) {
 		t.Fatalf("1049 after entering alt screen = %c, want '1'", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ESC c (RIS — Reset to Initial State)
+// ---------------------------------------------------------------------------
+
+func TestRIS_ClearsFullScreen(t *testing.T) {
+	// Bug: reset() called clear(0, 0, rows-1, cols-1) — swapped axes.
+	// On a wide terminal (cols >> rows) only the first `rows` columns were
+	// blanked, leaving the rest of each line intact. ESC c should blank every
+	// cell in the grid.
+	const cols, rows = 220, 24
+	term := newTestTerm(cols, rows)
+
+	// Fill every cell with 'X'.
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			term.Write([]byte("X")) //nolint:errcheck
+		}
+	}
+
+	// ESC c = RIS
+	term.Write([]byte("\x1bc")) //nolint:errcheck
+
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			g := term.Cell(c, r)
+			if g.Char != 0 && g.Char != ' ' {
+				t.Errorf("cell(%d,%d) = %q after RIS, want blank", c, r, g.Char)
+				return
+			}
+		}
+	}
+}
