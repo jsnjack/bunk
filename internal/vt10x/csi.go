@@ -45,12 +45,40 @@ func (c *csiEscape) parse() {
 	s = s[:len(s)-1]
 	ss := strings.Split(s, ";")
 	for _, p := range ss {
-		i, err := strconv.Atoi(p)
-		if err != nil {
-			//t.logf("invalid CSI arg '%s'\n", p)
-			break
+		// Handle sub-parameters separated by ':' (e.g. "4:3" for curly underline,
+		// "38:2:R:G:B" for RGB colour).  Encode as main*10000+sub so setAttr can
+		// distinguish them from plain parameters without a separate data structure.
+		// Only the FIRST sub-parameter is encoded; deeper sub-params (e.g. the
+		// R:G:B in 38:2:R:G:B) are passed as separate ';'-equivalent args below.
+		if idx := strings.IndexByte(p, ':'); idx >= 0 {
+			main, err := strconv.Atoi(p[:idx])
+			if err != nil {
+				break
+			}
+			rest := p[idx+1:]
+			// For multi-sub-param forms (e.g. "38:2:255:0:128"), flatten all
+			// sub-params into individual args so the existing colour-parsing
+			// logic in setAttr can handle them identically to the ';' form.
+			subParts := strings.Split(rest, ":")
+			sub, err := strconv.Atoi(subParts[0])
+			if err != nil {
+				sub = 0
+			}
+			c.args = append(c.args, main*10000+sub+1) // +1: distinguishes 4:0 (→40001) from plain 4 (→4)
+			for _, sp := range subParts[1:] {
+				v, err := strconv.Atoi(sp)
+				if err != nil {
+					break
+				}
+				c.args = append(c.args, v)
+			}
+		} else {
+			i, err := strconv.Atoi(p)
+			if err != nil {
+				break
+			}
+			c.args = append(c.args, i)
 		}
-		c.args = append(c.args, i)
 	}
 }
 

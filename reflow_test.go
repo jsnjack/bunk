@@ -484,51 +484,71 @@ func TestResizePreservesCursorOnPrompt(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEmitSGR_Dim_RoundTrip(t *testing.T) {
-// Build a row with a dim 'X', inject it into a fresh terminal, and
-// confirm the dim attribute is restored.
-const cols = 10
-src := vt10x.New(vt10x.WithSize(cols, 3))
-src.Write([]byte("\x1b[2mX")) //nolint:errcheck
+	// Build a row with a dim 'X', inject it into a fresh terminal, and
+	// confirm the dim attribute is restored.
+	const cols = 10
+	src := vt10x.New(vt10x.WithSize(cols, 3))
+	src.Write([]byte("\x1b[2mX")) //nolint:errcheck
 
-rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
+	rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
 
-dst := vt10x.New(vt10x.WithSize(cols, 3))
-reflowInject(dst, rows)
+	dst := vt10x.New(vt10x.WithSize(cols, 3))
+	reflowInject(dst, rows)
 
-cell := dst.Cell(0, 0)
-if cell.Mode&vt10x.AttrDim == 0 {
-t.Errorf("emitSGR dim round-trip: AttrDim not set after reflowInject; Mode=%b", cell.Mode)
-}
+	cell := dst.Cell(0, 0)
+	if cell.Mode&vt10x.AttrDim == 0 {
+		t.Errorf("emitSGR dim round-trip: AttrDim not set after reflowInject; Mode=%b", cell.Mode)
+	}
 }
 
 func TestEmitSGR_Strikethrough_RoundTrip(t *testing.T) {
-const cols = 10
-src := vt10x.New(vt10x.WithSize(cols, 3))
-src.Write([]byte("\x1b[9mX")) //nolint:errcheck
+	const cols = 10
+	src := vt10x.New(vt10x.WithSize(cols, 3))
+	src.Write([]byte("\x1b[9mX")) //nolint:errcheck
 
-rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
+	rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
 
-dst := vt10x.New(vt10x.WithSize(cols, 3))
-reflowInject(dst, rows)
+	dst := vt10x.New(vt10x.WithSize(cols, 3))
+	reflowInject(dst, rows)
 
-cell := dst.Cell(0, 0)
-if cell.Mode&vt10x.AttrStrikethrough == 0 {
-t.Errorf("emitSGR strikethrough round-trip: AttrStrikethrough not set; Mode=%b", cell.Mode)
-}
+	cell := dst.Cell(0, 0)
+	if cell.Mode&vt10x.AttrStrikethrough == 0 {
+		t.Errorf("emitSGR strikethrough round-trip: AttrStrikethrough not set; Mode=%b", cell.Mode)
+	}
 }
 
 func TestEmitSGR_Invisible_RoundTrip(t *testing.T) {
-const cols = 10
-src := vt10x.New(vt10x.WithSize(cols, 3))
-src.Write([]byte("\x1b[8mX")) //nolint:errcheck
+	const cols = 10
+	src := vt10x.New(vt10x.WithSize(cols, 3))
+	src.Write([]byte("\x1b[8mX")) //nolint:errcheck
 
-rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
+	rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
 
-dst := vt10x.New(vt10x.WithSize(cols, 3))
-reflowInject(dst, rows)
+	dst := vt10x.New(vt10x.WithSize(cols, 3))
+	reflowInject(dst, rows)
 
-cell := dst.Cell(0, 0)
-if cell.Mode&vt10x.AttrInvisible == 0 {
-t.Errorf("emitSGR invisible round-trip: AttrInvisible not set; Mode=%b", cell.Mode)
+	cell := dst.Cell(0, 0)
+	if cell.Mode&vt10x.AttrInvisible == 0 {
+		t.Errorf("emitSGR invisible round-trip: AttrInvisible not set; Mode=%b", cell.Mode)
+	}
 }
+
+func TestEmitSGR_CurlyUnderline_RoundTrip(t *testing.T) {
+	const cols = 10
+	src := vt10x.New(vt10x.WithSize(cols, 3))
+	src.Write([]byte("\x1b[4:3mX")) //nolint:errcheck
+
+	rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
+
+	dst := vt10x.New(vt10x.WithSize(cols, 3))
+	reflowInject(dst, rows)
+
+	cell := dst.Cell(0, 0)
+	if cell.Mode&vt10x.AttrUnderline == 0 {
+		t.Fatalf("curly underline round-trip: AttrUnderline not set; Mode=%b", cell.Mode)
+	}
+	styleBits := (cell.Mode & vt10x.AttrUnderlineStyleMask) / vt10x.AttrUnderlineStyleBit0
+	if styleBits != 2 { // 2 = curly
+		t.Errorf("curly underline round-trip: style bits = %d, want 2 (curly)", styleBits)
+	}
 }

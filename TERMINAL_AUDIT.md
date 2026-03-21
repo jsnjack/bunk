@@ -19,7 +19,7 @@ Date: 2026-03-12 (updated 2026-03-21)
 | 2 | Dim/Faint | OK | vt10x vendored; AttrDim bit added. RGB-colour terminals ignore ti.Dim, so bunk blends FG 50% toward BG itself |
 | 3 | Italic | OK | |
 | 4 | Underline | OK | |
-| 4:1-4:5 | Curly/dotted/dashed underline | **MISSING** | Neovim diagnostics (curly underline for errors) |
+| 4:0-4:5 | Underline styles (curly/double/dotted/dashed) | OK | CSI sub-param parser fixed; all styles stored in Glyph.Mode bits and mapped to tcell.UnderlineStyleXxx |
 | 5-6 | Blink | OK | |
 | 7 | Reverse | **FIXED** | Was broken for default-color cells — vtColor mapped both DefaultFG and DefaultBG to the positional `def` param, undoing vt10x's FG/BG swap. Claude/Copilot cursor (reverse-video space) was invisible |
 | 8 | Hidden/Invisible | OK | AttrInvisible bit added; rendered as space character |
@@ -112,7 +112,7 @@ Highest impact: XTVERSION (feature detection by newer apps).
 
 > **Note:** Any key bound to a bunk action in the user's config is intercepted and not forwarded to the PTY. Default consumed keys: F1 (split), Alt+F1 (split-context), F12 (zoom), Alt+arrows (pane nav), Shift+PgUp/PgDn (scrollback), Ctrl+C (copy/forward), Ctrl+V (paste), Ctrl+Q (quit), Ctrl+F (search), Ctrl+N (search-next). All of these are user-remappable.
 
-Highest impact: SGR 4:1 (curly underline) for neovim LSP diagnostics.
+Highest impact: SGR 58 (underline colour) for neovim LSP diagnostics colour-coding.
 
 ---
 
@@ -152,7 +152,7 @@ N/A in practice for cell-based multiplexer without passthrough support.
 
 ### Tier 1 — High impact, affects common apps daily
 
-1. **SGR 4:1 curly underline** — Neovim/helix LSP error squiggles (requires vt10x patch + tcell undercurl support)
+1. **SGR 58 colored underline** — Neovim LSP error/warning/hint colour (red/yellow/blue squiggles)
 
 ### Tier 2 — Medium impact, affects specific workflows
 
@@ -161,7 +161,7 @@ N/A in practice for cell-based multiplexer without passthrough support.
 
 ### Tier 3 — Nice to have
 
-7. Colored/curly underlines (neovim LSP diagnostics)
+7. Colored underlines - SGR 58 (neovim LSP diagnostics colour coding)
 8. XTVERSION response
 9. Grapheme clustering (mode 2027)
 10. Graphics protocol passthrough

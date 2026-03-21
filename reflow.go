@@ -187,7 +187,18 @@ func emitSGR(buf *bytes.Buffer, g vt10x.Glyph) {
 		buf.WriteString(";3")
 	}
 	if g.Mode&vtAttrUnderline != 0 {
-		buf.WriteString(";4")
+		switch (g.Mode & vtAttrUnderlineStyleMask) / vtAttrUnderlineStyleBit0 {
+		case 1:
+			buf.WriteString(";4:2") // double
+		case 2:
+			buf.WriteString(";4:3") // curly
+		case 3:
+			buf.WriteString(";4:4") // dotted
+		case 4:
+			buf.WriteString(";4:5") // dashed
+		default:
+			buf.WriteString(";4") // solid
+		}
 	}
 	if g.Mode&vtAttrBlink != 0 {
 		buf.WriteString(";5")

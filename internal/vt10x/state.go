@@ -18,24 +18,38 @@ const (
 	attrItalic
 	attrBlink
 	attrWrap
-	attrDim          // SGR 2  — faint/dim intensity
+	attrDim           // SGR 2  — faint/dim intensity
 	attrStrikethrough // SGR 9  — crossed-out
-	attrInvisible    // SGR 8  — conceal/invisible
+	attrInvisible     // SGR 8  — conceal/invisible
+	// Three bits encode the underline style (SGR 4:N).  They are only
+	// meaningful when attrUnderline is also set.
+	// Bit layout: bits 10-12 of Mode (values 1024/2048/4096).
+	// style=0 → solid; 1 → double; 2 → curly; 3 → dotted; 4 → dashed.
+	attrUnderlineStyleBit0 // 1024
+	attrUnderlineStyleBit1 // 2048
+	attrUnderlineStyleBit2 // 4096
 )
+
+// attrUnderlineStyleMask covers all three underline-style bits.
+const attrUnderlineStyleMask = attrUnderlineStyleBit0 | attrUnderlineStyleBit1 | attrUnderlineStyleBit2
 
 // Exported aliases so callers outside this package can reference the
 // attribute bitmasks without duplicating magic numbers.
 const (
-	AttrReverse      = attrReverse
-	AttrUnderline    = attrUnderline
-	AttrBold         = attrBold
-	AttrGfx          = attrGfx
-	AttrItalic       = attrItalic
-	AttrBlink        = attrBlink
-	AttrWrap         = attrWrap
-	AttrDim          = attrDim
-	AttrStrikethrough = attrStrikethrough
-	AttrInvisible    = attrInvisible
+	AttrReverse            = attrReverse
+	AttrUnderline          = attrUnderline
+	AttrBold               = attrBold
+	AttrGfx                = attrGfx
+	AttrItalic             = attrItalic
+	AttrBlink              = attrBlink
+	AttrWrap               = attrWrap
+	AttrDim                = attrDim
+	AttrStrikethrough      = attrStrikethrough
+	AttrInvisible          = attrInvisible
+	AttrUnderlineStyleBit0 = attrUnderlineStyleBit0
+	AttrUnderlineStyleBit1 = attrUnderlineStyleBit1
+	AttrUnderlineStyleBit2 = attrUnderlineStyleBit2
+	AttrUnderlineStyleMask = attrUnderlineStyleMask
 )
 
 const (
@@ -627,10 +641,18 @@ func (t *State) setAttr(attr []int) {
 	}
 	for i := 0; i < len(attr); i++ {
 		a := attr[i]
+		// Decode sub-parameter: params with a ':' sub-param are encoded as
+		// main*10000+(sub+1) by csiEscape.parse().  sub == -1 means no colon
+		// sub-parameter was present (plain arg like "4" vs "4:3").
+		var sub int = -1
+		if a >= 10000 {
+			sub = (a % 10000) - 1 // recover original: 40001→0, 40002→1, …
+			a = a / 10000
+		}
 		switch a {
 		case 0:
 			t.cur.Attr.Mode &^= attrReverse | attrUnderline | attrBold | attrItalic | attrBlink |
-				attrDim | attrStrikethrough | attrInvisible
+				attrDim | attrStrikethrough | attrInvisible | attrUnderlineStyleMask
 			t.cur.Attr.FG = DefaultFG
 			t.cur.Attr.BG = DefaultBG
 		case 1:
@@ -640,7 +662,35 @@ func (t *State) setAttr(attr []int) {
 		case 3:
 			t.cur.Attr.Mode |= attrItalic
 		case 4:
-			t.cur.Attr.Mode |= attrUnderline
+			// SGR 4[:N] — underline with optional style sub-parameter:
+			//   4 or 4:1 → solid/straight
+			//   4:2 → double
+			//   4:3 → curly/wavy
+			//   4:4 → dotted
+			//   4:5 → dashed
+			//   4:0 → turn off underline
+			t.cur.Attr.Mode &^= attrUnderlineStyleMask
+			if sub < 0 {
+				// plain "4" with no sub-parameter → solid underline
+				t.cur.Attr.Mode |= attrUnderline
+			} else {
+				switch sub {
+				case 0: // 4:0 → turn off
+					t.cur.Attr.Mode &^= attrUnderline
+				case 1: // solid
+					t.cur.Attr.Mode |= attrUnderline
+				case 2: // double
+					t.cur.Attr.Mode |= attrUnderline | attrUnderlineStyleBit0
+				case 3: // curly
+					t.cur.Attr.Mode |= attrUnderline | attrUnderlineStyleBit1
+				case 4: // dotted
+					t.cur.Attr.Mode |= attrUnderline | attrUnderlineStyleBit0 | attrUnderlineStyleBit1
+				case 5: // dashed
+					t.cur.Attr.Mode |= attrUnderline | attrUnderlineStyleBit2
+				default:
+					t.cur.Attr.Mode &^= attrUnderline
+				}
+			}
 		case 5, 6: // slow, rapid blink
 			t.cur.Attr.Mode |= attrBlink
 		case 7:
@@ -654,7 +704,7 @@ func (t *State) setAttr(attr []int) {
 		case 23:
 			t.cur.Attr.Mode &^= attrItalic
 		case 24:
-			t.cur.Attr.Mode &^= attrUnderline
+			t.cur.Attr.Mode &^= attrUnderline | attrUnderlineStyleMask
 		case 25, 26:
 			t.cur.Attr.Mode &^= attrBlink
 		case 27:
@@ -664,20 +714,33 @@ func (t *State) setAttr(attr []int) {
 		case 29:
 			t.cur.Attr.Mode &^= attrStrikethrough
 		case 38:
-			if i+2 < len(attr) && attr[i+1] == 5 {
-				i += 2
-				if between(attr[i], 0, 255) {
+			// Colour mode from sub-param (e.g. 38:2:R:G:B) or next arg (38;2;R;G;B).
+			colorMode := sub
+			if colorMode < 0 && i+1 < len(attr) {
+				colorMode = attr[i+1]
+			}
+			if colorMode == 5 {
+				if sub < 0 {
+					i++
+				} // skip the "5" arg only for the ';' form
+				i++
+				if i < len(attr) && between(attr[i], 0, 255) {
 					t.cur.Attr.FG = Color(attr[i])
 				} else {
-					t.logf("bad fgcolor %d\n", attr[i])
+					t.logf("bad fgcolor\n")
 				}
-			} else if i+4 < len(attr) && attr[i+1] == 2 {
-				i += 4
-				r, g, b := attr[i-2], attr[i-1], attr[i]
-				if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
-					t.logf("bad fg rgb color (%d,%d,%d)\n", r, g, b)
-				} else {
-					t.cur.Attr.FG = Color(r<<16 | g<<8 | b)
+			} else if colorMode == 2 {
+				if sub < 0 {
+					i++
+				} // skip the "2" arg only for the ';' form
+				i += 3
+				if i < len(attr) {
+					r, g, b := attr[i-2], attr[i-1], attr[i]
+					if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
+						t.logf("bad fg rgb color (%d,%d,%d)\n", r, g, b)
+					} else {
+						t.cur.Attr.FG = Color(r<<16 | g<<8 | b)
+					}
 				}
 			} else {
 				t.logf("gfx attr %d unknown\n", a)
@@ -685,20 +748,32 @@ func (t *State) setAttr(attr []int) {
 		case 39:
 			t.cur.Attr.FG = DefaultFG
 		case 48:
-			if i+2 < len(attr) && attr[i+1] == 5 {
-				i += 2
-				if between(attr[i], 0, 255) {
+			colorMode := sub
+			if colorMode < 0 && i+1 < len(attr) {
+				colorMode = attr[i+1]
+			}
+			if colorMode == 5 {
+				if sub < 0 {
+					i++
+				}
+				i++
+				if i < len(attr) && between(attr[i], 0, 255) {
 					t.cur.Attr.BG = Color(attr[i])
 				} else {
-					t.logf("bad bgcolor %d\n", attr[i])
+					t.logf("bad bgcolor\n")
 				}
-			} else if i+4 < len(attr) && attr[i+1] == 2 {
-				i += 4
-				r, g, b := attr[i-2], attr[i-1], attr[i]
-				if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
-					t.logf("bad bg rgb color (%d,%d,%d)\n", r, g, b)
-				} else {
-					t.cur.Attr.BG = Color(r<<16 | g<<8 | b)
+			} else if colorMode == 2 {
+				if sub < 0 {
+					i++
+				}
+				i += 3
+				if i < len(attr) {
+					r, g, b := attr[i-2], attr[i-1], attr[i]
+					if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
+						t.logf("bad bg rgb color (%d,%d,%d)\n", r, g, b)
+					} else {
+						t.cur.Attr.BG = Color(r<<16 | g<<8 | b)
+					}
 				}
 			} else {
 				t.logf("gfx attr %d unknown\n", a)

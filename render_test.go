@@ -5,8 +5,9 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/gdamore/tcell/v2"
 	"bunk/internal/vt10x"
+
+	"github.com/gdamore/tcell/v2"
 )
 
 // testTheme returns a resolvedTheme with distinct, recognisable colours for
@@ -950,4 +951,84 @@ func TestRenderPane_SGR22_ClearsDimAndBold(t *testing.T) {
 		t.Errorf("SGR 22: dim FG not cleared; got %v, want %v (normal FG)", aFG, nFG)
 	}
 	_ = boldDimStyle // used above implicitly via the "1;2m" sub-test
+}
+
+// ---------------------------------------------------------------------------
+// SGR 4:N — underline styles (curly, double, dotted, dashed)
+// ---------------------------------------------------------------------------
+
+func TestRenderPane_SGR4_Solid_Underline(t *testing.T) {
+	style := renderAndGetStyle(t, "\x1b[4mX")
+	got := style.GetUnderlineStyle()
+	if got != tcell.UnderlineStyleSolid {
+		t.Errorf("SGR 4: want UnderlineStyleSolid, got %v", got)
+	}
+}
+
+func TestRenderPane_SGR4_1_Solid_SubParam(t *testing.T) {
+	style := renderAndGetStyle(t, "\x1b[4:1mX")
+	got := style.GetUnderlineStyle()
+	if got != tcell.UnderlineStyleSolid {
+		t.Errorf("SGR 4:1: want UnderlineStyleSolid, got %v", got)
+	}
+}
+
+func TestRenderPane_SGR4_3_Curly(t *testing.T) {
+	// This is the primary use-case: neovim LSP errors use 4:3.
+	style := renderAndGetStyle(t, "\x1b[4:3mX")
+	got := style.GetUnderlineStyle()
+	if got != tcell.UnderlineStyleCurly {
+		t.Errorf("SGR 4:3: want UnderlineStyleCurly, got %v", got)
+	}
+}
+
+func TestRenderPane_SGR4_2_Double(t *testing.T) {
+	style := renderAndGetStyle(t, "\x1b[4:2mX")
+	got := style.GetUnderlineStyle()
+	if got != tcell.UnderlineStyleDouble {
+		t.Errorf("SGR 4:2: want UnderlineStyleDouble, got %v", got)
+	}
+}
+
+func TestRenderPane_SGR4_4_Dotted(t *testing.T) {
+	style := renderAndGetStyle(t, "\x1b[4:4mX")
+	got := style.GetUnderlineStyle()
+	if got != tcell.UnderlineStyleDotted {
+		t.Errorf("SGR 4:4: want UnderlineStyleDotted, got %v", got)
+	}
+}
+
+func TestRenderPane_SGR4_5_Dashed(t *testing.T) {
+	style := renderAndGetStyle(t, "\x1b[4:5mX")
+	got := style.GetUnderlineStyle()
+	if got != tcell.UnderlineStyleDashed {
+		t.Errorf("SGR 4:5: want UnderlineStyleDashed, got %v", got)
+	}
+}
+
+func TestRenderPane_SGR4_0_ClearsUnderline(t *testing.T) {
+	// 4:0 should turn underline off.
+	style := renderAndGetStyle(t, "\x1b[4m\x1b[4:0mX")
+	got := style.GetUnderlineStyle()
+	if got != tcell.UnderlineStyleNone {
+		t.Errorf("SGR 4:0: want UnderlineStyleNone (off), got %v", got)
+	}
+}
+
+func TestRenderPane_SGR24_ClearsUnderline(t *testing.T) {
+	// SGR 24 must clear the underline (including any style bits).
+	style := renderAndGetStyle(t, "\x1b[4:3m\x1b[24mX")
+	got := style.GetUnderlineStyle()
+	if got != tcell.UnderlineStyleNone {
+		t.Errorf("SGR 24: want UnderlineStyleNone, got %v", got)
+	}
+}
+
+func TestRenderPane_SGR0_ClearsUnderlineStyle(t *testing.T) {
+	// SGR 0 must clear curly underline.
+	style := renderAndGetStyle(t, "\x1b[4:3m\x1b[0mX")
+	got := style.GetUnderlineStyle()
+	if got != tcell.UnderlineStyleNone {
+		t.Errorf("SGR 0 after 4:3: want UnderlineStyleNone, got %v", got)
+	}
 }

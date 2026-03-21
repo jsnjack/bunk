@@ -25,21 +25,26 @@ import (
 	"time"
 
 	"bunk/internal/vt10x"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
 )
 
 // vtAttr aliases — thin local shorthands for the exported vt10x constants.
 const (
-	vtAttrReverse      int16 = vt10x.AttrReverse
-	vtAttrUnderline    int16 = vt10x.AttrUnderline
-	vtAttrBold         int16 = vt10x.AttrBold
-	vtAttrItalic       int16 = vt10x.AttrItalic
-	vtAttrBlink        int16 = vt10x.AttrBlink
-	vtAttrWrap         int16 = vt10x.AttrWrap         // last cell of a soft-wrapped row
-	vtAttrDim          int16 = vt10x.AttrDim          // SGR 2
-	vtAttrStrikethrough int16 = vt10x.AttrStrikethrough // SGR 9
-	vtAttrInvisible    int16 = vt10x.AttrInvisible    // SGR 8
+	vtAttrReverse            int16 = vt10x.AttrReverse
+	vtAttrUnderline          int16 = vt10x.AttrUnderline
+	vtAttrUnderlineStyleBit0 int16 = vt10x.AttrUnderlineStyleBit0
+	vtAttrUnderlineStyleBit1 int16 = vt10x.AttrUnderlineStyleBit1
+	vtAttrUnderlineStyleBit2 int16 = vt10x.AttrUnderlineStyleBit2
+	vtAttrUnderlineStyleMask int16 = vt10x.AttrUnderlineStyleMask
+	vtAttrBold               int16 = vt10x.AttrBold
+	vtAttrItalic             int16 = vt10x.AttrItalic
+	vtAttrBlink              int16 = vt10x.AttrBlink
+	vtAttrWrap               int16 = vt10x.AttrWrap          // last cell of a soft-wrapped row
+	vtAttrDim                int16 = vt10x.AttrDim           // SGR 2
+	vtAttrStrikethrough      int16 = vt10x.AttrStrikethrough // SGR 9
+	vtAttrInvisible          int16 = vt10x.AttrInvisible     // SGR 8
 )
 
 // ---------------------------------------------------------------------------
@@ -456,7 +461,20 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 					}
 				}
 				if cell.Mode&vtAttrUnderline != 0 {
-					style = style.Underline(true)
+					// Map the 3-bit underline style field to tcell's UnderlineStyle.
+					// style bits: 00=solid 01=double 10=curly 11=dotted 100=dashed
+					ulStyle := tcell.UnderlineStyleSolid
+					switch (cell.Mode & vtAttrUnderlineStyleMask) / vtAttrUnderlineStyleBit0 {
+					case 1:
+						ulStyle = tcell.UnderlineStyleDouble
+					case 2:
+						ulStyle = tcell.UnderlineStyleCurly
+					case 3:
+						ulStyle = tcell.UnderlineStyleDotted
+					case 4:
+						ulStyle = tcell.UnderlineStyleDashed
+					}
+					style = style.Underline(ulStyle)
 				}
 				if cell.Mode&vtAttrBlink != 0 {
 					style = style.Blink(true)
