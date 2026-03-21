@@ -57,14 +57,11 @@ type Pane struct {
 	cmd      *exec.Cmd // the shell process
 
 	// mu serialises all access to term (both writes from readPTY and reads from
-	// the render goroutine), plus the dead, wantsBracketedPaste, and
-	// inSyncUpdate flags.
-	mu                  sync.Mutex
-	term                vt10x.Terminal // VT100/ANSI state machine
-	dead                bool           // true once the shell process has exited
-	wantsBracketedPaste bool           // DECSET 2004 enabled by the running app
-	inSyncUpdate        bool           // inside a DEC 2026 synchronized update
-	cursorStyle         int            // DECSCUSR cursor shape (0-6); 0 = default
+	// the render goroutine), plus the dead flag.
+	mu   sync.Mutex
+	term vt10x.Terminal // VT100/ANSI state machine — also tracks bracketed paste,
+	// sync update, cursor shape, and all DEC private modes.
+	dead bool // true once the shell process has exited
 
 	// Scrollback buffer - lines that have scrolled off the vt10x grid top.
 	// Protected by mu.
@@ -278,34 +275,13 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			// Step 1 - OSC passthrough (CWD, hyperlinks, clipboard).
 			p.oscScan.Scan(chunk, oscCh)
 
-			// Step 2 - track DECSET 2004 (bracketed paste) and
-			// DEC 2026 (synchronized update).
-			// Check for both enable and disable; the last occurrence wins
-			// when a chunk contains both (e.g. an app toggles the mode).
-			enableBP := bytes.LastIndex(chunk, []byte("\x1b[?2004h"))
-			disableBP := bytes.LastIndex(chunk, []byte("\x1b[?2004l"))
-			enableSU := bytes.LastIndex(chunk, []byte("\x1b[?2026h"))
-			disableSU := bytes.LastIndex(chunk, []byte("\x1b[?2026l"))
-
-			// Step 2.5 - track DECSCUSR (cursor shape).
-			// Sequence: ESC [ Ps SP q  (e.g. \x1b[5 q = blinking bar).
-			curStyle := scanCursorStyle(chunk)
-
-			// Steps 2.5–4 under a single lock to prevent render from seeing
-			// updated flags (cursorStyle, inSyncUpdate) with stale vt10x cells.
+			// Steps 2–4 under a single lock: captureAndWrite feeds chunk into
+			// vt10x, which updates all mode flags (2004, 2026, cursor shape, etc.)
+			// atomically before render can read them.
 			p.mu.Lock()
-			if enableBP >= 0 || disableBP >= 0 {
-				p.wantsBracketedPaste = enableBP > disableBP
-			}
-			if enableSU >= 0 || disableSU >= 0 {
-				p.inSyncUpdate = enableSU > disableSU
-			}
-			if curStyle >= 0 {
-				p.cursorStyle = curStyle
-			}
 			p.captureAndWrite(chunk)
 			scrolling := p.sbOff > 0
-			syncing := p.inSyncUpdate
+			syncing := p.term.Mode()&vt10x.ModeSync != 0
 			p.mu.Unlock()
 
 			// Step 5 - wake the render loop (coalesced).
@@ -428,38 +404,15 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			}
 		}
 		// DECRQM — mode status query: \x1b[?<n>$p  →  \x1b[?<n>;<status>$y
-		// Status values: 1=set, 2=reset, 3=permanently set, 4=permanently reset.
-		// Apps use this to detect whether a terminal supports specific modes
-		// before enabling them (e.g. sync updates, focus events).
-		// We respond to modes we actively support; everything else is ignored.
+		// Status values: 1=set, 2=reset, 4=not recognized.
+		// QueryPrivateMode() in vt10x handles all tracked modes automatically.
 		if bytes.Contains(chunk, []byte("$p")) {
-			for _, mode := range []struct {
-				query  []byte
-				status byte // '1'=set, '2'=reset
-			}{
-				{[]byte("\x1b[?2026$p"), '2'}, // synchronized updates: recognised, currently reset
-				{[]byte("\x1b[?2004$p"), func() byte {
-					if p.wantsBracketedPaste {
-						return '1'
-					}
-					return '2'
-				}()}, // bracketed paste: reflect actual state
-				{[]byte("\x1b[?1004$p"), '2'}, // focus events: recognised
-				{[]byte("\x1b[?1049$p"), func() byte {
-					if p.term.Mode()&vt10x.ModeAltScreen != 0 {
-						return '1'
-					}
-					return '2'
-				}()}, // alt screen: reflect actual state
-			} {
-				if bytes.Contains(chunk, mode.query) {
-					// Extract numeric mode from the query sequence.
-					n := mode.query[3 : len(mode.query)-2] // between \x1b[? and $p
-					resp := fmt.Sprintf("\x1b[?%s;%c$y", n, mode.status)
-					p.ptmx.Write([]byte(resp)) //nolint:errcheck
-					L.Log(nil, LevelTrace, "captureAndWrite: DECRQM response", "pane", p.id, "mode", string(n), "status", string(mode.status))
-				}
-			}
+			scanDECRQM(chunk, func(n int) {
+				status := p.term.QueryPrivateMode(n)
+				resp := fmt.Sprintf("\x1b[?%d;%c$y", n, status)
+				p.ptmx.Write([]byte(resp)) //nolint:errcheck
+				L.Log(nil, LevelTrace, "captureAndWrite: DECRQM response", "pane", p.id, "mode", n, "status", string(status))
+			})
 		}
 	}
 
@@ -1035,18 +988,32 @@ func utf8Boundary(b []byte) int {
 	return n
 }
 
-// scanCursorStyle returns the DECSCUSR parameter (0-6) from the last
-// \x1b[N q sequence in data, or -1 if not found.
-// The DECSCUSR format is: CSI Ps SP q  (ESC [ digit space q).
-func scanCursorStyle(data []byte) int {
-	for i := len(data) - 1; i >= 4; i-- {
-		if data[i] == 'q' && data[i-1] == ' ' &&
-			data[i-2] >= '0' && data[i-2] <= '6' &&
-			data[i-3] == '[' && data[i-4] == '\x1b' {
-			return int(data[i-2] - '0')
+// scanDECRQM scans data for DECRQM private-mode queries (\x1b[?N$p) and calls
+// fn with each parsed mode number. Multiple queries can appear in one chunk.
+func scanDECRQM(data []byte, fn func(n int)) {
+	const prefix = "\x1b[?"
+	const suffix = "$p"
+	i := 0
+	for i < len(data) {
+		idx := bytes.Index(data[i:], []byte(prefix))
+		if idx < 0 {
+			break
 		}
+		i += idx + len(prefix)
+		// Parse decimal digits up to the suffix.
+		j := i
+		for j < len(data) && data[j] >= '0' && data[j] <= '9' {
+			j++
+		}
+		if j > i && j+1 < len(data) && data[j] == '$' && data[j+1] == 'p' {
+			n := 0
+			for _, b := range data[i:j] {
+				n = n*10 + int(b-'0')
+			}
+			fn(n)
+		}
+		i = j
 	}
-	return -1
 }
 
 // findContentRows scans backwards from the bottom of a scratch terminal to

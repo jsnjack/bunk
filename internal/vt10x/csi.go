@@ -214,6 +214,19 @@ func (t *State) handleCSI() {
 		t.saveCursor()
 	case 'u': // DECRC - restore cursor position (ANSI.SYS)
 		t.restoreCursor()
+	case 'q': // DECSCUSR - set cursor shape: ESC [ Ps SP q
+		// The intermediate byte SP (0x20) precedes the final 'q'. Check for it
+		// in c.buf to distinguish DECSCUSR from any plain CSI ending in 'q'.
+		if len(c.buf) >= 2 && c.buf[len(c.buf)-2] == ' ' {
+			// c.buf = [Ps ' ' 'q'] — parse Ps from the bytes before the space.
+			ps := 0
+			for _, b := range c.buf[:len(c.buf)-2] {
+				if b >= '0' && b <= '9' {
+					ps = ps*10 + int(b-'0')
+				}
+			}
+			t.cur.Shape = ps
+		}
 	}
 	return
 unknown: // TODO: get rid of this goto

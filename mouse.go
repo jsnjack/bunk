@@ -25,10 +25,10 @@
 //
 // Bracketed paste (DECSET 2004)
 // -----------------------------
-// vt10x does not track DECSET 2004.  We pre-scan the raw PTY bytes in readPTY
-// and set Pane.wantsBracketedPaste ourselves.  When tcell delivers a
+// vt10x now tracks DECSET 2004 as ModeSetPaste.  When tcell delivers a
 // *tcell.EventPaste we wrap the content in ESC[200~…ESC[201~ if the active
-// pane has requested it, otherwise we forward the raw text.
+// pane has requested it (term.Mode()&vt10x.ModeSetPaste != 0), otherwise we
+// forward the raw text.
 //
 // ANSI mouse encoding cheat-sheet
 // ---------------------------------
@@ -439,7 +439,7 @@ func screenToVirtual(p *Pane, screenX, screenY int) selPos {
 // The actual paste text arrives as regular *tcell.EventKey events between
 // the two EventPaste events; handleKey forwards them to the pane's PTY as
 // usual.  Our job here is to wrap that content in ESC[200~…ESC[201~ for
-// panes that have enabled DECSET 2004 (tracked via Pane.wantsBracketedPaste).
+// panes that have enabled DECSET 2004 (tracked via vt10x.ModeSetPaste).
 // Panes that haven't opted in receive the content as plain keystrokes.
 func (app *App) handlePaste(ev *tcell.EventPaste) {
 	app.mu.Lock()
@@ -450,7 +450,7 @@ func (app *App) handlePaste(ev *tcell.EventPaste) {
 	}
 
 	active.mu.Lock()
-	bracketed := active.wantsBracketedPaste
+	bracketed := active.term.Mode()&vt10x.ModeSetPaste != 0
 	active.mu.Unlock()
 
 	L.Debug("handlePaste", "pane", active.id, "start", ev.Start(), "bracketed", bracketed)

@@ -86,6 +86,8 @@ const (
 	ModeFocus
 	ModeMouseX10
 	ModeMouseMany
+	ModeSetPaste  // DECSET 2004 — bracketed paste mode
+	ModeSync      // DECSET 2026 — synchronized update
 	ModeMouseMask = ModeMouseButton | ModeMouseMotion | ModeMouseX10 | ModeMouseMany
 )
 
@@ -121,6 +123,8 @@ type Cursor struct {
 	Attr  Glyph
 	X, Y  int
 	State uint8
+	Shape int // DECSCUSR cursor shape (0-6): 0=default, 1=blinking block, 2=steady block,
+	// 3=blinking underline, 4=steady underline, 5=blinking bar, 6=steady bar.
 }
 
 type parseState func(c rune)
@@ -216,6 +220,59 @@ func (t *State) CursorVisible() bool {
 // Mode returns the current terminal mode.
 func (t *State) Mode() ModeFlag {
 	return t.mode
+}
+
+// QueryPrivateMode returns the DECRQM status byte for a DEC private mode number.
+// Return values follow the DECRQM spec: '1' = set, '2' = reset, '4' = not recognized.
+// This is used to generate \x1b[?N;S$y responses without hardcoding them in the host.
+func (t *State) QueryPrivateMode(mode int) byte {
+	// Mode 25 (DECTCEM) is inverted: "mode 25 set" means cursor visible, but
+	// internally we track ModeHide (cursor hidden). Invert before returning.
+	if mode == 25 {
+		if t.mode&ModeHide == 0 {
+			return '1' // cursor visible → DECTCEM is "set"
+		}
+		return '2' // cursor hidden → DECTCEM is "reset"
+	}
+	flag, ok := t.privateModeFlag(mode)
+	if !ok {
+		return '4' // not recognized
+	}
+	if t.mode&flag != 0 {
+		return '1' // set
+	}
+	return '2' // reset
+}
+
+// privateModeFlag maps a DEC private mode number to its ModeFlag.
+// Returns (0, false) for untracked modes.
+func (t *State) privateModeFlag(mode int) (ModeFlag, bool) {
+	switch mode {
+	case 1:
+		return ModeAppCursor, true
+	case 5:
+		return ModeReverse, true
+	case 7:
+		return ModeWrap, true
+	case 1000:
+		return ModeMouseButton, true
+	case 1002:
+		return ModeMouseMotion, true
+	case 1003:
+		return ModeMouseMany, true
+	case 1004:
+		return ModeFocus, true
+	case 1006:
+		return ModeMouseSgr, true
+	case 1049:
+		return ModeAltScreen, true
+	case 2004:
+		return ModeSetPaste, true
+	case 2026:
+		return ModeSync, true
+	default:
+		return 0, false
+	}
 }
 
 // Title returns the current title set via the tty.
@@ -623,6 +680,10 @@ func (t *State) setMode(priv bool, set bool, args []int) {
 			case 1015:
 				// urxvt mangled mouse mode; incompatiblt and can be mistaken
 				// for other control codes
+			case 2004: // bracketed paste
+				t.modMode(set, ModeSetPaste)
+			case 2026: // synchronized update
+				t.modMode(set, ModeSync)
 			default:
 				t.logf("unknown private set/reset mode %d\n", a)
 			}

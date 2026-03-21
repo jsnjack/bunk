@@ -21,6 +21,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"bunk/internal/vt10x"
 )
 
 // copyToClipboard copies text to the clipboard via OSC 52 and native tools.
@@ -81,7 +83,7 @@ func (app *App) pasteFromClipboard() bool {
 	text = strings.ReplaceAll(text, "\n", "\r")
 
 	active.mu.Lock()
-	bracketed := active.wantsBracketedPaste
+	bracketed := active.term.Mode()&vt10x.ModeSetPaste != 0
 	active.mu.Unlock()
 
 	if bracketed {

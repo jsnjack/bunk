@@ -53,6 +53,10 @@ type View interface {
 
 	// Unlock resets change flags and unlocks the state object's mutex.
 	Unlock()
+
+	// QueryPrivateMode returns the DECRQM status byte for a DEC private mode.
+	// '1' = set, '2' = reset, '4' = not recognized.
+	QueryPrivateMode(mode int) byte
 }
 
 type TerminalOption func(*TerminalInfo)

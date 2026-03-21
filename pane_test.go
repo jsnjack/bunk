@@ -10,69 +10,41 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// scanCursorStyle
+// scanDECRQM
 //
-// Bug: cursor not visible in Claude/Copilot
-//
-// Apps send DECSCUSR (\x1b[N q) to set cursor shape. scanCursorStyle
-// extracts the style from the PTY output so we can forward it via tcell.
+// scanDECRQM replaced the old per-mode DECRQM list with a generic scanner
+// that finds all \x1b[?N$p queries in a chunk and calls a callback for each.
 // ---------------------------------------------------------------------------
 
-func TestScanCursorStyle_CursorForwarding_ValidSequences(t *testing.T) {
-	for ps := 0; ps <= 6; ps++ {
-		seq := []byte{0x1b, '[', byte('0' + ps), ' ', 'q'}
-		got := scanCursorStyle(seq)
-		if got != ps {
-			t.Errorf("scanCursorStyle(\\x1b[%d q) = %d, want %d", ps, got, ps)
-		}
+func TestScanDECRQM_Single(t *testing.T) {
+	var modes []int
+	scanDECRQM([]byte("\x1b[?2026$p"), func(n int) { modes = append(modes, n) })
+	if len(modes) != 1 || modes[0] != 2026 {
+		t.Errorf("got %v, want [2026]", modes)
 	}
 }
 
-func TestScanCursorStyle_CursorForwarding_LastOccurrence(t *testing.T) {
-	// Two sequences: \x1b[2 q then \x1b[4 q — should return 4.
-	data := []byte{0x1b, '[', '2', ' ', 'q', 'X', 'Y', 0x1b, '[', '4', ' ', 'q'}
-	got := scanCursorStyle(data)
-	if got != 4 {
-		t.Errorf("scanCursorStyle with two sequences = %d, want 4", got)
+func TestScanDECRQM_Multiple(t *testing.T) {
+	var modes []int
+	scanDECRQM([]byte("\x1b[?2004$p some junk \x1b[?1049$p"), func(n int) { modes = append(modes, n) })
+	if len(modes) != 2 || modes[0] != 2004 || modes[1] != 1049 {
+		t.Errorf("got %v, want [2004 1049]", modes)
 	}
 }
 
-func TestScanCursorStyle_CursorForwarding_NotPresent(t *testing.T) {
-	data := []byte("hello world, no cursor style here")
-	got := scanCursorStyle(data)
-	if got != -1 {
-		t.Errorf("scanCursorStyle on plain text = %d, want -1", got)
+func TestScanDECRQM_NotPresent(t *testing.T) {
+	var modes []int
+	scanDECRQM([]byte("hello world"), func(n int) { modes = append(modes, n) })
+	if len(modes) != 0 {
+		t.Errorf("expected no modes, got %v", modes)
 	}
 }
 
-func TestScanCursorStyle_CursorForwarding_BufferTooShort(t *testing.T) {
-	// Needs at least 5 bytes; feed 4.
-	data := []byte{0x1b, '[', '2', ' '}
-	got := scanCursorStyle(data)
-	if got != -1 {
-		t.Errorf("scanCursorStyle on short buffer = %d, want -1", got)
-	}
-}
-
-func TestScanCursorStyle_CursorForwarding_InvalidDigit(t *testing.T) {
-	for _, digit := range []byte{'7', '8', '9'} {
-		data := []byte{0x1b, '[', digit, ' ', 'q'}
-		got := scanCursorStyle(data)
-		if got != -1 {
-			t.Errorf("scanCursorStyle(\\x1b[%c q) = %d, want -1", digit, got)
-		}
-	}
-}
-
-func TestScanCursorStyle_CursorForwarding_Embedded(t *testing.T) {
-	// Sequence embedded in a larger stream of data.
-	prefix := []byte("some output before\x1b[0m")
-	seq := []byte{0x1b, '[', '5', ' ', 'q'}
-	suffix := []byte("more output after")
-	data := append(append(prefix, seq...), suffix...)
-	got := scanCursorStyle(data)
-	if got != 5 {
-		t.Errorf("scanCursorStyle embedded = %d, want 5", got)
+func TestScanDECRQM_MultiDigitMode(t *testing.T) {
+	var modes []int
+	scanDECRQM([]byte("\x1b[?1000$p\x1b[?2026$p"), func(n int) { modes = append(modes, n) })
+	if len(modes) != 2 || modes[0] != 1000 || modes[1] != 2026 {
+		t.Errorf("got %v, want [1000 2026]", modes)
 	}
 }
 
@@ -86,8 +58,10 @@ func TestScanCursorStyle_CursorForwarding_Embedded(t *testing.T) {
 // render() could sneak between them and see the updated cursorStyle with
 // stale vt10x cells — making the reverse-video cursor invisible.
 //
-// This test verifies the merged single-lock invariant: cursorStyle and
+// This test verifies the merged single-lock invariant: cursor shape and
 // vt10x cell content are always consistent when observed under p.mu.
+// Both are now tracked entirely inside vt10x, so a single Write() call
+// updates them atomically.
 // ---------------------------------------------------------------------------
 
 func TestReadPTYSingleLock_ClaudeCursorRace(t *testing.T) {
@@ -102,19 +76,19 @@ func TestReadPTYSingleLock_ClaudeCursorRace(t *testing.T) {
 	done := make(chan struct{})
 
 	// Writer goroutine: simulates readPTY's single-lock section.
-	// Each iteration atomically sets cursorStyle AND writes a paired
-	// marker character to cell(0,0).
-	// style 1 ↔ 'A', style 2 ↔ 'B', …, style 6 ↔ 'F', then wraps.
+	// Each iteration writes DECSCUSR (cursor shape) AND a paired marker
+	// character to cell(0,0) in a single p.term.Write call under p.mu.
+	// shape 1 ↔ 'A', shape 2 ↔ 'B', …, shape 6 ↔ 'F', then wraps.
 	go func() {
 		defer close(done)
 		for i := 0; i < iterations; i++ {
-			style := (i % 6) + 1
+			shape := byte('1' + (i % 6)) // '1'..'6'
 			marker := byte('A' + (i % 6))
+			// DECSCUSR: ESC [ shape SP q; cursor home: ESC [ H; marker char.
+			seq := []byte{0x1b, '[', shape, ' ', 'q', 0x1b, '[', 'H', marker}
 
 			p.mu.Lock()
-			p.cursorStyle = style
-			// \x1b[H = cursor home (0,0), then write the marker.
-			p.term.Write([]byte{0x1b, '[', 'H', marker}) //nolint:errcheck
+			p.term.Write(seq) //nolint:errcheck
 			p.mu.Unlock()
 
 			runtime.Gosched() // yield to give reader a chance to observe
@@ -122,15 +96,15 @@ func TestReadPTYSingleLock_ClaudeCursorRace(t *testing.T) {
 	}()
 
 	// Reader goroutine (this goroutine): simulates render() reading
-	// cursorStyle + cell content under a single lock acquisition.
-	// The invariant: style and cell must be from the SAME write.
+	// cursor shape + cell content under a single lock acquisition.
+	// The invariant: shape and cell must come from the SAME write.
 	violations := 0
 	checks := 0
 	for {
 		select {
 		case <-done:
 			if violations > 0 {
-				t.Errorf("%d/%d observations saw cursorStyle updated but cell stale (lock broken)",
+				t.Errorf("%d/%d observations saw cursor shape updated but cell stale (lock broken)",
 					violations, checks)
 			}
 			t.Logf("checked %d observations, 0 violations", checks)
@@ -139,13 +113,13 @@ func TestReadPTYSingleLock_ClaudeCursorRace(t *testing.T) {
 		}
 
 		p.mu.Lock()
-		style := p.cursorStyle
+		shape := p.term.Cursor().Shape
 		cell := p.term.Cell(0, 0)
 		p.mu.Unlock()
 
 		checks++
-		if style > 0 && cell.Char != 0 {
-			expected := rune('A' + (style - 1))
+		if shape > 0 && cell.Char != 0 {
+			expected := rune('A' + (shape - 1))
 			if cell.Char != expected {
 				violations++
 			}

@@ -107,7 +107,7 @@ func (app *App) render() {
 		// frame after \x1b[2J but before the app has drawn its content.
 		// readPTY triggers a fresh redraw when the end marker arrives.
 		zp.mu.Lock()
-		syncing := zp.inSyncUpdate
+		syncing := zp.term.Mode()&vt10x.ModeSync != 0
 		zp.mu.Unlock()
 		if syncing {
 			return
@@ -151,7 +151,7 @@ func (app *App) render() {
 	// syncing guard, so we must also gate here.
 	if active != nil {
 		active.mu.Lock()
-		syncing := active.inSyncUpdate
+		syncing := active.term.Mode()&vt10x.ModeSync != 0
 		active.mu.Unlock()
 		if syncing {
 			return
@@ -318,7 +318,7 @@ func (app *App) emitCursorStyle(p *Pane) {
 		return
 	}
 	p.mu.Lock()
-	style := p.cursorStyle
+	style := p.term.Cursor().Shape
 	p.mu.Unlock()
 	if style == app.lastCursorStyle {
 		return
@@ -364,7 +364,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	// check and this vt10x read. readPTY may have started a new sync frame
 	// (blanking vt10x) in between. Returning here leaves tcell's cell buffer
 	// unchanged, so Show() sends nothing — no blank flash reaches the terminal.
-	if p.inSyncUpdate {
+	if p.term.Mode()&vt10x.ModeSync != 0 {
 		return
 	}
 
