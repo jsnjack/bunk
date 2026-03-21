@@ -376,3 +376,45 @@ func TestSendFocusOut_Disabled(t *testing.T) {
 		t.Errorf("sendFocusOut wrote %d bytes when focus events disabled", n)
 	}
 }
+
+// TestMouseToBytes_DragMotionBit guards the bug where drag events (button held
+// while moving) were encoded as button-press events instead of motion events.
+// ANSI mouse protocol: bit 32 on the button code = motion event.
+// Without this bit, apps receive multiple "press" events along the drag path
+// and restart selection at each one → full-line selection instead of range.
+func TestMouseToBytes_DragMotionBit_SGR(t *testing.T) {
+	// SGR: left button drag should be cb=32 (0 | 32), final 'M'
+	got := mouseToBytes(tcell.Button1, tcell.Button1, 0, 10, 5, true)
+	want := "\x1b[<32;10;5M"
+	if string(got) != want {
+		t.Errorf("SGR left drag = %q, want %q (missing motion bit 32)", got, want)
+	}
+}
+
+func TestMouseToBytes_DragMotionBit_X10(t *testing.T) {
+	// X10: left button drag cb=32, encoded byte = 32+32 = 64 = '@'
+	got := mouseToBytes(tcell.Button1, tcell.Button1, 0, 10, 5, false)
+	// byte 4 = cb+32 = 32+32 = 64
+	want := []byte{'\x1b', '[', 'M', 64, 10 + 32, 5 + 32}
+	if string(got) != string(want) {
+		t.Errorf("X10 left drag = %q, want %q (missing motion bit 32)", got, want)
+	}
+}
+
+func TestMouseToBytes_PressHasNoMotionBit(t *testing.T) {
+	// Fresh press (prevBtn=None): cb=0, no motion bit.
+	got := mouseToBytes(tcell.Button1, tcell.ButtonNone, 0, 10, 5, true)
+	want := "\x1b[<0;10;5M"
+	if string(got) != want {
+		t.Errorf("SGR left press = %q, want %q", got, want)
+	}
+}
+
+func TestMouseToBytes_WheelNoDragBit(t *testing.T) {
+	// Wheel events should never get the motion bit regardless of prevBtn.
+	got := mouseToBytes(tcell.WheelUp, tcell.WheelUp, 0, 10, 5, true)
+	want := "\x1b[<64;10;5M"
+	if string(got) != want {
+		t.Errorf("SGR wheel up = %q, want %q", got, want)
+	}
+}

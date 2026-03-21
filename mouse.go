@@ -371,8 +371,19 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	if !wantsMouse {
 		return
 	}
-	if btn == tcell.ButtonNone && mode&(vt10x.ModeMouseMotion|vt10x.ModeMouseMany) == 0 {
-		return
+	// Filter events that the app didn't ask for.
+	//
+	// Mode 1000 (ModeMouseButton): press + release only — no motion at all.
+	// Mode 1002 (ModeMouseMotion): motion while a button is held (drag), NOT
+	//   pure no-button motion.  Only mode 1003 (ModeMouseMany) gets those.
+	//
+	// isDrag here means Button1 is still held while the cursor moves.
+	// We forward drags for 1002+ but not for mode 1000-only apps.
+	if isDrag && mode&(vt10x.ModeMouseMotion|vt10x.ModeMouseMany) == 0 {
+		return // app only wants clicks, not drag motion (mode 1000 only)
+	}
+	if btn == tcell.ButtonNone && mode&vt10x.ModeMouseMany == 0 {
+		return // pure no-button motion only forwarded for mode 1003
 	}
 
 	px := x - tx + 1
@@ -503,6 +514,18 @@ func mouseToBytes(btn, prevBtn tcell.ButtonMask, mod tcell.ModMask, x, y int, sg
 	}
 	if mod&tcell.ModCtrl != 0 {
 		cb |= 16
+	}
+
+	// Set the motion bit (32) for button-held drag events.
+	// ANSI protocol: bit 5 indicates "motion" — same button as last event,
+	// not a fresh press.  Without this, every drag position looks like a
+	// new press and apps restart selection at each intermediate point.
+	// Pure motion (ButtonNone) already has it embedded in cb=35 above.
+	// Wheel events don't need it — they never produce drag sequences.
+	isWheel := activebtn == tcell.WheelUp || activebtn == tcell.WheelDown ||
+		activebtn == tcell.WheelLeft || activebtn == tcell.WheelRight
+	if !release && !isWheel && activebtn != tcell.ButtonNone && prevBtn == btn {
+		cb |= 32
 	}
 
 	if sgr {
