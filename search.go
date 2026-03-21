@@ -22,8 +22,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/gdamore/tcell/v2"
 	"bunk/internal/vt10x"
+	"github.com/gdamore/tcell/v2"
 )
 
 // searchMatch identifies one occurrence of the search query inside a pane's

@@ -46,6 +46,8 @@ make build         # runs tests first, then produces bin/bunk_linux_amd64
 
 Tests run with `-race`. Tests are a prerequisite of the binary build — both must pass.
 
+**Always run `gofmt -w .` after completing any code changes.** All Go source files must be gofmt-clean before committing.
+
 ---
 
 ## Test recipes

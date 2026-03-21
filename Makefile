@@ -14,6 +14,7 @@ bin/${BINARY}: bin/${BINARY}_linux_amd64
 	cp bin/${BINARY}_linux_amd64 bin/${BINARY}
 
 test:
+	gofmt -w .
 	go test ./... -count=1 -race
 
 bin/${BINARY}_linux_amd64: version test *.go

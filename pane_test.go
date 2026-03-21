@@ -606,101 +606,101 @@ func TestXTVersion_ShortForm(t *testing.T) {
 }
 
 func TestXTGETTCAP_Smulx(t *testing.T) {
-pr, pw, err := os.Pipe()
-if err != nil {
-t.Fatalf("os.Pipe: %v", err)
-}
-defer pr.Close()
-defer pw.Close()
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
 
-term := vt10x.New(vt10x.WithSize(40, 10))
-p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
 
-// "Smulx" hex-encoded = 536d756c78
-p.captureAndWrite([]byte("\x1bP+q536d756c78\x1b\\"))
-pw.Close()
+	// "Smulx" hex-encoded = 536d756c78
+	p.captureAndWrite([]byte("\x1bP+q536d756c78\x1b\\"))
+	pw.Close()
 
-buf, _ := io.ReadAll(pr)
-// value = "\x1b[4:%p1%dm" hex-encoded
-wantHexVal := "1b5b343a25703125646d"
-want := "\x1bP1+r536d756c78=" + wantHexVal + "\x1b\\"
-if string(buf) != want {
-t.Errorf("XTGETTCAP Smulx = %q, want %q", string(buf), want)
-}
+	buf, _ := io.ReadAll(pr)
+	// value = "\x1b[4:%p1%dm" hex-encoded
+	wantHexVal := "1b5b343a25703125646d"
+	want := "\x1bP1+r536d756c78=" + wantHexVal + "\x1b\\"
+	if string(buf) != want {
+		t.Errorf("XTGETTCAP Smulx = %q, want %q", string(buf), want)
+	}
 }
 
 func TestXTGETTCAP_Unknown(t *testing.T) {
-pr, pw, err := os.Pipe()
-if err != nil {
-t.Fatalf("os.Pipe: %v", err)
-}
-defer pr.Close()
-defer pw.Close()
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
 
-term := vt10x.New(vt10x.WithSize(40, 10))
-p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
 
-// "colors" hex-encoded = 636f6c6f7273
-p.captureAndWrite([]byte("\x1bP+q636f6c6f7273\x1b\\"))
-pw.Close()
+	// "colors" hex-encoded = 636f6c6f7273
+	p.captureAndWrite([]byte("\x1bP+q636f6c6f7273\x1b\\"))
+	pw.Close()
 
-buf, _ := io.ReadAll(pr)
-want := "\x1bP0+r636f6c6f7273\x1b\\"
-if string(buf) != want {
-t.Errorf("XTGETTCAP unknown cap = %q, want %q", string(buf), want)
-}
+	buf, _ := io.ReadAll(pr)
+	want := "\x1bP0+r636f6c6f7273\x1b\\"
+	if string(buf) != want {
+		t.Errorf("XTGETTCAP unknown cap = %q, want %q", string(buf), want)
+	}
 }
 
 func TestXTGETTCAPResponse_Smulx(t *testing.T) {
-// Smulx hex = 536d756c78; value = "\x1b[4:%p1%dm"
-got := xtgettcapResponse("536d756c78")
-wantHexVal := "1b5b343a25703125646d"
-want := "\x1bP1+r536d756c78=" + wantHexVal + "\x1b\\"
-if got != want {
-t.Errorf("xtgettcapResponse(Smulx) = %q, want %q", got, want)
-}
+	// Smulx hex = 536d756c78; value = "\x1b[4:%p1%dm"
+	got := xtgettcapResponse("536d756c78")
+	wantHexVal := "1b5b343a25703125646d"
+	want := "\x1bP1+r536d756c78=" + wantHexVal + "\x1b\\"
+	if got != want {
+		t.Errorf("xtgettcapResponse(Smulx) = %q, want %q", got, want)
+	}
 }
 
 func TestXTGETTCAPResponse_Setulc(t *testing.T) {
-// Setulc hex = 5365 74756c63
-got := xtgettcapResponse("5365 74756c63")
-// invalid hex (space) — should return empty string (no response)
-if got != "" {
-t.Errorf("xtgettcapResponse(invalid hex) = %q, want \"\"", got)
-}
+	// Setulc hex = 5365 74756c63
+	got := xtgettcapResponse("5365 74756c63")
+	// invalid hex (space) — should return empty string (no response)
+	if got != "" {
+		t.Errorf("xtgettcapResponse(invalid hex) = %q, want \"\"", got)
+	}
 }
 
 func TestXTGETTCAPResponse_Setulc_Valid(t *testing.T) {
-// "Setulc" hex-encoded = 5365 74756c63 without space = 536574756c63
-got := xtgettcapResponse("536574756c63")
-if got == "" || got[2] != '1' {
-t.Errorf("xtgettcapResponse(Setulc) should be found, got %q", got)
-}
+	// "Setulc" hex-encoded = 5365 74756c63 without space = 536574756c63
+	got := xtgettcapResponse("536574756c63")
+	if got == "" || got[2] != '1' {
+		t.Errorf("xtgettcapResponse(Setulc) should be found, got %q", got)
+	}
 }
 
 func TestSGR53_Overline(t *testing.T) {
-term := vt10x.New(vt10x.WithSize(10, 5))
-// SGR 53 = overline on, SGR 55 = overline off
-term.Write([]byte("\x1b[53mA\x1b[55mB"))
-cellA := term.Cell(0, 0)
-cellB := term.Cell(1, 0)
-if cellA.Mode&vt10x.AttrOverline == 0 {
-t.Errorf("cell A (after SGR 53): expected AttrOverline set, Mode=0x%x", cellA.Mode)
-}
-if cellB.Mode&vt10x.AttrOverline != 0 {
-t.Errorf("cell B (after SGR 55): expected AttrOverline cleared, Mode=0x%x", cellB.Mode)
-}
+	term := vt10x.New(vt10x.WithSize(10, 5))
+	// SGR 53 = overline on, SGR 55 = overline off
+	term.Write([]byte("\x1b[53mA\x1b[55mB"))
+	cellA := term.Cell(0, 0)
+	cellB := term.Cell(1, 0)
+	if cellA.Mode&vt10x.AttrOverline == 0 {
+		t.Errorf("cell A (after SGR 53): expected AttrOverline set, Mode=0x%x", cellA.Mode)
+	}
+	if cellB.Mode&vt10x.AttrOverline != 0 {
+		t.Errorf("cell B (after SGR 55): expected AttrOverline cleared, Mode=0x%x", cellB.Mode)
+	}
 }
 
 func TestSGR53_ResetBy0(t *testing.T) {
-term := vt10x.New(vt10x.WithSize(10, 5))
-term.Write([]byte("\x1b[53mA\x1b[0mB"))
-cellA := term.Cell(0, 0)
-cellB := term.Cell(1, 0)
-if cellA.Mode&vt10x.AttrOverline == 0 {
-t.Errorf("cell A (after SGR 53): expected AttrOverline set, Mode=0x%x", cellA.Mode)
-}
-if cellB.Mode&vt10x.AttrOverline != 0 {
-t.Errorf("cell B (after SGR 0): expected AttrOverline cleared, Mode=0x%x", cellB.Mode)
-}
+	term := vt10x.New(vt10x.WithSize(10, 5))
+	term.Write([]byte("\x1b[53mA\x1b[0mB"))
+	cellA := term.Cell(0, 0)
+	cellB := term.Cell(1, 0)
+	if cellA.Mode&vt10x.AttrOverline == 0 {
+		t.Errorf("cell A (after SGR 53): expected AttrOverline set, Mode=0x%x", cellA.Mode)
+	}
+	if cellB.Mode&vt10x.AttrOverline != 0 {
+		t.Errorf("cell B (after SGR 0): expected AttrOverline cleared, Mode=0x%x", cellB.Mode)
+	}
 }

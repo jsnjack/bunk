@@ -20,7 +20,7 @@ const oscChanSize = 64
 type App struct {
 	screen tcell.Screen
 	theme  resolvedTheme // active colour theme, set at startup
-	keys   Keybindings  // resolved hotkey configuration
+	keys   Keybindings   // resolved hotkey configuration
 
 	scrollback int // max scrollback lines per pane (from config)
 
@@ -87,9 +87,9 @@ type App struct {
 	// sbDragLastY is the Y cell from the previous drag event (for relative deltas).
 	// sbDragAccum is the accumulated fractional sbOff so sub-line deltas don't vanish.
 	// All three are accessed only from the event-loop goroutine.
-	sbDragPane    *Pane
-	sbDragLastY   int
-	sbDragAccum   float64
+	sbDragPane  *Pane
+	sbDragLastY int
+	sbDragAccum float64
 
 	// Search state.  All fields are protected by mu (read by the render loop,
 	// written by the event loop via enterSearch/exitSearch/updateSearch).

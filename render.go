@@ -38,7 +38,7 @@ const (
 	vtAttrUnderlineStyleBit1 int16 = vt10x.AttrUnderlineStyleBit1
 	vtAttrUnderlineStyleBit2 int16 = vt10x.AttrUnderlineStyleBit2
 	vtAttrUnderlineStyleMask int16 = vt10x.AttrUnderlineStyleMask
-	vtAttrHasULColor         int16 = vt10x.AttrHasULColor     // SGR 58 was explicitly set
+	vtAttrHasULColor         int16 = vt10x.AttrHasULColor // SGR 58 was explicitly set
 	vtAttrBold               int16 = vt10x.AttrBold
 	vtAttrItalic             int16 = vt10x.AttrItalic
 	vtAttrBlink              int16 = vt10x.AttrBlink

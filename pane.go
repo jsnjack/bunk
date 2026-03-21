@@ -23,8 +23,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/creack/pty"
 	"bunk/internal/vt10x"
+	"github.com/creack/pty"
 )
 
 // defaultScrollbackLines is the default maximum number of scrollback lines
@@ -1410,23 +1410,23 @@ func xParseColor(rrggbb string) string {
 // The response is "found" (DCS 1+r...) for capabilities we implement and
 // "not found" (DCS 0+r...) for everything else.
 func xtgettcapResponse(hexCap string) string {
-capBytes, err := hex.DecodeString(hexCap)
-if err != nil || len(capBytes) == 0 {
-return ""
-}
-capName := string(capBytes)
-// Capabilities we actively support — values are standard terminfo strings.
-// Smulx: extended underline style (SGR 4:N)
-// Setulc: underline colour (SGR 58:2::R:G:B)
-// Su: synonym for extended underline support
-caps := map[string]string{
-"Smulx":  "\x1b[4:%p1%dm",
-"Setulc": "\x1b[58:2::%p1%d:%p2%d:%p3%dm",
-"Su":     "\x1b[4:%p1%dm",
-}
-if val, ok := caps[capName]; ok {
-hexVal := hex.EncodeToString([]byte(val))
-return "\x1bP1+r" + hexCap + "=" + hexVal + "\x1b\\"
-}
-return "\x1bP0+r" + hexCap + "\x1b\\"
+	capBytes, err := hex.DecodeString(hexCap)
+	if err != nil || len(capBytes) == 0 {
+		return ""
+	}
+	capName := string(capBytes)
+	// Capabilities we actively support — values are standard terminfo strings.
+	// Smulx: extended underline style (SGR 4:N)
+	// Setulc: underline colour (SGR 58:2::R:G:B)
+	// Su: synonym for extended underline support
+	caps := map[string]string{
+		"Smulx":  "\x1b[4:%p1%dm",
+		"Setulc": "\x1b[58:2::%p1%d:%p2%d:%p3%dm",
+		"Su":     "\x1b[4:%p1%dm",
+	}
+	if val, ok := caps[capName]; ok {
+		hexVal := hex.EncodeToString([]byte(val))
+		return "\x1bP1+r" + hexCap + "=" + hexVal + "\x1b\\"
+	}
+	return "\x1bP0+r" + hexCap + "\x1b\\"
 }
