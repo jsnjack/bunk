@@ -23,7 +23,7 @@ import (
 	"unicode"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/hinshun/vt10x"
+	"bunk/internal/vt10x"
 )
 
 // searchMatch identifies one occurrence of the search query inside a pane's

@@ -23,7 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/creack/pty"
-	"github.com/hinshun/vt10x"
+	"bunk/internal/vt10x"
 )
 
 // defaultScrollbackLines is the default maximum number of scrollback lines

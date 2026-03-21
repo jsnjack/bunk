@@ -13,13 +13,9 @@
 //	screen.SetContent to stage the glyph for display.
 //	pane.mu is held during the scan to prevent races with readPTY.
 //
-// vt10x attribute bit-mask values (unexported in vt10x; replicated here):
-//
-//	attrReverse   = 1
-//	attrUnderline = 2
-//	attrBold      = 4
-//	attrItalic    = 16
-//	attrBlink     = 32
+// vt10x attribute bit-mask values are now exported from internal/vt10x as
+// AttrXxx constants (e.g. vt10x.AttrBold).  The local vtAttrXxx aliases
+// below exist for brevity in render.go.
 package main
 
 import (
@@ -28,19 +24,22 @@ import (
 	"strings"
 	"time"
 
+	"bunk/internal/vt10x"
 	"github.com/gdamore/tcell/v2"
-	"github.com/hinshun/vt10x"
 	"github.com/rivo/uniseg"
 )
 
-// vt10x Glyph.Mode bitmask constants (mirrored from vt10x/state.go).
+// vtAttr aliases — thin local shorthands for the exported vt10x constants.
 const (
-	vtAttrReverse   int16 = 1
-	vtAttrUnderline int16 = 2
-	vtAttrBold      int16 = 4
-	vtAttrItalic    int16 = 16
-	vtAttrBlink     int16 = 32
-	vtAttrWrap      int16 = 64 // last cell of a soft-wrapped row
+	vtAttrReverse      int16 = vt10x.AttrReverse
+	vtAttrUnderline    int16 = vt10x.AttrUnderline
+	vtAttrBold         int16 = vt10x.AttrBold
+	vtAttrItalic       int16 = vt10x.AttrItalic
+	vtAttrBlink        int16 = vt10x.AttrBlink
+	vtAttrWrap         int16 = vt10x.AttrWrap         // last cell of a soft-wrapped row
+	vtAttrDim          int16 = vt10x.AttrDim          // SGR 2
+	vtAttrStrikethrough int16 = vt10x.AttrStrikethrough // SGR 9
+	vtAttrInvisible    int16 = vt10x.AttrInvisible    // SGR 8
 )
 
 // ---------------------------------------------------------------------------
@@ -426,10 +425,35 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			// attributes.  Applying underline/bold/etc. to a space character
 			// would visually show an underline under blank areas, which vim
 			// triggers whenever it erases to EOL while underline is active.
+			//
+			// SGR 8 (invisible): render as space so the character is visually
+			// hidden; the cell data is still stored for copy-paste fidelity.
 			isBlank := ch == ' '
+			if cell.Mode&vtAttrInvisible != 0 {
+				ch = ' '
+				isBlank = true
+			}
 			if !isBlank {
 				if cell.Mode&vtAttrBold != 0 {
 					style = style.Bold(true)
+				}
+				if cell.Mode&vtAttrDim != 0 {
+					// SGR 2 (dim/faint): terminals only apply the visual
+					// dim effect to palette-indexed colours.  With explicit
+					// RGB colours — which bunk always uses for theme FG/BG —
+					// most terminals (VTE/Ptyxis, xterm) silently ignore
+					// ti.Dim.  We blend the FG 50% toward BG ourselves so
+					// dim is always visible regardless of terminal.
+					dimFG, dimBG, _ := style.Decompose()
+					if dimFG.IsRGB() && dimBG.IsRGB() {
+						fr, fg2, fb := dimFG.RGB()
+						br, bg2, bb := dimBG.RGB()
+						style = style.Foreground(tcell.NewRGBColor(
+							(fr+br)/2, (fg2+bg2)/2, (fb+bb)/2,
+						))
+					} else {
+						style = style.Dim(true) // palette colours: let terminal handle it
+					}
 				}
 				if cell.Mode&vtAttrUnderline != 0 {
 					style = style.Underline(true)
@@ -439,6 +463,9 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 				}
 				if cell.Mode&vtAttrItalic != 0 {
 					style = style.Italic(true)
+				}
+				if cell.Mode&vtAttrStrikethrough != 0 {
+					style = style.StrikeThrough(true)
 				}
 			}
 			// NOTE: we do NOT apply tcell.Reverse(true) for vtAttrReverse.

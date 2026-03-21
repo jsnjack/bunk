@@ -16,14 +16,14 @@ Date: 2026-03-12 (updated 2026-03-21)
 |----------|---------|--------|--------|
 | 0 | Reset | OK | |
 | 1 | Bold | OK | |
-| 2 | Dim/Faint | **MISSING** | `git diff` dim lines, `ls --color` dim permissions, many TUIs use for disabled state |
+| 2 | Dim/Faint | OK | vt10x vendored; AttrDim bit added. RGB-colour terminals ignore ti.Dim, so bunk blends FG 50% toward BG itself |
 | 3 | Italic | OK | |
 | 4 | Underline | OK | |
 | 4:1-4:5 | Curly/dotted/dashed underline | **MISSING** | Neovim diagnostics (curly underline for errors) |
 | 5-6 | Blink | OK | |
 | 7 | Reverse | **FIXED** | Was broken for default-color cells — vtColor mapped both DefaultFG and DefaultBG to the positional `def` param, undoing vt10x's FG/BG swap. Claude/Copilot cursor (reverse-video space) was invisible |
-| 8 | Hidden/Invisible | **MISSING** | Password prompts in some TUIs |
-| 9 | Strikethrough | **MISSING** | Markdown renderers (glow, bat), task managers (taskwarrior) |
+| 8 | Hidden/Invisible | OK | AttrInvisible bit added; rendered as space character |
+| 9 | Strikethrough | OK | AttrStrikethrough bit added; tcell StrikeThrough(true) applied |
 | 21 | Double underline | **MISSING** | Rare, some rich-text TUIs |
 | 53 | Overline | **MISSING** | Rare |
 | 58;5;N | Colored underline (256) | **MISSING** | Neovim LSP diagnostics, helix |
@@ -33,7 +33,7 @@ Date: 2026-03-12 (updated 2026-03-21)
 | 38;5;N / 48;5;N | 256 colors | OK | |
 | 38;2;R;G;B / 48;2;R;G;B | True color (24-bit) | OK | |
 
-Root cause: vt10x's `setAttr()` has no cases for SGR 2, 8, or 9. The `Glyph.Mode` bitmask has no bits allocated for them. Fixing requires patching vt10x or adding a parallel tracking layer.
+Root cause (resolved): vt10x vendored to `internal/vt10x`; SGR 2/8/9 attr bits added and wired.
 
 Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazygit
 
@@ -112,7 +112,7 @@ Highest impact: XTVERSION (feature detection by newer apps).
 
 > **Note:** Any key bound to a bunk action in the user's config is intercepted and not forwarded to the PTY. Default consumed keys: F1 (split), Alt+F1 (split-context), F12 (zoom), Alt+arrows (pane nav), Shift+PgUp/PgDn (scrollback), Ctrl+C (copy/forward), Ctrl+V (paste), Ctrl+Q (quit), Ctrl+F (search), Ctrl+N (search-next). All of these are user-remappable.
 
-Highest impact: SGR 2 (dim) affects git diff, ls --color daily.
+Highest impact: SGR 4:1 (curly underline) for neovim LSP diagnostics.
 
 ---
 
@@ -152,13 +152,12 @@ N/A in practice for cell-based multiplexer without passthrough support.
 
 ### Tier 1 — High impact, affects common apps daily
 
-1. **SGR 2 (dim)** — Needs vt10x patch or bitmask extension
-2. **SGR 9 (strikethrough)** — Same
+1. **SGR 4:1 curly underline** — Neovim/helix LSP error squiggles (requires vt10x patch + tcell undercurl support)
 
 ### Tier 2 — Medium impact, affects specific workflows
 
-3. **OSC 133 forwarding** — Shell integration / prompt marking
-4. **SGR 8 (invisible)** — Password entry in some TUIs
+2. **OSC 133 forwarding** — Shell integration / prompt marking
+3. **SGR 58 colored underline** — Neovim LSP diagnostics colour
 
 ### Tier 3 — Nice to have
 

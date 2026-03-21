@@ -36,7 +36,7 @@
 //	Any non-scroll key → snap back to live view automatically
 package main
 
-import "github.com/hinshun/vt10x"
+import "bunk/internal/vt10x"
 
 // sbRing is a fixed-capacity circular buffer of captured Glyph rows.
 // maxLines must be set before the first push (typically from the config).

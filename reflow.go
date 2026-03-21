@@ -30,7 +30,7 @@ import (
 	"bytes"
 	"strconv"
 
-	"github.com/hinshun/vt10x"
+	"bunk/internal/vt10x"
 )
 
 // stripAltScreen removes alt-screen content from buf, keeping pre-entry and
@@ -180,6 +180,9 @@ func emitSGR(buf *bytes.Buffer, g vt10x.Glyph) {
 	if g.Mode&vtAttrBold != 0 {
 		buf.WriteString(";1")
 	}
+	if g.Mode&vtAttrDim != 0 {
+		buf.WriteString(";2")
+	}
 	if g.Mode&vtAttrItalic != 0 {
 		buf.WriteString(";3")
 	}
@@ -191,6 +194,12 @@ func emitSGR(buf *bytes.Buffer, g vt10x.Glyph) {
 	}
 	if g.Mode&vtAttrReverse != 0 {
 		buf.WriteString(";7")
+	}
+	if g.Mode&vtAttrInvisible != 0 {
+		buf.WriteString(";8")
+	}
+	if g.Mode&vtAttrStrikethrough != 0 {
+		buf.WriteString(";9")
 	}
 	emitColorCode(buf, g.FG, true)
 	emitColorCode(buf, g.BG, false)

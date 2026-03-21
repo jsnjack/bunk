@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/hinshun/vt10x"
+	"bunk/internal/vt10x"
 )
 
 // testTheme returns a resolvedTheme with distinct, recognisable colours for
@@ -812,4 +812,142 @@ func TestTcellColorToXParse_Default_Fallback(t *testing.T) {
 	if got == "" {
 		t.Error("tcellColorToXParse(ColorDefault) returned empty string")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// SGR 2 (dim), SGR 8 (invisible), SGR 9 (strikethrough) rendering
+// ---------------------------------------------------------------------------
+
+// renderAndGetStyle builds a minimal Pane+SimulationScreen, writes ANSI bytes
+// into the vt10x terminal, renders into the screen, and returns the tcell.Style
+// stored at cell (0, 0).
+func renderAndGetStyle(t *testing.T, ansi string) tcell.Style {
+	t.Helper()
+	const (
+		w = 20
+		h = 3
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	term.Write([]byte(ansi)) //nolint:errcheck
+
+	p := &Pane{
+		term: term, cmd: &exec.Cmd{},
+		x: 0, y: 0, w: w, h: h,
+		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+	}
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+
+	renderPane(scr, p, testTheme())
+	_, _, style, _ := scr.GetContent(0, 0)
+	return style
+}
+
+func TestRenderPane_SGR2_Dim(t *testing.T) {
+	// SGR 2 with RGB FG: bunk blends the FG 50% toward BG instead of relying
+	// on ti.Dim, because most terminals (VTE/Ptyxis, xterm) silently ignore
+	// SGR 2 when the FG colour is an explicit RGB value.
+	// Verify that the rendered FG is the midpoint between normal FG and BG.
+	theme := testTheme()
+	normalStyle := renderAndGetStyle(t, "X")     // no dim
+	dimStyle := renderAndGetStyle(t, "\x1b[2mX") // with dim
+
+	normalFG, _, _ := normalStyle.Decompose()
+	dimFG, _, _ := dimStyle.Decompose()
+
+	if !normalFG.IsRGB() {
+		t.Skip("testTheme FG is not RGB; skip RGB-blend assertion")
+	}
+	nr, ng, nb := normalFG.RGB()
+	dr, dg, db := dimFG.RGB()
+	br, bg2, bb := theme.bg.RGB()
+
+	wantR, wantG, wantB := (nr+br)/2, (ng+bg2)/2, (nb+bb)/2
+	if dr != wantR || dg != wantG || db != wantB {
+		t.Errorf("SGR 2 dim: FG not blended correctly\n  got  rgb(%d,%d,%d)\n  want rgb(%d,%d,%d)",
+			dr, dg, db, wantR, wantG, wantB)
+	}
+}
+
+func TestRenderPane_SGR9_Strikethrough(t *testing.T) {
+	// SGR 9 should result in StrikeThrough=true on the rendered cell.
+	style := renderAndGetStyle(t, "\x1b[9mX")
+	_, _, attr := style.Decompose()
+	if attr&tcell.AttrStrikeThrough == 0 {
+		t.Error("SGR 9 (strikethrough): expected tcell.AttrStrikeThrough to be set, got", attr)
+	}
+}
+
+func TestRenderPane_SGR8_Invisible_RendersSpace(t *testing.T) {
+	// SGR 8 (invisible): character must render as space regardless of content.
+	const (
+		w = 10
+		h = 3
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	term.Write([]byte("\x1b[8mX")) //nolint:errcheck
+
+	p := &Pane{
+		term: term, cmd: &exec.Cmd{},
+		x: 0, y: 0, w: w, h: h,
+		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+	}
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+
+	renderPane(scr, p, testTheme())
+	mainc, _, _, _ := scr.GetContent(0, 0)
+	if mainc != ' ' {
+		t.Errorf("SGR 8 (invisible): got rune %q at col 0, want ' ' (space)", mainc)
+	}
+}
+
+func TestRenderPane_SGR2_Reset_SGR0(t *testing.T) {
+	// SGR 0 clears dim: FG should return to the un-blended theme colour.
+	normalStyle := renderAndGetStyle(t, "X")
+	resetStyle := renderAndGetStyle(t, "\x1b[2m\x1b[0mX")
+
+	nFG, _, _ := normalStyle.Decompose()
+	rFG, _, _ := resetStyle.Decompose()
+	if nFG != rFG {
+		t.Errorf("SGR 0 after SGR 2: FG not restored; got %v, want %v", rFG, nFG)
+	}
+}
+
+func TestRenderPane_SGR9_Reset_SGR29(t *testing.T) {
+	// SGR 29 must clear strikethrough.
+	style := renderAndGetStyle(t, "\x1b[9m\x1b[29mX")
+	_, _, attr := style.Decompose()
+	if attr&tcell.AttrStrikeThrough != 0 {
+		t.Error("SGR 29: expected AttrStrikeThrough to be cleared, but it is still set")
+	}
+}
+
+func TestRenderPane_SGR22_ClearsDimAndBold(t *testing.T) {
+	// SGR 22 (normal intensity) must clear both bold and dim.
+	// For bold: AttrBold must be off.
+	// For dim: FG must return to the un-blended (normal) colour.
+	boldDimStyle := renderAndGetStyle(t, "\x1b[1;2mX")
+	afterStyle := renderAndGetStyle(t, "\x1b[1;2m\x1b[22mX")
+	normalStyle := renderAndGetStyle(t, "X")
+
+	// Bold must be cleared.
+	_, _, afterAttr := afterStyle.Decompose()
+	if afterAttr&tcell.AttrBold != 0 {
+		t.Error("SGR 22: expected AttrBold to be cleared, but it is still set")
+	}
+
+	// Dim must be cleared: FG returns to normal (not blended).
+	nFG, _, _ := normalStyle.Decompose()
+	aFG, _, _ := afterStyle.Decompose()
+	if nFG != aFG {
+		t.Errorf("SGR 22: dim FG not cleared; got %v, want %v (normal FG)", aFG, nFG)
+	}
+	_ = boldDimStyle // used above implicitly via the "1;2m" sub-test
 }

@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/hinshun/vt10x"
+	"bunk/internal/vt10x"
 )
 
 // ---------------------------------------------------------------------------

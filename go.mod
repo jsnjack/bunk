@@ -6,7 +6,6 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/creack/pty v1.1.24
 	github.com/gdamore/tcell/v2 v2.13.8
-	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
 	github.com/rivo/uniseg v0.4.7
 	github.com/spf13/cobra v1.10.2
 )

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/hinshun/vt10x"
+	"bunk/internal/vt10x"
 )
 
 // ---------------------------------------------------------------------------
@@ -477,4 +477,58 @@ func TestResizePreservesCursorOnPrompt(t *testing.T) {
 	if cur.Y != 0 {
 		t.Errorf("after resize cursor Y = %d, want 0 (prompt row)", cur.Y)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// emitSGR round-trip: SGR 2/8/9 survive reflow injection
+// ---------------------------------------------------------------------------
+
+func TestEmitSGR_Dim_RoundTrip(t *testing.T) {
+// Build a row with a dim 'X', inject it into a fresh terminal, and
+// confirm the dim attribute is restored.
+const cols = 10
+src := vt10x.New(vt10x.WithSize(cols, 3))
+src.Write([]byte("\x1b[2mX")) //nolint:errcheck
+
+rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
+
+dst := vt10x.New(vt10x.WithSize(cols, 3))
+reflowInject(dst, rows)
+
+cell := dst.Cell(0, 0)
+if cell.Mode&vt10x.AttrDim == 0 {
+t.Errorf("emitSGR dim round-trip: AttrDim not set after reflowInject; Mode=%b", cell.Mode)
+}
+}
+
+func TestEmitSGR_Strikethrough_RoundTrip(t *testing.T) {
+const cols = 10
+src := vt10x.New(vt10x.WithSize(cols, 3))
+src.Write([]byte("\x1b[9mX")) //nolint:errcheck
+
+rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
+
+dst := vt10x.New(vt10x.WithSize(cols, 3))
+reflowInject(dst, rows)
+
+cell := dst.Cell(0, 0)
+if cell.Mode&vt10x.AttrStrikethrough == 0 {
+t.Errorf("emitSGR strikethrough round-trip: AttrStrikethrough not set; Mode=%b", cell.Mode)
+}
+}
+
+func TestEmitSGR_Invisible_RoundTrip(t *testing.T) {
+const cols = 10
+src := vt10x.New(vt10x.WithSize(cols, 3))
+src.Write([]byte("\x1b[8mX")) //nolint:errcheck
+
+rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
+
+dst := vt10x.New(vt10x.WithSize(cols, 3))
+reflowInject(dst, rows)
+
+cell := dst.Cell(0, 0)
+if cell.Mode&vt10x.AttrInvisible == 0 {
+t.Errorf("emitSGR invisible round-trip: AttrInvisible not set; Mode=%b", cell.Mode)
+}
 }

@@ -52,7 +52,7 @@ import (
 	"unicode"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/hinshun/vt10x"
+	"bunk/internal/vt10x"
 )
 
 // handleMouse processes a host mouse event delivered by tcell.
