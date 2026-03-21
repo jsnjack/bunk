@@ -46,6 +46,7 @@ const (
 	vtAttrDim                int16 = vt10x.AttrDim           // SGR 2
 	vtAttrStrikethrough      int16 = vt10x.AttrStrikethrough // SGR 9
 	vtAttrInvisible          int16 = vt10x.AttrInvisible     // SGR 8
+	vtAttrOverline           int16 = vt10x.AttrOverline      // SGR 53 — parsed/stored; tcell has no overline attr
 )
 
 // ---------------------------------------------------------------------------

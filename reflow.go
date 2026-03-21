@@ -212,6 +212,9 @@ func emitSGR(buf *bytes.Buffer, g vt10x.Glyph) {
 	if g.Mode&vtAttrStrikethrough != 0 {
 		buf.WriteString(";9")
 	}
+	if g.Mode&vtAttrOverline != 0 {
+		buf.WriteString(";53")
+	}
 	emitColorCode(buf, g.FG, true)
 	emitColorCode(buf, g.BG, false)
 	if g.Mode&vtAttrHasULColor != 0 {

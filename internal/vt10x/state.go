@@ -29,6 +29,7 @@ const (
 	attrUnderlineStyleBit1 // 2048
 	attrUnderlineStyleBit2 // 4096
 	attrHasULColor         // 8192: SGR 58 was explicitly set; UL field is valid
+	attrOverline           // 16384: SGR 53 — overline (stored but not rendered; tcell has no overline attr)
 )
 
 // attrUnderlineStyleMask covers all three underline-style bits.
@@ -52,6 +53,7 @@ const (
 	AttrUnderlineStyleBit2 = attrUnderlineStyleBit2
 	AttrUnderlineStyleMask = attrUnderlineStyleMask
 	AttrHasULColor         = attrHasULColor
+	AttrOverline           = attrOverline
 )
 
 const (
@@ -666,7 +668,7 @@ func (t *State) setAttr(attr []int) {
 		switch a {
 		case 0:
 			t.cur.Attr.Mode &^= attrReverse | attrUnderline | attrBold | attrItalic | attrBlink |
-				attrDim | attrStrikethrough | attrInvisible | attrUnderlineStyleMask | attrHasULColor
+				attrDim | attrStrikethrough | attrInvisible | attrUnderlineStyleMask | attrHasULColor | attrOverline
 			t.cur.Attr.FG = DefaultFG
 			t.cur.Attr.BG = DefaultBG
 			t.cur.Attr.UL = DefaultUL
@@ -728,6 +730,10 @@ func (t *State) setAttr(attr []int) {
 			t.cur.Attr.Mode &^= attrInvisible
 		case 29:
 			t.cur.Attr.Mode &^= attrStrikethrough
+		case 53:
+			t.cur.Attr.Mode |= attrOverline
+		case 55:
+			t.cur.Attr.Mode &^= attrOverline
 		case 38:
 			// Colour mode from sub-param (e.g. 38:2:R:G:B) or next arg (38;2;R;G;B).
 			colorMode := sub

@@ -25,7 +25,7 @@ Date: 2026-03-12 (updated 2026-03-21)
 | 8 | Hidden/Invisible | OK | AttrInvisible bit added; rendered as space character |
 | 9 | Strikethrough | OK | AttrStrikethrough bit added; tcell StrikeThrough(true) applied |
 | 21 | Double underline | **MISSING** | Rare, some rich-text TUIs |
-| 53 | Overline | **MISSING** | Rare |
+| 53 | Overline | **MISSING** | Parsed and stored (AttrOverline bit); reflow-correct; not rendered — tcell has no overline attribute |
 | 58;5;N | Colored underline (256) | OK | attrHasULColor flag + UL Color field; vtColor mapping; tcell style.Underline(color) |
 | 58;2;R;G;B | Colored underline (RGB) | OK | Same |
 | 30-37, 90-97 | ANSI FG colors | OK | |
@@ -86,7 +86,8 @@ Highest impact: OSC 12 (cursor colour) and OSC 110/111/112 (reset) still missing
 | CPR (CSI 6 n) | Cursor position report | OK | |
 | DSR (CSI 5 n) | Device status report | OK | |
 | DECRQM (CSI ? Ps $ p) | Request mode | OK | Responds for modes 2026, 2004, 1004, 1049 |
-| XTVERSION (CSI > 0 q) | Terminal version | OK | Responds with DCS >|bunk(version) ST; used by Claude Code, Neovim, WezTerm for feature detection |
+| XTVERSION (CSI > 0 q) | Terminal version | OK | Responds with DCS >|VTE(8203) ST; VTE_VERSION=8203 set in pane env; used by Claude Code, Neovim, WezTerm for feature detection |
+| XTGETTCAP (DCS + q) | Terminfo capability query | OK | Responds to Smulx/Setulc/Su (found with hex-encoded value); all others get "not found"; eliminates startup latency in apps that query capabilities |
 | DECRQSS | Request setting | **MISSING** | Low impact |
 
 Highest impact: XTVERSION (feature detection by newer apps).
@@ -152,17 +153,15 @@ N/A in practice for cell-based multiplexer without passthrough support.
 
 ### Tier 1 — High impact, affects common apps daily
 
-1. **SGR 58 colored underline** — Neovim LSP error/warning/hint colour (red/yellow/blue squiggles)
+All high-impact items have been implemented. Remaining gaps are low-priority.
 
-### Tier 2 — Medium impact, affects specific workflows
+### Tier 2 — Medium impact, cosmetic or edge-case
 
-2. **OSC 133 forwarding** — Shell integration / prompt marking
-3. **SGR 58 colored underline** — Neovim LSP diagnostics colour
+1. **SGR 21 double underline** — stored as underline style 2 but tcell doesn't distinguish it visually
+2. **SGR 53 overline display** — parsed/stored; blocked on tcell adding AttrOverline (upstream request needed)
 
 ### Tier 3 — Nice to have
 
-7. Colored underlines - SGR 58 (neovim LSP diagnostics colour coding)
-8. XTVERSION response
-9. Grapheme clustering (mode 2027)
-10. Graphics protocol passthrough
-11. Keypad keys (numpad in app keypad mode)
+3. Grapheme clustering (mode 2027) — wide-char clusters
+4. Graphics protocol passthrough (Sixel / kitty)
+5. Keypad keys (numpad in app keypad mode)

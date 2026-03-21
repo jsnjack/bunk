@@ -13,6 +13,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -382,6 +383,23 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		if bytes.Contains(chunk, []byte("\x1b[>0q")) || bytes.Contains(chunk, []byte("\x1b[>q")) {
 			p.ptmx.Write([]byte("\x1bP>|VTE(8203)\x1b\\")) //nolint:errcheck
 			L.Log(nil, LevelTrace, "captureAndWrite: XTVERSION response", "pane", p.id)
+		}
+		// XTGETTCAP — terminfo capability query: DCS + q <hex-caps> ST
+		// Format: ESC P + q <hex-cap1> ; <hex-cap2> ... ESC \
+		// Response per cap: ESC P 1 + r <hex-cap> = <hex-value> ESC \  (found)
+		//                   ESC P 0 + r <hex-cap> ESC \                 (not found)
+		// Apps (Neovim, WezTerm, kitty-protocol users) use this for runtime
+		// capability detection.  Without a response they wait ~1 second then
+		// degrade.  We respond to the caps we actually implement.
+		if idx := bytes.Index(chunk, []byte("\x1bP+q")); idx >= 0 {
+			rest := chunk[idx+4:]
+			if end := bytes.Index(rest, []byte("\x1b\\")); end >= 0 {
+				payload := string(rest[:end])
+				for _, hexCap := range strings.Split(payload, ";") {
+					p.ptmx.Write([]byte(xtgettcapResponse(hexCap))) //nolint:errcheck
+				}
+				L.Log(nil, LevelTrace, "captureAndWrite: XTGETTCAP response", "pane", p.id, "payload", payload)
+			}
 		}
 		// CPR - cursor position report: ESC [ 6 n → ESC [ row ; col R
 		// BubbleTea sends this at startup to know where to render inline UI.
@@ -1385,4 +1403,30 @@ func xParseColor(rrggbb string) string {
 		rrggbb[0:2], rrggbb[0:2],
 		rrggbb[2:4], rrggbb[2:4],
 		rrggbb[4:6], rrggbb[4:6])
+}
+
+// xtgettcapResponse builds the DCS response for a single XTGETTCAP capability
+// query.  hexCap is the hex-encoded capability name as sent by the app.
+// The response is "found" (DCS 1+r...) for capabilities we implement and
+// "not found" (DCS 0+r...) for everything else.
+func xtgettcapResponse(hexCap string) string {
+capBytes, err := hex.DecodeString(hexCap)
+if err != nil || len(capBytes) == 0 {
+return ""
+}
+capName := string(capBytes)
+// Capabilities we actively support — values are standard terminfo strings.
+// Smulx: extended underline style (SGR 4:N)
+// Setulc: underline colour (SGR 58:2::R:G:B)
+// Su: synonym for extended underline support
+caps := map[string]string{
+"Smulx":  "\x1b[4:%p1%dm",
+"Setulc": "\x1b[58:2::%p1%d:%p2%d:%p3%dm",
+"Su":     "\x1b[4:%p1%dm",
+}
+if val, ok := caps[capName]; ok {
+hexVal := hex.EncodeToString([]byte(val))
+return "\x1bP1+r" + hexCap + "=" + hexVal + "\x1b\\"
+}
+return "\x1bP0+r" + hexCap + "\x1b\\"
 }
