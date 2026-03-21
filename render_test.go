@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
@@ -612,5 +613,174 @@ func TestCheckAndClearNeedsSync_Tree_AllDirty(t *testing.T) {
 	}
 	if p1.needsSync || p2.needsSync {
 		t.Error("not all needsSync flags cleared")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Wide-character rendering
+//
+// Regression: emoji and CJK characters occupy 2 terminal columns.  vt10x
+// stores a zero-char continuation glyph at col+1.  Before the fix, renderPane
+// converted that zero to ' ' and called SetContent(col+1, ' '), overwriting
+// tcell's internal combining-placeholder.  At Show() time tcell had to emit a
+// cursor-back sequence to write the space, erasing the right half of the emoji
+// and corrupting column alignment for every character that followed (e.g. the
+// │ borders in copilot-cli's output tables).
+// ---------------------------------------------------------------------------
+
+// TestRenderPane_WideChar_CombiningPlaceholderPreserved checks that after
+// rendering a wide rune (🔴, 2 cells), the adjacent col+1 still holds
+// tcell's combining-placeholder (width=0), not a space (width=1).
+func TestRenderPane_WideChar_CombiningPlaceholderPreserved(t *testing.T) {
+	const (
+		w = 12
+		h = 3
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	term.Write([]byte("🔴X")) //nolint:errcheck
+
+	p := &Pane{
+		term:            term,
+		cmd:             &exec.Cmd{},
+		x:               0,
+		y:               0,
+		w:               w,
+		h:               h,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+
+	renderPane(scr, p, testTheme())
+
+	// Col 0: the wide emoji must be present.
+	mainc, _, _, width := scr.GetContent(0, 0)
+	if mainc != '🔴' {
+		t.Errorf("col 0: got rune %q, want '🔴'", mainc)
+	}
+	if width != 2 {
+		t.Errorf("col 0: got width %d, want 2", width)
+	}
+
+	// Col 1: must NOT have the wide char or 'X' — the displayCol remapping
+	// means col 1 is the visual right-half of the emoji (the combining slot).
+	// In tcell's SimulationScreen the combining placeholder is not auto-set,
+	// but we must NOT have called SetContent(1, 'X') there (column shift).
+	mainc, _, _, _ = scr.GetContent(1, 0)
+	if mainc == 'X' {
+		t.Errorf("col 1: got 'X', want the combining slot to be empty — column shift bug present")
+	}
+
+	// Col 2: narrow 'X' must be at exactly column 2, not shifted to 3.
+	mainc, _, _, _ = scr.GetContent(2, 0)
+	if mainc != 'X' {
+		t.Errorf("col 2: got rune %q, want 'X' — column shifted after wide char", mainc)
+	}
+}
+
+// TestRenderPane_WideChar_TableBordersAligned checks that box-drawing
+// characters used as column separators (│, U+2502) land at the correct screen
+// column after a wide emoji in the same row.  This is the exact pattern from
+// copilot-cli's output tables: "│ 🔴 High │ ...".
+func TestRenderPane_WideChar_TableBordersAligned(t *testing.T) {
+	const (
+		w = 20
+		h = 3
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	// "A🔴B│C": A at col 0, 🔴 at col 1 (2 cells), B at col 3, │ at col 4, C at col 5.
+	term.Write([]byte("A🔴B│C")) //nolint:errcheck
+
+	p := &Pane{
+		term:            term,
+		cmd:             &exec.Cmd{},
+		x:               0,
+		y:               0,
+		w:               w,
+		h:               h,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+
+	renderPane(scr, p, testTheme())
+
+	wants := []struct {
+		col  int
+		want rune
+		desc string
+	}{
+		{0, 'A', "col 0: 'A'"},
+		{1, '🔴', "col 1: wide emoji"},
+		// col 2 is the combining placeholder — skip rune check
+		{3, 'B', "col 3: 'B' after wide emoji"},
+		{4, '│', "col 4: box-drawing '│' (table border)"},
+		{5, 'C', "col 5: 'C' after table border"},
+	}
+	for _, tc := range wants {
+		mainc, _, _, _ := scr.GetContent(tc.col, 0)
+		if mainc != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.desc, mainc, tc.want)
+		}
+	}
+}
+
+// TestRenderPane_WideChar_MultipleConsecutive checks that two consecutive wide
+// chars each get their own combining-placeholder and narrow chars after them
+// are correctly positioned.
+func TestRenderPane_WideChar_MultipleConsecutive(t *testing.T) {
+	const (
+		w = 16
+		h = 3
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	// 🔴🟡Z: 🔴 at 0-1, 🟡 at 2-3, Z at 4.
+	term.Write([]byte("🔴🟡Z")) //nolint:errcheck
+
+	p := &Pane{
+		term:            term,
+		cmd:             &exec.Cmd{},
+		x:               0,
+		y:               0,
+		w:               w,
+		h:               h,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+
+	renderPane(scr, p, testTheme())
+
+	// Both continuation slots must NOT hold the character that follows —
+	// that would indicate a column shift (the old bug).
+	for _, tc := range []struct {
+		col     int
+		notWant rune
+	}{
+		{1, '🟡'}, // right-half of 🔴 — must not hold the next wide char
+		{3, 'Z'},  // right-half of 🟡 — must not hold 'Z'
+	} {
+		mainc, _, _, _ := scr.GetContent(tc.col, 0)
+		if mainc == tc.notWant {
+			t.Errorf("col %d: got %q, which indicates a column-shift bug (char should be at col+1)",
+				tc.col, tc.notWant)
+		}
+	}
+	// 'Z' must be at column 4, not shifted to 5 or 6.
+	mainc, _, _, _ := scr.GetContent(4, 0)
+	if mainc != 'Z' {
+		t.Errorf("col 4: got %q, want 'Z' — column shift after consecutive wide chars", mainc)
 	}
 }

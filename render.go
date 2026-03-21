@@ -30,6 +30,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/hinshun/vt10x"
+	"github.com/rivo/uniseg"
 )
 
 // vt10x Glyph.Mode bitmask constants (mirrored from vt10x/state.go).
@@ -389,7 +390,19 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			}
 		}
 
+		// displayCol is the actual screen column for the next character.
+		// It differs from the vt10x column (col) whenever wide characters
+		// (emoji, CJK) have been encountered: vt10x treats every character
+		// as 1 cell wide, but those chars occupy 2 display columns in the
+		// host terminal.  Without this correction, narrow chars following a
+		// wide one would be placed 1 column too far left and overwrite the
+		// right half of the wide glyph when tcell renders them.
+		displayCol := 0
 		for col := 0; col < cols; col++ {
+			if displayCol >= cols {
+				break // remaining vt10x cells would overflow past the pane edge
+			}
+
 			var cell vt10x.Glyph
 			if cells != nil && col < len(cells) {
 				cell = cells[col]
@@ -454,14 +467,28 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 				}
 			}
 
-			scr.SetContent(p.x+col, p.y+row, ch, nil, style)
+			scr.SetContent(p.x+displayCol, p.y+row, ch, nil, style)
+
+			// Advance by actual display width.  For wide chars (emoji, CJK)
+			// the host terminal renders 2 cells; vt10x only advances 1 column,
+			// so without correction subsequent chars overwrite the wide glyph's
+			// right half.  tcell automatically sets a combining-placeholder at
+			// displayCol+1 when SetContent is called with a wide rune, so we
+			// just skip rendering there.
+			if !isBlank && uniseg.StringWidth(string(ch)) == 2 {
+				displayCol += 2
+			} else {
+				displayCol++
+			}
 		}
-		// Clear cells between the vt10x grid edge and the pane's visual edge
-		// (minus the scrollbar column). During resize coalescing the pane area
-		// may be wider than the terminal grid, leaving stale cells visible.
+		// Clear cells between the last rendered display column and the pane's
+		// visual edge (minus the scrollbar column).  This covers two cases:
+		//   1. The vt10x grid is narrower than the pane (resize coalescing).
+		//   2. Wide chars caused displayCol to reach cols before all vt10x
+		//      columns were rendered — the remaining screen columns are stale.
 		blankStyle := tcell.StyleDefault.Background(rt.bg)
-		for col := cols; col < p.w-1; col++ {
-			scr.SetContent(p.x+col, p.y+row, ' ', nil, blankStyle)
+		for dc := displayCol; dc < p.w-1; dc++ {
+			scr.SetContent(p.x+dc, p.y+row, ' ', nil, blankStyle)
 		}
 	}
 
