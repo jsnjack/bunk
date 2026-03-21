@@ -161,8 +161,8 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pr2.Close()
-	pw.Close()          // close old write end
-	p.ptmx = pw2       // point pane at new pipe
+	pw.Close()   // close old write end
+	p.ptmx = pw2 // point pane at new pipe
 
 	// Now fire many mouse events with the double-check guard.
 	// Since mode is disabled, none should be written.

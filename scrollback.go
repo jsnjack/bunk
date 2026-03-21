@@ -41,10 +41,10 @@ import "github.com/hinshun/vt10x"
 // sbRing is a fixed-capacity circular buffer of captured Glyph rows.
 // maxLines must be set before the first push (typically from the config).
 type sbRing struct {
-	maxLines int               // ring capacity (from config scrollback setting)
-	lines    [][]vt10x.Glyph   // allocated on first push, length = maxLines
-	head     int               // index of the oldest entry
-	count    int               // number of valid entries (0 … maxLines)
+	maxLines int             // ring capacity (from config scrollback setting)
+	lines    [][]vt10x.Glyph // allocated on first push, length = maxLines
+	head     int             // index of the oldest entry
+	count    int             // number of valid entries (0 … maxLines)
 }
 
 // push appends one captured row to the ring.  When the ring is full, the

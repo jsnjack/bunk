@@ -47,13 +47,13 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 4 | Set palette color | OK | vt10x handles |
 | 7 | CWD notification | OK | Forwarded to host |
 | 8 | Hyperlinks | OK | Forwarded to host |
-| 10/11/12 | Query fg/bg/cursor color | **MISSING** | vt10x consumes but doesn't respond. Neovim, helix, and many TUIs query these to detect dark/light theme |
+| 10/11/12 | Query fg/bg/cursor color | OK (10/11) | OSC 10/11 answered from theme; OSC 12 (cursor colour) still MISSING |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles |
 | 110/111/112 | Reset fg/bg/cursor color | **MISSING** | Some apps reset to defaults |
 | 133 | Shell integration/prompt marking | **MISSING** | Used by bash/zsh/fish for semantic prompts. Terminals use this for jump-to-prompt. Not forwarded to host |
 
-Highest impact: OSC 10/11 (color query). Without a response, apps can't auto-detect dark vs light theme.
+Highest impact: OSC 12 (cursor colour) and OSC 110/111/112 (reset) still missing but low priority.
 
 ---
 
@@ -85,11 +85,11 @@ Highest impact: OSC 10/11 (color query). Without a response, apps can't auto-det
 | DA3 (CSI = c) | Tertiary device attributes | **MISSING** | Rare, low impact |
 | CPR (CSI 6 n) | Cursor position report | OK | |
 | DSR (CSI 5 n) | Device status report | OK | |
-| DECRQM (CSI ? Ps $ p) | Request mode | **MISSING** | Apps query whether sync updates/focus events are supported |
+| DECRQM (CSI ? Ps $ p) | Request mode | OK | Responds for modes 2026, 2004, 1004, 1049 |
 | XTVERSION (CSI > 0 q) | Terminal version | **MISSING** | Feature detection |
 | DECRQSS | Request setting | **MISSING** | Low impact |
 
-Highest impact: DECRQM. Apps may skip sync updates without a mode-supported response.
+Highest impact: XTVERSION (feature detection by newer apps).
 
 ---
 
@@ -154,13 +154,11 @@ N/A in practice for cell-based multiplexer without passthrough support.
 
 1. **SGR 2 (dim)** — Needs vt10x patch or bitmask extension
 2. **SGR 9 (strikethrough)** — Same
-3. **OSC 10/11 response** — Dark/light theme detection for apps
-4. **DECRQM response for mode 2026** — Tells apps sync updates are supported
 
 ### Tier 2 — Medium impact, affects specific workflows
 
-5. **OSC 133 forwarding** — Shell integration / prompt marking
-6. **SGR 8 (invisible)** — Password entry in some TUIs
+3. **OSC 133 forwarding** — Shell integration / prompt marking
+4. **SGR 8 (invisible)** — Password entry in some TUIs
 
 ### Tier 3 — Nice to have
 

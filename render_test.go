@@ -770,7 +770,7 @@ func TestRenderPane_WideChar_MultipleConsecutive(t *testing.T) {
 		notWant rune
 	}{
 		{1, '🟡'}, // right-half of 🔴 — must not hold the next wide char
-		{3, 'Z'},  // right-half of 🟡 — must not hold 'Z'
+		{3, 'Z'}, // right-half of 🟡 — must not hold 'Z'
 	} {
 		mainc, _, _, _ := scr.GetContent(tc.col, 0)
 		if mainc == tc.notWant {
@@ -782,5 +782,34 @@ func TestRenderPane_WideChar_MultipleConsecutive(t *testing.T) {
 	mainc, _, _, _ := scr.GetContent(4, 0)
 	if mainc != 'Z' {
 		t.Errorf("col 4: got %q, want 'Z' — column shift after consecutive wide chars", mainc)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// tcellColorToXParse
+// ---------------------------------------------------------------------------
+
+func TestTcellColorToXParse_RGB(t *testing.T) {
+	// Exact RGB colour: each component doubled to 16-bit.
+	c := tcell.NewRGBColor(0xd0, 0xd0, 0xd0)
+	got := tcellColorToXParse(c)
+	if got != "rgb:d0d0/d0d0/d0d0" {
+		t.Errorf("got %q, want rgb:d0d0/d0d0/d0d0", got)
+	}
+}
+
+func TestTcellColorToXParse_DarkBG(t *testing.T) {
+	c := tcell.NewRGBColor(0x1a, 0x1a, 0x2e)
+	got := tcellColorToXParse(c)
+	if got != "rgb:1a1a/1a1a/2e2e" {
+		t.Errorf("got %q, want rgb:1a1a/1a1a/2e2e", got)
+	}
+}
+
+func TestTcellColorToXParse_Default_Fallback(t *testing.T) {
+	// tcell.ColorDefault has no RGB — must return a safe fallback, not panic.
+	got := tcellColorToXParse(tcell.ColorDefault)
+	if got == "" {
+		t.Error("tcellColorToXParse(ColorDefault) returned empty string")
 	}
 }

@@ -121,7 +121,6 @@ func sshHostFromCmdline(args []string) string {
 	return ""
 }
 
-
 // whose image matches imageName.  Returns the first container ID found, or "".
 // Used as a fallback when process-tree walking cannot find the container.
 func findContainerByAncestor(imageName, containerType string) string {
@@ -172,6 +171,7 @@ func findRunningContainerFromPID(pid int) string {
 	}
 	return walk(pid, 0)
 }
+
 // an lxc/incus exec ancestor.  Returns the full argv of that process, which
 // includes the container name and the command that was used to enter it
 // (e.g. ["lxc", "exec", "xx", "--", "su", "--login", "jsn"]).

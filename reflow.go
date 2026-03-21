@@ -241,4 +241,3 @@ func emitColorCode(buf *bytes.Buffer, c vt10x.Color, isFG bool) {
 		buf.Write(strconv.AppendInt(nil, int64(b), 10))
 	}
 }
-

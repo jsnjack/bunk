@@ -67,9 +67,9 @@ type Pane struct {
 
 	// Scrollback buffer - lines that have scrolled off the vt10x grid top.
 	// Protected by mu.
-	sb             sbRing // ring buffer of captured rows
-	sbOff          int    // 0 = live view; N = N lines above live view
-	scrollbackLines int   // max scrollback rows (from config)
+	sb              sbRing // ring buffer of captured rows
+	sbOff           int    // 0 = live view; N = N lines above live view
+	scrollbackLines int    // max scrollback rows (from config)
 
 	// Text selection state.  Protected by mu.
 	// selAnchor is where Button1 was pressed; selCursor tracks the drag endpoint.
@@ -133,6 +133,13 @@ type Pane struct {
 	// Clears automatically after statusMsgEnd.  Protected by mu.
 	statusMsg    string
 	statusMsgEnd time.Time
+
+	// themeFG/BG are the host terminal's fg/bg colours in XParseColor format
+	// ("rgb:<rrrr>/<gggg>/<bbbb>"), set once at pane creation.  Used to answer
+	// OSC 10/11 colour queries so apps (neovim, helix, BubbleTea) can detect
+	// the dark/light theme.  Immutable after SetThemeColors is called.
+	themeFGColor string
+	themeBGColor string
 }
 
 // NewPane spawns a shell inside a new PTY with the given geometry, starts the
@@ -203,7 +210,7 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 		id: id, x: x, y: y, w: w, h: h,
 		ptmx: ptmx, cmd: cmd, term: term,
 		scrollbackLines: scrollback,
-		sb:               sbRing{maxLines: scrollback},
+		sb:              sbRing{maxLines: scrollback},
 	}
 
 	// One-time container detection: read the shell process's own environ.
@@ -373,13 +380,56 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			p.ptmx.Write([]byte(resp)) //nolint:errcheck
 			L.Log(nil, LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
 		}
-		// OSC 10/11 (fg/bg colour queries) — NOT answered.
-		// Writing the response to ptmx injects bytes into the shell's stdin.
-		// Fast-exiting programs (e.g. `gh` printing help) send the query via
-		// BubbleTea init and exit before the response arrives; bash's readline
-		// then picks up the stale bytes and echoes them as visible garbage.
-		// BubbleTea has a ~100 ms timeout and falls back to default colours,
-		// so not responding is safe and avoids the race entirely.
+		// OSC 10/11 — fg/bg colour queries.  Apps (neovim, helix, BubbleTea)
+		// send these at startup to detect dark vs light theme so they can pick
+		// appropriate colour schemes.  We respond with the resolved theme colours.
+		// Gated on !altScreen: same reasoning as CPR above.
+		if !altScreen && p.themeFGColor != "" {
+			if bytes.Contains(chunk, []byte("\x1b]10;?")) {
+				resp := fmt.Sprintf("\x1b]10;%s\x1b\\", p.themeFGColor)
+				p.ptmx.Write([]byte(resp)) //nolint:errcheck
+				L.Log(nil, LevelTrace, "captureAndWrite: OSC 10 response", "pane", p.id, "color", p.themeFGColor)
+			}
+			if bytes.Contains(chunk, []byte("\x1b]11;?")) {
+				resp := fmt.Sprintf("\x1b]11;%s\x1b\\", p.themeBGColor)
+				p.ptmx.Write([]byte(resp)) //nolint:errcheck
+				L.Log(nil, LevelTrace, "captureAndWrite: OSC 11 response", "pane", p.id, "color", p.themeBGColor)
+			}
+		}
+		// DECRQM — mode status query: \x1b[?<n>$p  →  \x1b[?<n>;<status>$y
+		// Status values: 1=set, 2=reset, 3=permanently set, 4=permanently reset.
+		// Apps use this to detect whether a terminal supports specific modes
+		// before enabling them (e.g. sync updates, focus events).
+		// We respond to modes we actively support; everything else is ignored.
+		if bytes.Contains(chunk, []byte("$p")) {
+			for _, mode := range []struct {
+				query  []byte
+				status byte // '1'=set, '2'=reset
+			}{
+				{[]byte("\x1b[?2026$p"), '2'}, // synchronized updates: recognised, currently reset
+				{[]byte("\x1b[?2004$p"), func() byte {
+					if p.wantsBracketedPaste {
+						return '1'
+					}
+					return '2'
+				}()}, // bracketed paste: reflect actual state
+				{[]byte("\x1b[?1004$p"), '2'}, // focus events: recognised
+				{[]byte("\x1b[?1049$p"), func() byte {
+					if p.term.Mode()&vt10x.ModeAltScreen != 0 {
+						return '1'
+					}
+					return '2'
+				}()}, // alt screen: reflect actual state
+			} {
+				if bytes.Contains(chunk, mode.query) {
+					// Extract numeric mode from the query sequence.
+					n := mode.query[3 : len(mode.query)-2] // between \x1b[? and $p
+					resp := fmt.Sprintf("\x1b[?%s;%c$y", n, mode.status)
+					p.ptmx.Write([]byte(resp)) //nolint:errcheck
+					L.Log(nil, LevelTrace, "captureAndWrite: DECRQM response", "pane", p.id, "mode", string(n), "status", string(mode.status))
+				}
+			}
+		}
 	}
 
 	// Kitty keyboard protocol — bunk acts as the "terminal" for pane apps.
@@ -443,7 +493,7 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				L.Log(nil, LevelTrace, "captureAndWrite: alt-screen entry", "pane", p.id, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
 
 				end := i + len(b)
-				p.term.Write(chunk[i:end])             //nolint:errcheck
+				p.term.Write(chunk[i:end])            //nolint:errcheck
 				p.term.Write([]byte("\x1b[2J\x1b[H")) //nolint:errcheck
 				if end < len(chunk) {
 					p.term.Write(chunk[end:]) //nolint:errcheck
@@ -1300,4 +1350,26 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 	// Flush remaining bytes.
 	out = append(out, chunk[copied:]...)
 	return out
+}
+
+// SetThemeColors stores the host terminal's fg/bg colours so captureAndWrite
+// can answer OSC 10/11 queries.  Must be called before the first readPTY chunk
+// arrives (i.e. immediately after NewPane).  Thread-safe: called once from the
+// main goroutine before any PTY I/O goroutines use the fields.
+func (p *Pane) SetThemeColors(fg, bg string) {
+	p.themeFGColor = fg
+	p.themeBGColor = bg
+}
+
+// xParseColor converts an RGB hex string "rrggbb" (6 hex digits) to the
+// XParseColor format "rgb:<rrrr>/<gggg>/<bbbb>" used in OSC 10/11 responses.
+// Each 8-bit component is doubled to 16-bit by repeating the byte.
+func xParseColor(rrggbb string) string {
+	if len(rrggbb) != 6 {
+		return "rgb:0000/0000/0000"
+	}
+	return fmt.Sprintf("rgb:%s%s/%s%s/%s%s",
+		rrggbb[0:2], rrggbb[0:2],
+		rrggbb[2:4], rrggbb[2:4],
+		rrggbb[4:6], rrggbb[4:6])
 }

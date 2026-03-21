@@ -17,5 +17,3 @@ func queryCellAspect(cfgAspect float64) float64 {
 	L.Debug("queryCellAspect: using default", "aspect", 2.25)
 	return 2.25
 }
-
-

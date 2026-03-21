@@ -146,6 +146,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		screen.Fini()
 		return err
 	}
+	p.SetThemeColors(tcellColorToXParse(app.theme.fg), tcellColorToXParse(app.theme.bg))
 	app.nextID++
 	app.root = newLeaf(p, 0, 0, w, h)
 	app.active = p

@@ -30,10 +30,10 @@ type fileConfig struct {
 	Theme      string            `toml:"theme"`
 	LogFile    string            `toml:"log_file"`
 	LogLevel   string            `toml:"log_level"`
-	CellAspect float64           `toml:"cell_aspect"`  // cell pixel H/W ratio; 0 = auto-detect
-	Scrollback int               `toml:"scrollback"`   // max scrollback lines per pane; 0 = default
+	CellAspect float64           `toml:"cell_aspect"` // cell pixel H/W ratio; 0 = auto-detect
+	Scrollback int               `toml:"scrollback"`  // max scrollback lines per pane; 0 = default
 	UI         uiOverride        `toml:"ui"`
-	Keys       map[string]string `toml:"keys"`          // action → key string, e.g. "split" → "f1"
+	Keys       map[string]string `toml:"keys"` // action → key string, e.g. "split" → "f1"
 }
 
 type uiOverride struct {
@@ -58,8 +58,8 @@ var keybindingNames = map[string]tcell.Key{
 	"enter": tcell.KeyEnter, "return": tcell.KeyEnter,
 	"escape": tcell.KeyEsc, "esc": tcell.KeyEsc,
 	"backspace": tcell.KeyBackspace2,
-	"delete": tcell.KeyDelete, "del": tcell.KeyDelete,
-	"tab": tcell.KeyTab,
+	"delete":    tcell.KeyDelete, "del": tcell.KeyDelete,
+	"tab":    tcell.KeyTab,
 	"insert": tcell.KeyInsert,
 }
 

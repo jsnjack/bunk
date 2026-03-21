@@ -380,7 +380,7 @@ func TestKeyToBytes(t *testing.T) {
 			name:       "Kitty Ctrl+C",
 			ev:         keyEv(tcell.KeyCtrlC, tcell.ModCtrl),
 			kittyFlags: 1,
-			want: "\x1b[99;5u",
+			want:       "\x1b[99;5u",
 		},
 		{
 			name:       "Kitty Ctrl+Z",

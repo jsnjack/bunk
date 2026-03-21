@@ -350,8 +350,8 @@ func TestAdjustAfterScrollbackPush_RingNotFull(t *testing.T) {
 	p.selAnchor = selPos{row: 7, col: 0}
 	p.selCursor = selPos{row: 9, col: 5}
 
-	oldCount := p.sb.count  // 10
-	oldSbOff := p.sbOff     // 3
+	oldCount := p.sb.count // 10
+	oldSbOff := p.sbOff    // 3
 	// Push 2 more rows (ring not full, count goes 10→12).
 	p.sb.push(makeGlyphRow('K'))
 	p.sb.push(makeGlyphRow('L'))
@@ -520,5 +520,35 @@ func TestFindContentRows_CursorOnContent(t *testing.T) {
 	// Cursor is on row 0, which has content → should return 1.
 	if got != 1 {
 		t.Errorf("findContentRows = %d, want 1", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// xParseColor
+// ---------------------------------------------------------------------------
+
+func TestXParseColor_Standard(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"d0d0d0", "rgb:d0d0/d0d0/d0d0"},
+		{"1a1a2e", "rgb:1a1a/1a1a/2e2e"},
+		{"000000", "rgb:0000/0000/0000"},
+		{"ffffff", "rgb:ffff/ffff/ffff"},
+		{"ff0080", "rgb:ffff/0000/8080"},
+	}
+	for _, tc := range tests {
+		got := xParseColor(tc.input)
+		if got != tc.want {
+			t.Errorf("xParseColor(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestXParseColor_InvalidLength(t *testing.T) {
+	got := xParseColor("ff00")
+	if got != "rgb:0000/0000/0000" {
+		t.Errorf("xParseColor invalid length: got %q, want fallback", got)
 	}
 }

@@ -543,6 +543,7 @@ func (app *App) splitActive(inheritContext bool) {
 		L.Error("splitActive: NewPane", "err", err, "dir", dir, "spawnArgs", spawnArgs, "container", ct, "containerID", cid)
 		return
 	}
+	newPane.SetThemeColors(tcellColorToXParse(app.theme.fg), tcellColorToXParse(app.theme.bg))
 	L.Debug("splitActive: new pane created", "new_pane", newPane.id, "x", nx, "y", ny, "w", nw, "h", nh)
 	app.nextID++
 
@@ -1027,4 +1028,18 @@ func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
 		return []byte{'\x1b', '[', '2', '4', ';', '2', '~'} // Shift+F12
 	}
 	return nil
+}
+
+// tcellColorToXParse converts a tcell.Color to XParseColor format
+// "rgb:<rrrr>/<gggg>/<bbbb>" for use in OSC 10/11 terminal colour query
+// responses.  Each 8-bit RGB component is doubled to 16-bit (0xd0 → "d0d0").
+// Falls back to black/white defaults for non-RGB colours.
+func tcellColorToXParse(c tcell.Color) string {
+	r, g, b := c.RGB()
+	if r < 0 {
+		// Not an RGB colour (e.g. tcell.ColorDefault, palette colour).
+		// Return a safe neutral dark colour as fallback.
+		return "rgb:1a1a/1a1a/2e2e"
+	}
+	return fmt.Sprintf("rgb:%02x%02x/%02x%02x/%02x%02x", r, r, g, g, b, b)
 }
