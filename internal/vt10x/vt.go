@@ -64,6 +64,11 @@ type TerminalOption func(*TerminalInfo)
 type TerminalInfo struct {
 	w          io.Writer
 	cols, rows int
+	// scrollCb is called synchronously inside scrollUp() for each row that
+	// leaves the top of the primary screen (orig == 0), before that row's
+	// backing storage is cleared.  The slice is only valid for the duration
+	// of the call; the receiver must copy any content it wants to retain.
+	scrollCb func(row []Glyph)
 }
 
 func WithWriter(w io.Writer) TerminalOption {
@@ -76,6 +81,16 @@ func WithSize(cols, rows int) TerminalOption {
 	return func(info *TerminalInfo) {
 		info.cols = cols
 		info.rows = rows
+	}
+}
+
+// WithScrollCallback installs a callback that fires once per row scrolled off
+// the top of the primary screen.  The callback runs synchronously inside
+// terminal mutation code; it must be fast and non-blocking.  The row slice
+// is only valid for the duration of the call.
+func WithScrollCallback(fn func(row []Glyph)) TerminalOption {
+	return func(info *TerminalInfo) {
+		info.scrollCb = fn
 	}
 }
 

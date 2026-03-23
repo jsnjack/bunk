@@ -409,7 +409,10 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 				break // remaining vt10x cells would overflow past the pane edge
 			}
 
-			var cell vt10x.Glyph
+			// Default: theme colours for cells not populated from scrollback or
+			// the live terminal (blank rows before oldest history, and columns
+			// beyond a scrollback row's captured width after a resize).
+			cell := vt10x.Glyph{FG: vt10x.DefaultFG, BG: vt10x.DefaultBG}
 			if cells != nil && col < len(cells) {
 				cell = cells[col]
 			} else if useTermDirect {

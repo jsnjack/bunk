@@ -1032,3 +1032,79 @@ func TestRenderPane_SGR0_ClearsUnderlineStyle(t *testing.T) {
 		t.Errorf("SGR 0 after 4:3: want UnderlineStyleNone, got %v", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Scrollback background seam
+//
+// Bug: after resize, columns beyond the old terminal width show ANSI black
+// (Color 0) instead of the theme background in scrollback rows.
+//
+// Scrollback rows captured at oldCols have len(row) == oldCols.  In the render
+// loop, when col >= len(cells), the cell was left as a zero-value Glyph
+// (BG=0 = ANSI black), which renders as rt.palette[0] — not rt.bg.  A visible
+// seam appears between scrollback rows (BG = ANSI black on the right edge)
+// and live rows (BG = DefaultBG = rt.bg).
+//
+// Fix: initialise the cell to DefaultFG/DefaultBG so that unpopulated
+// positions render with the theme's background colour.
+// ---------------------------------------------------------------------------
+
+func TestRenderPane_ScrollbackBeyondWidth_UsesThemeBG(t *testing.T) {
+	const (
+		oldCols = 5
+		newCols = 8
+		rows    = 4
+		paneW   = newCols + 1 // +1 for scrollbar column
+	)
+
+	rt := testTheme()
+	// rt.bg (DefaultBG) must differ from rt.palette[0] (ANSI black) for the
+	// test to detect the seam.  testTheme guarantees this:
+	//   rt.bg      = #1a1a2e (dark blue)
+	//   palette[0] = #000000 (pure black)
+	if rt.bg == rt.palette[0] {
+		t.Skip("testTheme bg == palette[0]; cannot distinguish the seam")
+	}
+
+	// Build a pane whose live terminal is newCols wide.
+	term := vt10x.New(vt10x.WithSize(newCols, rows))
+	p := &Pane{
+		term:            term,
+		cmd:             &exec.Cmd{},
+		x:               0,
+		y:               0,
+		w:               paneW,
+		h:               rows,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	// Manually push a scrollback row captured at oldCols width (content 'A').
+	sbRow := make([]vt10x.Glyph, oldCols)
+	for i := range sbRow {
+		sbRow[i] = vt10x.Glyph{Char: 'A', FG: vt10x.DefaultFG, BG: vt10x.DefaultBG}
+	}
+	p.sb.push(sbRow)
+
+	// Enter scrollback mode (show the one captured row at screen row 0).
+	p.sbOff = 1
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(paneW, rows)
+
+	renderPane(scr, p, rt)
+
+	// Row 0 is the scrollback row.  Columns 0..oldCols-1 come from sbRow;
+	// columns oldCols..newCols-1 are beyond sbRow's width and must render
+	// with rt.bg (DefaultBG), NOT rt.palette[0] (ANSI black = Color 0).
+	for col := oldCols; col < newCols; col++ {
+		_, _, style, _ := scr.GetContent(col, 0)
+		_, bg, _ := style.Decompose()
+		if bg != rt.bg {
+			t.Errorf("scrollback row 0 col %d: bg = %v, want rt.bg = %v (got ANSI black seam)",
+				col, bg, rt.bg)
+		}
+	}
+}

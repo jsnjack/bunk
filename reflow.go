@@ -22,8 +22,9 @@
 //     wrapped) lines, not logical lines.  A line that was split across two
 //     rows by auto-wrap at the OLD width will not be re-joined before being
 //     re-wrapped at the new width.  This is the same behaviour as tmux/screen.
-//   - The scrollback is rebuilt from the combined history, so the user's
-//     scroll position is reset to the live view after a resize.
+//   - The scrollback is rebuilt from the combined history on a column-width
+//     resize.  The user's scroll position is preserved via content-anchor
+//     matching (centre row fingerprint) with proportional fallback.
 package main
 
 import (
@@ -110,7 +111,123 @@ func rowContentEnd(row []vt10x.Glyph) int {
 	return end
 }
 
-// rowVisualHeight returns how many terminal rows a Glyph row will occupy when
+// rowChars extracts the visible rune sequence from a Glyph row (up to the
+// last non-blank character).  Interior spaces are included — they are
+// meaningful content that distinguishes e.g. "Mar 23" from "Mar23".
+// Trailing blank cells (NUL or space) are excluded via rowContentEnd.
+func rowChars(row []vt10x.Glyph) []rune {
+	end := rowContentEnd(row)
+	if end == 0 {
+		return nil
+	}
+	chars := make([]rune, 0, end)
+	for i := 0; i < end; i++ {
+		if c := row[i].Char; c != 0 { // include spaces, exclude only unset cells
+			chars = append(chars, c)
+		}
+	}
+	return chars
+}
+
+// rowCharsMatch reports whether a and b share a common prefix of at least
+// minLen runes.  This handles both wrap directions: after narrowing, the
+// original line is split so the captured anchor is a prefix of the new row;
+// after widening, the new row contains the full original line so the anchor
+// matches its beginning.
+func rowCharsMatch(a, b []rune, minLen int) bool {
+	n := min(len(a), len(b))
+	if n < minLen {
+		return false
+	}
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// reflowSbOff computes the new sbOff value to use after a column-width resize.
+//
+// It tries to keep the same content line at the centre of the viewport:
+//  1. If anchorChars has ≥ anchorMinLen runes, scan the scrollback portion of
+//     the scratch terminal for a row whose character content matches (prefix
+//     match handles wrap in both directions).  When multiple rows match, prefer
+//     the one closest to the proportional estimate.  Set sbOff so that row
+//     appears at newRows/2 from the top of the viewport.
+//  2. Fall back to proportional mapping of the top-of-viewport row when the
+//     anchor is missing, too short, or not found in the scratch terminal.
+func reflowSbOff(
+	oldSbOff, oldSbCount, oldRows int,
+	newSbCount, newRows int,
+	anchorChars []rune, anchorOldRingIdx, anchorMinLen int,
+	scratch vt10x.Terminal, newCols int,
+) int {
+	if oldSbOff == 0 {
+		return 0
+	}
+
+	// Content-match path.
+	if len(anchorChars) >= anchorMinLen {
+		// Proportional estimate within the ring only (anchor is always a ring
+		// row, so ring-only fractions give a more accurate tiebreaker than
+		// including the live terminal rows in the denominator).
+		propEstRow := 0
+		if oldSbCount > 0 && anchorOldRingIdx >= 0 {
+			propEstRow = anchorOldRingIdx * newSbCount / oldSbCount
+		}
+
+		bestRow := -1
+		bestDist := newSbCount + 1
+		rowBuf := make([]vt10x.Glyph, newCols)
+		// Only search the scrollback portion of the scratch terminal.
+		// If the anchor content ended up in the live terminal region
+		// (rows newSbCount..contentRows-1), sbOff=0 is correct — and
+		// searching that region could incorrectly win over the scrollback
+		// match if it happens to be closer to propEstRow.
+		for r := 0; r < newSbCount; r++ {
+			for c := 0; c < newCols; c++ {
+				rowBuf[c] = scratch.Cell(c, r)
+			}
+			if rowCharsMatch(anchorChars, rowChars(rowBuf), anchorMinLen) {
+				d := r - propEstRow
+				if d < 0 {
+					d = -d
+				}
+				if d < bestDist {
+					bestDist = d
+					bestRow = r
+				}
+			}
+		}
+
+		if bestRow >= 0 {
+			sbOff := newSbCount - bestRow + newRows/2
+			if sbOff > newSbCount {
+				sbOff = newSbCount
+			}
+			return sbOff
+		}
+	}
+
+	// Proportional fallback: scale the top-of-viewport row index by the
+	// ratio of total content rows (old vs new).
+	oldTotal := oldSbCount + oldRows
+	newTotal := newSbCount + newRows
+	oldTopRow := oldSbCount - oldSbOff
+	if oldTopRow < 0 {
+		oldTopRow = 0
+	}
+	newTopRow := 0
+	if oldTotal > 0 {
+		newTopRow = oldTopRow * newTotal / oldTotal
+	}
+	if newTopRow < newSbCount {
+		return newSbCount - newTopRow
+	}
+	return 0
+}
+
 // rendered in a terminal that is cols columns wide.
 func rowVisualHeight(row []vt10x.Glyph, cols int) int {
 	end := rowContentEnd(row)

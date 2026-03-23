@@ -152,6 +152,11 @@ type State struct {
 	tabs          []bool
 	title         string
 	colorOverride map[Color]Color
+	// scrollRowCb, if non-nil, is called once per row that scrolls off the
+	// top of the primary screen (orig == 0 in scrollUp).  It fires before
+	// the row's backing storage is cleared, so the content is still intact.
+	// The caller must copy any data it wants to retain after the call.
+	scrollRowCb func(row []Glyph)
 }
 
 func newState(w io.Writer) *State {
@@ -581,6 +586,14 @@ func (t *State) scrollDown(orig, n int) {
 
 func (t *State) scrollUp(orig, n int) {
 	n = clamp(n, 0, t.bottom-orig+1)
+	// Fire the scroll callback before clearing the departing rows.
+	// The callback receives each row while its content is still intact.
+	// Only fire when orig == 0 — rows leaving the top of the visible screen.
+	if t.scrollRowCb != nil && orig == 0 {
+		for i := 0; i < n; i++ {
+			t.scrollRowCb([]Glyph(t.lines[i]))
+		}
+	}
 	t.clear(0, orig, t.cols-1, orig+n-1)
 	t.changed |= ChangedScreen
 	for i := orig; i <= t.bottom-n; i++ {

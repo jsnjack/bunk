@@ -205,14 +205,18 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 	//      stale bytes as visible garbage on the prompt line.
 	// DA/DA2/CPR responses are handled manually in captureAndWrite where
 	// we can gate them on specific conditions (e.g. non-alt-screen).
-	term := vt10x.New(vt10x.WithSize(w-1, h))
-
+	// Create the pane first so we can pass p.onScrollRow as the scroll
+	// callback.  p.term is set immediately after; the callback is only
+	// invoked from readPTY (started below), so p.term is always valid
+	// by the time the callback could fire.
 	p := &Pane{
 		id: id, x: x, y: y, w: w, h: h,
-		ptmx: ptmx, cmd: cmd, term: term,
+		ptmx:            ptmx,
+		cmd:             cmd,
 		scrollbackLines: scrollback,
 		sb:              sbRing{maxLines: scrollback},
 	}
+	p.term = vt10x.New(vt10x.WithSize(w-1, h), vt10x.WithScrollCallback(p.onScrollRow))
 
 	// One-time container detection: read the shell process's own environ.
 	if cmd.Process != nil {
@@ -304,22 +308,33 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 	p.closePTX()
 }
 
-// captureAndWrite snapshots rows that are about to scroll off, then writes
-// chunk to vt10x.  Must be called with Pane.mu held.
+// onScrollRow is the vt10x scroll callback installed in NewPane via
+// WithScrollCallback.  It is called synchronously inside vt10x.Write()
+// for each row that scrolls off the top of the primary screen (orig == 0
+// in vt10x.scrollUp), before that row's backing storage is cleared.
 //
-// The detection algorithm is described in scrollback.go.  We skip capture
-// when the alternate screen is active (vim, htop, less) because those apps
-// manage their own screen state and don't produce classic TTY scrolling.
+// The pane lock (p.mu) is already held by captureAndWrite, which is the
+// only caller of term.Write under that lock; no additional locking is needed.
 //
-// We do NOT skip capture based on cursor position.  The previous optimisation
-// (only snapshot when cursorY >= rows/2) was incorrect: a large burst of output
-// can cause scrolling even when the cursor started in the upper half of the
-// screen.  Fresh panes start with cursor at row 0, so the guard prevented any
-// scrollback from being captured until the cursor happened to move past the
-// midpoint.  Removing it costs one full-grid snapshot per PTY chunk (cheap;
-// see scrollback.go for the O(cols×rows) analysis).
+// Alt-screen scrolls must be ignored: TUI apps (vim, htop, less) use the
+// alt-screen and their scroll events must not populate primary scrollback.
+func (p *Pane) onScrollRow(row []vt10x.Glyph) {
+	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
+		return
+	}
+	oldCount := p.sb.count
+	oldSbOff := p.sbOff
+	p.sb.push(row)
+	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
+}
+
+// captureAndWrite writes chunk to vt10x and handles DA/CPR/XTGETTCAP
+// capability queries.  Scrollback capture is handled by the onScrollRow
+// callback installed at pane creation — vt10x calls it directly when rows
+// scroll off the top, so no post-write diffing is required here.
+//
+// Must be called with Pane.mu held.
 func (p *Pane) captureAndWrite(chunk []byte) {
-	cols, rows := p.term.Size()
 	altScreen := p.term.Mode()&vt10x.ModeAltScreen != 0
 	if L.Enabled(nil, LevelTrace) {
 		cur := p.term.Cursor()
@@ -445,11 +460,6 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		}
 	}
 
-	var prevGrid [][]vt10x.Glyph
-	if !altScreen {
-		prevGrid = captureGrid(p.term, cols, rows)
-	}
-
 	// If this chunk crosses an alt-screen entry point:
 	//   1. Save the primary cursor so we can restore it on exit (vt10x shares
 	//      a single saved-cursor slot for ESC-7/8 and \x1b[?1049h/l, so the
@@ -482,7 +492,6 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 				if end < len(chunk) {
 					p.term.Write(chunk[end:]) //nolint:errcheck
 				}
-				prevGrid = nil // alt-screen now active; skip primary-row scrollback push
 				wrote = true
 				break
 			}
@@ -567,66 +576,6 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		p.needsSync = true
 	}
 
-	if prevGrid != nil {
-		newRow0 := captureRow(p.term, 0, cols)
-		var newRow1 []vt10x.Glyph
-		if rows >= 2 {
-			newRow1 = captureRow(p.term, 1, cols)
-		}
-		shift := detectShift(prevGrid, newRow0, newRow1)
-		if shift > 0 && shift < len(prevGrid) {
-			// Normal scroll: exactly `shift` rows have scrolled off the top.
-			oldCount := p.sb.count
-			oldSbOff := p.sbOff
-			for i := 0; i < shift; i++ {
-				p.sb.push(prevGrid[i])
-			}
-			p.adjustAfterScrollbackPush(shift, oldCount, oldSbOff)
-			L.Debug("captureAndWrite: scrollback push", "pane", p.id, "rows", shift, "total", p.sb.count, "sbOff", p.sbOff)
-		} else if shift == len(prevGrid) {
-			// Large-burst sentinel: the output burst may have scrolled more
-			// than one full terminal height.
-			//
-			// Before pushing, verify this is a genuine full-screen scroll and
-			// not an in-place overwrite (progress bars, spinners, etc.).  For
-			// a real scroll ALL rows are replaced with new content; for an
-			// in-place update most rows are unchanged.  Sample rows at N/4,
-			// N/2, and 3N/4: if ANY matches prevGrid at that position the
-			// screen was not truly replaced, so skip the push entirely.
-			// (For real scrolls these samples are fresh content from the PTY
-			// output and won't match the old snapshot.)
-			realScroll := true
-			for _, sampleY := range []int{rows / 4, rows / 2, rows * 3 / 4} {
-				if sampleY >= rows {
-					continue
-				}
-				cur := captureRow(p.term, sampleY, cols)
-				if rowsEqual(cur, prevGrid[sampleY]) {
-					realScroll = false
-					break
-				}
-			}
-			if !realScroll {
-				// In-place update (progress bars, spinners) — skip push.
-			} else {
-				// Genuine large-burst scroll: push all non-blank rows of prevGrid.
-				lastNonBlank := -1
-				for i := 0; i < len(prevGrid); i++ {
-					if !isBlankRow(prevGrid[i]) {
-						lastNonBlank = i
-					}
-				}
-				pushed := lastNonBlank + 1
-				oldCount := p.sb.count
-				oldSbOff := p.sbOff
-				for i := 0; i < pushed; i++ {
-					p.sb.push(prevGrid[i])
-				}
-				p.adjustAfterScrollbackPush(pushed, oldCount, oldSbOff)
-				L.Debug("captureAndWrite: large-burst scrollback push", "pane", p.id, "rows", pushed, "total", p.sb.count, "sbOff", p.sbOff)
-			}
-		}
-	}
 }
 
 // waitForExit blocks until the shell process exits (or the app shuts down),
@@ -651,18 +600,10 @@ func (p *Pane) writeInput(data []byte) {
 
 // scrollUp scrolls the view n lines toward the past (increases sbOff).
 // Clamped so sbOff never exceeds the number of captured lines.
+// p.sb is populated in real time by onScrollRow; no rebuild is needed here.
 func (p *Pane) scrollUp(n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.sbOff == 0 {
-		// Entering scrollback for the first time: rebuild the ring from the
-		// raw PTY byte buffer.  detectShift can only capture rows that were
-		// visible *before* a chunk arrived; a single large TCP burst (common
-		// over SSH) can scroll through many screenfuls in one read, dropping
-		// every intermediate line.  The rawBuf replay into a tall scratch
-		// terminal captures all of them at once.
-		p.rebuildScrollbackFromRawBuf()
-	}
 	before := p.sbOff
 	p.sbOff += n
 	if p.sbOff > p.sb.count {
@@ -839,18 +780,60 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 		firstVisible = 0
 	}
 
-	// Rebuild scrollback from the replay — but only if it yields MORE rows
-	// than the ring already holds.  rawBuf is a rolling byte window, so for
-	// long-running sessions it covers only recent output.  Overwriting a
-	// 40-row ring with 0 replay rows (expand case: content fits in the taller
-	// terminal) silently discards all captured history.
-	if firstVisible > p.sb.count {
-		p.sb = sbRing{maxLines: p.scrollbackLines}
-		for r := 0; r < firstVisible; r++ {
-			p.sb.push(captureRow(scratch, r, newCols))
+	// Always rebuild the scrollback ring from the replay on a column-width
+	// change.  Any rows currently in the ring are at oldCols width; keeping
+	// them at newCols would produce garbled wrapping when the user scrolls.
+	//
+	// When firstVisible > 0 the ring is populated from the replay rows.
+	// When firstVisible == 0 (all rawBuf content fits in the new terminal)
+	// the ring is reset to empty — the live terminal holds everything that
+	// rawBuf covers, so there are no rows to archive.
+	//
+	// This means any scrollback that rawBuf's rolling window no longer covers
+	// is discarded on a column-width resize.  That is an accepted limitation;
+	// the alternative (keeping stale-width rows) produces visible corruption.
+
+	// Before rebuilding, capture the character content of the viewport's
+	// centre row so we can find the same line in the new ring after reflow.
+	// The centre row is chosen because it is the most stable landmark: the
+	// top row can disappear when the ring shrinks, and the bottom row is
+	// already at the live-view boundary.
+	const anchorMinLen = 6
+	var anchorChars []rune
+	anchorOldRingIdx := -1 // ring index (0=oldest) of the anchor row before rebuild
+	if p.sbOff > 0 {
+		midRingIdx := p.sb.count - p.sbOff + oldRows/2
+		if midRingIdx >= 0 && midRingIdx < p.sb.count {
+			anchorChars = rowChars(p.sb.get(midRingIdx))
+			anchorOldRingIdx = midRingIdx
 		}
 	}
-	p.sbOff = 0
+
+	oldSbOff := p.sbOff
+	oldSbCount := p.sb.count
+	p.sb = sbRing{maxLines: p.scrollbackLines}
+	for r := 0; r < firstVisible; r++ {
+		p.sb.push(captureRow(scratch, r, newCols))
+	}
+
+	// Reposition the viewport so the same content line appears in the
+	// centre of the pane after reflow.
+	//
+	// Strategy:
+	//   1. If we have a valid anchor (centre row had ≥ anchorMinLen visible
+	//      characters), search the scratch terminal for a row whose character
+	//      content matches the anchor (prefix match handles wrap changes in
+	//      both directions).  Use the proportional estimate as a tiebreaker
+	//      when the same content appears multiple times.  Set sbOff to put the
+	//      matched row at newRows/2 from the top of the viewport.
+	//   2. If no anchor, no match, or user was in live view: fall back to
+	//      proportional mapping of the viewport's top row.
+	p.sbOff = reflowSbOff(
+		oldSbOff, oldSbCount, oldRows,
+		p.sb.count, newRows,
+		anchorChars, anchorOldRingIdx, anchorMinLen,
+		scratch, newCols,
+	)
 
 	// Rebuild the live terminal by injecting only the visible rows.
 	visibleRows := make([][]vt10x.Glyph, newRows)
@@ -862,7 +845,7 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 			visibleRows[r] = make([]vt10x.Glyph, newCols) // blank padding
 		}
 	}
-	p.term = vt10x.New(vt10x.WithSize(newCols, newRows))
+	p.term = vt10x.New(vt10x.WithSize(newCols, newRows), vt10x.WithScrollCallback(p.onScrollRow))
 	reflowInject(p.term, visibleRows)
 
 	// If the cursor was on a blank row below the last content (i.e. after a
@@ -928,9 +911,17 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 		combCurRow := pull + origCur.Y
 		cursorBelowContent := combCurRow >= 0 && combCurRow < len(combined) && rowContentEnd(combined[combCurRow]) == 0
 
-		p.sbOff = 0
+		// Preserve the scroll position.  The newest `pull` scrollback rows
+		// moved into the live terminal, so the user's distance from the live
+		// view bottom decreases by `pull`.  Clamp to zero (live view) when
+		// the user was looking at rows that are now in the live grid.
+		if p.sbOff > pull {
+			p.sbOff -= pull
+		} else {
+			p.sbOff = 0
+		}
 
-		p.term = vt10x.New(vt10x.WithSize(cols, newRows))
+		p.term = vt10x.New(vt10x.WithSize(cols, newRows), vt10x.WithScrollCallback(p.onScrollRow))
 		reflowInject(p.term, combined)
 		if cursorBelowContent {
 			p.term.Write([]byte("\r\n")) //nolint:errcheck
@@ -944,6 +935,7 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 		if excess < 0 {
 			excess = 0
 		}
+		oldSbOff := p.sbOff
 		for r := 0; r < excess; r++ {
 			p.sb.push(captureRow(p.term, r, cols))
 		}
@@ -963,9 +955,14 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 		remCurRow := origCur.Y - excess
 		cursorBelowContent := remCurRow >= 0 && remCurRow < len(remaining) && rowContentEnd(remaining[remCurRow]) == 0
 
-		p.sbOff = 0
+		// Preserve the scroll position.  `excess` rows were pushed from the
+		// top of the live terminal into scrollback; the user's distance from
+		// the live view bottom increases by the same amount.
+		if oldSbOff > 0 {
+			p.sbOff = min(oldSbOff+excess, p.sb.count)
+		} // else: live view stays live view (sbOff 0 → 0)
 
-		p.term = vt10x.New(vt10x.WithSize(cols, newRows))
+		p.term = vt10x.New(vt10x.WithSize(cols, newRows), vt10x.WithScrollCallback(p.onScrollRow))
 		reflowInject(p.term, remaining)
 		if cursorBelowContent {
 			p.term.Write([]byte("\r\n")) //nolint:errcheck
@@ -1085,67 +1082,6 @@ func (p *Pane) adjustAfterScrollbackPush(pushed, oldCount, oldSbOff int) {
 			p.selCursor.row += d
 		}
 	}
-}
-
-// rebuildScrollbackFromRawBuf replays the raw PTY byte buffer into a tall
-// scratch terminal at the current column width and rebuilds the scrollback
-// ring from rows that don't fit in the live view.
-//
-// Unlike the real-time detectShift path, this captures every line that ever
-// passed through the terminal — including lines that scrolled off mid-chunk
-// in a single large TCP burst (the common SSH case where a remote "cat" sends
-// many screenfuls of data in one read).
-//
-// Only the scrollback ring is updated; p.term is left untouched so the live
-// view is not disturbed.
-//
-// Must be called with p.mu held.
-func (p *Pane) rebuildScrollbackFromRawBuf() {
-	cols, rows := p.term.Size()
-	if len(p.rawBuf) == 0 || p.term.Mode()&vt10x.ModeAltScreen != 0 {
-		return
-	}
-	replayH := p.scrollbackLines + rows
-	scratch := vt10x.New(vt10x.WithSize(cols, replayH))
-	replay := stripAltScreen(p.rawBuf)
-	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
-
-	contentRows := findContentRows(scratch, cols, replayH)
-	firstVisible := contentRows - rows
-	if firstVisible < 0 {
-		firstVisible = 0
-	}
-
-	// rawBuf is a rolling window capped at scrollbackLines*200 bytes.  For
-	// long-running commands (dnf install, cargo build, …) the window covers
-	// only the most recent output, so the replay produces FEWER rows than
-	// detectShift has already accumulated in p.sb.  Replacing a larger ring
-	// with a smaller one would silently erase visible history.
-	//
-	// Only replace the ring when the replay yields more rows — this is the
-	// SSH large-burst case where a single read scrolled through many
-	// screenfuls and detectShift missed the intermediate lines.
-	if firstVisible <= p.sb.count {
-		L.Debug("rebuildScrollbackFromRawBuf: skipped (existing ring has more rows)",
-			"pane", p.id, "existing", p.sb.count, "replay", firstVisible)
-		return
-	}
-
-	oldCount := p.sb.count
-	p.sb = sbRing{maxLines: p.scrollbackLines}
-	for r := 0; r < firstVisible; r++ {
-		p.sb.push(captureRow(scratch, r, cols))
-	}
-
-	// If the ring grew, adjust selection virtual-row coordinates by the same
-	// delta so they still point at the same content after the rebuild.
-	if delta := p.sb.count - oldCount; delta > 0 && p.selActive {
-		p.selAnchor.row += delta
-		p.selCursor.row += delta
-	}
-
-	L.Debug("rebuildScrollbackFromRawBuf", "pane", p.id,
-		"content_rows", contentRows, "sb_rows", firstVisible, "delta", p.sb.count-oldCount)
 }
 
 // close shuts down the PTY and sends SIGHUP to the shell so it exits cleanly.
