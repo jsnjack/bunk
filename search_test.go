@@ -50,34 +50,13 @@ func TestSpanContains_Empty(t *testing.T) {
 // searchHighlight span layout
 // ---------------------------------------------------------------------------
 
-// buildTestHL runs the match-building logic extracted from the goroutine in
-// updateSearch, given a flat list of matches and the current index.
-func buildHL(matches []searchMatch, idx int) *searchHighlight {
-	if len(matches) == 0 {
-		return nil
-	}
-	hl := &searchHighlight{
-		regular: make(map[int][]searchSpan),
-		current: make(map[int][]searchSpan),
-	}
-	for i, m := range matches {
-		span := searchSpan{col: m.col, end: m.col + m.length}
-		if i == idx {
-			hl.current[m.vRow] = append(hl.current[m.vRow], span)
-		} else {
-			hl.regular[m.vRow] = append(hl.regular[m.vRow], span)
-		}
-	}
-	return hl
-}
-
 func TestSearchHighlight_CurrentDistinctFromRegular(t *testing.T) {
 	matches := []searchMatch{
 		{vRow: 0, col: 2, length: 3},
 		{vRow: 1, col: 5, length: 3},
 		{vRow: 2, col: 0, length: 3},
 	}
-	hl := buildHL(matches, 1) // match[1] is current
+	hl := buildSearchHighlight(matches, 1) // match[1] is current
 
 	// Row 0: regular only.
 	if !spanContains(hl.regular[0], 2) {
@@ -166,6 +145,21 @@ func newSearchPane(t *testing.T, cols, rows int, content string) *Pane {
 	return p
 }
 
+func waitForSearchMatches(t *testing.T, app *App, ready func([]searchMatch) bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		app.mu.Lock()
+		matches := append([]searchMatch(nil), app.searchMatches...)
+		app.mu.Unlock()
+		if ready(matches) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for search results")
+}
+
 func TestUpdateSearch_FindsAllMatches(t *testing.T) {
 	const cols, rows = 20, 5
 	// "foo" appears on rows 0, 2, 4.
@@ -180,18 +174,7 @@ func TestUpdateSearch_FindsAllMatches(t *testing.T) {
 	app.mu.Unlock()
 
 	app.updateSearch()
-
-	// Wait for the goroutine to complete (it's async).
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		app.mu.Lock()
-		n := len(app.searchMatches)
-		app.mu.Unlock()
-		if n > 0 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitForSearchMatches(t, app, func(matches []searchMatch) bool { return len(matches) == 3 })
 
 	app.mu.Lock()
 	matches := app.searchMatches
@@ -270,4 +253,73 @@ func TestUpdateSearch_RaceCondition(t *testing.T) {
 	wg.Wait()
 	// Wait for in-flight goroutines.
 	time.Sleep(100 * time.Millisecond)
+}
+
+func TestUpdateSearch_RapidQueriesPublishLatest(t *testing.T) {
+	const cols, rows = 20, 4
+	p := newSearchPane(t, cols, rows, "alpha beta gamma\r\nbeta gamma\r\ngamma only")
+
+	app := &App{}
+	app.mu.Lock()
+	app.searchMode = true
+	app.searchPane = p
+	app.searchQuery = "alpha"
+	app.mu.Unlock()
+	app.updateSearch()
+
+	app.mu.Lock()
+	app.searchQuery = "gamma"
+	app.mu.Unlock()
+	app.updateSearch()
+
+	waitForSearchMatches(t, app, func(matches []searchMatch) bool { return len(matches) == 3 })
+
+	app.mu.Lock()
+	matches := append([]searchMatch(nil), app.searchMatches...)
+	idx := app.searchIdx
+	app.mu.Unlock()
+
+	if len(matches) != 3 {
+		t.Fatalf("latest query should publish 3 gamma matches, got %d", len(matches))
+	}
+	if idx != 0 {
+		t.Fatalf("searchIdx = %d, want 0", idx)
+	}
+}
+
+func TestSearchNavigate_UpdatesCurrentHighlight(t *testing.T) {
+	const cols, rows = 20, 4
+	p := newSearchPane(t, cols, rows, "foo\r\nbar\r\nfoo\r\nfoo")
+
+	app := &App{}
+	app.mu.Lock()
+	app.searchMode = true
+	app.searchPane = p
+	app.searchQuery = "foo"
+	app.mu.Unlock()
+	app.updateSearch()
+
+	waitForSearchMatches(t, app, func(matches []searchMatch) bool { return len(matches) == 3 })
+
+	app.searchNavigate(+1)
+
+	app.mu.Lock()
+	idx := app.searchIdx
+	app.mu.Unlock()
+	if idx != 1 {
+		t.Fatalf("searchIdx after navigate = %d, want 1", idx)
+	}
+
+	p.mu.Lock()
+	hl := p.searchHL
+	p.mu.Unlock()
+	if hl == nil {
+		t.Fatal("searchHL is nil after navigate")
+	}
+	if !spanContains(hl.current[2], 0) {
+		t.Fatal("current highlight should move to the second match on row 2")
+	}
+	if spanContains(hl.current[0], 0) {
+		t.Fatal("first match should no longer be current after navigate")
+	}
 }

@@ -261,27 +261,29 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 //  5. Signals the render loop to repaint.
 func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 	buf := make([]byte, 32768)
-	var carry []byte // incomplete UTF-8 tail from previous read
+	var carry []byte // incomplete UTF-8 / ANSI tail from previous read
 	for {
 		n, err := p.ptmx.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
 
-			// Prepend any incomplete UTF-8 bytes carried from the previous read.
+			// Prepend any incomplete UTF-8 / ANSI bytes carried from the previous read.
 			if len(carry) > 0 {
 				chunk = append(carry, chunk...)
 				carry = nil
 			}
 
-			// If the chunk ends mid-UTF-8 sequence, split off the trailing
-			// incomplete bytes so vt10x (and the OSC scanner) only see
-			// complete runes.  Without this, a multi-byte character like ▒
-			// (3 bytes) straddling the read boundary is lost: vt10x treats
-			// each fragment as invalid and drops them.
-			if split := utf8Boundary(chunk); split < len(chunk) {
-				carry = make([]byte, len(chunk)-split)
-				copy(carry, chunk[split:])
-				chunk = chunk[:split]
+			// Hold back a trailing incomplete UTF-8 rune or ANSI control
+			// sequence so captureAndWrite only sees complete units.  This keeps
+			// vt10x, OSC forwarding, and our manual query/alt-screen handling
+			// aligned even when a control sequence straddles two PTY reads.
+			chunk, carry = splitPTYChunk(chunk)
+			if len(chunk) == 0 {
+				if err != nil {
+					L.Debug("readPTY: PTY read error (shell exited)", "pane", p.id, "err", err)
+					break
+				}
+				continue
 			}
 
 			L.Log(nil, LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
@@ -1021,6 +1023,115 @@ func utf8Boundary(b []byte) int {
 		// continuation byte (0x80..0xBF) — keep scanning
 	}
 	return n
+}
+
+// splitPTYChunk returns the prefix of chunk that is safe to process now and
+// the trailing bytes that must be carried into the next PTY read.
+//
+// Two cases are withheld:
+//   - an incomplete UTF-8 tail, so vt10x never sees split runes
+//   - an incomplete ANSI escape/control sequence, so our query handling and
+//     alt-screen detection never see split sequences
+func splitPTYChunk(chunk []byte) (complete, carry []byte) {
+	if len(chunk) == 0 {
+		return nil, nil
+	}
+
+	split := utf8Boundary(chunk)
+	head := chunk[:split]
+	if tailLen := ansiTailLen(head); tailLen > 0 {
+		start := len(head) - tailLen
+		carry = make([]byte, len(chunk)-start)
+		copy(carry, chunk[start:])
+		return head[:start], carry
+	}
+	if split < len(chunk) {
+		carry = make([]byte, len(chunk)-split)
+		copy(carry, chunk[split:])
+	}
+	return head, carry
+}
+
+// ansiTailLen reports how many trailing bytes belong to an incomplete
+// escape/control sequence at the end of b.  Complete OSC/DCS strings and CSI
+// sequences return 0; incomplete ones return the full suffix length starting
+// from the ESC byte.
+func ansiTailLen(b []byte) int {
+	const (
+		ansiIdle = iota
+		ansiSeenESC
+		ansiCSI
+		ansiOSC
+		ansiOSCEsc
+		ansiDCS
+		ansiDCSEsc
+	)
+
+	state := ansiIdle
+	start := -1
+	for i, c := range b {
+		switch state {
+		case ansiIdle:
+			if c == 0x1b {
+				state = ansiSeenESC
+				start = i
+			}
+
+		case ansiSeenESC:
+			switch c {
+			case '[':
+				state = ansiCSI
+			case ']':
+				state = ansiOSC
+			case 'P':
+				state = ansiDCS
+			default:
+				state = ansiIdle
+				start = -1
+			}
+
+		case ansiCSI:
+			if c >= 0x40 && c <= 0x7e {
+				state = ansiIdle
+				start = -1
+			}
+
+		case ansiOSC:
+			switch c {
+			case 0x07:
+				state = ansiIdle
+				start = -1
+			case 0x1b:
+				state = ansiOSCEsc
+			}
+
+		case ansiOSCEsc:
+			if c == '\\' {
+				state = ansiIdle
+				start = -1
+			} else {
+				state = ansiOSC
+			}
+
+		case ansiDCS:
+			if c == 0x1b {
+				state = ansiDCSEsc
+			}
+
+		case ansiDCSEsc:
+			if c == '\\' {
+				state = ansiIdle
+				start = -1
+			} else {
+				state = ansiDCS
+			}
+		}
+	}
+
+	if state != ansiIdle && start >= 0 {
+		return len(b) - start
+	}
+	return 0
 }
 
 // scanDECRQM scans data for DECRQM private-mode queries (\x1b[?N$p) and calls

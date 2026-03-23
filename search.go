@@ -16,11 +16,11 @@
 // protected by pane.mu.  updateSearch acquires each lock independently (never
 // both at once) to avoid deadlocks.
 //
-// Async scan: updateSearch snapshots the virtual rows to [][]rune under p.mu
-// (fast memcpy), releases the lock, then scans in a background goroutine.
-// A searchGen counter guards against stale goroutines: if the user types
-// another character before the goroutine finishes, the stale result is
-// discarded.
+// Async scan: updateSearch signals a single background worker.  The worker
+// snapshots the virtual rows to [][]rune under p.mu (fast memcpy), then scans
+// outside the lock.  The wake channel is size 1, so rapid typing coalesces to
+// "scan the latest query once" instead of spawning one goroutine per keypress.
+// A searchGen counter still guards against stale publishes.
 package main
 
 import (
@@ -46,6 +46,148 @@ type searchSpan struct{ col, end int }
 type searchHighlight struct {
 	regular map[int][]searchSpan
 	current map[int][]searchSpan
+}
+
+// buildSearchHighlight maps match positions to per-row spans for renderPane.
+// idx is the currently selected match; it is highlighted via current spans.
+func buildSearchHighlight(matches []searchMatch, idx int) *searchHighlight {
+	if len(matches) == 0 {
+		return nil
+	}
+	hl := &searchHighlight{
+		regular: make(map[int][]searchSpan),
+		current: make(map[int][]searchSpan),
+	}
+	for i, m := range matches {
+		span := searchSpan{col: m.col, end: m.col + m.length}
+		if i == idx {
+			hl.current[m.vRow] = append(hl.current[m.vRow], span)
+		} else {
+			hl.regular[m.vRow] = append(hl.regular[m.vRow], span)
+		}
+	}
+	return hl
+}
+
+func (app *App) ensureSearchWorker() {
+	app.searchOnce.Do(func() {
+		if app.searchWake == nil {
+			app.searchWake = make(chan struct{}, 1)
+		}
+		go app.searchWorker()
+	})
+}
+
+func (app *App) searchWorker() {
+	for {
+		select {
+		case <-app.done:
+			return
+		case <-app.searchWake:
+			app.runSearchScan()
+			for {
+				select {
+				case <-app.searchWake:
+					app.runSearchScan()
+				default:
+					goto next
+				}
+			}
+		}
+	next:
+	}
+}
+
+func (app *App) runSearchScan() {
+	// Snapshot search state under app.mu.
+	app.mu.Lock()
+	p := app.searchPane
+	query := app.searchQuery
+	idx := app.searchIdx
+	gen := app.searchGen
+	app.mu.Unlock()
+
+	if p == nil || query == "" {
+		return
+	}
+
+	lq := strings.ToLower(query)
+	lqRunes := []rune(lq)
+	lqLen := len(lqRunes)
+
+	// Snapshot the virtual grid to [][]rune under p.mu.
+	// This is a pure memcpy — no pattern matching yet — so lock hold time is
+	// O(sbCount × cols) iterations of simple ToLower calls.
+	p.mu.Lock()
+	cols, rows := p.term.Size()
+	sbCount := p.sb.count
+	totalRows := sbCount + rows
+	snapshot := make([][]rune, totalRows)
+	for vRow := 0; vRow < totalRows; vRow++ {
+		var cells []vt10x.Glyph
+		if vRow < sbCount {
+			cells = p.sb.get(vRow)
+		} else {
+			cells = captureRow(p.term, vRow-sbCount, cols)
+		}
+		row := make([]rune, cols)
+		for i := 0; i < cols; i++ {
+			var ch rune
+			if i < len(cells) {
+				ch = cells[i].Char
+			}
+			if ch == 0 {
+				ch = ' '
+			}
+			row[i] = unicode.ToLower(ch)
+		}
+		snapshot[vRow] = row
+	}
+	p.mu.Unlock()
+
+	var matches []searchMatch
+	for vRow, row := range snapshot {
+		for offset := 0; offset+lqLen <= len(row); offset++ {
+			match := true
+			for k := 0; k < lqLen; k++ {
+				if row[offset+k] != lqRunes[k] {
+					match = false
+					break
+				}
+			}
+			if match {
+				matches = append(matches, searchMatch{
+					vRow:   vRow,
+					col:    offset,
+					length: lqLen,
+				})
+				offset += lqLen - 1 // skip to end of match (loop adds 1)
+			}
+		}
+	}
+
+	clampedIdx := idx
+	if clampedIdx >= len(matches) {
+		clampedIdx = 0
+	}
+	hl := buildSearchHighlight(matches, clampedIdx)
+
+	app.mu.Lock()
+	if app.searchGen != gen {
+		app.mu.Unlock()
+		return
+	}
+	app.searchMatches = matches
+	app.searchIdx = clampedIdx
+	app.mu.Unlock()
+
+	p.mu.Lock()
+	p.searchHL = hl
+	p.searchHLGen++
+	p.mu.Unlock()
+
+	L.Debug("search: scan done", "query", query, "matches", len(matches), "idx", clampedIdx, "gen", gen)
+	app.triggerRedraw()
 }
 
 // enterSearch activates search mode for the currently active pane.
@@ -95,18 +237,14 @@ func (app *App) exitSearch() {
 	app.triggerRedraw()
 }
 
-// updateSearch snapshots the active search pane's virtual grid, then scans
-// for the current query in a background goroutine.  Results are published only
-// if the searchGen counter still matches when the goroutine finishes — stale
-// results from superseded queries are silently discarded.
+// updateSearch marks the current search state dirty and wakes the background
+// worker.  Empty queries are still cleared synchronously so the highlight
+// disappears immediately when the user backspaces to nothing.
 func (app *App) updateSearch() {
-	// Snapshot search state under app.mu.
 	app.mu.Lock()
+	app.searchGen++
 	p := app.searchPane
 	query := app.searchQuery
-	idx := app.searchIdx
-	app.searchGen++
-	gen := app.searchGen
 	app.mu.Unlock()
 
 	if p == nil {
@@ -125,104 +263,11 @@ func (app *App) updateSearch() {
 		return
 	}
 
-	lq := strings.ToLower(query)
-	lqRunes := []rune(lq)
-	lqLen := len(lqRunes)
-
-	// Snapshot the virtual grid to [][]rune under p.mu.
-	// This is a pure memcpy — no pattern matching yet — so lock hold time is
-	// O(sbCount × cols) iterations of simple ToLower calls (typically < 1ms).
-	p.mu.Lock()
-	cols, rows := p.term.Size()
-	sbCount := p.sb.count
-	totalRows := sbCount + rows
-	snapshot := make([][]rune, totalRows)
-	for vRow := 0; vRow < totalRows; vRow++ {
-		var cells []vt10x.Glyph
-		if vRow < sbCount {
-			cells = p.sb.get(vRow)
-		} else {
-			cells = captureRow(p.term, vRow-sbCount, cols)
-		}
-		row := make([]rune, cols)
-		for i := 0; i < cols; i++ {
-			var ch rune
-			if i < len(cells) {
-				ch = cells[i].Char
-			}
-			if ch == 0 {
-				ch = ' '
-			}
-			row[i] = unicode.ToLower(ch)
-		}
-		snapshot[vRow] = row
+	app.ensureSearchWorker()
+	select {
+	case app.searchWake <- struct{}{}:
+	default:
 	}
-	p.mu.Unlock()
-
-	go func() {
-		// Scan snapshot — no lock held.
-		var matches []searchMatch
-		for vRow, row := range snapshot {
-			for offset := 0; offset+lqLen <= len(row); offset++ {
-				match := true
-				for k := 0; k < lqLen; k++ {
-					if row[offset+k] != lqRunes[k] {
-						match = false
-						break
-					}
-				}
-				if match {
-					matches = append(matches, searchMatch{
-						vRow:   vRow,
-						col:    offset,
-						length: lqLen,
-					})
-					offset += lqLen - 1 // skip to end of match (loop adds 1)
-				}
-			}
-		}
-
-		// Clamp index.
-		clampedIdx := idx
-		if clampedIdx >= len(matches) {
-			clampedIdx = 0
-		}
-
-		// Build span-based highlight.
-		var hl *searchHighlight
-		if len(matches) > 0 {
-			hl = &searchHighlight{
-				regular: make(map[int][]searchSpan),
-				current: make(map[int][]searchSpan),
-			}
-			for i, m := range matches {
-				span := searchSpan{col: m.col, end: m.col + m.length}
-				if i == clampedIdx {
-					hl.current[m.vRow] = append(hl.current[m.vRow], span)
-				} else {
-					hl.regular[m.vRow] = append(hl.regular[m.vRow], span)
-				}
-			}
-		}
-
-		// Publish — check generation before committing either result.
-		app.mu.Lock()
-		if app.searchGen != gen {
-			app.mu.Unlock()
-			return // superseded by a newer query
-		}
-		app.searchMatches = matches
-		app.searchIdx = clampedIdx
-		app.mu.Unlock()
-
-		p.mu.Lock()
-		p.searchHL = hl
-		p.searchHLGen++
-		p.mu.Unlock()
-
-		L.Debug("search: scan done", "query", query, "matches", len(matches), "idx", clampedIdx, "gen", gen)
-		app.triggerRedraw()
-	}()
 }
 
 // searchNavigate moves to the next (delta=+1) or previous (delta=-1) match,
@@ -235,17 +280,20 @@ func (app *App) searchNavigate(delta int) {
 		return
 	}
 	app.searchIdx = (app.searchIdx + delta + len(matches)) % len(matches)
-	m := matches[app.searchIdx]
+	app.searchGen++ // invalidate any in-flight scan for the previously selected match
+	idx := app.searchIdx
+	m := matches[idx]
 	p := app.searchPane
 	app.mu.Unlock()
 
-	L.Debug("search: navigate", "delta", delta, "idx", app.searchIdx, "total", len(matches), "vrow", m.vRow)
+	L.Debug("search: navigate", "delta", delta, "idx", idx, "total", len(matches), "vrow", m.vRow)
 
 	if p == nil {
 		return
 	}
 
 	// Scroll so the match is centred vertically in the pane.
+	hl := buildSearchHighlight(matches, idx)
 	p.mu.Lock()
 	sbCount := p.sb.count
 	rows := p.h
@@ -257,10 +305,10 @@ func (app *App) searchNavigate(delta int) {
 		targetOff = sbCount
 	}
 	p.sbOff = targetOff
+	p.searchHL = hl
+	p.searchHLGen++
 	p.mu.Unlock()
-
-	// Rebuild highlights with the updated index.
-	app.updateSearch()
+	app.triggerRedraw()
 }
 
 // handleSearchKey processes a key event while search mode is active.

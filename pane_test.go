@@ -48,6 +48,152 @@ func TestScanDECRQM_MultiDigitMode(t *testing.T) {
 	}
 }
 
+func feedSplitPTYChunks(t *testing.T, p *Pane, chunks ...[]byte) {
+	t.Helper()
+	var carry []byte
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, chunk := range chunks {
+		combined := append(append([]byte(nil), carry...), chunk...)
+		complete, nextCarry := splitPTYChunk(combined)
+		if len(complete) > 0 {
+			p.captureAndWrite(complete)
+		}
+		carry = nextCarry
+	}
+
+	if len(carry) != 0 {
+		t.Fatalf("splitPTYChunk left %q buffered after final chunk", carry)
+	}
+}
+
+func TestSplitPTYChunk_PartialControlCarry(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        []byte
+		wantComplete []byte
+		wantCarry    []byte
+	}{
+		{
+			name:         "plain text",
+			input:        []byte("hello"),
+			wantComplete: []byte("hello"),
+		},
+		{
+			name:         "partial csi",
+			input:        []byte("abc\x1b[>0"),
+			wantComplete: []byte("abc"),
+			wantCarry:    []byte("\x1b[>0"),
+		},
+		{
+			name:         "partial osc",
+			input:        []byte("abc\x1b]10"),
+			wantComplete: []byte("abc"),
+			wantCarry:    []byte("\x1b]10"),
+		},
+		{
+			name:      "partial dcs",
+			input:     []byte("\x1bP+q536d"),
+			wantCarry: []byte("\x1bP+q536d"),
+		},
+		{
+			name:      "partial utf8",
+			input:     []byte{0xe2, 0x96},
+			wantCarry: []byte{0xe2, 0x96},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			complete, carry := splitPTYChunk(tc.input)
+			if string(complete) != string(tc.wantComplete) {
+				t.Fatalf("complete = %q, want %q", complete, tc.wantComplete)
+			}
+			if string(carry) != string(tc.wantCarry) {
+				t.Fatalf("carry = %q, want %q", carry, tc.wantCarry)
+			}
+		})
+	}
+}
+
+func TestCaptureAndWrite_SplitXTVersionResponse(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	p := &Pane{
+		term:            vt10x.New(vt10x.WithSize(40, 10)),
+		ptmx:            pw,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	feedSplitPTYChunks(t, p, []byte("\x1b[>"), []byte("0q"))
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	want := "\x1bP>|VTE(8203)\x1b\\"
+	if string(buf) != want {
+		t.Fatalf("split XTVERSION response = %q, want %q", string(buf), want)
+	}
+}
+
+func TestCaptureAndWrite_SplitXTGETTCAPResponse(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	p := &Pane{
+		term:            vt10x.New(vt10x.WithSize(40, 10)),
+		ptmx:            pw,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	feedSplitPTYChunks(t, p, []byte("\x1bP+q536d"), []byte("756c78\x1b\\"))
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	wantHexVal := "1b5b343a25703125646d"
+	want := "\x1bP1+r536d756c78=" + wantHexVal + "\x1b\\"
+	if string(buf) != want {
+		t.Fatalf("split XTGETTCAP response = %q, want %q", string(buf), want)
+	}
+}
+
+func TestCaptureAndWrite_SplitOSC10Response(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	p := &Pane{
+		term:            vt10x.New(vt10x.WithSize(40, 10)),
+		ptmx:            pw,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
+	}
+
+	feedSplitPTYChunks(t, p, []byte("\x1b]10"), []byte(";?\x1b\\"))
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
+	if string(buf) != want {
+		t.Fatalf("split OSC 10 response = %q, want %q", string(buf), want)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // readPTY single-lock invariant
 //
