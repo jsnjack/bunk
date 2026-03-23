@@ -1108,3 +1108,169 @@ func TestRenderPane_ScrollbackBeyondWidth_UsesThemeBG(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Dirty-row rendering — renderPane skips rows vt10x hasn't touched
+// ---------------------------------------------------------------------------
+
+// screenRowFingerprints captures the rune at column 0 for each row as a quick
+// proxy for "which rows changed" in the simulation screen.
+func screenRowFingerprints(scr tcell.SimulationScreen, rows int) []rune {
+	fp := make([]rune, rows)
+	for r := 0; r < rows; r++ {
+		ch, _, _, _ := scr.GetContent(0, r)
+		fp[r] = ch
+	}
+	return fp
+}
+
+// TestRenderPane_DirtyOnlyRepaintsChangedRow verifies that when only one row
+// changes in the live terminal, renderPane only repaints that row and leaves
+// the others unchanged in the tcell simulation screen.
+func TestRenderPane_DirtyOnlyRepaintsChangedRow(t *testing.T) {
+	const (
+		cols     = 10
+		termCols = cols - 1 // PTY is 1 column narrower (scrollbar)
+		rows     = 5
+	)
+
+	p := &Pane{
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+		x:               0, y: 0, w: cols, h: rows,
+		cmd: &exec.Cmd{},
+	}
+	p.term = vt10x.New(vt10x.WithSize(termCols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(cols, rows)
+	rt := testTheme()
+
+	// Write distinct content to each row.
+	p.mu.Lock()
+	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE"))
+	p.mu.Unlock()
+
+	// First render: full repaint (all rows dirty from initial state).
+	renderPane(scr, p, rt)
+
+	before := screenRowFingerprints(scr, rows)
+
+	// Overwrite only row 2 (0-based) with exactly termCols characters.
+	// Using fewer than termCols avoids wrapping into row 3.
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\x1b[3;1HXXXXXXXXX")) // CSI 3;1H = row 3 col 1 (1-based = row 2 0-based); 9 chars = termCols
+	p.mu.Unlock()
+
+	// Second render: dirty-only — only row 2 should change.
+	renderPane(scr, p, rt)
+
+	after := screenRowFingerprints(scr, rows)
+
+	for r := 0; r < rows; r++ {
+		if r == 2 {
+			if after[r] == before[r] {
+				t.Errorf("row %d: expected change after write, but rune unchanged (%q)", r, after[r])
+			}
+		} else {
+			if after[r] != before[r] {
+				t.Errorf("row %d: expected no change (dirty-only), but rune changed %q → %q",
+					r, before[r], after[r])
+			}
+		}
+	}
+}
+
+// TestRenderPane_IdlePaneSkipsAllRows verifies that when no rows are dirty and
+// no overlay changed, renderPane returns immediately without touching the screen.
+func TestRenderPane_IdlePaneSkipsAllRows(t *testing.T) {
+	const cols, rows = 10, 4
+
+	p := &Pane{
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+		x:               0, y: 0, w: cols, h: rows,
+		cmd: &exec.Cmd{},
+	}
+	p.term = vt10x.New(vt10x.WithSize(cols-1, rows))
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(cols, rows)
+	rt := testTheme()
+
+	p.mu.Lock()
+	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC"))
+	p.mu.Unlock()
+
+	renderPane(scr, p, rt) // first render, drains dirty
+
+	before := screenRowFingerprints(scr, rows)
+
+	// Second render with no writes: should be a no-op.
+	renderPane(scr, p, rt)
+
+	after := screenRowFingerprints(scr, rows)
+
+	for r := 0; r < rows; r++ {
+		if after[r] != before[r] {
+			t.Errorf("idle render changed row %d: %q → %q", r, before[r], after[r])
+		}
+	}
+}
+
+// TestRenderPane_FullRepaintOnScrollChange verifies that changing sbOff
+// triggers a full repaint (even for rows vt10x considers clean).
+func TestRenderPane_FullRepaintOnScrollChange(t *testing.T) {
+	const cols, rows = 10, 3
+
+	p := &Pane{
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+		x:               0, y: 0, w: cols, h: rows,
+		cmd: &exec.Cmd{},
+	}
+	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.onScrollRow))
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(cols, rows)
+	rt := testTheme()
+
+	// Fill enough content to create scrollback.
+	p.mu.Lock()
+	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n"))
+	p.mu.Unlock()
+
+	renderPane(scr, p, rt) // first render
+
+	if p.sb.count == 0 {
+		t.Skip("no scrollback captured; cannot test scroll change")
+	}
+
+	before := screenRowFingerprints(scr, rows)
+
+	// Scroll back: sbOff > 0, full repaint required.
+	p.mu.Lock()
+	p.sbOff = p.sb.count
+	p.mu.Unlock()
+
+	renderPane(scr, p, rt)
+
+	after := screenRowFingerprints(scr, rows)
+
+	// At least one row must have changed (scrollback content differs from live).
+	changed := 0
+	for r := 0; r < rows; r++ {
+		if after[r] != before[r] {
+			changed++
+		}
+	}
+	if changed == 0 {
+		t.Error("scroll to top: expected at least one row to change, but all are identical")
+	}
+}

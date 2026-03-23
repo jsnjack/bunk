@@ -374,7 +374,46 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	hasSel := p.selActive
 	hasSearch := p.searchHL != nil
 
+	// Determine whether a full repaint is needed.
+	//
+	// Full repaint is required when any overlay changes (scroll position,
+	// search highlights, selection) — a row that vt10x hasn't written to
+	// may still need repainting because its highlight changed.
+	//
+	// When sbOff > 0 the viewport mixes ring rows (no dirty tracking) with
+	// live terminal rows, so full repaint is always used in scroll mode.
+	fullRepaint := sbOff > 0 ||
+		sbOff != p.lastRenderSbOff ||
+		hasSel != p.lastRenderSelActive ||
+		p.selAnchor != p.lastRenderSelAnchor ||
+		p.selCursor != p.lastRenderSelCursor ||
+		p.searchHLGen != p.lastRenderSearchHLGen
+
+	// Always consume dirty to keep vt10x state clean (avoids accumulating
+	// dirty rows while the pane is scrolled that would confuse later renders).
+	dirty, anyDirty := p.term.ConsumeDirty()
+
+	// Record the overlay state we are rendering with.
+	p.lastRenderSbOff = sbOff
+	p.lastRenderSelActive = hasSel
+	p.lastRenderSelAnchor = p.selAnchor
+	p.lastRenderSelCursor = p.selCursor
+	p.lastRenderSearchHLGen = p.searchHLGen
+
+	// Nothing to draw: pane is in live view, no overlay changed, and vt10x
+	// reports no cell writes since the last render.
+	if !fullRepaint && !anyDirty {
+		return
+	}
+
 	for row := 0; row < rows; row++ {
+		// Skip rows that vt10x hasn't touched and that don't need overlay
+		// repainting.  Only valid in live view (sbOff==0) because scrolled
+		// rows come from the ring which has no dirty tracking.
+		if !fullRepaint && (dirty == nil || !dirty[row]) {
+			continue
+		}
+
 		// Unified virtual row: stable across scrolls (see selPos in pane.go).
 		vRow := (sbCount - sbOff) + row
 

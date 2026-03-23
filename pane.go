@@ -77,7 +77,17 @@ type Pane struct {
 
 	// searchHL maps (vRow<<32|col) → match type: 1=regular, 2=current (orange).
 	// nil when no search is active for this pane.  Protected by mu.
-	searchHL map[int64]int8
+	searchHL    map[int64]int8
+	searchHLGen int // incremented on every searchHL assignment
+
+	// Dirty-render tracking: renderPane compares these against the current
+	// overlay state to decide between full repaint and dirty-row-only repaint.
+	// All fields protected by mu.
+	lastRenderSbOff       int
+	lastRenderSelActive   bool
+	lastRenderSelAnchor   selPos
+	lastRenderSelCursor   selPos
+	lastRenderSearchHLGen int
 
 	// oscScan is the per-pane OSC pre-scanner (value, no alloc).
 	// Forwards OSC 7 (CWD), OSC 8 (hyperlinks), OSC 52 (clipboard) to the

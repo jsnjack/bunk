@@ -50,6 +50,7 @@ func (app *App) enterSearch() {
 
 	p.mu.Lock()
 	p.searchHL = nil
+	p.searchHLGen++
 	p.mu.Unlock()
 
 	app.triggerRedraw()
@@ -70,6 +71,7 @@ func (app *App) exitSearch() {
 	if p != nil {
 		p.mu.Lock()
 		p.searchHL = nil
+		p.searchHLGen++
 		p.mu.Unlock()
 	}
 	app.triggerRedraw()
@@ -92,6 +94,7 @@ func (app *App) updateSearch() {
 	if query == "" {
 		p.mu.Lock()
 		p.searchHL = nil
+		p.searchHLGen++
 		p.mu.Unlock()
 		app.mu.Lock()
 		app.searchMatches = nil
@@ -180,6 +183,7 @@ func (app *App) updateSearch() {
 		}
 	}
 	p.searchHL = hl
+	p.searchHLGen++
 	p.mu.Unlock()
 
 	// Commit match list and (possibly clamped) index under app.mu.

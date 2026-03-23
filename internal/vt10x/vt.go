@@ -57,6 +57,12 @@ type View interface {
 	// QueryPrivateMode returns the DECRQM status byte for a DEC private mode.
 	// '1' = set, '2' = reset, '4' = not recognized.
 	QueryPrivateMode(mode int) byte
+
+	// ConsumeDirty returns which rows have been written to since the last
+	// ConsumeDirty call, then clears the dirty state.  Returns nil, false
+	// when nothing is dirty (zero allocation).  The caller must not retain
+	// the returned slice past the next Write call.
+	ConsumeDirty() (rows []bool, any bool)
 }
 
 type TerminalOption func(*TerminalInfo)
