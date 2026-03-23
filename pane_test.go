@@ -530,6 +530,55 @@ func TestRebuildScrollback_PreservesLargerRing(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// resizeAndReflow — must not clobber scrollback when pane expands
+//
+// Bug: split panes erase scrollback history
+//
+// Trace showed: pane had 43 rows of scrollback; user expanded terminal from
+// 79×24 to 281×64 then pressed F1 to split.  resizeAndReflow was rebuilding
+// p.sb unconditionally from rawBuf replay.  At 281 cols the 24 content rows
+// fit in the 64-row terminal with firstVisible=0, so p.sb was replaced by an
+// empty ring.  After the split (narrow again, 140 cols) the ring was still
+// empty, and scrolling no longer worked.
+//
+// Fix: only replace p.sb when the replay yields MORE rows than already held.
+// ---------------------------------------------------------------------------
+
+func TestResizeAndReflow_PreservesScrollbackOnExpand(t *testing.T) {
+	const cols, rows = 40, 10
+	term := vt10x.New(vt10x.WithSize(cols, rows))
+	p := &Pane{
+		term:            term,
+		scrollbackLines: 200,
+		sb:              sbRing{maxLines: 200},
+	}
+
+	// Pre-fill p.sb with 30 rows captured by detectShift (simulating real output).
+	for i := 0; i < 30; i++ {
+		row := make([]vt10x.Glyph, cols)
+		for c := range row {
+			row[c] = vt10x.Glyph{Char: rune('A' + i%26)}
+		}
+		p.sb.push(row)
+	}
+	wantSB := p.sb.count // 30
+
+	// rawBuf holds only 5 lines (rolling window, older content trimmed).
+	p.rawBuf = []byte("line1\r\nline2\r\nline3\r\nline4\r\nline5\r\n")
+
+	// Expand: double both dimensions.  replay will produce only 5 rows of
+	// scrollback (content fits in the taller/wider terminal) → firstVisible=0.
+	p.mu.Lock()
+	p.resizeAndReflow(cols*2, rows*2)
+	p.mu.Unlock()
+
+	if p.sb.count < wantSB {
+		t.Errorf("resizeAndReflow clobbered scrollback on expand: count %d → %d (want ≥ %d)",
+			wantSB, p.sb.count, wantSB)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // needsSync — set on alt-screen exit
 //
 // Bug: btop background artifact persists after exit

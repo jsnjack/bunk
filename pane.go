@@ -839,10 +839,16 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 		firstVisible = 0
 	}
 
-	// Rebuild scrollback from the replay.
-	p.sb = sbRing{maxLines: p.scrollbackLines}
-	for r := 0; r < firstVisible; r++ {
-		p.sb.push(captureRow(scratch, r, newCols))
+	// Rebuild scrollback from the replay — but only if it yields MORE rows
+	// than the ring already holds.  rawBuf is a rolling byte window, so for
+	// long-running sessions it covers only recent output.  Overwriting a
+	// 40-row ring with 0 replay rows (expand case: content fits in the taller
+	// terminal) silently discards all captured history.
+	if firstVisible > p.sb.count {
+		p.sb = sbRing{maxLines: p.scrollbackLines}
+		for r := 0; r < firstVisible; r++ {
+			p.sb.push(captureRow(scratch, r, newCols))
+		}
 	}
 	p.sbOff = 0
 
