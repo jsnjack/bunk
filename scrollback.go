@@ -99,26 +99,3 @@ func captureRow(term vt10x.Terminal, r, cols int) []vt10x.Glyph {
 	}
 	return row
 }
-
-// isBlankRow returns true if every cell in row is empty (NUL or space).
-func isBlankRow(row []vt10x.Glyph) bool {
-	for _, g := range row {
-		if g.Char != 0 && g.Char != ' ' {
-			return false
-		}
-	}
-	return true
-}
-
-// rowsEqual compares two rows cell-by-cell.
-func rowsEqual(a, b []vt10x.Glyph) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
