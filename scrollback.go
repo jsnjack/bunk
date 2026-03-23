@@ -48,7 +48,11 @@ type sbRing struct {
 }
 
 // push appends one captured row to the ring.  When the ring is full, the
-// oldest entry is evicted and its backing memory is reused to avoid GC churn.
+// oldest entry is evicted.  The ring owns its backing storage: each slot's
+// []vt10x.Glyph is reused when the incoming row fits (same or narrower width),
+// or reallocated when the row is wider.  The incoming row is always copied —
+// the ring never retains a reference into the caller's slice (e.g. a
+// captureGrid slab), so the caller's allocation can be freed immediately.
 func (s *sbRing) push(row []vt10x.Glyph) {
 	if s.maxLines <= 0 {
 		return
@@ -56,14 +60,26 @@ func (s *sbRing) push(row []vt10x.Glyph) {
 	if s.lines == nil {
 		s.lines = make([][]vt10x.Glyph, s.maxLines)
 	}
+
+	// Determine the destination slot.
+	var slot int
 	if s.count < s.maxLines {
-		s.lines[(s.head+s.count)%s.maxLines] = row
+		slot = (s.head + s.count) % s.maxLines
 		s.count++
 	} else {
 		// Ring is full: overwrite oldest slot (head), advance head.
-		s.lines[s.head] = row
+		slot = s.head
 		s.head = (s.head + 1) % s.maxLines
 	}
+
+	// Reuse the slot's existing backing array when capacity allows;
+	// allocate a new one only when the row is wider than the current slot.
+	if cap(s.lines[slot]) >= len(row) {
+		s.lines[slot] = s.lines[slot][:len(row)]
+	} else {
+		s.lines[slot] = make([]vt10x.Glyph, len(row))
+	}
+	copy(s.lines[slot], row)
 }
 
 // get returns the line at logical index i, where 0 is the OLDEST surviving

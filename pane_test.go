@@ -230,6 +230,147 @@ func TestSbRing_GetWrapped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// sbRing — ownership and slot-reuse properties
+//
+// These tests verify that push() copies rows into ring-owned storage and
+// reuses backing arrays when the terminal width stays constant.  The
+// captureGrid path produces sub-slices of a shared slab; without copy
+// semantics, any retained slab row keeps the entire slab alive.
+// ---------------------------------------------------------------------------
+
+func makeGlyphRowN(n int, ch rune) []vt10x.Glyph {
+	row := make([]vt10x.Glyph, n)
+	for i := range row {
+		row[i] = vt10x.Glyph{Char: ch}
+	}
+	return row
+}
+
+// TestSbRing_PushCopiesRow: mutating the source after push must not affect
+// the ring.  Fails with the reference-store implementation.
+func TestSbRing_PushCopiesRow(t *testing.T) {
+	r := sbRing{maxLines: 3}
+	src := makeGlyphRowN(4, 'A')
+	r.push(src)
+
+	// Mutate the source after pushing.
+	src[0].Char = 'Z'
+
+	got := r.get(0)
+	if got == nil {
+		t.Fatal("get(0) returned nil")
+	}
+	if got[0].Char != 'A' {
+		t.Errorf("ring mutated by source change: got %q, want 'A'", got[0].Char)
+	}
+}
+
+// TestSbRing_SlabNotRetained: pushing a row that is a sub-slice of a slab
+// must not cause the ring to hold a reference into that slab.
+// We verify this by checking that the ring's stored slice does NOT share
+// backing memory with the original slab.
+func TestSbRing_SlabNotRetained(t *testing.T) {
+	const cols, rows = 4, 2
+	// Build a fake captureGrid-style slab.
+	slab := make([]vt10x.Glyph, rows*cols)
+	for i := range slab {
+		slab[i].Char = 'X'
+	}
+	row0 := slab[0:cols] // sub-slice into slab
+	row0[0].Char = 'A'
+
+	r := sbRing{maxLines: 3}
+	r.push(row0)
+
+	got := r.get(0)
+	if got == nil {
+		t.Fatal("get(0) returned nil")
+	}
+	// After a copy, got and row0 must not share memory.
+	// Overwrite row0 and verify got is unaffected.
+	row0[0].Char = 'Z'
+	if got[0].Char != 'A' {
+		t.Errorf("ring shares slab memory: overwriting source changed ring content")
+	}
+}
+
+// TestSbRing_SlotReusedWhenFull: once the ring is full, repeated pushes at the
+// same width should reuse the slot's existing backing array (no new allocation).
+func TestSbRing_SlotReusedWhenFull(t *testing.T) {
+	const width = 6
+	r := sbRing{maxLines: 2}
+	r.push(makeGlyphRowN(width, 'A')) // slot 0
+	r.push(makeGlyphRowN(width, 'B')) // slot 1 — ring now full
+
+	// Record the backing-array pointer of physical slot 0.
+	ptr0 := &r.lines[0][0]
+
+	// Push again: ring is full, head=0, so slot 0 is overwritten.
+	r.push(makeGlyphRowN(width, 'C'))
+
+	// Slot 0 must have been reused (same backing array).
+	if &r.lines[0][0] != ptr0 {
+		t.Error("SlotReusedWhenFull: push allocated new backing array instead of reusing slot")
+	}
+	// Content must be correct.
+	got := r.get(1) // newest is at logical index 1
+	if got == nil || got[0].Char != 'C' {
+		t.Errorf("SlotReusedWhenFull: newest row = %v, want 'C'", got)
+	}
+}
+
+// TestSbRing_SlotReusedOnShrink: pushing a narrower row into a full ring
+// must reuse the existing backing array (cap >= new len) rather than
+// allocating a fresh slice.
+func TestSbRing_SlotReusedOnShrink(t *testing.T) {
+	const wideW, narrowW = 8, 3
+	r := sbRing{maxLines: 2}
+	r.push(makeGlyphRowN(wideW, 'W')) // slot 0, cap=8
+	r.push(makeGlyphRowN(wideW, 'W')) // slot 1, cap=8 — ring full
+
+	ptr0 := &r.lines[0][0]
+
+	narrow := makeGlyphRowN(narrowW, 'N')
+	r.push(narrow) // slot 0 overwritten, cap 8 >= len 3 → should reuse
+
+	if &r.lines[0][0] != ptr0 {
+		t.Error("SlotReusedOnShrink: push allocated new backing array despite sufficient capacity")
+	}
+	got := r.get(1) // newest
+	if got == nil || len(got) != narrowW {
+		t.Errorf("SlotReusedOnShrink: len = %d, want %d", len(got), narrowW)
+	}
+	if got[0].Char != 'N' {
+		t.Errorf("SlotReusedOnShrink: char = %q, want 'N'", got[0].Char)
+	}
+}
+
+// TestSbRing_SlotReallocOnGrow: pushing a wider row into a full ring must
+// allocate new backing storage and store the content correctly.
+func TestSbRing_SlotReallocOnGrow(t *testing.T) {
+	const narrowW, wideW = 3, 8
+	r := sbRing{maxLines: 2}
+	r.push(makeGlyphRowN(narrowW, 'N')) // slot 0, cap=3
+	r.push(makeGlyphRowN(narrowW, 'N')) // slot 1, cap=3 — ring full
+
+	wide := makeGlyphRowN(wideW, 'W')
+	for i := range wide {
+		wide[i].Char = rune('A' + i)
+	}
+	r.push(wide) // slot 0, cap 3 < len 8 → must reallocate
+
+	got := r.get(1) // newest
+	if got == nil || len(got) != wideW {
+		t.Fatalf("SlotReallocOnGrow: len = %d, want %d", len(got), wideW)
+	}
+	for i, g := range got {
+		if g.Char != rune('A'+i) {
+			t.Errorf("SlotReallocOnGrow: got[%d].Char = %q, want %q", i, g.Char, rune('A'+i))
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // isBlankRow
 // ---------------------------------------------------------------------------
 
