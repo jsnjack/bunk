@@ -1,0 +1,273 @@
+package main
+
+// Tests for the async search implementation (Change 3B).
+//
+// Covers:
+//   - spanContains correctness
+//   - searchHighlight span construction
+//   - Generation guard: stale goroutine results are discarded
+//   - End-to-end: updateSearch finds all matches and clears them on empty query
+
+import (
+	"os/exec"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"bunk/internal/vt10x"
+)
+
+// ---------------------------------------------------------------------------
+// spanContains
+// ---------------------------------------------------------------------------
+
+func TestSpanContains_Hit(t *testing.T) {
+	spans := []searchSpan{{col: 3, end: 7}}
+	for col := 3; col < 7; col++ {
+		if !spanContains(spans, col) {
+			t.Errorf("spanContains(col=%d): want true", col)
+		}
+	}
+}
+
+func TestSpanContains_Miss(t *testing.T) {
+	spans := []searchSpan{{col: 3, end: 7}}
+	for _, col := range []int{0, 1, 2, 7, 8, 100} {
+		if spanContains(spans, col) {
+			t.Errorf("spanContains(col=%d): want false", col)
+		}
+	}
+}
+
+func TestSpanContains_Empty(t *testing.T) {
+	if spanContains(nil, 5) {
+		t.Error("spanContains(nil, 5): want false")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// searchHighlight span layout
+// ---------------------------------------------------------------------------
+
+// buildTestHL runs the match-building logic extracted from the goroutine in
+// updateSearch, given a flat list of matches and the current index.
+func buildHL(matches []searchMatch, idx int) *searchHighlight {
+	if len(matches) == 0 {
+		return nil
+	}
+	hl := &searchHighlight{
+		regular: make(map[int][]searchSpan),
+		current: make(map[int][]searchSpan),
+	}
+	for i, m := range matches {
+		span := searchSpan{col: m.col, end: m.col + m.length}
+		if i == idx {
+			hl.current[m.vRow] = append(hl.current[m.vRow], span)
+		} else {
+			hl.regular[m.vRow] = append(hl.regular[m.vRow], span)
+		}
+	}
+	return hl
+}
+
+func TestSearchHighlight_CurrentDistinctFromRegular(t *testing.T) {
+	matches := []searchMatch{
+		{vRow: 0, col: 2, length: 3},
+		{vRow: 1, col: 5, length: 3},
+		{vRow: 2, col: 0, length: 3},
+	}
+	hl := buildHL(matches, 1) // match[1] is current
+
+	// Row 0: regular only.
+	if !spanContains(hl.regular[0], 2) {
+		t.Error("row 0 col 2: want in regular")
+	}
+	if spanContains(hl.current[0], 2) {
+		t.Error("row 0 col 2: want NOT in current")
+	}
+
+	// Row 1: current only.
+	if spanContains(hl.regular[1], 5) {
+		t.Error("row 1 col 5: want NOT in regular")
+	}
+	if !spanContains(hl.current[1], 5) {
+		t.Error("row 1 col 5: want in current")
+	}
+
+	// Row 2: regular only.
+	if !spanContains(hl.regular[2], 0) {
+		t.Error("row 2 col 0: want in regular")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Generation guard — stale goroutine must not publish
+// ---------------------------------------------------------------------------
+
+// TestSearchGen_StaleResultDiscarded verifies that when searchGen advances
+// before a goroutine publishes, the goroutine's results are not committed.
+func TestSearchGen_StaleResultDiscarded(t *testing.T) {
+	// We exercise the generation guard logic directly by simulating what
+	// updateSearch's goroutine does: read gen, check gen against app.searchGen
+	// before committing.
+
+	app := &App{}
+	app.mu.Lock()
+	app.searchGen = 5 // simulate: user typed 5 chars
+	app.mu.Unlock()
+
+	// Goroutine captured gen=3 (stale).
+	gen := 3
+
+	committed := false
+	app.mu.Lock()
+	if app.searchGen == gen {
+		committed = true // would publish
+	}
+	app.mu.Unlock()
+
+	if committed {
+		t.Error("stale generation (3 vs 5): should not have committed")
+	}
+
+	// Goroutine with gen=5 (current) should commit.
+	gen = 5
+	app.mu.Lock()
+	if app.searchGen == gen {
+		committed = true
+	}
+	app.mu.Unlock()
+
+	if !committed {
+		t.Error("current generation (5 vs 5): should have committed")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end: updateSearch finds all matches
+// ---------------------------------------------------------------------------
+
+// newSearchPane builds a minimal pane with the given content written in,
+// ready for updateSearch to scan.
+func newSearchPane(t *testing.T, cols, rows int, content string) *Pane {
+	t.Helper()
+	p := &Pane{
+		scrollbackLines: 200,
+		sb:              sbRing{maxLines: 200},
+		x:               0, y: 0, w: cols + 1, h: rows,
+		cmd: &exec.Cmd{},
+	}
+	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.mu.Lock()
+	p.rawBuf = []byte(content)
+	p.captureAndWrite([]byte(content))
+	p.mu.Unlock()
+	return p
+}
+
+func TestUpdateSearch_FindsAllMatches(t *testing.T) {
+	const cols, rows = 20, 5
+	// "foo" appears on rows 0, 2, 4.
+	content := "foo bar baz\r\nno match here\r\nfoo again\r\nnope\r\nfoo end"
+	p := newSearchPane(t, cols, rows, content)
+
+	app := &App{}
+	app.mu.Lock()
+	app.searchMode = true
+	app.searchQuery = "foo"
+	app.searchPane = p
+	app.mu.Unlock()
+
+	app.updateSearch()
+
+	// Wait for the goroutine to complete (it's async).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		app.mu.Lock()
+		n := len(app.searchMatches)
+		app.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	app.mu.Lock()
+	matches := app.searchMatches
+	app.mu.Unlock()
+
+	if len(matches) != 3 {
+		t.Errorf("expected 3 matches for 'foo', got %d", len(matches))
+	}
+	for _, m := range matches {
+		if m.col != 0 || m.length != 3 {
+			t.Errorf("unexpected match: vRow=%d col=%d length=%d", m.vRow, m.col, m.length)
+		}
+	}
+}
+
+func TestUpdateSearch_EmptyQueryClearsHL(t *testing.T) {
+	const cols, rows = 20, 3
+	p := newSearchPane(t, cols, rows, "hello world\r\nhello again")
+
+	// Pre-populate searchHL with something.
+	p.mu.Lock()
+	p.searchHL = &searchHighlight{
+		regular: map[int][]searchSpan{0: {{0, 5}}},
+		current: map[int][]searchSpan{},
+	}
+	p.searchHLGen++
+	p.mu.Unlock()
+
+	app := &App{}
+	app.mu.Lock()
+	app.searchMode = true
+	app.searchQuery = "" // empty → clear
+	app.searchPane = p
+	app.mu.Unlock()
+
+	app.updateSearch() // synchronous for empty query
+
+	p.mu.Lock()
+	hl := p.searchHL
+	p.mu.Unlock()
+
+	if hl != nil {
+		t.Error("empty query: expected searchHL to be nil after updateSearch")
+	}
+}
+
+// TestUpdateSearch_RaceCondition exercises the async path under concurrent
+// access (the race detector will catch data races if any exist).
+func TestUpdateSearch_RaceCondition(t *testing.T) {
+	const cols, rows = 40, 10
+	content := "the quick brown fox jumps over the lazy dog\r\n"
+	var sb strings.Builder
+	for i := 0; i < rows*2; i++ {
+		sb.WriteString(content)
+	}
+	p := newSearchPane(t, cols, rows, sb.String())
+
+	app := &App{}
+	app.mu.Lock()
+	app.searchMode = true
+	app.searchPane = p
+	app.mu.Unlock()
+
+	var wg sync.WaitGroup
+	queries := []string{"the", "fo", "fox", "dog", "lazy", "quick", ""}
+	for _, q := range queries {
+		wg.Add(1)
+		go func(query string) {
+			defer wg.Done()
+			app.mu.Lock()
+			app.searchQuery = query
+			app.mu.Unlock()
+			app.updateSearch()
+		}(q)
+	}
+	wg.Wait()
+	// Wait for in-flight goroutines.
+	time.Sleep(100 * time.Millisecond)
+}

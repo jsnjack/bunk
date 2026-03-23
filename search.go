@@ -14,8 +14,13 @@
 //
 // Thread safety: App.search* fields are protected by app.mu.  Pane.searchHL is
 // protected by pane.mu.  updateSearch acquires each lock independently (never
-// both at once) to avoid deadlocks, accepting a one-frame visual inconsistency
-// if the render loop runs between the two commits.
+// both at once) to avoid deadlocks.
+//
+// Async scan: updateSearch snapshots the virtual rows to [][]rune under p.mu
+// (fast memcpy), releases the lock, then scans in a background goroutine.
+// A searchGen counter guards against stale goroutines: if the user types
+// another character before the goroutine finishes, the stale result is
+// discarded.
 package main
 
 import (
@@ -32,6 +37,17 @@ type searchMatch struct {
 	vRow, col, length int
 }
 
+// searchSpan is a highlighted column range within one virtual row [col, end).
+type searchSpan struct{ col, end int }
+
+// searchHighlight holds span-based match positions for renderPane.
+// regular contains all matches; current contains only the selected match.
+// Both map virtual row → spans for that row.
+type searchHighlight struct {
+	regular map[int][]searchSpan
+	current map[int][]searchSpan
+}
+
 // enterSearch activates search mode for the currently active pane.
 func (app *App) enterSearch() {
 	app.mu.Lock()
@@ -46,6 +62,7 @@ func (app *App) enterSearch() {
 	app.searchPane = p
 	app.searchMatches = nil
 	app.searchIdx = 0
+	app.searchGen++
 	app.mu.Unlock()
 
 	p.mu.Lock()
@@ -66,6 +83,7 @@ func (app *App) exitSearch() {
 	app.searchPane = nil
 	app.searchMatches = nil
 	app.searchIdx = 0
+	app.searchGen++ // invalidate any in-flight scan goroutine
 	app.mu.Unlock()
 
 	if p != nil {
@@ -77,15 +95,18 @@ func (app *App) exitSearch() {
 	app.triggerRedraw()
 }
 
-// updateSearch scans the active search pane's virtual grid for the current
-// query and rebuilds p.searchHL (match highlights) and app.searchMatches.
-// Called from the event loop after any query or index change.
+// updateSearch snapshots the active search pane's virtual grid, then scans
+// for the current query in a background goroutine.  Results are published only
+// if the searchGen counter still matches when the goroutine finishes — stale
+// results from superseded queries are silently discarded.
 func (app *App) updateSearch() {
 	// Snapshot search state under app.mu.
 	app.mu.Lock()
 	p := app.searchPane
 	query := app.searchQuery
 	idx := app.searchIdx
+	app.searchGen++
+	gen := app.searchGen
 	app.mu.Unlock()
 
 	if p == nil {
@@ -106,94 +127,102 @@ func (app *App) updateSearch() {
 
 	lq := strings.ToLower(query)
 	lqRunes := []rune(lq)
-	lqRuneLen := len(lqRunes)
+	lqLen := len(lqRunes)
 
-	// Scan the virtual grid under p.mu.  We hold p.mu for the entire scan to
-	// get a consistent snapshot; it is the same lock held by renderPane, so
-	// the scan blocks at most one render frame.
+	// Snapshot the virtual grid to [][]rune under p.mu.
+	// This is a pure memcpy — no pattern matching yet — so lock hold time is
+	// O(sbCount × cols) iterations of simple ToLower calls (typically < 1ms).
 	p.mu.Lock()
 	cols, rows := p.term.Size()
 	sbCount := p.sb.count
-	var matches []searchMatch
-
-	for vRow := 0; vRow < sbCount+rows; vRow++ {
+	totalRows := sbCount + rows
+	snapshot := make([][]rune, totalRows)
+	for vRow := 0; vRow < totalRows; vRow++ {
 		var cells []vt10x.Glyph
 		if vRow < sbCount {
 			cells = p.sb.get(vRow)
-		} else if tr := vRow - sbCount; tr >= 0 && tr < rows {
-			cells = captureRow(p.term, tr, cols)
+		} else {
+			cells = captureRow(p.term, vRow-sbCount, cols)
 		}
-		if cells == nil {
-			continue
-		}
-		// Build lowercase rune slice for column-accurate matching.
-		// Using runes (not bytes) ensures match positions map 1:1 to
-		// cell grid columns, which is essential for correct highlighting
-		// when the terminal content contains multi-byte UTF-8 characters.
-		lineRunes := make([]rune, len(cells))
-		for i, g := range cells {
-			ch := g.Char
+		row := make([]rune, cols)
+		for i := 0; i < cols; i++ {
+			var ch rune
+			if i < len(cells) {
+				ch = cells[i].Char
+			}
 			if ch == 0 {
 				ch = ' '
 			}
-			lineRunes[i] = unicode.ToLower(ch)
+			row[i] = unicode.ToLower(ch)
 		}
-
-		// Find all non-overlapping occurrences using rune indices.
-		for offset := 0; offset+lqRuneLen <= len(lineRunes); offset++ {
-			match := true
-			for k := 0; k < lqRuneLen; k++ {
-				if lineRunes[offset+k] != lqRunes[k] {
-					match = false
-					break
-				}
-			}
-			if match {
-				matches = append(matches, searchMatch{
-					vRow:   vRow,
-					col:    offset,
-					length: lqRuneLen,
-				})
-				offset += lqRuneLen - 1 // skip past this match (loop increments by 1)
-			}
-		}
+		snapshot[vRow] = row
 	}
-
-	// Clamp index.
-	if idx >= len(matches) {
-		idx = 0
-	}
-
-	// Build highlight map: 1 = regular match, 2 = current match.
-	var hl map[int64]int8
-	if len(matches) > 0 {
-		hl = make(map[int64]int8, len(matches)*lqRuneLen)
-		for i, m := range matches {
-			val := int8(1)
-			if i == idx {
-				val = 2
-			}
-			for c := m.col; c < m.col+m.length && c < cols; c++ {
-				key := int64(m.vRow)<<32 | int64(c)
-				// Don't downgrade a current-match cell to regular.
-				if hl[key] != 2 {
-					hl[key] = val
-				}
-			}
-		}
-	}
-	p.searchHL = hl
-	p.searchHLGen++
 	p.mu.Unlock()
 
-	// Commit match list and (possibly clamped) index under app.mu.
-	app.mu.Lock()
-	app.searchMatches = matches
-	app.searchIdx = idx
-	app.mu.Unlock()
+	go func() {
+		// Scan snapshot — no lock held.
+		var matches []searchMatch
+		for vRow, row := range snapshot {
+			for offset := 0; offset+lqLen <= len(row); offset++ {
+				match := true
+				for k := 0; k < lqLen; k++ {
+					if row[offset+k] != lqRunes[k] {
+						match = false
+						break
+					}
+				}
+				if match {
+					matches = append(matches, searchMatch{
+						vRow:   vRow,
+						col:    offset,
+						length: lqLen,
+					})
+					offset += lqLen - 1 // skip to end of match (loop adds 1)
+				}
+			}
+		}
 
-	L.Debug("search: updateSearch done", "query", query, "matches", len(matches), "idx", idx)
-	app.triggerRedraw()
+		// Clamp index.
+		clampedIdx := idx
+		if clampedIdx >= len(matches) {
+			clampedIdx = 0
+		}
+
+		// Build span-based highlight.
+		var hl *searchHighlight
+		if len(matches) > 0 {
+			hl = &searchHighlight{
+				regular: make(map[int][]searchSpan),
+				current: make(map[int][]searchSpan),
+			}
+			for i, m := range matches {
+				span := searchSpan{col: m.col, end: m.col + m.length}
+				if i == clampedIdx {
+					hl.current[m.vRow] = append(hl.current[m.vRow], span)
+				} else {
+					hl.regular[m.vRow] = append(hl.regular[m.vRow], span)
+				}
+			}
+		}
+
+		// Publish — check generation before committing either result.
+		app.mu.Lock()
+		if app.searchGen != gen {
+			app.mu.Unlock()
+			return // superseded by a newer query
+		}
+		app.searchMatches = matches
+		app.searchIdx = clampedIdx
+		app.mu.Unlock()
+
+		p.mu.Lock()
+		p.searchHL = hl
+		p.searchHLGen++
+		p.mu.Unlock()
+
+		L.Debug("search: scan done", "query", query, "matches", len(matches), "idx", clampedIdx, "gen", gen)
+		app.triggerRedraw()
+	}()
 }
 
 // searchNavigate moves to the next (delta=+1) or previous (delta=-1) match,
@@ -267,4 +296,14 @@ func (app *App) handleSearchKey(ev *tcell.EventKey) bool {
 		app.updateSearch()
 	}
 	return true
+}
+
+// spanContains reports whether any span in spans covers col.
+func spanContains(spans []searchSpan, col int) bool {
+	for _, sp := range spans {
+		if col >= sp.col && col < sp.end {
+			return true
+		}
+	}
+	return false
 }

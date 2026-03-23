@@ -75,9 +75,9 @@ type Pane struct {
 	selAnchor, selCursor selPos
 	selActive            bool
 
-	// searchHL maps (vRow<<32|col) → match type: 1=regular, 2=current (orange).
-	// nil when no search is active for this pane.  Protected by mu.
-	searchHL    map[int64]int8
+	// searchHL holds span-based match highlights for this pane.
+	// nil when no search is active.  Protected by mu.
+	searchHL    *searchHighlight
 	searchHLGen int // incremented on every searchHL assignment
 
 	// Dirty-render tracking: renderPane compares these against the current

@@ -443,6 +443,16 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 		// wide one would be placed 1 column too far left and overwrite the
 		// right half of the wide glyph when tcell renders them.
 		displayCol := 0
+
+		// Fetch per-row search spans once before the column loop so the
+		// inner loop does a short linear scan instead of a hash lookup per
+		// cell.
+		var regSpans, curSpans []searchSpan
+		if hasSearch {
+			regSpans = p.searchHL.regular[vRow]
+			curSpans = p.searchHL.current[vRow]
+		}
+
 		for col := 0; col < cols; col++ {
 			if displayCol >= cols {
 				break // remaining vt10x cells would overflow past the pane edge
@@ -548,15 +558,15 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			}
 
 			// Search highlight: amber for regular matches, orange for current.
+			// Current-match spans take priority over regular spans.
 			if hasSearch {
-				key := int64(vRow)<<32 | int64(col)
-				switch p.searchHL[key] {
-				case 1:
-					style = style.Background(tcell.NewRGBColor(0x80, 0x60, 0x00)).
-						Foreground(tcell.NewRGBColor(0xff, 0xe0, 0x80))
-				case 2:
+				switch {
+				case spanContains(curSpans, col):
 					style = style.Background(tcell.NewRGBColor(0xff, 0xa5, 0x00)).
 						Foreground(tcell.ColorBlack)
+				case spanContains(regSpans, col):
+					style = style.Background(tcell.NewRGBColor(0x80, 0x60, 0x00)).
+						Foreground(tcell.NewRGBColor(0xff, 0xe0, 0x80))
 				}
 			}
 

@@ -98,6 +98,7 @@ type App struct {
 	searchPane    *Pane
 	searchMatches []searchMatch
 	searchIdx     int
+	searchGen     int // incremented on every search state change; guards async goroutines
 
 	// Zoom state.  Protected by mu.
 	// When zoomedPane is non-nil, only that pane is drawn (fullscreen).
