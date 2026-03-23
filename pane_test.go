@@ -433,6 +433,103 @@ func TestAdjustAfterScrollbackPush_NoSelection(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// captureAndWrite — in-place overwrite must not fire large-burst sentinel
+//
+// Bug: dnf/cargo progress bars erase scrollback history
+//
+// Progress bars update rows in-place using cursor-up + overwrite.  When row 0
+// happens to be rewritten with new progress text, detectShift sees row 0
+// changed and the new content isn't found anywhere in the previous grid —
+// which matches the large-burst sentinel condition.  The sentinel was firing
+// on every progress update, pushing the entire screen snapshot into p.sb
+// repeatedly and evicting real history.
+//
+// Fix: sample rows at N/4, N/2, N*3/4 after the write.  If any sample is
+// unchanged from prevGrid the screen wasn't truly replaced, so skip the push.
+// ---------------------------------------------------------------------------
+
+func TestCaptureAndWrite_InPlaceOverwrite_NoSentinelPush(t *testing.T) {
+	const cols, rows = 20, 8
+	term := vt10x.New(vt10x.WithSize(cols, rows))
+	p := &Pane{
+		term:            term,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	// Write 8 distinct rows directly (bypasses captureAndWrite so p.sb
+	// stays empty).  Cursor lands on row 7.
+	setup := "\x1b[0m\x1b[H" +
+		"AAAA_INITIAL_ROW0___\r\n" +
+		"BBBB_ROW1_UNCHANGED_\r\n" +
+		"CCCC_ROW2_UNCHANGED_\r\n" + // sample at rows/4 = 2
+		"DDDD_ROW3_UNCHANGED_\r\n" +
+		"EEEE_ROW4_UNCHANGED_\r\n" + // sample at rows/2 = 4
+		"FFFF_ROW5_UNCHANGED_\r\n" +
+		"GGGG_ROW6_UNCHANGED_\r\n" + // sample at rows*3/4 = 6
+		"HHHH_ROW7_CURSOR____"
+	term.Write([]byte(setup)) //nolint:errcheck
+	if p.sb.count != 0 {
+		t.Fatalf("setup: expected sb.count=0, got %d", p.sb.count)
+	}
+
+	// In-place update: only row 0 changes.  Middle rows are unchanged.
+	// Large-burst sentinel must NOT fire.
+	chunk := []byte("\x1b[1;1HNEWPROGRESS_ROW0\x1b[K")
+	p.mu.Lock()
+	p.captureAndWrite(chunk)
+	p.mu.Unlock()
+
+	if p.sb.count != 0 {
+		t.Errorf("in-place row-0 overwrite triggered scrollback push: sb.count = %d, want 0",
+			p.sb.count)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// rebuildScrollbackFromRawBuf — must not clobber a larger existing ring
+//
+// Bug: entering scrollback during dnf install erases older history
+//
+// rawBuf is a rolling byte window (capped at scrollbackLines*200 bytes).
+// After a long-running command the window covers only recent output; the
+// older history lives in p.sb (captured by detectShift).  The rebuild was
+// unconditionally replacing p.sb, discarding rows that weren't in rawBuf.
+//
+// Fix: skip the rebuild when the replay would produce fewer rows than p.sb
+// already holds.
+// ---------------------------------------------------------------------------
+
+func TestRebuildScrollback_PreservesLargerRing(t *testing.T) {
+	const cols, rows = 20, 5
+	term := vt10x.New(vt10x.WithSize(cols, rows))
+	p := &Pane{
+		term:            term,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	// Simulate detectShift accumulating 40 rows during a long-running command.
+	for i := 0; i < 40; i++ {
+		p.sb.push(makeGlyphRow(rune('A' + i%26)))
+	}
+	want := p.sb.count // 40
+
+	// rawBuf contains only a few lines — the rolling window trimmed older
+	// content.  Replaying it would produce ~3 rows, far fewer than 40.
+	p.rawBuf = []byte("lineX\r\nlineY\r\nlineZ\r\n")
+
+	p.mu.Lock()
+	p.rebuildScrollbackFromRawBuf()
+	p.mu.Unlock()
+
+	if p.sb.count != want {
+		t.Errorf("rebuildScrollbackFromRawBuf clobbered ring: count %d → %d (want %d)",
+			want, p.sb.count, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // needsSync — set on alt-screen exit
 //
 // Bug: btop background artifact persists after exit

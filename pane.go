@@ -584,25 +584,47 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			p.adjustAfterScrollbackPush(shift, oldCount, oldSbOff)
 			L.Debug("captureAndWrite: scrollback push", "pane", p.id, "rows", shift, "total", p.sb.count, "sbOff", p.sbOff)
 		} else if shift == len(prevGrid) {
-			// Large-burst sentinel: the output scrolled more than one full
-			// terminal height, so all of prevGrid has rolled off.
-			// Only push up to the LAST NON-BLANK row to avoid storing the
-			// unused blank space below the cursor (those rows were never
-			// written to; a terminal is never "full" at the start).
-			lastNonBlank := -1
-			for i := 0; i < len(prevGrid); i++ {
-				if !isBlankRow(prevGrid[i]) {
-					lastNonBlank = i
+			// Large-burst sentinel: the output burst may have scrolled more
+			// than one full terminal height.
+			//
+			// Before pushing, verify this is a genuine full-screen scroll and
+			// not an in-place overwrite (progress bars, spinners, etc.).  For
+			// a real scroll ALL rows are replaced with new content; for an
+			// in-place update most rows are unchanged.  Sample rows at N/4,
+			// N/2, and 3N/4: if ANY matches prevGrid at that position the
+			// screen was not truly replaced, so skip the push entirely.
+			// (For real scrolls these samples are fresh content from the PTY
+			// output and won't match the old snapshot.)
+			realScroll := true
+			for _, sampleY := range []int{rows / 4, rows / 2, rows * 3 / 4} {
+				if sampleY >= rows {
+					continue
+				}
+				cur := captureRow(p.term, sampleY, cols)
+				if rowsEqual(cur, prevGrid[sampleY]) {
+					realScroll = false
+					break
 				}
 			}
-			pushed := lastNonBlank + 1
-			oldCount := p.sb.count
-			oldSbOff := p.sbOff
-			for i := 0; i < pushed; i++ {
-				p.sb.push(prevGrid[i])
+			if !realScroll {
+				// In-place update (progress bars, spinners) — skip push.
+			} else {
+				// Genuine large-burst scroll: push all non-blank rows of prevGrid.
+				lastNonBlank := -1
+				for i := 0; i < len(prevGrid); i++ {
+					if !isBlankRow(prevGrid[i]) {
+						lastNonBlank = i
+					}
+				}
+				pushed := lastNonBlank + 1
+				oldCount := p.sb.count
+				oldSbOff := p.sbOff
+				for i := 0; i < pushed; i++ {
+					p.sb.push(prevGrid[i])
+				}
+				p.adjustAfterScrollbackPush(pushed, oldCount, oldSbOff)
+				L.Debug("captureAndWrite: large-burst scrollback push", "pane", p.id, "rows", pushed, "total", p.sb.count, "sbOff", p.sbOff)
 			}
-			p.adjustAfterScrollbackPush(pushed, oldCount, oldSbOff)
-			L.Debug("captureAndWrite: large-burst scrollback push", "pane", p.id, "rows", pushed, "total", p.sb.count, "sbOff", p.sbOff)
 		}
 	}
 }
@@ -1087,6 +1109,22 @@ func (p *Pane) rebuildScrollbackFromRawBuf() {
 	if firstVisible < 0 {
 		firstVisible = 0
 	}
+
+	// rawBuf is a rolling window capped at scrollbackLines*200 bytes.  For
+	// long-running commands (dnf install, cargo build, …) the window covers
+	// only the most recent output, so the replay produces FEWER rows than
+	// detectShift has already accumulated in p.sb.  Replacing a larger ring
+	// with a smaller one would silently erase visible history.
+	//
+	// Only replace the ring when the replay yields more rows — this is the
+	// SSH large-burst case where a single read scrolled through many
+	// screenfuls and detectShift missed the intermediate lines.
+	if firstVisible <= p.sb.count {
+		L.Debug("rebuildScrollbackFromRawBuf: skipped (existing ring has more rows)",
+			"pane", p.id, "existing", p.sb.count, "replay", firstVisible)
+		return
+	}
+
 	oldCount := p.sb.count
 	p.sb = sbRing{maxLines: p.scrollbackLines}
 	for r := 0; r < firstVisible; r++ {
