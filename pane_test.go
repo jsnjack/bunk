@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"bunk/internal/vt10x"
+	"github.com/gdamore/tcell/v2"
 )
 
 // ---------------------------------------------------------------------------
@@ -1558,5 +1559,126 @@ func TestPrivateModeSGR_realSGR4_still_works(t *testing.T) {
 	}
 	if cellN.Mode&vt10x.AttrUnderline != 0 {
 		t.Errorf("cell N (after \\x1b[0m): expected no underline, Mode=0x%x", cellN.Mode)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Kitty keyboard protocol stack (handleKittyKeyboard via captureAndWrite)
+//
+// Apps like Claude Code enable KKP with \x1b[>1u and should disable it with
+// \x1b[<u on exit.  If they crash or exit abnormally the stack is left non-
+// empty and bunk encodes subsequent keystrokes as CSI-u sequences that the
+// shell does not understand.  trackFgProcess clears the stack on PGID change.
+// ---------------------------------------------------------------------------
+
+func TestHandleKittyKeyboard_PushQueryPop(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+
+	// Push flags=1 (\x1b[>1u) — the spec form used by Claude Code and Neovim.
+	p.captureAndWrite([]byte("\x1b[>1u"))
+	p.mu.Lock()
+	if len(p.kittyStack) != 1 || p.kittyStack[0] != 1 {
+		t.Errorf("after push: kittyStack = %v, want [1]", p.kittyStack)
+	}
+	p.mu.Unlock()
+
+	// Push again with flags=3 to verify nesting.
+	p.captureAndWrite([]byte("\x1b[>3u"))
+	p.mu.Lock()
+	if len(p.kittyStack) != 2 || p.kittyStack[1] != 3 {
+		t.Errorf("after second push: kittyStack = %v, want [1 3]", p.kittyStack)
+	}
+	p.mu.Unlock()
+
+	// Query (\x1b[?u) — response must be \x1b[?3u (top of stack).
+	p.captureAndWrite([]byte("\x1b[?u"))
+
+	// Pop one level (\x1b[<u) — stack should shrink by 1.
+	p.captureAndWrite([]byte("\x1b[<u"))
+	p.mu.Lock()
+	if len(p.kittyStack) != 1 || p.kittyStack[0] != 1 {
+		t.Errorf("after pop: kittyStack = %v, want [1]", p.kittyStack)
+	}
+	p.mu.Unlock()
+
+	// Pop all remaining levels (\x1b[<2u with count > depth — should clamp to 0).
+	p.captureAndWrite([]byte("\x1b[<2u"))
+	p.mu.Lock()
+	if len(p.kittyStack) != 0 {
+		t.Errorf("after over-pop: kittyStack = %v, want []", p.kittyStack)
+	}
+	p.mu.Unlock()
+
+	pw.Close()
+	buf, _ := io.ReadAll(pr)
+	// Only the query should have produced a response.
+	want := "\x1b[?3u"
+	if string(buf) != want {
+		t.Errorf("ptmx output = %q, want %q", string(buf), want)
+	}
+}
+
+// TestKittyStack_StaleAfterExit is the regression test for the bug where a
+// non-alt-screen app (e.g. Claude Code) enables KKP but exits without sending
+// \x1b[<u.  The stale kittyStack causes bunk to encode all subsequent
+// keystrokes as CSI-u sequences; the shell echoes them as garbage text.
+//
+// trackFgProcess clears kittyStack on foreground PGID change.  This test
+// verifies that a cleared stack restores legacy key encoding.
+func TestKittyStack_StaleAfterExit(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	pw.Close() // no responses expected
+
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+
+	// Simulate app enabling KKP but exiting without cleanup.
+	p.captureAndWrite([]byte("\x1b[>1u"))
+
+	p.mu.Lock()
+	staleFlags := 0
+	if len(p.kittyStack) > 0 {
+		staleFlags = p.kittyStack[len(p.kittyStack)-1]
+	}
+	p.mu.Unlock()
+
+	if staleFlags == 0 {
+		t.Fatal("precondition: expected non-zero kittyFlags after push")
+	}
+
+	// With stale stack, Enter encodes as CSI-u — the broken state.
+	gotStale := keyToBytes(keyEv(tcell.KeyEnter, tcell.ModNone), staleFlags)
+	if string(gotStale) != "\x1b[13u" {
+		t.Errorf("stale KKP: Enter = %q, want \\x1b[13u", gotStale)
+	}
+
+	// trackFgProcess clears the stack when the foreground PGID changes.
+	p.mu.Lock()
+	p.kittyStack = p.kittyStack[:0]
+	p.mu.Unlock()
+
+	p.mu.Lock()
+	clearedFlags := 0
+	if len(p.kittyStack) > 0 {
+		clearedFlags = p.kittyStack[len(p.kittyStack)-1]
+	}
+	p.mu.Unlock()
+
+	// After clear, Enter must encode as a plain carriage return.
+	gotCleared := keyToBytes(keyEv(tcell.KeyEnter, tcell.ModNone), clearedFlags)
+	if string(gotCleared) != "\r" {
+		t.Errorf("after clear: Enter = %q, want \\r", gotCleared)
 	}
 }

@@ -674,6 +674,21 @@ func (p *Pane) trackFgProcess(redraw chan struct{}, done chan struct{}) {
 			lastPGID = pgid
 			ct, cn = "", ""
 			sshHost = ""
+
+			// When the foreground process changes, clear any stale kitty
+			// keyboard protocol state.  Apps (e.g. Claude Code) may enable
+			// KKP without using the alt screen, so the alt-screen-exit reset
+			// in captureAndWrite does not fire.  If they crash, are killed,
+			// or exit without sending \x1b[<u, the stack stays non-empty and
+			// bunk keeps encoding keystrokes as KKP sequences that the next
+			// shell cannot interpret.
+			p.mu.Lock()
+			if len(p.kittyStack) > 0 {
+				L.Debug("trackFgProcess: clearing stale kittyStack on pgid change", "pane", p.id, "pgid", pgid)
+				p.kittyStack = p.kittyStack[:0]
+			}
+			p.mu.Unlock()
+
 			if pgid > 0 {
 				ct, cn = detectContainerInfoFromProcEnv(pgid)
 				L.Debug("trackFgProcess: detection (pgid changed)", "pane", p.id, "pgid", pgid, "name", name, "ct", ct, "cn", cn)

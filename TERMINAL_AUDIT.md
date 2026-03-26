@@ -103,7 +103,7 @@ Highest impact: XTVERSION (feature detection by newer apps).
 | Alt+key (ESC prefix) | OK | |
 | Arrow keys | OK | |
 | Shift+Tab (BackTab) | **FIXED** | Was sending `\x1b[9;3u` (Alt+Tab) in kitty mode; now correctly `\x1b[9;2u` |
-| Kitty keyboard protocol | OK | Push/pop/query stack; CSI u encoding for Enter, Tab, Backspace, Ctrl+letter |
+| Kitty keyboard protocol | **FIXED** | Push/pop/query stack; CSI u encoding for Enter, Tab, Backspace, Ctrl+letter. Fixed: stale stack after non-alt-screen KKP app exits without `\x1b[<u` — cleared by `trackFgProcess` on PGID change |
 | F1–F12 | OK | Any key bound to a bunk action (default: F1=split, F12=zoom) is consumed and not forwarded; this is config-dependent |
 | F13-F24 | OK | Shift+F1-F12; handled both via `KeyF13`–`KeyF24` and via `KeyF1`+`ModShift` modifier path |
 | Home/End/PgUp/PgDn/Ins/Del | OK | All modifiers forwarded as `\x1b[<code>;<mod>~` / `\x1b[1;<mod>H/F`; Shift+PgUp/PgDn consumed by default for scrollback (config-dependent) |
