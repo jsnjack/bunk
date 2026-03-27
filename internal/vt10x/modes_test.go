@@ -254,3 +254,19 @@ func TestRIS_ClearsFullScreen(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// OSC 110/111/112 — reset dynamic fg/bg/cursor color
+// ---------------------------------------------------------------------------
+
+// TestOSC110_111_112_NoWrite verifies that OSC 110/111/112 (reset dynamic
+// fg/bg/cursor colour) are silently dropped without panicking or writing to
+// the terminal writer.  Previously they fell through to the default case which
+// logged "unknown OSC command N" noise.
+func TestOSC110_111_112_NoWrite(t *testing.T) {
+	// newTestTerm uses a nil writer; any accidental write panics.
+	term := newTestTerm(80, 24)
+	term.Write([]byte("\x1b]110\x07")) //nolint:errcheck // reset fg
+	term.Write([]byte("\x1b]111\x07")) //nolint:errcheck // reset bg
+	term.Write([]byte("\x1b]112\x07")) //nolint:errcheck // reset cursor
+}

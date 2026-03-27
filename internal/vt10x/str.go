@@ -111,6 +111,10 @@ func (t *State) handleSTR() {
 		// } else {
 		// 	// TODO: redraw
 		// }
+		case 110, 111, 112: // reset dynamic fg/bg/cursor color to default
+			// OSC 110 = reset fg, OSC 111 = reset bg, OSC 112 = reset cursor.
+			// Silently dropped — bunk uses its own theme colours so there is
+			// nothing to reset.  Handle here to avoid "unknown OSC" log spam.
 		case 4: // color set
 			if len(s.args) < 3 {
 				break

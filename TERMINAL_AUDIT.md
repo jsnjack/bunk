@@ -50,7 +50,7 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 10/11/12 | Query fg/bg/cursor color | OK (10/11, alt-screen only) | OSC 10/11 answered from theme in alt-screen mode only; normal-mode responses are suppressed to prevent leaking into programs like survey (gh auth login). OSC 12 (cursor colour) still MISSING |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles |
-| 110/111/112 | Reset fg/bg/cursor color | **MISSING** | Some apps reset to defaults |
+| 110/111/112 | Reset fg/bg/cursor color | N/A | Silently dropped — bunk uses theme colours, so there is nothing to reset |
 | 133 | Shell integration/prompt marking | **MISSING** | Used by bash/zsh/fish for semantic prompts. Terminals use this for jump-to-prompt. Not forwarded to host |
 
 Highest impact: OSC 12 (cursor colour) and OSC 110/111/112 (reset) still missing but low priority.
