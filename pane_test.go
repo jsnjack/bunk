@@ -169,6 +169,10 @@ func TestCaptureAndWrite_SplitXTGETTCAPResponse(t *testing.T) {
 	}
 }
 
+// TestCaptureAndWrite_SplitOSC10Response verifies that a split OSC 10 query
+// (arriving in two chunks) receives a response in alt-screen mode.
+// OSC 10/11 responses are only sent in alt-screen mode — full-screen TUI apps
+// (neovim, helix) own their event loop and safely consume terminal responses.
 func TestCaptureAndWrite_SplitOSC10Response(t *testing.T) {
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -185,13 +189,50 @@ func TestCaptureAndWrite_SplitOSC10Response(t *testing.T) {
 		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
 	}
 
-	feedSplitPTYChunks(t, p, []byte("\x1b]10"), []byte(";?\x1b\\"))
+	// Enter alt-screen before the OSC 10 query; the DECSET 1049 and the start
+	// of the OSC are in the first chunk so splitPTYChunk carries the partial
+	// OSC into the second chunk — this exercises the carry/split path.
+	feedSplitPTYChunks(t, p, []byte("\x1b[?1049h\x1b]10"), []byte(";?\x1b\\"))
 	pw.Close()
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
 	if string(buf) != want {
 		t.Fatalf("split OSC 10 response = %q, want %q", string(buf), want)
+	}
+}
+
+// TestCaptureAndWrite_OSC10NormalModeNoResponse verifies that OSC 10/11
+// queries in normal screen mode do NOT produce a response.  Writing a
+// response in normal mode would put OSC bytes into the PTY buffer where they
+// appear as unexpected keyboard input to programs like survey (gh auth login).
+func TestCaptureAndWrite_OSC10NormalModeNoResponse(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	p := &Pane{
+		term:            vt10x.New(vt10x.WithSize(40, 10)),
+		ptmx:            pw,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
+		themeBGColor:    "rgb:1c1c/1c1c/1f1f",
+	}
+
+	// Send OSC 10 and OSC 11 queries in normal screen mode (no alt-screen).
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\x1b]10;?\x1b\\"))
+	p.captureAndWrite([]byte("\x1b]11;?\x1b\\"))
+	p.mu.Unlock()
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	if len(buf) != 0 {
+		t.Fatalf("normal-mode OSC 10/11 produced response %q, want none", string(buf))
 	}
 }
 

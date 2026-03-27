@@ -214,7 +214,10 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 	//      before reading the response; bash readline then echoes the
 	//      stale bytes as visible garbage on the prompt line.
 	// DA/DA2/CPR responses are handled manually in captureAndWrite where
-	// we can gate them on specific conditions (e.g. non-alt-screen).
+	// we can gate them on specific conditions.  OSC 10/11 responses are
+	// restricted to alt-screen mode for the same reason as (2) above: in
+	// normal mode the response can be read as keyboard input by the next
+	// program (e.g. survey used by gh auth login).
 	// Create the pane first so we can pass p.onScrollRow as the scroll
 	// callback.  p.term is set immediately after; the callback is only
 	// invoked from readPTY (started below), so p.term is always valid
@@ -414,11 +417,13 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 			p.ptmx.Write([]byte(resp)) //nolint:errcheck
 			L.Log(nil, LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
 		}
-		// OSC 10/11 — fg/bg colour queries.  Apps (neovim, helix, BubbleTea)
-		// send these at startup to detect dark vs light theme so they can pick
-		// appropriate colour schemes.  We respond with the resolved theme colours.
-		// Gated on !altScreen: same reasoning as CPR above.
-		if !altScreen && p.themeFGColor != "" {
+		// OSC 10/11 — fg/bg colour queries.  Full-screen TUI apps (neovim,
+		// helix) send these to detect dark vs light theme.  We only respond
+		// in alt-screen mode: those apps own their event loop and safely
+		// consume terminal responses.  In normal screen mode the response
+		// sits in the PTY buffer and is read as unexpected keyboard input by
+		// the next program (e.g. survey used by `gh auth login`).
+		if altScreen && p.themeFGColor != "" {
 			if bytes.Contains(chunk, []byte("\x1b]10;?")) {
 				resp := fmt.Sprintf("\x1b]10;%s\x1b\\", p.themeFGColor)
 				p.ptmx.Write([]byte(resp)) //nolint:errcheck

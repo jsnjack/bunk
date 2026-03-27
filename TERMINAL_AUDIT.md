@@ -47,7 +47,7 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 4 | Set palette color | OK | vt10x handles |
 | 7 | CWD notification | OK | Forwarded to host |
 | 8 | Hyperlinks | OK | Forwarded to host |
-| 10/11/12 | Query fg/bg/cursor color | OK (10/11) | OSC 10/11 answered from theme; OSC 12 (cursor colour) still MISSING |
+| 10/11/12 | Query fg/bg/cursor color | OK (10/11, alt-screen only) | OSC 10/11 answered from theme in alt-screen mode only; normal-mode responses are suppressed to prevent leaking into programs like survey (gh auth login). OSC 12 (cursor colour) still MISSING |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles |
 | 110/111/112 | Reset fg/bg/cursor color | **MISSING** | Some apps reset to defaults |
