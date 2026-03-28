@@ -47,13 +47,13 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 4 | Set palette color | OK | vt10x handles |
 | 7 | CWD notification | OK | Forwarded to host |
 | 8 | Hyperlinks | OK | Forwarded to host |
-| 10/11/12 | Query fg/bg/cursor color | **PARTIAL** | Queries are answered in-stream from bunk's current dynamic colour state. Replies are gated to alt-screen mode to avoid leaking into normal-mode apps; when the default colour is unknown (e.g. `theme="terminal"`), bunk suppresses the reply instead of inventing one |
+| 10/11/12 | Query fg/bg/cursor color | **PARTIAL** | Queries are answered in-stream from bunk's current dynamic colour state. Replies are gated to alt-screen mode to avoid leaking into normal-mode apps. In `theme="terminal"` mode bunk now probes the outer terminal's OSC 10/11/12 defaults at startup and uses them when available; replies are still suppressed if the host terminal does not answer or the cursor colour is genuinely unknown |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles |
 | 110/111/112 | Reset fg/bg/cursor color | **PARTIAL** | Clears bunk's dynamic fg/bg/cursor overrides. Cursor-colour state is tracked for query/reset semantics, but bunk does not visibly render a separate cursor colour |
 | 133 | Shell integration/prompt marking | OK | Forwarded to host so semantic prompt integration and jump-to-prompt can work when the outer terminal supports it |
 
-Highest impact: Dynamic colour queries/resets are implemented but still partial because bunk cannot guarantee the host terminal's true default/cursor colour in `theme="terminal"` mode.
+Highest impact: Dynamic colour queries/resets are implemented and `theme="terminal"` now probes host defaults at startup, but compliance is still partial when the outer terminal does not support OSC 10/11/12 or does not expose a distinct cursor colour.
 
 ---
 

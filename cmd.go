@@ -109,6 +109,11 @@ func run(configPath, themeName string, debug, trace bool) error {
 	cellAspect := queryCellAspect(cfg.CellAspect)
 	L.Debug("startup: cell aspect ratio", "aspect", cellAspect)
 
+	hostColors := hostOSCColors{}
+	if needsHostOSCColorProbe(cfg.Theme) {
+		hostColors = probeHostOSCColors()
+	}
+
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -121,15 +126,16 @@ func run(configPath, themeName string, debug, trace bool) error {
 	screen.Clear()
 
 	app := &App{
-		screen:     screen,
-		theme:      cfg.Theme,
-		cellAspect: cellAspect,
-		keys:       cfg.Keybindings,
-		scrollback: cfg.Scrollback,
-		redraw:     make(chan struct{}, 1),
-		paneDead:   make(chan *Pane, 8),
-		done:       make(chan struct{}),
-		oscCh:      make(chan []byte, oscChanSize),
+		screen:        screen,
+		theme:         cfg.Theme,
+		hostOSCColors: hostColors,
+		cellAspect:    cellAspect,
+		keys:          cfg.Keybindings,
+		scrollback:    cfg.Scrollback,
+		redraw:        make(chan struct{}, 1),
+		paneDead:      make(chan *Pane, 8),
+		done:          make(chan struct{}),
+		oscCh:         make(chan []byte, oscChanSize),
 	}
 
 	screen.EnableMouse(tcell.MouseMotionEvents)
@@ -141,11 +147,12 @@ func run(configPath, themeName string, debug, trace bool) error {
 	w, h := screen.Size()
 	L.Debug("startup: screen size", "w", w, "h", h)
 
+	fgOSC, bgOSC, cursorOSC := app.paneOSCColors()
 	p, err := NewPane(
 		app.nextID, 0, 0, w, h, app.scrollback, "", nil,
-		tcellColorToXParse(app.theme.fg),
-		tcellColorToXParse(app.theme.bg),
-		tcellColorToXParse(app.theme.fg),
+		fgOSC,
+		bgOSC,
+		cursorOSC,
 		app.redraw, app.paneDead, app.done, app.oscCh,
 	)
 	if err != nil {

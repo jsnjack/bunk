@@ -327,6 +327,10 @@ func (app *App) emitCursorStyle(p *Pane) {
 	app.screen.SetCursorStyle(tcell.CursorStyle(style))
 }
 
+func (app *App) paneOSCColors() (fg, bg, cursor string) {
+	return defaultOSCColors(app.theme, app.hostOSCColors)
+}
+
 // ---------------------------------------------------------------------------
 // Pane content rendering
 // ---------------------------------------------------------------------------

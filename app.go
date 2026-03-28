@@ -62,6 +62,11 @@ type App struct {
 	// terminal.  Compared each frame to avoid redundant writes.
 	lastCursorStyle int
 
+	// hostOSCColors caches the outer terminal's probed default fg/bg/cursor
+	// colours for theme="terminal" mode so new panes can answer OSC 10/11/12
+	// queries consistently without re-probing after tcell owns stdin.
+	hostOSCColors hostOSCColors
+
 	// prevMouseBtn remembers the last pressed mouse button so mouseToBytes can
 	// generate release events (only used in the event loop goroutine).
 	prevMouseBtn tcell.ButtonMask
@@ -541,11 +546,12 @@ func (app *App) splitActive(inheritContext bool) {
 		}
 	}
 
+	fgOSC, bgOSC, cursorOSC := app.paneOSCColors()
 	newPane, err := NewPane(
 		app.nextID, nx, ny, nw, nh, app.scrollback, dir, spawnArgs,
-		tcellColorToXParse(app.theme.fg),
-		tcellColorToXParse(app.theme.bg),
-		tcellColorToXParse(app.theme.fg),
+		fgOSC,
+		bgOSC,
+		cursorOSC,
 		app.redraw, app.paneDead, app.done, app.oscCh,
 	)
 	if err != nil {
