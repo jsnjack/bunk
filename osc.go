@@ -13,6 +13,8 @@
 //	OSC 8   - inline hyperlinks; terminals can open URLs on Ctrl+click.
 //	OSC 52  - clipboard read/write; lets programs access the system clipboard
 //	           without needing xclip/xdotool.
+//	OSC 133 - shell prompt markers; terminals use these for jump-to-prompt,
+//	           command timing, semantic prompt integration, etc.
 //
 // The oscScanner runs over each raw PTY chunk BEFORE it is fed to vt10x.
 // When it finds a complete OSC in the forward-set it sends a copy to a
@@ -30,9 +32,10 @@ import (
 // terminal verbatim.  Sequences not in this set are consumed by vt10x or
 // silently discarded.
 var oscForwardNums = map[int]bool{
-	7:  true, // CWD notification  (shell integration, widely supported)
-	8:  true, // Hyperlinks        (Ctrl+click in modern terminals)
-	52: true, // Clipboard access  (OSC 52, supported by most terminals)
+	7:   true, // CWD notification       (shell integration, widely supported)
+	8:   true, // Hyperlinks             (Ctrl+click in modern terminals)
+	52:  true, // Clipboard access       (OSC 52, supported by most terminals)
+	133: true, // Shell prompt markers   (semantic shell integration)
 }
 
 // oscMaxBuf is the maximum bytes we accumulate for a single OSC sequence.

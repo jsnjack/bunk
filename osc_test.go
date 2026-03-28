@@ -5,7 +5,8 @@ import (
 	"testing"
 )
 
-// OSC scanner tests: clipboard paste (OSC 52) and directory tracking (OSC 7)
+// OSC scanner tests: clipboard paste, directory tracking, and shell prompt
+// markers that must be forwarded to the host terminal.
 //
 // Bug: clipboard paste not working, CWD not updating in pane title
 //
@@ -64,6 +65,32 @@ func TestOSC7_ST(t *testing.T) {
 
 func TestOSC52_Forwarded(t *testing.T) {
 	data := []byte("\x1b]52;c;SGVsbG8=\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 1 {
+		t.Fatalf("expected 1 forwarded sequence, got %d", len(seqs))
+	}
+	if !bytes.Equal(seqs[0], data) {
+		t.Errorf("forwarded sequence = %q, want %q", seqs[0], data)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// OSC 133 (shell prompt markers)
+// ---------------------------------------------------------------------------
+
+func TestOSC133_BEL(t *testing.T) {
+	data := []byte("\x1b]133;A\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 1 {
+		t.Fatalf("expected 1 forwarded sequence, got %d", len(seqs))
+	}
+	if !bytes.Equal(seqs[0], data) {
+		t.Errorf("forwarded sequence = %q, want %q", seqs[0], data)
+	}
+}
+
+func TestOSC133_ST(t *testing.T) {
+	data := []byte("\x1b]133;D;0\x1b\\")
 	seqs := scanAll(data)
 	if len(seqs) != 1 {
 		t.Fatalf("expected 1 forwarded sequence, got %d", len(seqs))

@@ -51,9 +51,9 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles |
 | 110/111/112 | Reset fg/bg/cursor color | **PARTIAL** | Clears bunk's dynamic fg/bg/cursor overrides. Cursor-colour state is tracked for query/reset semantics, but bunk does not visibly render a separate cursor colour |
-| 133 | Shell integration/prompt marking | **MISSING** | Used by bash/zsh/fish for semantic prompts. Terminals use this for jump-to-prompt. Not forwarded to host |
+| 133 | Shell integration/prompt marking | OK | Forwarded to host so semantic prompt integration and jump-to-prompt can work when the outer terminal supports it |
 
-Highest impact: OSC 133 prompt markers are still missing. Dynamic colour queries/resets are implemented but still partial because bunk cannot guarantee the host terminal's true default/cursor colour in `theme="terminal"` mode.
+Highest impact: Dynamic colour queries/resets are implemented but still partial because bunk cannot guarantee the host terminal's true default/cursor colour in `theme="terminal"` mode.
 
 ---
 
