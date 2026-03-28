@@ -9,6 +9,7 @@
 #   bash terminal_features.sh cursor
 #   bash terminal_features.sh integration
 #   bash terminal_features.sh queries
+#   bash terminal_features.sh osc
 #
 # Notes:
 #   - `all` runs every grouped script in order.
@@ -30,6 +31,7 @@ Usage:
   bash terminal_features.sh cursor
   bash terminal_features.sh integration
   bash terminal_features.sh queries
+  bash terminal_features.sh osc
 
 Groups:
   text         SGR attributes and underline styles
@@ -37,6 +39,7 @@ Groups:
   cursor       Cursor shapes and Unicode width/alignment
   integration  Hyperlinks, bracketed paste, OSC 133 prompt markers
   queries      DA/DA2/XTVERSION/CPR/XTGETTCAP/DECRQM/OSC color queries/kitty
+  osc          Automated PASS/FAIL OSC set/query/reset and DECRQM assertions
 EOF
 }
 
@@ -53,6 +56,8 @@ Available grouped diagnostics:
                OSC 8 hyperlinks, bracketed paste, OSC 133 markers
   queries      ${SCRIPT_DIR}/05_queries.sh
                DA/DA2/XTVERSION/CPR/XTGETTCAP/DECRQM/OSC/kitty queries
+  osc          ${SCRIPT_DIR}/06_osc_smoke.sh
+               Automated OSC 10/11/12 set/query/reset and DECRQM assertions
 
 Run all groups:
   bash terminal_features.sh all
@@ -65,20 +70,20 @@ run_group() {
 }
 
 run_all() {
-    local scripts=(
-        01_text_attributes.sh
-        02_colors.sh
-        03_cursor_unicode.sh
-        04_host_integration.sh
-        05_queries.sh
-    )
     local script
-    for script in "${scripts[@]}"; do
-        if [[ "${script}" == "05_queries.sh" && ( ! -t 0 || ! -t 1 ) ]]; then
-            printf 'Skipping queries group: requires an interactive TTY on stdin/stdout.\n' >&2
-            continue
-        fi
-        run_group "${script}" || return 1
+    for script in "${SCRIPT_DIR}"/[0-9]*.sh; do
+        local base
+        base="$(basename "$script")"
+        # skip query-heavy scripts when not on a TTY
+        case "$base" in
+            05_*|06_*)
+                if [[ ! -t 0 || ! -t 1 ]]; then
+                    printf 'Skipping %s: requires an interactive TTY on stdin/stdout.\n' "$base" >&2
+                    continue
+                fi
+                ;;
+        esac
+        run_group "$base" || return 1
     done
 }
 
@@ -103,6 +108,9 @@ case "${1:-all}" in
         ;;
     queries|protocols)
         run_group 05_queries.sh
+        ;;
+    osc|smoke)
+        run_group 06_osc_smoke.sh
         ;;
     *)
         usage >&2

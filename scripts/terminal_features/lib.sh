@@ -83,10 +83,10 @@ query_terminal() {
 
     old_stty=$(stty -g 2>/dev/null) || return 1
     stty -echo -icanon min 0 time 0 2>/dev/null || return 1
-    printf '%s' "$query"
+    printf '%s' "$query" >/dev/tty
     sleep "$timeout"
     response=""
-    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do
+    while IFS= read -r -s -t 0.05 -n 1 ch </dev/tty 2>/dev/null; do
         response+="$ch"
         [[ ${#response} -gt 200 ]] && break
     done
@@ -101,16 +101,16 @@ query_terminal_alt() {
 
     old_stty=$(stty -g 2>/dev/null) || return 1
     stty -echo -icanon min 0 time 0 2>/dev/null || return 1
-    printf '%s' "${CSI}?1049h"
+    printf '%s' "${CSI}?1049h" >/dev/tty
     sleep 0.05
-    printf '%s' "$query"
+    printf '%s' "$query" >/dev/tty
     sleep "$timeout"
     response=""
-    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do
+    while IFS= read -r -s -t 0.05 -n 1 ch </dev/tty 2>/dev/null; do
         response+="$ch"
         [[ ${#response} -gt 200 ]] && break
     done
-    printf '%s' "${CSI}?1049l"
+    printf '%s' "${CSI}?1049l" >/dev/tty
     stty "$old_stty" 2>/dev/null
     printf '%s' "$response" | cat -v
 }
