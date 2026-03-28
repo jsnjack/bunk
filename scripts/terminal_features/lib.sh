@@ -10,6 +10,14 @@ ST="${ESC}\\"
 BEL=$'\007'
 R="${CSI}0m"
 
+# Save original stdout (the pane's PTY) to fd 3 so query functions can
+# write escape sequences to the terminal even inside $(...) captures.
+if [[ -t 1 ]]; then
+    exec 3>&1
+else
+    exec 3>/dev/null
+fi
+
 hr() {
     printf '\n%s\n' "$(printf '─%.0s' {1..72})"
 }
@@ -83,10 +91,10 @@ query_terminal() {
 
     old_stty=$(stty -g 2>/dev/null) || return 1
     stty -echo -icanon min 0 time 0 2>/dev/null || return 1
-    printf '%s' "$query" >/dev/tty
+    printf '%s' "$query" >&3
     sleep "$timeout"
     response=""
-    while IFS= read -r -s -t 0.05 -n 1 ch </dev/tty 2>/dev/null; do
+    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do
         response+="$ch"
         [[ ${#response} -gt 200 ]] && break
     done
@@ -101,16 +109,16 @@ query_terminal_alt() {
 
     old_stty=$(stty -g 2>/dev/null) || return 1
     stty -echo -icanon min 0 time 0 2>/dev/null || return 1
-    printf '%s' "${CSI}?1049h" >/dev/tty
+    printf '%s' "${CSI}?1049h" >&3
     sleep 0.05
-    printf '%s' "$query" >/dev/tty
+    printf '%s' "$query" >&3
     sleep "$timeout"
     response=""
-    while IFS= read -r -s -t 0.05 -n 1 ch </dev/tty 2>/dev/null; do
+    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do
         response+="$ch"
         [[ ${#response} -gt 200 ]] && break
     done
-    printf '%s' "${CSI}?1049l" >/dev/tty
+    printf '%s' "${CSI}?1049l" >&3
     stty "$old_stty" 2>/dev/null
     printf '%s' "$response" | cat -v
 }

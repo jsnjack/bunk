@@ -55,11 +55,11 @@ query_raw() {
     old_stty=$(stty -g 2>/dev/null) || return 1
     stty -echo -icanon min 0 time 0 2>/dev/null || return 1
     # drain any stale input
-    while IFS= read -r -s -t 0.05 -n 1 ch </dev/tty 2>/dev/null; do :; done
-    printf '%s' "$query" >/dev/tty
+    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do :; done
+    printf '%s' "$query" >&3
     sleep "$timeout"
     response=""
-    while IFS= read -r -s -t 0.05 -n 1 ch </dev/tty 2>/dev/null; do
+    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do
         response+="$ch"
         [[ ${#response} -gt 400 ]] && break
     done
