@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -45,6 +47,45 @@ func TestParseOSCColorReply_Incomplete(t *testing.T) {
 func TestParseOSCColorReply_IgnoresDifferentOSCNumber(t *testing.T) {
 	if got, ok := parseOSCColorReply([]byte("\x1b]11;rgb:aaaa/bbbb/cccc\x1b\\"), 10); ok || got != "" {
 		t.Fatalf("parseOSCColorReply(other num) = (%q, %t), want (\"\", false)", got, ok)
+	}
+}
+
+func TestReadHostOSCReplies_NoReplyBailsAtInitialTimeout(t *testing.T) {
+	// With no data on the fd, readHostOSCReplies should bail after the
+	// initial timeout without waiting for the extended timeout.
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	start := time.Now()
+	got := readHostOSCReplies(int(pr.Fd()), []int{10, 11, 12}, 50*time.Millisecond, 50*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if len(got) != 0 {
+		t.Fatalf("expected no replies, got %v", got)
+	}
+	if elapsed > 80*time.Millisecond {
+		t.Fatalf("took %v, want ~50ms (initial timeout only)", elapsed)
+	}
+}
+
+func TestReadHostOSCReplies_FirstReplyExtendsDeadline(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	// Write one reply immediately so the deadline extends.
+	pw.Write([]byte("\x1b]10;rgb:aaaa/bbbb/cccc\x1b\\"))
+
+	got := readHostOSCReplies(int(pr.Fd()), []int{10, 11, 12}, 50*time.Millisecond, 50*time.Millisecond)
+	if got[10] != "rgb:aaaa/bbbb/cccc" {
+		t.Fatalf("OSC 10 = %q, want rgb:aaaa/bbbb/cccc", got[10])
 	}
 }
 

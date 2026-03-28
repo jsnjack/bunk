@@ -73,7 +73,7 @@ func probeHostOSCColors() hostOSCColors {
 		}
 	}
 
-	replies := readHostOSCReplies(int(tty.Fd()), queries, 150*time.Millisecond)
+	replies := readHostOSCReplies(int(tty.Fd()), queries, 50*time.Millisecond, 50*time.Millisecond)
 	colors := hostOSCColors{
 		fg:     replies[10],
 		bg:     replies[11],
@@ -83,13 +83,19 @@ func probeHostOSCColors() hostOSCColors {
 	return colors
 }
 
-func readHostOSCReplies(fd int, queries []int, timeout time.Duration) map[int]string {
+// readHostOSCReplies reads OSC colour replies with an adaptive timeout.
+// It waits up to initialTimeout for the first reply.  If no reply arrives the
+// terminal likely doesn't support these queries and we bail early.  Once the
+// first reply lands the deadline is extended by extendedTimeout to collect
+// remaining replies (which typically arrive within microseconds of the first).
+func readHostOSCReplies(fd int, queries []int, initialTimeout, extendedTimeout time.Duration) map[int]string {
 	found := make(map[int]string, len(queries))
 	if len(queries) == 0 {
 		return found
 	}
 
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(initialTimeout)
+	extended := false
 	var buf []byte
 	tmp := make([]byte, 256)
 
@@ -128,6 +134,7 @@ func readHostOSCReplies(fd int, queries []int, timeout time.Duration) map[int]st
 			break
 		}
 
+		prevFound := len(found)
 		buf = append(buf, tmp[:nr]...)
 		for _, num := range queries {
 			if _, ok := found[num]; ok {
@@ -136,6 +143,10 @@ func readHostOSCReplies(fd int, queries []int, timeout time.Duration) map[int]st
 			if color, ok := parseOSCColorReply(buf, num); ok {
 				found[num] = color
 			}
+		}
+		if !extended && len(found) > prevFound {
+			deadline = time.Now().Add(extendedTimeout)
+			extended = true
 		}
 	}
 	return found
