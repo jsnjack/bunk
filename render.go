@@ -373,12 +373,14 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	sbCount := p.sb.count
 	hasSel := p.selActive
 	hasSearch := p.searchHL != nil
+	statusKey := statusOverlayKeyLocked(p, time.Now())
 
 	// Determine whether a full repaint is needed.
 	//
 	// Full repaint is required when any overlay changes (scroll position,
-	// search highlights, selection) — a row that vt10x hasn't written to
-	// may still need repainting because its highlight changed.
+	// search highlights, selection, status badges) — a row that vt10x
+	// hasn't written to may still need repainting because an overlay on top
+	// of it changed.
 	//
 	// When sbOff > 0 the viewport mixes ring rows (no dirty tracking) with
 	// live terminal rows, so full repaint is always used in scroll mode.
@@ -387,7 +389,8 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 		hasSel != p.lastRenderSelActive ||
 		p.selAnchor != p.lastRenderSelAnchor ||
 		p.selCursor != p.lastRenderSelCursor ||
-		p.searchHLGen != p.lastRenderSearchHLGen
+		p.searchHLGen != p.lastRenderSearchHLGen ||
+		statusKey != p.lastRenderStatusKey
 
 	// Always consume dirty to keep vt10x state clean (avoids accumulating
 	// dirty rows while the pane is scrolled that would confuse later renders).
@@ -399,6 +402,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	p.lastRenderSelAnchor = p.selAnchor
 	p.lastRenderSelCursor = p.selCursor
 	p.lastRenderSearchHLGen = p.searchHLGen
+	p.lastRenderStatusKey = statusKey
 
 	// Nothing to draw: pane is in live view, no overlay changed, and vt10x
 	// reports no cell writes since the last render.

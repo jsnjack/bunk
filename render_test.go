@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	"bunk/internal/vt10x"
 
@@ -1142,6 +1144,18 @@ func screenRowFingerprints(scr tcell.SimulationScreen, rows int) []rune {
 	return fp
 }
 
+func screenRowString(scr tcell.SimulationScreen, y, cols int) string {
+	runes := make([]rune, cols)
+	for x := 0; x < cols; x++ {
+		ch, _, _, _ := scr.GetContent(x, y)
+		if ch == 0 {
+			ch = ' '
+		}
+		runes[x] = ch
+	}
+	return string(runes)
+}
+
 // TestRenderPane_DirtyOnlyRepaintsChangedRow verifies that when only one row
 // changes in the live terminal, renderPane only repaints that row and leaves
 // the others unchanged in the tcell simulation screen.
@@ -1290,5 +1304,62 @@ func TestRenderPane_FullRepaintOnScrollChange(t *testing.T) {
 	}
 	if changed == 0 {
 		t.Error("scroll to top: expected at least one row to change, but all are identical")
+	}
+}
+
+// TestRenderPane_FullRepaintOnStatusOverlayChange verifies that top-row status
+// badges are treated as an overlay invalidation source. Without this, an
+// expired badge can leave stale text behind on an otherwise idle pane because
+// drawPaneStatus stops drawing before renderPane repaints the underlying row.
+func TestRenderPane_FullRepaintOnStatusOverlayChange(t *testing.T) {
+	const cols, rows = 14, 2
+
+	p := &Pane{
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+		x:               0,
+		y:               0,
+		w:               cols,
+		h:               rows,
+		cmd:             &exec.Cmd{},
+	}
+	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.onScrollRow))
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(cols, rows)
+	rt := testTheme()
+	node := &Node{pane: p}
+
+	p.mu.Lock()
+	p.captureAndWrite([]byte("hello world"))
+	p.statusMsg = "COPIED"
+	p.statusMsgEnd = time.Now().Add(time.Minute)
+	p.mu.Unlock()
+
+	renderPane(scr, p, rt)
+	drawScrollbars(scr, node, rt)
+	drawPaneStatus(scr, p, true, rt, false)
+
+	withBadge := screenRowString(scr, 0, cols)
+	if !strings.Contains(withBadge, "COPIED") {
+		t.Fatalf("initial render missing status badge: row=%q", withBadge)
+	}
+
+	p.mu.Lock()
+	p.statusMsgEnd = time.Now().Add(-time.Second)
+	p.mu.Unlock()
+
+	renderPane(scr, p, rt)
+	drawScrollbars(scr, node, rt)
+	drawPaneStatus(scr, p, true, rt, false)
+
+	withoutBadge := screenRowString(scr, 0, cols)
+	if strings.Contains(withoutBadge, "COPIED") {
+		t.Fatalf("expired status badge left stale text behind: row=%q", withoutBadge)
+	}
+	if !strings.Contains(withoutBadge, "hello") {
+		t.Fatalf("underlying row was not restored after badge expiry: row=%q", withoutBadge)
 	}
 }

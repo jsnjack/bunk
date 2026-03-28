@@ -740,6 +740,23 @@ func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane, rt resolvedTheme
 	drawAllPaneStatus(scr, n.right, active, rt, zoomed)
 }
 
+// statusOverlayKeyLocked returns a stable signature for the badge content that
+// overlays the pane's top row. renderPane uses this to force a repaint when
+// status badges change even if vt10x itself has not marked any rows dirty.
+//
+// p.mu must be held by the caller.
+func statusOverlayKeyLocked(p *Pane, now time.Time) string {
+	tempActive := !p.statusMsgEnd.IsZero() && now.Before(p.statusMsgEnd) && p.statusMsg != ""
+	return fmt.Sprintf("%t|%s|%s|%s|%s|%s",
+		tempActive,
+		p.statusMsg,
+		p.fgProcess,
+		p.containerType,
+		p.containerID,
+		p.sshHost,
+	)
+}
+
 // drawPaneStatus draws compact status badges in the top-right corner of
 // pane p.  Badges are drawn right-to-left so the highest-priority badge
 // (scroll count) is closest to the edge and always visible.

@@ -88,6 +88,7 @@ type Pane struct {
 	lastRenderSelAnchor   selPos
 	lastRenderSelCursor   selPos
 	lastRenderSearchHLGen int
+	lastRenderStatusKey   string
 
 	// oscScan is the per-pane OSC pre-scanner (value, no alloc).
 	// Forwards OSC 7 (CWD), OSC 8 (hyperlinks), OSC 52 (clipboard) to the
