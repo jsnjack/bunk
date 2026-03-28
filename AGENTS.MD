@@ -17,7 +17,7 @@ bunk is a lightweight terminal multiplexer in Go. Each pane is a real PTY-backed
 | `layout.go` | BSP tree: `Node`, split/remove/resize math |
 | `scrollback.go` | `sbRing` ring buffer, scroll-detection algorithm |
 | `reflow.go` | Terminal reflow on resize, `rawBuf` replay, `stripAltScreen()` |
-| `osc.go` | OSC pre-scanner, passthrough of OSC 7/8/52 to host |
+| `osc.go` | OSC pre-scanner, passthrough of OSC 7/8/52/133 to host |
 | `mouse.go` | Mouse events → PTY byte sequences |
 | `status.go` | Status badges (scroll count, container, SSH, flash messages) |
 | `search.go` | In-pane text search |
@@ -69,6 +69,13 @@ make build         # runs tests first, then produces bin/bunk_linux_amd64
 Tests run with `-race`. Tests are a prerequisite of the binary build — both must pass.
 
 **Always run `gofmt -w .` after completing any code changes.** All Go source files must be gofmt-clean before committing.
+
+Manual regression scripts:
+- `bash terminal_features.sh text` for SGR/style changes in `render.go` or `internal/vt10x/state.go`
+- `bash terminal_features.sh colors` for ANSI/256/RGB/underline-colour changes in `render.go`, `config.go`, or vt10x colour parsing
+- `TERMINAL_FEATURES_AUTO=1 bash terminal_features.sh cursor` for cursor-shape, width, emoji, or reflow changes
+- `TERMINAL_FEATURES_AUTO=1 bash terminal_features.sh integration` for hyperlink, bracketed-paste, and OSC 133 host-integration changes
+- `bash terminal_features.sh queries` plus `bash scripts/osc_smoke.sh` inside bunk for OSC, DECRQM, capability-query, or kitty-keyboard changes in `pane.go`, `osc.go`, or `internal/vt10x/str.go`
 
 ---
 
