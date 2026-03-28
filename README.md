@@ -147,3 +147,9 @@ BUNK= ./bunk
 
 # (or: BUNK= ./bunk --trace for detailed logs of all input/output)
 ```
+
+Or use the Makefile shortcut — builds the local binary, resets `/tmp/bunk.log`, and opens a new terminal with trace logging in one step:
+
+```bash
+make run
+```

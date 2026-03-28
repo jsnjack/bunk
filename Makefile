@@ -26,4 +26,9 @@ release: build
 	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_linux_amd64.tar.gz bin/${BINARY}_linux_amd64
 	grm release jsnjack/${BINARY} -f bin/${BINARY}_linux_amd64.tar.gz -t "v`monova`"
 
-.PHONY: version release build test
+run:
+	go build -o ${BINARY} .
+	> /tmp/bunk.log
+	BUNK=1 gnome-terminal -- bash -c 'cd $(PWD) && BUNK= ./${BINARY} --trace'
+
+.PHONY: version release build test run
