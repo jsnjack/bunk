@@ -58,6 +58,10 @@ type View interface {
 	// '1' = set, '2' = reset, '4' = not recognized.
 	QueryPrivateMode(mode int) byte
 
+	// ColorOverride returns the current dynamic-colour override for c, if one
+	// has been set via OSC 10/11/12 or similar colour-control sequences.
+	ColorOverride(c Color) (Color, bool)
+
 	// ConsumeDirty returns which rows have been written to since the last
 	// ConsumeDirty call, then clears the dirty state.  Returns nil, false
 	// when nothing is dirty (zero allocation).  The caller must not retain

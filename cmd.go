@@ -141,12 +141,17 @@ func run(configPath, themeName string, debug, trace bool) error {
 	w, h := screen.Size()
 	L.Debug("startup: screen size", "w", w, "h", h)
 
-	p, err := NewPane(app.nextID, 0, 0, w, h, app.scrollback, "", nil, app.redraw, app.paneDead, app.done, app.oscCh)
+	p, err := NewPane(
+		app.nextID, 0, 0, w, h, app.scrollback, "", nil,
+		tcellColorToXParse(app.theme.fg),
+		tcellColorToXParse(app.theme.bg),
+		tcellColorToXParse(app.theme.fg),
+		app.redraw, app.paneDead, app.done, app.oscCh,
+	)
 	if err != nil {
 		screen.Fini()
 		return err
 	}
-	p.SetThemeColors(tcellColorToXParse(app.theme.fg), tcellColorToXParse(app.theme.bg))
 	app.nextID++
 	app.root = newLeaf(p, 0, 0, w, h)
 	app.active = p

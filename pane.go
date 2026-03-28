@@ -142,12 +142,12 @@ type Pane struct {
 	statusMsg    string
 	statusMsgEnd time.Time
 
-	// themeFG/BG are the host terminal's fg/bg colours in XParseColor format
-	// ("rgb:<rrrr>/<gggg>/<bbbb>"), set once at pane creation.  Used to answer
-	// OSC 10/11 colour queries so apps (neovim, helix, BubbleTea) can detect
-	// the dark/light theme.  Immutable after SetThemeColors is called.
-	themeFGColor string
-	themeBGColor string
+	// themeFG/BG/Cursor are the default colours bunk exposes to pane apps in
+	// XParseColor format ("rgb:<rrrr>/<gggg>/<bbbb>") when no dynamic OSC
+	// override is active.  Empty means "unknown" and suppresses the reply.
+	themeFGColor     string
+	themeBGColor     string
+	themeCursorColor string
 }
 
 // NewPane spawns a shell inside a new PTY with the given geometry, starts the
@@ -160,7 +160,7 @@ type Pane struct {
 //	paneDead  - receives p when the shell exits
 //	done      - closed by the app on shutdown
 //	oscCh     - receives OSC 7/8/52 sequences to forward to the host terminal
-func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
+func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, themeFG, themeBG, themeCursor string, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
 	if w < 2 || h < 1 {
 		return nil, fmt.Errorf("pane too small: %dx%d", w, h)
 	}
@@ -214,7 +214,7 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 	//      before reading the response; bash readline then echoes the
 	//      stale bytes as visible garbage on the prompt line.
 	// DA/DA2/CPR responses are handled manually in captureAndWrite where
-	// we can gate them on specific conditions.  OSC 10/11 responses are
+	// we can gate them on specific conditions.  OSC 10/11/12 responses are
 	// restricted to alt-screen mode for the same reason as (2) above: in
 	// normal mode the response can be read as keyboard input by the next
 	// program (e.g. survey used by gh auth login).
@@ -224,10 +224,13 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, red
 	// by the time the callback could fire.
 	p := &Pane{
 		id: id, x: x, y: y, w: w, h: h,
-		ptmx:            ptmx,
-		cmd:             cmd,
-		scrollbackLines: scrollback,
-		sb:              sbRing{maxLines: scrollback},
+		ptmx:             ptmx,
+		cmd:              cmd,
+		scrollbackLines:  scrollback,
+		sb:               sbRing{maxLines: scrollback},
+		themeFGColor:     themeFG,
+		themeBGColor:     themeBG,
+		themeCursorColor: themeCursor,
 	}
 	p.term = vt10x.New(vt10x.WithSize(w-1, h), vt10x.WithScrollCallback(p.onScrollRow))
 
@@ -343,109 +346,46 @@ func (p *Pane) onScrollRow(row []vt10x.Glyph) {
 	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
 }
 
-// captureAndWrite writes chunk to vt10x and handles DA/CPR/XTGETTCAP
-// capability queries.  Scrollback capture is handled by the onScrollRow
-// callback installed at pane creation — vt10x calls it directly when rows
-// scroll off the top, so no post-write diffing is required here.
+// captureAndWrite writes chunk to vt10x and answers terminal capability
+// queries against the terminal state that exists at that byte offset in the
+// stream.  Scrollback capture is handled by the onScrollRow callback installed
+// at pane creation — vt10x calls it directly when rows scroll off the top, so
+// no post-write diffing is required here.
 //
 // Must be called with Pane.mu held.
 func (p *Pane) captureAndWrite(chunk []byte) {
+	if len(chunk) == 0 {
+		return
+	}
+
+	if p.fgProcess != "ssh" && p.fgProcess != "mosh" {
+		offset := 0
+		for offset < len(chunk) {
+			q, ok := nextTerminalQuery(chunk, offset)
+			if !ok {
+				p.writeTerminalChunk(chunk[offset:])
+				return
+			}
+			if q.start > offset {
+				p.writeTerminalChunk(chunk[offset:q.start])
+			}
+			p.writeTerminalChunk(chunk[q.start:q.end])
+			p.replyTerminalQuery(q)
+			offset = q.end
+		}
+		return
+	}
+
+	p.writeTerminalChunk(chunk)
+}
+
+// writeTerminalChunk feeds chunk into vt10x while preserving bunk's
+// scrollback, rawBuf replay, alt-screen hygiene, and kitty-keyboard handling.
+func (p *Pane) writeTerminalChunk(chunk []byte) {
 	altScreen := p.term.Mode()&vt10x.ModeAltScreen != 0
 	if L.Enabled(nil, LevelTrace) {
 		cur := p.term.Cursor()
-		L.Log(nil, LevelTrace, "captureAndWrite: start", "pane", p.id, "cursor_y", cur.Y, "cursor_x", cur.X, "alt", altScreen, "chunk_len", len(chunk))
-	}
-
-	// Respond to terminal capability queries emitted by local programs
-	// (e.g. BubbleTea inline apps like gh-copilot).  Answering immediately
-	// eliminates multi-second startup delays caused by unanswered-query
-	// timeouts.  Skip for SSH/mosh panes: writing to ptmx there forwards
-	// bytes to the remote server as user input, corrupting the session.
-	if p.fgProcess != "ssh" && p.fgProcess != "mosh" {
-		// DA - Primary Device Attributes: ESC [ c or ESC [ 0 c
-		// Many TUI apps (neovim, BubbleTea, zellij) send this at startup to
-		// detect terminal capabilities.  Without a response they time out or
-		// fall back to degraded mode.  We identify as VT220 with ANSI colour,
-		// which is the minimum needed for modern apps to enable 256-colour /
-		// truecolor support.
-		if bytes.Contains(chunk, []byte("\x1b[c")) || bytes.Contains(chunk, []byte("\x1b[0c")) {
-			// Response: VT220 with ANSI colour (62), columns (1), ANSI text
-			// locator (9).  Matches what xterm-256color reports.
-			p.ptmx.Write([]byte("\x1b[?62;1;2;4;6;9;15;22c")) //nolint:errcheck
-			L.Log(nil, LevelTrace, "captureAndWrite: DA response", "pane", p.id)
-		}
-		// DA2 - Secondary Device Attributes: ESC [ > c or ESC [ > 0 c
-		// Reports terminal type and version.  We identify as xterm (type 0).
-		if bytes.Contains(chunk, []byte("\x1b[>c")) || bytes.Contains(chunk, []byte("\x1b[>0c")) {
-			p.ptmx.Write([]byte("\x1b[>0;279;0c")) //nolint:errcheck
-			L.Log(nil, LevelTrace, "captureAndWrite: DA2 response", "pane", p.id)
-		}
-		// XTVERSION - terminal name/version query: ESC [ > 0 q  or  ESC [ > q
-		// Response is a DCS string: DCS > | name(version) ST
-		// Modern apps (Claude Code, Neovim, WezTerm, foot) use this for
-		// feature detection — a missing response causes them to skip features
-		// or wait for a timeout.  We report as VTE 0.82.3 (8203) to match what
-		// GNOME Terminal and Tilix report — apps are calibrated against this number.
-		if bytes.Contains(chunk, []byte("\x1b[>0q")) || bytes.Contains(chunk, []byte("\x1b[>q")) {
-			p.ptmx.Write([]byte("\x1bP>|VTE(8203)\x1b\\")) //nolint:errcheck
-			L.Log(nil, LevelTrace, "captureAndWrite: XTVERSION response", "pane", p.id)
-		}
-		// XTGETTCAP — terminfo capability query: DCS + q <hex-caps> ST
-		// Format: ESC P + q <hex-cap1> ; <hex-cap2> ... ESC \
-		// Response per cap: ESC P 1 + r <hex-cap> = <hex-value> ESC \  (found)
-		//                   ESC P 0 + r <hex-cap> ESC \                 (not found)
-		// Apps (Neovim, WezTerm, kitty-protocol users) use this for runtime
-		// capability detection.  Without a response they wait ~1 second then
-		// degrade.  We respond to the caps we actually implement.
-		if idx := bytes.Index(chunk, []byte("\x1bP+q")); idx >= 0 {
-			rest := chunk[idx+4:]
-			if end := bytes.Index(rest, []byte("\x1b\\")); end >= 0 {
-				payload := string(rest[:end])
-				for _, hexCap := range strings.Split(payload, ";") {
-					p.ptmx.Write([]byte(xtgettcapResponse(hexCap))) //nolint:errcheck
-				}
-				L.Log(nil, LevelTrace, "captureAndWrite: XTGETTCAP response", "pane", p.id, "payload", payload)
-			}
-		}
-		// CPR - cursor position report: ESC [ 6 n → ESC [ row ; col R
-		// BubbleTea sends this at startup to know where to render inline UI.
-		// Reply with the actual cursor position so the app renders right after
-		// the command line, matching normal terminal behaviour.
-		if bytes.Contains(chunk, []byte("\x1b[6n")) && !altScreen {
-			cur := p.term.Cursor()
-			resp := fmt.Sprintf("\x1b[%d;%dR", cur.Y+1, cur.X+1)
-			p.ptmx.Write([]byte(resp)) //nolint:errcheck
-			L.Log(nil, LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
-		}
-		// OSC 10/11 — fg/bg colour queries.  Full-screen TUI apps (neovim,
-		// helix) send these to detect dark vs light theme.  We only respond
-		// in alt-screen mode: those apps own their event loop and safely
-		// consume terminal responses.  In normal screen mode the response
-		// sits in the PTY buffer and is read as unexpected keyboard input by
-		// the next program (e.g. survey used by `gh auth login`).
-		if altScreen && p.themeFGColor != "" {
-			if bytes.Contains(chunk, []byte("\x1b]10;?")) {
-				resp := fmt.Sprintf("\x1b]10;%s\x1b\\", p.themeFGColor)
-				p.ptmx.Write([]byte(resp)) //nolint:errcheck
-				L.Log(nil, LevelTrace, "captureAndWrite: OSC 10 response", "pane", p.id, "color", p.themeFGColor)
-			}
-			if bytes.Contains(chunk, []byte("\x1b]11;?")) {
-				resp := fmt.Sprintf("\x1b]11;%s\x1b\\", p.themeBGColor)
-				p.ptmx.Write([]byte(resp)) //nolint:errcheck
-				L.Log(nil, LevelTrace, "captureAndWrite: OSC 11 response", "pane", p.id, "color", p.themeBGColor)
-			}
-		}
-		// DECRQM — mode status query: \x1b[?<n>$p  →  \x1b[?<n>;<status>$y
-		// Status values: 1=set, 2=reset, 4=not recognized.
-		// QueryPrivateMode() in vt10x handles all tracked modes automatically.
-		if bytes.Contains(chunk, []byte("$p")) {
-			scanDECRQM(chunk, func(n int) {
-				status := p.term.QueryPrivateMode(n)
-				resp := fmt.Sprintf("\x1b[?%d;%c$y", n, status)
-				p.ptmx.Write([]byte(resp)) //nolint:errcheck
-				L.Log(nil, LevelTrace, "captureAndWrite: DECRQM response", "pane", p.id, "mode", n, "status", string(status))
-			})
-		}
+		L.Log(nil, LevelTrace, "writeTerminalChunk: start", "pane", p.id, "cursor_y", cur.Y, "cursor_x", cur.X, "alt", altScreen, "chunk_len", len(chunk))
 	}
 
 	// Kitty keyboard protocol — bunk acts as the "terminal" for pane apps.
@@ -593,6 +533,214 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 		p.needsSync = true
 	}
 
+}
+
+type terminalQueryKind int
+
+const (
+	terminalQueryDA terminalQueryKind = iota
+	terminalQueryDA2
+	terminalQueryXTVERSION
+	terminalQueryXTGETTCAP
+	terminalQueryCPR
+	terminalQueryDECRQM
+	terminalQueryOSC10
+	terminalQueryOSC11
+	terminalQueryOSC12
+)
+
+type terminalQuery struct {
+	start, end int
+	kind       terminalQueryKind
+	mode       int
+	payload    string
+}
+
+func (p *Pane) replyTerminalQuery(q terminalQuery) {
+	switch q.kind {
+	case terminalQueryDA:
+		p.ptmx.Write([]byte("\x1b[?62;1;2;4;6;9;15;22c")) //nolint:errcheck
+		L.Log(nil, LevelTrace, "captureAndWrite: DA response", "pane", p.id)
+	case terminalQueryDA2:
+		p.ptmx.Write([]byte("\x1b[>0;279;0c")) //nolint:errcheck
+		L.Log(nil, LevelTrace, "captureAndWrite: DA2 response", "pane", p.id)
+	case terminalQueryXTVERSION:
+		p.ptmx.Write([]byte("\x1bP>|VTE(8203)\x1b\\")) //nolint:errcheck
+		L.Log(nil, LevelTrace, "captureAndWrite: XTVERSION response", "pane", p.id)
+	case terminalQueryXTGETTCAP:
+		for _, hexCap := range strings.Split(q.payload, ";") {
+			if resp := xtgettcapResponse(hexCap); resp != "" {
+				p.ptmx.Write([]byte(resp)) //nolint:errcheck
+			}
+		}
+		L.Log(nil, LevelTrace, "captureAndWrite: XTGETTCAP response", "pane", p.id, "payload", q.payload)
+	case terminalQueryCPR:
+		if p.term.Mode()&vt10x.ModeAltScreen != 0 {
+			return
+		}
+		cur := p.term.Cursor()
+		resp := fmt.Sprintf("\x1b[%d;%dR", cur.Y+1, cur.X+1)
+		p.ptmx.Write([]byte(resp)) //nolint:errcheck
+		L.Log(nil, LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
+	case terminalQueryDECRQM:
+		status := p.term.QueryPrivateMode(q.mode)
+		resp := fmt.Sprintf("\x1b[?%d;%c$y", q.mode, status)
+		p.ptmx.Write([]byte(resp)) //nolint:errcheck
+		L.Log(nil, LevelTrace, "captureAndWrite: DECRQM response", "pane", p.id, "mode", q.mode, "status", string(status))
+	case terminalQueryOSC10:
+		p.replyOSCColorQuery(10, vt10x.DefaultFG, p.themeFGColor)
+	case terminalQueryOSC11:
+		p.replyOSCColorQuery(11, vt10x.DefaultBG, p.themeBGColor)
+	case terminalQueryOSC12:
+		p.replyOSCColorQuery(12, vt10x.DefaultCursor, p.themeCursorColor)
+	}
+}
+
+func (p *Pane) replyOSCColorQuery(num int, def vt10x.Color, fallback string) {
+	if p.term.Mode()&vt10x.ModeAltScreen == 0 {
+		return
+	}
+	color := p.currentOSCColor(def, fallback)
+	if color == "" {
+		return
+	}
+	resp := fmt.Sprintf("\x1b]%d;%s\x1b\\", num, color)
+	p.ptmx.Write([]byte(resp)) //nolint:errcheck
+	L.Log(nil, LevelTrace, "captureAndWrite: OSC color response", "pane", p.id, "osc_num", num, "color", color)
+}
+
+func (p *Pane) currentOSCColor(def vt10x.Color, fallback string) string {
+	if c, ok := p.term.ColorOverride(def); ok {
+		return vtColorToXParse(c)
+	}
+	return fallback
+}
+
+func vtColorToXParse(c vt10x.Color) string {
+	if c >= vt10x.DefaultFG {
+		return ""
+	}
+	r := byte(c >> 16)
+	g := byte(c >> 8)
+	b := byte(c)
+	return fmt.Sprintf("rgb:%02x%02x/%02x%02x/%02x%02x", r, r, g, g, b, b)
+}
+
+func nextTerminalQuery(data []byte, from int) (terminalQuery, bool) {
+	for i := from; i+1 < len(data); i++ {
+		if data[i] != 0x1b {
+			continue
+		}
+		switch data[i+1] {
+		case '[':
+			if q, ok := parseCSIQuery(data, i); ok {
+				return q, true
+			}
+		case ']':
+			end := oscSequenceEnd(data, i)
+			if end <= i {
+				continue
+			}
+			if q, ok := parseOSCQuery(data, i, end); ok {
+				return q, true
+			}
+			i = end - 1
+		case 'P':
+			end := dcsSequenceEnd(data, i)
+			if end <= i {
+				continue
+			}
+			if bytes.HasPrefix(data[i:end], []byte("\x1bP+q")) {
+				return terminalQuery{
+					start:   i,
+					end:     end,
+					kind:    terminalQueryXTGETTCAP,
+					payload: string(data[i+4 : end-2]),
+				}, true
+			}
+			i = end - 1
+		}
+	}
+	return terminalQuery{}, false
+}
+
+func parseCSIQuery(data []byte, start int) (terminalQuery, bool) {
+	rest := data[start:]
+	switch {
+	case bytes.HasPrefix(rest, []byte("\x1b[>0q")):
+		return terminalQuery{start: start, end: start + len("\x1b[>0q"), kind: terminalQueryXTVERSION}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[>q")):
+		return terminalQuery{start: start, end: start + len("\x1b[>q"), kind: terminalQueryXTVERSION}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[>0c")):
+		return terminalQuery{start: start, end: start + len("\x1b[>0c"), kind: terminalQueryDA2}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[>c")):
+		return terminalQuery{start: start, end: start + len("\x1b[>c"), kind: terminalQueryDA2}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[0c")):
+		return terminalQuery{start: start, end: start + len("\x1b[0c"), kind: terminalQueryDA}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[c")):
+		return terminalQuery{start: start, end: start + len("\x1b[c"), kind: terminalQueryDA}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[6n")):
+		return terminalQuery{start: start, end: start + len("\x1b[6n"), kind: terminalQueryCPR}, true
+	case bytes.HasPrefix(rest, []byte("\x1b[?")):
+		mode, end, ok := parseDECRQM(data, start)
+		if ok {
+			return terminalQuery{start: start, end: end, kind: terminalQueryDECRQM, mode: mode}, true
+		}
+	}
+	return terminalQuery{}, false
+}
+
+func parseDECRQM(data []byte, start int) (mode, end int, ok bool) {
+	i := start + len("\x1b[?")
+	j := i
+	for j < len(data) && data[j] >= '0' && data[j] <= '9' {
+		mode = mode*10 + int(data[j]-'0')
+		j++
+	}
+	if j == i || j+1 >= len(data) || data[j] != '$' || data[j+1] != 'p' {
+		return 0, 0, false
+	}
+	return mode, j + 2, true
+}
+
+func parseOSCQuery(data []byte, start, end int) (terminalQuery, bool) {
+	bodyEnd := end - 1
+	if end-start >= 2 && data[end-1] != 0x07 {
+		bodyEnd = end - 2
+	}
+	switch string(data[start+2 : bodyEnd]) {
+	case "10;?":
+		return terminalQuery{start: start, end: end, kind: terminalQueryOSC10}, true
+	case "11;?":
+		return terminalQuery{start: start, end: end, kind: terminalQueryOSC11}, true
+	case "12;?":
+		return terminalQuery{start: start, end: end, kind: terminalQueryOSC12}, true
+	default:
+		return terminalQuery{}, false
+	}
+}
+
+func oscSequenceEnd(data []byte, start int) int {
+	for i := start + 2; i < len(data); i++ {
+		switch data[i] {
+		case 0x07:
+			return i + 1
+		case 0x1b:
+			if i+1 < len(data) && data[i+1] == '\\' {
+				return i + 2
+			}
+		}
+	}
+	return -1
+}
+
+func dcsSequenceEnd(data []byte, start int) int {
+	for i := start + 2; i < len(data); i++ {
+		if data[i] == 0x1b && i+1 < len(data) && data[i+1] == '\\' {
+			return i + 2
+		}
+	}
+	return -1
 }
 
 // waitForExit blocks until the shell process exits (or the app shuts down),
@@ -1454,15 +1602,6 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 	// Flush remaining bytes.
 	out = append(out, chunk[copied:]...)
 	return out
-}
-
-// SetThemeColors stores the host terminal's fg/bg colours so captureAndWrite
-// can answer OSC 10/11 queries.  Must be called before the first readPTY chunk
-// arrives (i.e. immediately after NewPane).  Thread-safe: called once from the
-// main goroutine before any PTY I/O goroutines use the fields.
-func (p *Pane) SetThemeColors(fg, bg string) {
-	p.themeFGColor = fg
-	p.themeBGColor = bg
 }
 
 // xParseColor converts an RGB hex string "rrggbb" (6 hex digits) to the

@@ -47,13 +47,13 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 4 | Set palette color | OK | vt10x handles |
 | 7 | CWD notification | OK | Forwarded to host |
 | 8 | Hyperlinks | OK | Forwarded to host |
-| 10/11/12 | Query fg/bg/cursor color | OK (10/11, alt-screen only) | OSC 10/11 answered from theme in alt-screen mode only; normal-mode responses are suppressed to prevent leaking into programs like survey (gh auth login). OSC 12 (cursor colour) still MISSING |
+| 10/11/12 | Query fg/bg/cursor color | **PARTIAL** | Queries are answered in-stream from bunk's current dynamic colour state. Replies are gated to alt-screen mode to avoid leaking into normal-mode apps; when the default colour is unknown (e.g. `theme="terminal"`), bunk suppresses the reply instead of inventing one |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles |
-| 110/111/112 | Reset fg/bg/cursor color | N/A | Silently dropped — bunk uses theme colours, so there is nothing to reset |
+| 110/111/112 | Reset fg/bg/cursor color | **PARTIAL** | Clears bunk's dynamic fg/bg/cursor overrides. Cursor-colour state is tracked for query/reset semantics, but bunk does not visibly render a separate cursor colour |
 | 133 | Shell integration/prompt marking | **MISSING** | Used by bash/zsh/fish for semantic prompts. Terminals use this for jump-to-prompt. Not forwarded to host |
 
-Highest impact: OSC 12 (cursor colour) and OSC 110/111/112 (reset) still missing but low priority.
+Highest impact: OSC 133 prompt markers are still missing. Dynamic colour queries/resets are implemented but still partial because bunk cannot guarantee the host terminal's true default/cursor colour in `theme="terminal"` mode.
 
 ---
 

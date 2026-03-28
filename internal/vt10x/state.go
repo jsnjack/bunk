@@ -249,6 +249,12 @@ func (t *State) QueryPrivateMode(mode int) byte {
 	return '2' // reset
 }
 
+// ColorOverride returns the active dynamic-colour override for c, if present.
+func (t *State) ColorOverride(c Color) (Color, bool) {
+	v, ok := t.colorOverride[c]
+	return v, ok
+}
+
 // privateModeFlag maps a DEC private mode number to its ModeFlag.
 // Returns (0, false) for untracked modes.
 func (t *State) privateModeFlag(mode int) (ModeFlag, bool) {

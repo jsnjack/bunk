@@ -236,6 +236,143 @@ func TestCaptureAndWrite_OSC10NormalModeNoResponse(t *testing.T) {
 	}
 }
 
+func TestCaptureAndWrite_OSC10SameChunkAltScreenResponse(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	p := &Pane{
+		term:            vt10x.New(vt10x.WithSize(40, 10)),
+		ptmx:            pw,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
+	}
+
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
+	p.mu.Unlock()
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
+	if string(buf) != want {
+		t.Fatalf("same-chunk alt-screen OSC 10 response = %q, want %q", string(buf), want)
+	}
+}
+
+func TestCaptureAndWrite_OSC10QueryUsesDynamicOverride(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	p := &Pane{
+		term:            vt10x.New(vt10x.WithSize(40, 10)),
+		ptmx:            pw,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
+	}
+
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]10;?\x1b\\"))
+	p.mu.Unlock()
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	want := "\x1b]10;rgb:1111/2222/3333\x1b\\"
+	if string(buf) != want {
+		t.Fatalf("dynamic OSC 10 response = %q, want %q", string(buf), want)
+	}
+}
+
+func TestCaptureAndWrite_OSC10ResetRestoresTheme(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	p := &Pane{
+		term:            vt10x.New(vt10x.WithSize(40, 10)),
+		ptmx:            pw,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
+	}
+
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]110\x07\x1b]10;?\x1b\\"))
+	p.mu.Unlock()
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
+	if string(buf) != want {
+		t.Fatalf("OSC 110 reset response = %q, want %q", string(buf), want)
+	}
+}
+
+func TestCaptureAndWrite_DECRQMSameChunkUsesUpdatedState(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	p := &Pane{
+		term:            vt10x.New(vt10x.WithSize(40, 10)),
+		ptmx:            pw,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\x1b[?2004h\x1b[?2004$p\x1b[?2004l\x1b[?2004$p"))
+	p.mu.Unlock()
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	want := "\x1b[?2004;1$y\x1b[?2004;2$y"
+	if string(buf) != want {
+		t.Fatalf("same-chunk DECRQM responses = %q, want %q", string(buf), want)
+	}
+}
+
+func TestCaptureAndWrite_OSC10UnknownThemeNoResponse(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	p := &Pane{
+		term:            vt10x.New(vt10x.WithSize(40, 10)),
+		ptmx:            pw,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
+	p.mu.Unlock()
+	pw.Close()
+
+	buf, _ := io.ReadAll(pr)
+	if len(buf) != 0 {
+		t.Fatalf("unknown-theme OSC 10 produced response %q, want none", string(buf))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // readPTY single-lock invariant
 //
@@ -1418,6 +1555,12 @@ func TestXParseColor_InvalidLength(t *testing.T) {
 	got := xParseColor("ff00")
 	if got != "rgb:0000/0000/0000" {
 		t.Errorf("xParseColor invalid length: got %q, want fallback", got)
+	}
+}
+
+func TestTcellColorToXParse_DefaultReturnsEmpty(t *testing.T) {
+	if got := tcellColorToXParse(tcell.ColorDefault); got != "" {
+		t.Fatalf("tcellColorToXParse(ColorDefault) = %q, want empty", got)
 	}
 }
 

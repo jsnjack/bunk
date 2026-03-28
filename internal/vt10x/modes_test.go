@@ -259,14 +259,35 @@ func TestRIS_ClearsFullScreen(t *testing.T) {
 // OSC 110/111/112 — reset dynamic fg/bg/cursor color
 // ---------------------------------------------------------------------------
 
-// TestOSC110_111_112_NoWrite verifies that OSC 110/111/112 (reset dynamic
-// fg/bg/cursor colour) are silently dropped without panicking or writing to
-// the terminal writer.  Previously they fell through to the default case which
-// logged "unknown OSC command N" noise.
-func TestOSC110_111_112_NoWrite(t *testing.T) {
-	// newTestTerm uses a nil writer; any accidental write panics.
+// TestOSC110_111_112_ResetOverrides verifies that dynamic colour resets clear
+// the corresponding OSC 10/11/12 overrides instead of being silently ignored.
+func TestOSC110_111_112_ResetOverrides(t *testing.T) {
 	term := newTestTerm(80, 24)
+	term.Write([]byte("\x1b]10;rgb:1111/2222/3333\x07")) //nolint:errcheck
+	term.Write([]byte("\x1b]11;rgb:4444/5555/6666\x07")) //nolint:errcheck
+	term.Write([]byte("\x1b]12;rgb:7777/8888/9999\x07")) //nolint:errcheck
+
+	if _, ok := term.ColorOverride(DefaultFG); !ok {
+		t.Fatal("DefaultFG override missing after OSC 10 set")
+	}
+	if _, ok := term.ColorOverride(DefaultBG); !ok {
+		t.Fatal("DefaultBG override missing after OSC 11 set")
+	}
+	if _, ok := term.ColorOverride(DefaultCursor); !ok {
+		t.Fatal("DefaultCursor override missing after OSC 12 set")
+	}
+
 	term.Write([]byte("\x1b]110\x07")) //nolint:errcheck // reset fg
 	term.Write([]byte("\x1b]111\x07")) //nolint:errcheck // reset bg
 	term.Write([]byte("\x1b]112\x07")) //nolint:errcheck // reset cursor
+
+	if _, ok := term.ColorOverride(DefaultFG); ok {
+		t.Fatal("DefaultFG override still present after OSC 110 reset")
+	}
+	if _, ok := term.ColorOverride(DefaultBG); ok {
+		t.Fatal("DefaultBG override still present after OSC 111 reset")
+	}
+	if _, ok := term.ColorOverride(DefaultCursor); ok {
+		t.Fatal("DefaultCursor override still present after OSC 112 reset")
+	}
 }

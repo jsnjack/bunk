@@ -807,11 +807,12 @@ func TestTcellColorToXParse_DarkBG(t *testing.T) {
 	}
 }
 
-func TestTcellColorToXParse_Default_Fallback(t *testing.T) {
-	// tcell.ColorDefault has no RGB — must return a safe fallback, not panic.
+func TestTcellColorToXParse_Default_Unknown(t *testing.T) {
+	// tcell.ColorDefault has no RGB — return empty so callers can suppress
+	// OSC replies instead of fabricating a colour.
 	got := tcellColorToXParse(tcell.ColorDefault)
-	if got == "" {
-		t.Error("tcellColorToXParse(ColorDefault) returned empty string")
+	if got != "" {
+		t.Errorf("tcellColorToXParse(ColorDefault) = %q, want empty", got)
 	}
 }
 
@@ -906,6 +907,23 @@ func TestRenderPane_SGR8_Invisible_RendersSpace(t *testing.T) {
 	mainc, _, _, _ := scr.GetContent(0, 0)
 	if mainc != ' ' {
 		t.Errorf("SGR 8 (invisible): got rune %q at col 0, want ' ' (space)", mainc)
+	}
+}
+
+func TestRenderPane_BG256Color_RendersPaletteEntry(t *testing.T) {
+	style := renderAndGetStyle(t, "\x1b[48;5;196mX")
+	_, bg, _ := style.Decompose()
+	if bg != tcell.PaletteColor(196) {
+		t.Fatalf("48;5;196 background = %v, want %v", bg, tcell.PaletteColor(196))
+	}
+}
+
+func TestRenderPane_BGTrueColor_RendersRGB(t *testing.T) {
+	style := renderAndGetStyle(t, "\x1b[48;2;255;128;0mX")
+	_, bg, _ := style.Decompose()
+	want := tcell.NewRGBColor(255, 128, 0)
+	if bg != want {
+		t.Fatalf("48;2;255;128;0 background = %v, want %v", bg, want)
 	}
 }
 

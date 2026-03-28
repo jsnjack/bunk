@@ -69,52 +69,49 @@ func (t *State) handleSTR() {
 			if title != "" {
 				t.setTitle(title)
 			}
-		case 10:
+		case 10, 11, 12:
 			if len(s.args) < 2 {
 				break
 			}
 
 			c := s.argString(1, "")
 			p := &c
-			if p != nil && *p == "?" {
-				t.oscColorResponse(int(DefaultFG), 10)
-			} else if err := t.setColorName(int(DefaultFG), p); err != nil {
-				t.logf("invalid foreground color: %s\n", maybe(p))
+			var (
+				colorNum  int
+				colorName string
+			)
+			switch d {
+			case 10:
+				colorNum = int(DefaultFG)
+				colorName = "foreground"
+			case 11:
+				colorNum = int(DefaultBG)
+				colorName = "background"
+			default:
+				colorNum = int(DefaultCursor)
+				colorName = "cursor"
+			}
+
+			if *p == "?" {
+				t.oscColorResponse(colorNum, d)
+			} else if err := t.setColorName(colorNum, p); err != nil {
+				t.logf("invalid %s color: %s\n", colorName, maybe(p))
 			} else {
 				// TODO: redraw
 			}
-		case 11:
-			if len(s.args) < 2 {
-				break
-			}
-
-			c := s.argString(1, "")
-			p := &c
-			if p != nil && *p == "?" {
-				t.oscColorResponse(int(DefaultBG), 11)
-			} else if err := t.setColorName(int(DefaultBG), p); err != nil {
-				t.logf("invalid cursor color: %s\n", maybe(p))
-			} else {
-				// TODO: redraw
-			}
-		// case 12:
-		// if len(s.args) < 2 {
-		// 	break
-		// }
-
-		// c := s.argString(1, "")
-		// p := &c
-		// if p != nil && *p == "?" {
-		// 	t.oscColorResponse(int(DefaultCursor), 12)
-		// } else if err := t.setColorName(int(DefaultCursor), p); err != nil {
-		// 	t.logf("invalid background color: %s\n", p)
-		// } else {
-		// 	// TODO: redraw
-		// }
 		case 110, 111, 112: // reset dynamic fg/bg/cursor color to default
-			// OSC 110 = reset fg, OSC 111 = reset bg, OSC 112 = reset cursor.
-			// Silently dropped — bunk uses its own theme colours so there is
-			// nothing to reset.  Handle here to avoid "unknown OSC" log spam.
+			var colorNum int
+			switch d {
+			case 110:
+				colorNum = int(DefaultFG)
+			case 111:
+				colorNum = int(DefaultBG)
+			default:
+				colorNum = int(DefaultCursor)
+			}
+			if err := t.setColorName(colorNum, nil); err != nil {
+				t.logf("failed to reset OSC color %d\n", d)
+			}
 		case 4: // color set
 			if len(s.args) < 3 {
 				break
@@ -158,7 +155,7 @@ func (t *State) handleSTR() {
 }
 
 func (t *State) setColorName(j int, p *string) error {
-	if !between(j, 0, 1<<24) {
+	if !between(j, 0, 1<<24) && j != int(DefaultFG) && j != int(DefaultBG) && j != int(DefaultCursor) {
 		return fmt.Errorf("invalid color value %d", j)
 	}
 
