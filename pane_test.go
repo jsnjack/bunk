@@ -49,6 +49,15 @@ func TestScanDECRQM_MultiDigitMode(t *testing.T) {
 	}
 }
 
+func TestParseDECRQM_OverflowRejected(t *testing.T) {
+	// A mode number exceeding 65535 must be rejected to prevent int overflow.
+	data := []byte("\x1b[?99999999999999999$p")
+	_, _, ok := parseDECRQM(data, 0)
+	if ok {
+		t.Error("parseDECRQM accepted overflowing mode number, want rejection")
+	}
+}
+
 func feedSplitPTYChunks(t *testing.T, p *Pane, chunks ...[]byte) {
 	t.Helper()
 	var carry []byte

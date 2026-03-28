@@ -697,6 +697,9 @@ func parseDECRQM(data []byte, start int) (mode, end int, ok bool) {
 	j := i
 	for j < len(data) && data[j] >= '0' && data[j] <= '9' {
 		mode = mode*10 + int(data[j]-'0')
+		if mode > 65535 {
+			return 0, 0, false
+		}
 		j++
 	}
 	if j == i || j+1 >= len(data) || data[j] != '$' || data[j+1] != 'p' {
