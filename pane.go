@@ -160,8 +160,9 @@ type Pane struct {
 //	redraw    - signalled after each chunk of PTY output
 //	paneDead  - receives p when the shell exits
 //	done      - closed by the app on shutdown
+//	colors    - default OSC 10/11/12 colours for the pane (from theme or host probe)
 //	oscCh     - receives OSC 7/8/52 sequences to forward to the host terminal
-func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, themeFG, themeBG, themeCursor string, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
+func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, colors hostOSCColors, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
 	if w < 2 || h < 1 {
 		return nil, fmt.Errorf("pane too small: %dx%d", w, h)
 	}
@@ -229,9 +230,9 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, the
 		cmd:              cmd,
 		scrollbackLines:  scrollback,
 		sb:               sbRing{maxLines: scrollback},
-		themeFGColor:     themeFG,
-		themeBGColor:     themeBG,
-		themeCursorColor: themeCursor,
+		themeFGColor:     colors.fg,
+		themeBGColor:     colors.bg,
+		themeCursorColor: colors.cursor,
 	}
 	p.term = vt10x.New(vt10x.WithSize(w-1, h), vt10x.WithScrollCallback(p.onScrollRow))
 

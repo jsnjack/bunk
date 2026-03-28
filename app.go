@@ -546,12 +546,9 @@ func (app *App) splitActive(inheritContext bool) {
 		}
 	}
 
-	fgOSC, bgOSC, cursorOSC := app.paneOSCColors()
 	newPane, err := NewPane(
 		app.nextID, nx, ny, nw, nh, app.scrollback, dir, spawnArgs,
-		fgOSC,
-		bgOSC,
-		cursorOSC,
+		app.paneOSCColors(),
 		app.redraw, app.paneDead, app.done, app.oscCh,
 	)
 	if err != nil {

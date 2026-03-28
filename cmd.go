@@ -147,12 +147,9 @@ func run(configPath, themeName string, debug, trace bool) error {
 	w, h := screen.Size()
 	L.Debug("startup: screen size", "w", w, "h", h)
 
-	fgOSC, bgOSC, cursorOSC := app.paneOSCColors()
 	p, err := NewPane(
 		app.nextID, 0, 0, w, h, app.scrollback, "", nil,
-		fgOSC,
-		bgOSC,
-		cursorOSC,
+		app.paneOSCColors(),
 		app.redraw, app.paneDead, app.done, app.oscCh,
 	)
 	if err != nil {
