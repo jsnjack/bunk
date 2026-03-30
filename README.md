@@ -38,7 +38,7 @@ Or grab a binary from [Releases](https://github.com/jsnjack/bunk/releases).
 Add to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
-if [[ -t 1 ]] && [[ -z "$BUNK" ]] && command -v bunk &>/dev/null; then
+if [[ -t 1 ]] && [[ -z "$BUNK" ]] && [[ -z "$SSH_TTY" ]] && command -v bunk &>/dev/null; then
     exec bunk
 fi
 ```
