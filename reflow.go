@@ -290,6 +290,39 @@ func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 	term.Write(buf.Bytes()) //nolint:errcheck
 }
 
+// moveCursorTo writes a CUP escape that positions term's cursor at the
+// 0-based (col, row).  The position is clamped to the terminal's bounds.
+//
+// reflowInject leaves the cursor at the end of the last content row, which
+// can be one or more columns to the left of where the cursor actually was
+// before reflow (rowContentEnd strips trailing spaces — including the space
+// after a `$ ` prompt).  Callers use this to restore the original cursor
+// position after injecting content.
+func moveCursorTo(term vt10x.Terminal, col, row int) {
+	cols, rows := term.Size()
+	if cols <= 0 || rows <= 0 {
+		return
+	}
+	if col < 0 {
+		col = 0
+	}
+	if row < 0 {
+		row = 0
+	}
+	if col >= cols {
+		col = cols - 1
+	}
+	if row >= rows {
+		row = rows - 1
+	}
+	buf := append([]byte{}, '\x1b', '[')
+	buf = strconv.AppendInt(buf, int64(row+1), 10)
+	buf = append(buf, ';')
+	buf = strconv.AppendInt(buf, int64(col+1), 10)
+	buf = append(buf, 'H')
+	term.Write(buf) //nolint:errcheck
+}
+
 // emitSGR writes a complete SGR escape sequence for the given glyph's
 // attributes and colours into buf.  Always starts with \x1b[0 (full reset).
 func emitSGR(buf *bytes.Buffer, g vt10x.Glyph) {

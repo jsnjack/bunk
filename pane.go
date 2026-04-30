@@ -1018,15 +1018,15 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	p.term = vt10x.New(vt10x.WithSize(newCols, newRows), vt10x.WithScrollCallback(p.onScrollRow))
 	reflowInject(p.term, visibleRows)
 
-	// If the cursor was on a blank row below the last content (i.e. after a
-	// trailing \r\n from a log stream), advance to that blank row so the next
-	// output starts on a fresh line instead of being appended to the last
-	// content row.  We check the scratch terminal's cursor: if its row in the
-	// visible portion maps to a blank row, the cursor was on a new line.
+	// Restore the cursor to its original position.  reflowInject leaves it at
+	// the end of the last content row, but the cursor may have been past the
+	// trimmed content (e.g. after `$ ` where the trailing space was stripped)
+	// or on a blank row below content (after a trailing \r\n from a log
+	// stream).  An explicit CUP keeps the cursor where the shell put it.
 	scratchCur := scratch.Cursor()
 	visCurRow := scratchCur.Y - firstVisible
-	if visCurRow >= 0 && visCurRow < newRows && rowContentEnd(visibleRows[visCurRow]) == 0 {
-		p.term.Write([]byte("\r\n")) //nolint:errcheck
+	if visCurRow >= 0 && visCurRow < newRows {
+		moveCursorTo(p.term, scratchCur.X, visCurRow)
 	}
 
 	L.Debug("resizeAndReflow: raw replay done", "pane", p.id,
@@ -1075,11 +1075,10 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 			p.sb = newSB
 		}
 
-		// Check whether the cursor was on a blank row (below content) before
-		// rebuild — if so we'll advance one line after inject.
+		// Capture the original cursor position before rebuilding p.term so we
+		// can restore it after reflowInject.
 		origCur := p.term.Cursor()
 		combCurRow := pull + origCur.Y
-		cursorBelowContent := combCurRow >= 0 && combCurRow < len(combined) && rowContentEnd(combined[combCurRow]) == 0
 
 		// Preserve the scroll position.  The newest `pull` scrollback rows
 		// moved into the live terminal, so the user's distance from the live
@@ -1093,8 +1092,8 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 
 		p.term = vt10x.New(vt10x.WithSize(cols, newRows), vt10x.WithScrollCallback(p.onScrollRow))
 		reflowInject(p.term, combined)
-		if cursorBelowContent {
-			p.term.Write([]byte("\r\n")) //nolint:errcheck
+		if combCurRow >= 0 && combCurRow < newRows {
+			moveCursorTo(p.term, origCur.X, combCurRow)
 		}
 	} else {
 		// Terminal shrank: push excess live rows into scrollback.
@@ -1120,10 +1119,10 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 				remaining[r] = make([]vt10x.Glyph, cols)
 			}
 		}
-		// Check whether the cursor was on a blank row before rebuild.
+		// Capture the original cursor position before rebuilding p.term so we
+		// can restore it after reflowInject.
 		origCur := p.term.Cursor()
 		remCurRow := origCur.Y - excess
-		cursorBelowContent := remCurRow >= 0 && remCurRow < len(remaining) && rowContentEnd(remaining[remCurRow]) == 0
 
 		// Preserve the scroll position.  `excess` rows were pushed from the
 		// top of the live terminal into scrollback; the user's distance from
@@ -1134,8 +1133,8 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 
 		p.term = vt10x.New(vt10x.WithSize(cols, newRows), vt10x.WithScrollCallback(p.onScrollRow))
 		reflowInject(p.term, remaining)
-		if cursorBelowContent {
-			p.term.Write([]byte("\r\n")) //nolint:errcheck
+		if remCurRow >= 0 && remCurRow < newRows {
+			moveCursorTo(p.term, origCur.X, remCurRow)
 		}
 	}
 

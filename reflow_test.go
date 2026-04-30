@@ -459,23 +459,51 @@ func TestResizePreservesCursorOnPrompt(t *testing.T) {
 		sb:              sbRing{maxLines: 100},
 	}
 
-	data := []byte("user@host:~$ ")
-	p.captureAndWrite(data)
-	p.rawBuf = append(p.rawBuf, data...)
+	p.captureAndWrite([]byte("user@host:~$ "))
 
 	// Cursor should be on row 0, column 13.
 	cur := p.term.Cursor()
-	if cur.Y != 0 {
-		t.Fatalf("pre-resize cursor Y = %d, want 0", cur.Y)
+	if cur.Y != 0 || cur.X != 13 {
+		t.Fatalf("pre-resize cursor (X=%d,Y=%d), want (13,0)", cur.X, cur.Y)
 	}
 
 	// Resize.
 	p.resizeAndReflow(40, 8)
 
-	// Cursor should still be on row 0 (the prompt row), NOT row 1.
+	// Cursor should still be on row 0, column 13.  reflowInject strips
+	// trailing spaces, so without explicit cursor restoration the cursor
+	// would land at column 12 (right after `$`).
 	cur = p.term.Cursor()
-	if cur.Y != 0 {
-		t.Errorf("after resize cursor Y = %d, want 0 (prompt row)", cur.Y)
+	if cur.Y != 0 || cur.X != 13 {
+		t.Errorf("after height resize cursor (X=%d,Y=%d), want (13,0)", cur.X, cur.Y)
+	}
+}
+
+// Bug: after maximizing the host terminal (column-width change), the cursor
+// for a fresh `$ ` prompt landed right after `$` instead of after `$ ` —
+// reflowInject's row content-trimming dropped the trailing space, and the
+// caller did not restore the cursor X.
+func TestResizeColumnChangePreservesCursorAfterTrailingSpace(t *testing.T) {
+	term := vt10x.New(vt10x.WithSize(40, 5))
+	p := &Pane{
+		term:            term,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	p.captureAndWrite([]byte("user@host ~\r\n$ "))
+
+	cur := p.term.Cursor()
+	if cur.Y != 1 || cur.X != 2 {
+		t.Fatalf("pre-resize cursor (X=%d,Y=%d), want (2,1)", cur.X, cur.Y)
+	}
+
+	// Column change forces the full reflow path.
+	p.resizeAndReflow(80, 5)
+
+	cur = p.term.Cursor()
+	if cur.Y != 1 || cur.X != 2 {
+		t.Errorf("after column resize cursor (X=%d,Y=%d), want (2,1)", cur.X, cur.Y)
 	}
 }
 
