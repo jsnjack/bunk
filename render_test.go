@@ -1544,6 +1544,114 @@ func TestRenderPane_PS1AfterLsDoesNotCarryURL(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// drawSearchBar: chord-set hint on the right.
+// ---------------------------------------------------------------------------
+
+func TestCompactKeyName(t *testing.T) {
+	cases := map[string]string{
+		"ctrl+n":     "^N",
+		"ctrl+v":     "^V",
+		"ctrl+p":     "^P",
+		"alt+r":      "M-R",
+		"shift+pgup": "S-Pgup",
+		"escape":     "Esc",
+		"esc":        "Esc",
+		"enter":      "↵",
+		"return":     "↵",
+		"tab":        "⇥",
+		"backspace":  "⌫",
+		"f1":         "F1",
+		"pgdn":       "Pgdn",
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			if got := compactKeyName(in); got != want {
+				t.Errorf("compactKeyName(%q) = %q, want %q", in, got, want)
+			}
+		})
+	}
+}
+
+// readBarRow reads the bottom row of pane p as a string of visible runes.
+func readBarRow(t *testing.T, scr tcell.SimulationScreen, x, y, w int) string {
+	t.Helper()
+	var b strings.Builder
+	for col := x; col < x+w; col++ {
+		r, _, _, _ := scr.GetContent(col, y)
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func TestDrawSearchBar_WideEnoughShowsHint(t *testing.T) {
+	const w, h = 80, 5
+	p := &Pane{x: 0, y: 0, w: w, h: h}
+	kb := resolveKeybindings(nil) // built-in defaults
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+	drawSearchBar(scr, p, &kb, "needle", 2, 5)
+
+	row := readBarRow(t, scr, 0, h-1, w)
+	// Left side: query and counter.
+	if !strings.Contains(row, " Search: needle  3/5 ") {
+		t.Errorf("missing label in row: %q", row)
+	}
+	// Right side: hint mentions next/prev/exit (paste intentionally omitted —
+	// users discover Ctrl+V via OS muscle memory; we save horizontal space).
+	for _, want := range []string{"^N next", "^P prev", "Esc exit"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("hint missing %q in row: %q", want, row)
+		}
+	}
+	if strings.Contains(row, "paste") {
+		t.Errorf("hint should not mention paste, got: %q", row)
+	}
+}
+
+func TestDrawSearchBar_NarrowSuppressesHint(t *testing.T) {
+	// 24 cols leaves no room for the hint after label + cursor + gap.
+	const w, h = 24, 5
+	p := &Pane{x: 0, y: 0, w: w, h: h}
+	kb := resolveKeybindings(nil)
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+	drawSearchBar(scr, p, &kb, "x", 0, 1)
+
+	row := readBarRow(t, scr, 0, h-1, w)
+	// Hint markers must NOT appear — we drop the hint rather than truncate it.
+	if strings.Contains(row, "next") || strings.Contains(row, "exit") {
+		t.Errorf("narrow bar should suppress hint, but got: %q", row)
+	}
+}
+
+func TestDrawSearchBar_RemappedKeysAppearInHint(t *testing.T) {
+	// User remapped search_next to f3; hint should reflect it.
+	const w, h = 80, 5
+	p := &Pane{x: 0, y: 0, w: w, h: h}
+	kb := resolveKeybindings(map[string]string{"search_next": "f3"})
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+	drawSearchBar(scr, p, &kb, "x", 0, 1)
+
+	row := readBarRow(t, scr, 0, h-1, w)
+	if !strings.Contains(row, "F3 next") {
+		t.Errorf("hint should show F3 next after remap, got: %q", row)
+	}
+	if strings.Contains(row, "^N next") {
+		t.Errorf("hint should NOT still show ^N next after remap, got: %q", row)
+	}
+}
+
 // captureTty implements tcell.Tty by writing into a bytes.Buffer.  Used to
 // inspect the byte stream a real terminfo Screen emits, including the
 // OSC 8 transitions that earlier tests (using SimulationScreen) miss.

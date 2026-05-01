@@ -202,7 +202,7 @@ func (app *App) render() {
 
 	// Step 4.5 - search bar overlay (drawn on top of pane content).
 	if app.searchMode && app.searchPane != nil {
-		drawSearchBar(app.screen, app.searchPane, app.searchQuery,
+		drawSearchBar(app.screen, app.searchPane, &app.keys, app.searchQuery,
 			app.searchIdx, len(app.searchMatches))
 	}
 
@@ -750,7 +750,17 @@ func drawScrollbar(scr tcell.Screen, bx, by, h, sbCount, sbOff int, rt resolvedT
 
 // drawSearchBar renders a one-row search overlay at the bottom of pane p.
 // Called from render() (under app.mu) when search mode is active.
-func drawSearchBar(scr tcell.Screen, p *Pane, query string, matchIdx, matchCount int) {
+//
+// Layout, left to right:
+//
+//	" Search: <query>  <idx>/<n> █                         <hint> "
+//	└──────── label + cursor ─────┘    (blank fill)        └hint┘
+//
+// The right-side hint reminds the user of the chord set ("↵ next · ^P prev
+// · ^V paste · Esc exit").  It is rendered only if the pane is wide enough
+// to fit label + cursor + 2-column gap + hint without truncation;
+// otherwise we drop it silently rather than chop a key name in half.
+func drawSearchBar(scr tcell.Screen, p *Pane, kb *Keybindings, query string, matchIdx, matchCount int) {
 	y := p.y + p.h - 1
 
 	var label string
@@ -767,6 +777,8 @@ func drawSearchBar(scr tcell.Screen, p *Pane, query string, matchIdx, matchCount
 		Background(tcell.NewRGBColor(0x1a, 0x1a, 0x44)).
 		Foreground(tcell.ColorWhite)
 	noMatchStyle := barStyle.Foreground(tcell.NewRGBColor(0xff, 0x66, 0x66))
+	// Dimmer foreground for the hint so it reads as guidance, not content.
+	hintStyle := barStyle.Foreground(tcell.NewRGBColor(0x80, 0x80, 0xb0))
 
 	s := barStyle
 	if matchCount == 0 && query != "" {
@@ -786,10 +798,81 @@ func drawSearchBar(scr tcell.Screen, p *Pane, query string, matchIdx, matchCount
 		scr.SetContent(col, y, '█', nil, s)
 		col++
 	}
+
+	// Compose the hint from the live keybindings so remapped keys (e.g.
+	// search_next = "f3") show their actual binding rather than a stale
+	// default.  Only render if it fits with at least a 2-column gap.
+	hint := fmt.Sprintf("%s next · %s prev · %s exit",
+		compactKeyName(kb.SearchNext.raw),
+		compactKeyName(kb.SearchPrev.raw),
+		compactKeyName(kb.SearchExit.raw))
+	hintRunes := []rune(hint)
+	hintStart := p.x + p.w - len(hintRunes) - 1 // 1-col right pad
+	if hintStart >= col+2 {                     // 2-col gap after cursor
+		// Pad the gap.
+		for ; col < hintStart; col++ {
+			scr.SetContent(col, y, ' ', nil, barStyle)
+		}
+		for _, ch := range hintRunes {
+			scr.SetContent(col, y, ch, nil, hintStyle)
+			col++
+		}
+	}
+
 	// Pad to end of pane width.
 	for ; col < p.x+p.w; col++ {
 		scr.SetContent(col, y, ' ', nil, barStyle)
 	}
+}
+
+// compactKeyName turns a parseKey-style spec ("ctrl+n", "alt+r",
+// "shift+pgup", "escape") into a short on-screen hint ("^N", "M-R",
+// "S-Pgup", "Esc").  Returned values use one terminal column per visible
+// character so drawSearchBar's layout math matches the actual rendered
+// width.
+func compactKeyName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	parts := strings.Split(s, "+")
+	keyName := parts[len(parts)-1]
+	mods := parts[:len(parts)-1]
+
+	// Special standalone keys (no modifiers needed) get glyph hints.  We
+	// only short-circuit when there are no modifiers; "ctrl+enter" should
+	// still render as "^Enter" rather than "^↵".
+	if len(mods) == 0 {
+		switch keyName {
+		case "escape", "esc":
+			return "Esc"
+		case "enter", "return":
+			return "↵"
+		case "tab":
+			return "⇥"
+		case "backspace":
+			return "⌫"
+		}
+	}
+
+	var prefix strings.Builder
+	for _, m := range mods {
+		switch m {
+		case "ctrl":
+			prefix.WriteByte('^')
+		case "alt":
+			prefix.WriteString("M-")
+		case "shift":
+			prefix.WriteString("S-")
+		}
+	}
+
+	// Format key name: single letters uppercase, multi-letter title-case.
+	var key string
+	switch {
+	case len(keyName) == 1 && keyName[0] >= 'a' && keyName[0] <= 'z':
+		key = strings.ToUpper(keyName)
+	case len(keyName) > 0:
+		key = strings.ToUpper(keyName[:1]) + keyName[1:]
+	}
+	return prefix.String() + key
 }
 
 // ---------------------------------------------------------------------------
