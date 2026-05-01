@@ -20,11 +20,23 @@ test:
 bin/${BINARY}_linux_amd64: version test *.go
 	GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_linux_amd64
 
-build: bin/${BINARY} bin/${BINARY}_linux_amd64
+bin/${BINARY}_linux_arm64: version test *.go
+	GOOS=linux GOARCH=arm64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_linux_arm64
+
+bin/${BINARY}_darwin_amd64: version test *.go
+	GOOS=darwin GOARCH=amd64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_darwin_amd64
+
+bin/${BINARY}_darwin_arm64: version test *.go
+	GOOS=darwin GOARCH=arm64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_darwin_arm64
+
+build: bin/${BINARY} bin/${BINARY}_linux_amd64 bin/${BINARY}_linux_arm64 bin/${BINARY}_darwin_amd64 bin/${BINARY}_darwin_arm64
 
 release: build
 	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_linux_amd64.tar.gz bin/${BINARY}_linux_amd64
-	grm release jsnjack/${BINARY} -f bin/${BINARY}_linux_amd64.tar.gz -t "v`monova`"
+	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_linux_arm64.tar.gz bin/${BINARY}_linux_arm64
+	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_darwin_amd64.tar.gz bin/${BINARY}_darwin_amd64
+	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_darwin_arm64.tar.gz bin/${BINARY}_darwin_arm64
+	grm release jsnjack/${BINARY} -f bin/${BINARY}_linux_amd64.tar.gz -f bin/${BINARY}_linux_arm64.tar.gz -f bin/${BINARY}_darwin_amd64.tar.gz -f bin/${BINARY}_darwin_arm64.tar.gz -t "v`monova`"
 
 run:
 	go build -o ${BINARY} .

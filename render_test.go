@@ -1660,13 +1660,13 @@ type captureTty struct {
 	resizeCb func()
 }
 
-func (t *captureTty) Read(p []byte) (int, error)    { return 0, nil } // no input
-func (t *captureTty) Write(p []byte) (int, error)   { return t.out.Write(p) }
-func (t *captureTty) Close() error                  { return nil }
-func (t *captureTty) Start() error                  { return nil }
-func (t *captureTty) Stop() error                   { return nil }
-func (t *captureTty) Drain() error                  { return nil }
-func (t *captureTty) NotifyResize(cb func())        { t.resizeCb = cb }
+func (t *captureTty) Read(p []byte) (int, error)  { return 0, nil } // no input
+func (t *captureTty) Write(p []byte) (int, error) { return t.out.Write(p) }
+func (t *captureTty) Close() error                { return nil }
+func (t *captureTty) Start() error                { return nil }
+func (t *captureTty) Stop() error                 { return nil }
+func (t *captureTty) Drain() error                { return nil }
+func (t *captureTty) NotifyResize(cb func())      { t.resizeCb = cb }
 func (t *captureTty) WindowSize() (tcell.WindowSize, error) {
 	return tcell.WindowSize{Width: 80, Height: 24, PixelWidth: 800, PixelHeight: 600}, nil
 }

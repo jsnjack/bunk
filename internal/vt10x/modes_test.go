@@ -326,8 +326,8 @@ func TestOSC8_LinkInterning(t *testing.T) {
 	// Same URL emitted twice should reuse a single ID.
 	term := newTestTerm(40, 4)
 	term.Write([]byte("\x1b]8;;u\x1b\\a\x1b]8;;\x1b\\b\x1b]8;;u\x1b\\c")) //nolint:errcheck
-	id1 := term.Cell(0, 0).Link // 'a' under url u
-	id2 := term.Cell(2, 0).Link // 'c' under url u (after close + re-open)
+	id1 := term.Cell(0, 0).Link                                           // 'a' under url u
+	id2 := term.Cell(2, 0).Link                                           // 'c' under url u (after close + re-open)
 	if id1 == 0 {
 		t.Fatal("first 'a' should have a link ID")
 	}
@@ -348,12 +348,12 @@ func TestOSC8_RealUserChunks(t *testing.T) {
 			"\x1b]8;;file://ydell/home/jsn/workspace/bunk/reflow_test.go\x1b\\reflow_test.go\x1b]8;;\x1b\\\r\n",
 	))
 	// chunks 42-50: OSCs that arrive between ls and PS1
-	term.Write([]byte("\x1b]0;jsn@ydell:~/workspace/bunk\a"))                                                      //nolint:errcheck
-	term.Write([]byte("\x1b]3008;end=12fb10d4-9155-4970-8bb1-bd06ff65691f;exit=success\x1b\\"))                    //nolint:errcheck
+	term.Write([]byte("\x1b]0;jsn@ydell:~/workspace/bunk\a"))                                                                                                                                                                                                        //nolint:errcheck
+	term.Write([]byte("\x1b]3008;end=12fb10d4-9155-4970-8bb1-bd06ff65691f;exit=success\x1b\\"))                                                                                                                                                                      //nolint:errcheck
 	term.Write([]byte("\x1b]3008;start=ed2246a1-e4f1-437b-a965-10f98e6428cd;machineid=2edfbf51e2e34d64a9096ebdb31f64a9;user=jsn;hostname=ydell;bootid=54980873-4669-47b6-9af5-b9462259d4ee;pid=00000000000000390800;type=shell;cwd=/home/jsn/workspace/bunk\x1b\\")) //nolint:errcheck
-	term.Write([]byte("\x1b]666;vte.shell.postexec=0\x1b\\"))                                                      //nolint:errcheck
-	term.Write([]byte("\x1b]666;vte.shell.precmd!\x1b\\"))                                                         //nolint:errcheck
-	term.Write([]byte("\x1b]7;file://ydell/home/jsn/workspace/bunk\x1b\\"))                                        //nolint:errcheck
+	term.Write([]byte("\x1b]666;vte.shell.postexec=0\x1b\\"))                                                                                                                                                                                                        //nolint:errcheck
+	term.Write([]byte("\x1b]666;vte.shell.precmd!\x1b\\"))                                                                                                                                                                                                           //nolint:errcheck
+	term.Write([]byte("\x1b]7;file://ydell/home/jsn/workspace/bunk\x1b\\"))                                                                                                                                                                                          //nolint:errcheck
 	// chunk 51: PS1 with SGR-only styling
 	term.Write([]byte("\x1b[?2004h\x1b[01;32mjsn@ydell\x1b[0m \x1b[01;34m~/workspace/bunk\x1b[0m [\x1b[0;33mmaster\x1b[0m \x1b[1;31m!\x1b[0m]\r\r\n$ ")) //nolint:errcheck
 
