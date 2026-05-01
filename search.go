@@ -7,6 +7,8 @@
 //	Enter / Ctrl+N  → jump to next match
 //	Ctrl+P          → jump to previous match
 //	Backspace       → delete last character from query
+//	Ctrl+C          → copy the active pane's mouse selection to the clipboard
+//	Ctrl+V          → paste clipboard text into the search query (controls/newlines stripped)
 //	Escape          → exit search mode, clear all highlights
 //
 // The search is case-insensitive and covers both the scrollback ring and the
@@ -25,6 +27,7 @@ package main
 
 import (
 	"strings"
+	"time"
 	"unicode"
 
 	"bunk/internal/vt10x"
@@ -325,6 +328,12 @@ func (app *App) handleSearchKey(ev *tcell.EventKey) bool {
 	case kb.SearchPrev.Matches(ev):
 		app.searchNavigate(-1)
 
+	case kb.Copy.Matches(ev):
+		app.copySelectionToClipboard()
+
+	case kb.Paste.Matches(ev):
+		app.pasteIntoSearchQuery()
+
 	case ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2:
 		app.mu.Lock()
 		q := app.searchQuery
@@ -344,6 +353,68 @@ func (app *App) handleSearchKey(ev *tcell.EventKey) bool {
 		app.updateSearch()
 	}
 	return true
+}
+
+// copySelectionToClipboard copies the active pane's mouse selection (if any)
+// to the system clipboard.  Mirrors handleKey's Copy branch so search mode
+// supports the same select-and-copy round-trip as normal mode — without it,
+// users can't move text between a pane and the search bar.
+func (app *App) copySelectionToClipboard() {
+	app.mu.Lock()
+	active := app.active
+	app.mu.Unlock()
+	if active == nil {
+		return
+	}
+	active.mu.Lock()
+	text := active.selText()
+	if text != "" {
+		active.selActive = false
+	}
+	active.mu.Unlock()
+	if text == "" {
+		return
+	}
+	app.copyToClipboard(text)
+	active.SetStatus("COPIED", 3*time.Second)
+	app.triggerRedraw()
+	go func() {
+		time.Sleep(3 * time.Second)
+		app.triggerRedraw()
+	}()
+}
+
+// pasteIntoSearchQuery reads the system clipboard and appends it to the
+// active search query, stripping anything that doesn't belong in a single-line
+// query (newlines, C0/C1 control codepoints).  Multi-line selections paste
+// as their joined visible characters.
+func (app *App) pasteIntoSearchQuery() {
+	clean := stripForSearchQuery(readClipboard())
+	if clean == "" {
+		return
+	}
+	app.mu.Lock()
+	app.searchQuery += clean
+	app.mu.Unlock()
+	app.updateSearch()
+}
+
+// stripForSearchQuery removes C0 (U+0000-U+001F) and C1 (U+007F-U+009F)
+// control codepoints from s.  The search bar is single-line, so this also
+// drops \r, \n, and \t, leaving a query made of the original's printable
+// characters joined together.
+func stripForSearchQuery(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r < 0x20:
+		case r >= 0x7F && r <= 0x9F:
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // spanContains reports whether any span in spans covers col.
