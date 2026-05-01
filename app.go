@@ -166,40 +166,48 @@ func (app *App) triggerRedraw() {
 	}
 }
 
-// reinitHost resets the host terminal to a clean state and forces a full
-// repaint. It is bound to the reinit_host keybinding (default Alt+F5) and is
-// the recovery path when something has corrupted the host terminal — most
-// commonly a pane that printed binary data containing escape sequences which
-// reached the host before bunk's sanitizer could catch them.
+// reinitHost recovers from host-terminal corruption (typically caused by a
+// pane that printed binary data containing escape sequences) by emitting a
+// targeted reset and forcing tcell to repaint every cell.
 //
-// Sequence:
-//  1. Suspend tcell — restores the host terminal to its pre-bunk state
-//     (rmcup, mouse off, cursor visible).
-//  2. Write RIS (ESC c) to stdout — host terminal hard-resets palette,
-//     scroll region, charset, attributes, mouse and cursor modes.
-//  3. Resume tcell — re-enables alt-screen, mouse, etc.
-//  4. Force a full Sync repaint of every cell.
+// We deliberately do NOT call screen.Suspend()/Resume() here.  Suspend()
+// goes through tcell's disengage() which calls cells.Resize(0,0) — wiping
+// the cell buffer.  After Resume() the buffer is empty and Sync() paints
+// nothing, leaving a blank screen until the shell happens to redraw on the
+// next keystroke.  We hit exactly that bug while developing this command.
 //
-// app.mu is held for the whole sequence so the render loop cannot race
-// against the suspend/resume window.
+// We also do NOT emit RIS (ESC c).  RIS exits alt-screen mode, but tcell
+// has no way to know it needs to re-enter — its internal state still says
+// "alt-screen on", so subsequent paints would land on the user's primary
+// scrollback.
+//
+// What we DO emit, written directly to stdout under app.mu:
+//
+//	\x1b[m       SGR reset — clears bold/colours/etc. left over from the
+//	              binary stream.
+//	\x1b(B       Set G0 charset to ASCII — fixes line-drawing-mode glyph
+//	              lockup, the most common after-cat-binary symptom.
+//	\x1b]8;;\x1b\\  Close any active OSC 8 hyperlink.
+//
+// Then we invalidate bunk's per-frame emit caches (so title and cursor
+// style get re-sent) and call screen.Sync().  Sync()'s clearScreen() emits
+// its own AttrOff + exitUrl + default fg/bg + clear before invalidating
+// every cell and repainting from tcell's still-intact cell buffer.
+//
+// Net effect: the host terminal is reset enough to render correctly, tcell
+// re-emits all visual state, and the user's panes redraw immediately
+// without a keystroke.
 func (app *App) reinitHost() {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
-	if err := app.screen.Suspend(); err != nil {
-		L.Warn("reinitHost: Suspend failed", "err", err)
-		return
-	}
-	if _, err := os.Stdout.Write([]byte("\x1bc")); err != nil {
-		L.Warn("reinitHost: RIS write failed", "err", err)
-	}
-	if err := app.screen.Resume(); err != nil {
-		L.Warn("reinitHost: Resume failed", "err", err)
-		return
+	if _, err := os.Stdout.Write([]byte("\x1b[m\x1b(B\x1b]8;;\x1b\\")); err != nil {
+		L.Warn("reinitHost: reset write failed", "err", err)
 	}
 
-	// Invalidate the title and cursor-style caches: RIS reset them on the
-	// host so the next emit has to re-send the current values.
+	// Invalidate emit caches so the next frame re-sends title and cursor
+	// style — the host may have lost them, and the cache would otherwise
+	// suppress the re-emit.
 	app.lastEmittedTitle = ""
 	app.lastCursorStyle = 0
 
