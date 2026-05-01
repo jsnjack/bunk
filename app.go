@@ -11,10 +11,6 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-// oscChanSize caps how many forwarded OSC sequences can queue between the
-// pane reader goroutines and the render loop drain.
-const oscChanSize = 64
-
 // App holds every piece of global state and mediates between the event loop,
 // the render loop, and the layout tree.
 type App struct {
@@ -49,10 +45,11 @@ type App struct {
 	shutOnce sync.Once
 	renderWg sync.WaitGroup // tracks the render loop goroutine
 
-	// oscCh carries OSC sequences from pane readPTY goroutines to the render
-	// loop.  The render loop writes them to os.Stdout before tcell.Show() so
-	// the host terminal receives OSC 7/8/52 (CWD, hyperlinks, clipboard).
-	oscCh chan []byte
+	// oscBuf accumulates OSC sequences from pane readPTY goroutines (and the
+	// clipboard helper) for delivery to the host terminal. The render loop
+	// flushes it to os.Stdout before tcell.Show() so the host terminal
+	// receives OSC 7/8/52/133 (CWD, hyperlinks, clipboard, prompt markers).
+	oscBuf *oscBuffer
 
 	// lastEmittedTitle is the most recent title we wrote to the host terminal
 	// via OSC 0.  Compared each frame to avoid redundant writes.
@@ -167,6 +164,47 @@ func (app *App) triggerRedraw() {
 	case app.redraw <- struct{}{}:
 	default:
 	}
+}
+
+// reinitHost resets the host terminal to a clean state and forces a full
+// repaint. It is bound to the reinit_host keybinding (default Alt+F5) and is
+// the recovery path when something has corrupted the host terminal — most
+// commonly a pane that printed binary data containing escape sequences which
+// reached the host before bunk's sanitizer could catch them.
+//
+// Sequence:
+//  1. Suspend tcell — restores the host terminal to its pre-bunk state
+//     (rmcup, mouse off, cursor visible).
+//  2. Write RIS (ESC c) to stdout — host terminal hard-resets palette,
+//     scroll region, charset, attributes, mouse and cursor modes.
+//  3. Resume tcell — re-enables alt-screen, mouse, etc.
+//  4. Force a full Sync repaint of every cell.
+//
+// app.mu is held for the whole sequence so the render loop cannot race
+// against the suspend/resume window.
+func (app *App) reinitHost() {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	if err := app.screen.Suspend(); err != nil {
+		L.Warn("reinitHost: Suspend failed", "err", err)
+		return
+	}
+	if _, err := os.Stdout.Write([]byte("\x1bc")); err != nil {
+		L.Warn("reinitHost: RIS write failed", "err", err)
+	}
+	if err := app.screen.Resume(); err != nil {
+		L.Warn("reinitHost: Resume failed", "err", err)
+		return
+	}
+
+	// Invalidate the title and cursor-style caches: RIS reset them on the
+	// host so the next emit has to re-send the current values.
+	app.lastEmittedTitle = ""
+	app.lastCursorStyle = 0
+
+	app.screen.Sync()
+	L.Info("reinitHost: host terminal re-initialised")
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +342,10 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 	case kb.Quit.Matches(ev):
 		L.Debug("handleKey: quit", "key", kb.Quit)
 		return false
+	case kb.ReinitHost.Matches(ev):
+		L.Debug("handleKey: re-initialise host terminal", "key", kb.ReinitHost)
+		app.reinitHost()
+		return true
 	case kb.Search.Matches(ev):
 		L.Debug("handleKey: enter search", "key", kb.Search)
 		app.enterSearch()
@@ -549,7 +591,7 @@ func (app *App) splitActive(inheritContext bool) {
 	newPane, err := NewPane(
 		app.nextID, nx, ny, nw, nh, app.scrollback, dir, spawnArgs,
 		app.paneOSCColors(),
-		app.redraw, app.paneDead, app.done, app.oscCh,
+		app.redraw, app.paneDead, app.done, app.oscBuf,
 	)
 	if err != nil {
 		L.Error("splitActive: NewPane", "err", err, "dir", dir, "spawnArgs", spawnArgs, "container", ct, "containerID", cid)

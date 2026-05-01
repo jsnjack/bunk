@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -1361,5 +1362,317 @@ func TestRenderPane_FullRepaintOnStatusOverlayChange(t *testing.T) {
 	}
 	if !strings.Contains(withoutBadge, "hello") {
 		t.Fatalf("underlying row was not restored after badge expiry: row=%q", withoutBadge)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// sanitizeTitle: pane titles that came from binary content must be stripped
+// of control bytes before bunk re-emits them via OSC 0 to the host terminal.
+// ---------------------------------------------------------------------------
+
+func TestSanitizeTitle(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain ascii", "my-title", "my-title"},
+		{"unicode preserved", "café — 日本語", "café — 日本語"},
+		{"strip C0 controls", "before\x01\x02\x03after", "beforeafter"},
+		{"strip ESC", "evil\x1b]0;hijack\x07tail", "evil]0;hijacktail"},
+		{"strip DEL", "x\x7fy", "xy"},
+		{"strip C1 controls", "xy", "xy"},
+		{"strip nul", "a\x00b", "ab"},
+		{"invalid utf8 stripped", "good\xff\xfetail", "goodtail"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizeTitle(tc.in)
+			if got != tc.want {
+				t.Errorf("sanitizeTitle(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSanitizeTitle_LengthCap(t *testing.T) {
+	// Long titles get truncated to keep OSC 0 small.
+	in := strings.Repeat("A", 1000)
+	got := sanitizeTitle(in)
+	if len(got) > 512 {
+		t.Errorf("sanitizeTitle produced %d bytes, want <= 512", len(got))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// OSC 8 hyperlinks: end-to-end render pipeline tests.
+//
+// These tests exist because earlier unit-tests on vt10x's per-glyph Link
+// state passed while the actual rendered output (`ls --hyperlink=auto` in
+// bunk) corrupted the next prompt.  The bug lived between vt10x and the host
+// terminal — in tcell's emission, not in our state.  These tests inspect
+// what bunk actually pushes into tcell's cell buffer (via SimulationScreen)
+// and what bunk writes to the host's stdout (via the closeHostHyperlink
+// helper) — the layers that earlier tests skipped over.
+// ---------------------------------------------------------------------------
+
+// hasURL returns true when style carries any non-empty OSC 8 url. tcell's
+// Style.url field is unexported, so we detect the URL by exploiting equality:
+// Style.Url("") clears the url; if the result equals the original, the
+// original already had url="".
+func hasURL(s tcell.Style) bool { return s != s.Url("") }
+
+// styleURL returns the URL on style if any. Equality probe against several
+// candidates would be expensive; we instead compare s to s.Url(want) and
+// return want when they match. Used in tests that already know the candidate.
+func styleURLEquals(s tcell.Style, want string) bool { return s == s.Url(want) }
+
+func TestCloseHostHyperlink_WritesOSC8Close(t *testing.T) {
+	var buf bytes.Buffer
+	closeHostHyperlink(&buf)
+	got := buf.Bytes()
+	want := []byte("\x1b]8;;\x1b\\")
+	if !bytes.Equal(got, want) {
+		t.Errorf("closeHostHyperlink wrote %q, want %q", got, want)
+	}
+}
+
+// TestRenderPane_HyperlinkCellsCarryURL verifies that bunk's renderPane
+// stages each cell of a hyperlinked region with style.Url(URL) so tcell
+// will emit OSC 8 around the right characters.
+func TestRenderPane_HyperlinkCellsCarryURL(t *testing.T) {
+	const (
+		w = 20
+		h = 3
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	// `ls --hyperlink=auto`-style: open, name, close, space, plain text.
+	term.Write([]byte("\x1b]8;;file:///x\x1b\\foo\x1b]8;;\x1b\\ bar")) //nolint:errcheck
+
+	p := &Pane{
+		term:            term,
+		cmd:             &exec.Cmd{},
+		w:               w,
+		h:               h,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+	renderPane(scr, p, testTheme())
+
+	// Cells 0..2 ("foo") must carry the URL.
+	for col := 0; col < 3; col++ {
+		_, _, style, _ := scr.GetContent(col, 0)
+		if !hasURL(style) {
+			t.Errorf("col %d (inside link): style has no URL set", col)
+		}
+		if !styleURLEquals(style, "file:///x") {
+			t.Errorf("col %d: URL is not 'file:///x'", col)
+		}
+	}
+
+	// Cells 3+ (" bar") must NOT carry a URL — the link was closed.
+	for col := 3; col < 7; col++ {
+		_, _, style, _ := scr.GetContent(col, 0)
+		if hasURL(style) {
+			t.Errorf("col %d (after close): style still carries a URL — leak past close", col)
+		}
+	}
+}
+
+// TestRenderPane_PS1AfterLsDoesNotCarryURL is the regression test for the
+// original "ls --hyperlink=auto then PS1 is highlighted" bug.  A full
+// post-exec stream (OSC 0/3008/666/7) lands between the last hyperlink close
+// and the new PS1 — none of it should reattach a URL onto PS1's cells.
+func TestRenderPane_PS1AfterLsDoesNotCarryURL(t *testing.T) {
+	const (
+		w = 80
+		h = 20
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	term.Write([]byte( //nolint:errcheck
+		// Two hyperlinked filenames followed by a newline.
+		"\x1b]8;;file:///A\x1b\\AGENTS.MD\x1b]8;;\x1b\\ " +
+			"\x1b]8;;file:///B\x1b\\go.mod\x1b]8;;\x1b\\\r\n" +
+			// Bash post-exec OSCs (verbatim shape from /tmp/bunk.log).
+			"\x1b]0;jsn@ydell:~/x\a" +
+			"\x1b]3008;end=abc\x1b\\" +
+			"\x1b]666;vte.shell.precmd!\x1b\\" +
+			"\x1b]7;file:///x\x1b\\" +
+			// New PS1 with SGR styling, no OSC 8.
+			"\x1b[01;32mjsn@ydell\x1b[0m \x1b[01;34m~/x\x1b[0m\r\n$ "))
+
+	p := &Pane{
+		term:            term,
+		cmd:             &exec.Cmd{},
+		w:               w,
+		h:               h,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+	renderPane(scr, p, testTheme())
+
+	// Find any row containing "jsn@ydell" — that's PS1.  Every cell on
+	// that row, AND every cell on the row containing the cursor "$ ",
+	// must be link-free.
+	for row := 0; row < h; row++ {
+		var rowText []rune
+		for col := 0; col < w; col++ {
+			r, _, _, _ := scr.GetContent(col, row)
+			rowText = append(rowText, r)
+		}
+		s := string(rowText)
+		if !strings.Contains(s, "jsn@ydell") && !strings.Contains(s, "$ ") {
+			continue
+		}
+		for col := 0; col < w; col++ {
+			_, _, style, _ := scr.GetContent(col, row)
+			if hasURL(style) {
+				t.Errorf("PS1 row %d col %d (%q) carries a URL — link leaked past ls output",
+					row, col, rowText[col])
+			}
+		}
+	}
+}
+
+// captureTty implements tcell.Tty by writing into a bytes.Buffer.  Used to
+// inspect the byte stream a real terminfo Screen emits, including the
+// OSC 8 transitions that earlier tests (using SimulationScreen) miss.
+type captureTty struct {
+	out      bytes.Buffer
+	resizeCb func()
+}
+
+func (t *captureTty) Read(p []byte) (int, error)    { return 0, nil } // no input
+func (t *captureTty) Write(p []byte) (int, error)   { return t.out.Write(p) }
+func (t *captureTty) Close() error                  { return nil }
+func (t *captureTty) Start() error                  { return nil }
+func (t *captureTty) Stop() error                   { return nil }
+func (t *captureTty) Drain() error                  { return nil }
+func (t *captureTty) NotifyResize(cb func())        { t.resizeCb = cb }
+func (t *captureTty) WindowSize() (tcell.WindowSize, error) {
+	return tcell.WindowSize{Width: 80, Height: 24, PixelWidth: 800, PixelHeight: 600}, nil
+}
+
+// TestRender_HostByteStream_NoLinkLeakAcrossFrames is the byte-stream
+// regression test for the user-reported bug: after `ls --hyperlink=auto` the
+// next PS1 line was rendered as part of the last filename's hyperlink.
+//
+// The bug is CROSS-FRAME — within a single tcell.Show() draw pass, tcell
+// correctly emits OSC 8 transitions between cells.  The leak happens between
+// frames: tcell.draw() resets t.curstyle = styleInvalid (whose .url is "")
+// at the start of each frame, so a frame whose first dirty cell has url=""
+// never triggers an exitUrl emission even though the previous frame ended
+// with the host inside a hyperlink.
+//
+// This test reproduces the cross-frame scenario:
+//  1. Frame 1: render a hyperlinked filename so tcell ends with url="X" on
+//     the wire.  scr.Show() flushes, leaving the host inside the link.
+//  2. Frame 2: vt10x writes plain PS1 text into a different row.  Only the
+//     PS1 row is dirty.  scr.Show() flushes again — without our fix, no
+//     exitUrl is emitted, and PS1 chars land inside the leftover hyperlink.
+//
+// We assert that between frame 1 and frame 2, the byte stream contains an
+// OSC 8 close before any PS1 character.  If closeHostHyperlink() is removed
+// from render's frame-trailer code path, this test fails.
+func TestRender_HostByteStream_NoLinkLeakAcrossFrames(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	tty := &captureTty{}
+	scr, err := tcell.NewTerminfoScreenFromTty(tty)
+	if err != nil {
+		t.Skipf("terminfo screen unavailable: %v", err)
+	}
+	if err := scr.Init(); err != nil {
+		t.Skipf("screen Init failed: %v", err)
+	}
+	defer scr.Fini()
+	const w, h = 80, 24
+	scr.SetSize(w, h)
+
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+
+	// --- Frame 1: hyperlinked filename, leaves tcell.curstyle.url == "X".
+	term.Write([]byte("\x1b]8;;file:///A\x1b\\AGENTS.MD\x1b]8;;\x1b\\")) //nolint:errcheck
+	p := &Pane{
+		term: term, cmd: &exec.Cmd{}, w: w, h: h,
+		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+	}
+	renderPane(scr, p, testTheme())
+	closeHostHyperlink(&tty.out) // mirror render() trailer
+	scr.Show()
+	frame1Bytes := tty.out.Len()
+
+	// --- Frame 2: write PS1 on a fresh row.  This dirties new cells whose
+	// style.url == "" — without an explicit exitUrl from us, tcell will not
+	// emit one (per the styleInvalid.url = "" bug in tscreen.go).
+	term.Write([]byte("\r\n\x1b[01;32mjsn@ydell\x1b[0m\r\n$ ")) //nolint:errcheck
+	renderPane(scr, p, testTheme())
+	closeHostHyperlink(&tty.out) // ← the line under test
+	scr.Show()
+
+	// Inspect ONLY the bytes emitted by frame 2 (to avoid matching the
+	// frame-1 in-stream OSC 8 closes that bracket the filename itself).
+	frame2 := tty.out.String()[frame1Bytes:]
+	closeIdx := strings.Index(frame2, "\x1b]8;;\x1b\\")
+	psIdx := strings.Index(frame2, "jsn@ydell")
+	if psIdx == -1 {
+		t.Fatalf("frame 2 did not paint PS1:\n%q", frame2)
+	}
+	if closeIdx == -1 || closeIdx > psIdx {
+		t.Errorf("frame 2 emitted PS1 chars without a preceding OSC 8 close:\n  closeIdx=%d psIdx=%d\n  bytes=%q",
+			closeIdx, psIdx, frame2)
+	}
+}
+
+// TestRenderPane_TrailingClearedCellsAfterLink covers the scrollUp /
+// clear-to-EOL path: when clear() runs while cur.Attr.Link != 0 it must NOT
+// stamp the trailing whitespace of the affected row with a hyperlink.  This
+// catches the in-memory leak fixed by zeroing Link in clear().
+func TestRenderPane_TrailingClearedCellsAfterLink(t *testing.T) {
+	const (
+		w = 20
+		h = 3
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	// Open link, write 3 chars, clear-to-EOL while link is still open, close.
+	term.Write([]byte("\x1b]8;;file:///x\x1b\\foo\x1b[K\x1b]8;;\x1b\\")) //nolint:errcheck
+
+	p := &Pane{
+		term:            term,
+		cmd:             &exec.Cmd{},
+		w:               w,
+		h:               h,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init()
+	defer scr.Fini()
+	scr.SetSize(w, h)
+	renderPane(scr, p, testTheme())
+
+	// "foo" carries the link.
+	for col := 0; col < 3; col++ {
+		_, _, style, _ := scr.GetContent(col, 0)
+		if !hasURL(style) {
+			t.Errorf("col %d (inside link): style has no URL", col)
+		}
+	}
+	// Trailing cells must not.
+	for col := 3; col < w-1; col++ {
+		_, _, style, _ := scr.GetContent(col, 0)
+		if hasURL(style) {
+			t.Errorf("col %d (trailing cleared cell): carries URL — clear() leaked Link", col)
+		}
 	}
 }

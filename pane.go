@@ -161,8 +161,8 @@ type Pane struct {
 //	paneDead  - receives p when the shell exits
 //	done      - closed by the app on shutdown
 //	colors    - default OSC 10/11/12 colours for the pane (from theme or host probe)
-//	oscCh     - receives OSC 7/8/52 sequences to forward to the host terminal
-func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, colors hostOSCColors, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscCh chan<- []byte) (*Pane, error) {
+//	oscBuf    - receives OSC 7/8/52/133 sequences to forward to the host terminal
+func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, colors hostOSCColors, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscBuf *oscBuffer) (*Pane, error) {
 	if w < 2 || h < 1 {
 		return nil, fmt.Errorf("pane too small: %dx%d", w, h)
 	}
@@ -252,7 +252,7 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, col
 
 	L.Debug("pane spawned", "id", p.id, "x", x, "y", y, "w", w, "h", h)
 
-	go p.readPTY(redraw, oscCh)       // VT100 parsing bridge (write side)
+	go p.readPTY(redraw, oscBuf)      // VT100 parsing bridge (write side)
 	go p.waitForExit(paneDead, done)  // monitors shell lifecycle
 	go p.trackFgProcess(redraw, done) // polls foreground process name
 
@@ -267,7 +267,7 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, col
 //  3. Captures rows that are about to scroll off the top (scrollback).
 //  4. Feeds the bytes into vt10x.
 //  5. Signals the render loop to repaint.
-func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
+func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 	buf := make([]byte, 32768)
 	var carry []byte // incomplete UTF-8 / ANSI tail from previous read
 	for {
@@ -297,7 +297,7 @@ func (p *Pane) readPTY(redraw chan struct{}, oscCh chan<- []byte) {
 			L.Log(nil, LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
 
 			// Step 1 - OSC passthrough (CWD, hyperlinks, clipboard).
-			p.oscScan.Scan(chunk, oscCh)
+			p.oscScan.Scan(chunk, oscBuf.append)
 
 			// Steps 2–4 under a single lock: captureAndWrite feeds chunk into
 			// vt10x, which updates all mode flags (2004, 2026, cursor shape, etc.)

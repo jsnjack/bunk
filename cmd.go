@@ -135,7 +135,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		redraw:        make(chan struct{}, 1),
 		paneDead:      make(chan *Pane, 8),
 		done:          make(chan struct{}),
-		oscCh:         make(chan []byte, oscChanSize),
+		oscBuf:        newOSCBuffer(),
 	}
 
 	screen.EnableMouse(tcell.MouseMotionEvents)
@@ -150,7 +150,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 	p, err := NewPane(
 		app.nextID, 0, 0, w, h, app.scrollback, "", nil,
 		app.paneOSCColors(),
-		app.redraw, app.paneDead, app.done, app.oscCh,
+		app.redraw, app.paneDead, app.done, app.oscBuf,
 	)
 	if err != nil {
 		screen.Fini()

@@ -68,9 +68,17 @@ var keybindingNames = map[string]tcell.Key{
 // ---------------------------------------------------------------------------
 
 // Keybinding represents one resolved key combination (key code + modifiers).
+//
+// For most special keys (F1, arrows, Esc, …) only key+mod matter.  For
+// modifier+letter combinations the encoding depends on the modifier:
+//
+//   - Ctrl+letter is its own tcell.Key (KeyCtrlA … KeyCtrlZ) with mod=0.
+//   - Alt+letter is delivered as KeyRune with the letter rune and ModAlt;
+//     in that case `r` carries the letter so Matches can compare it.
 type Keybinding struct {
 	key tcell.Key
 	mod tcell.ModMask
+	r   rune   // only meaningful when key == tcell.KeyRune (e.g. alt+letter)
 	raw string // original string, for display
 }
 
@@ -78,6 +86,18 @@ type Keybinding struct {
 func (kb Keybinding) Matches(ev *tcell.EventKey) bool {
 	if ev.Key() != kb.key {
 		return false
+	}
+	// For rune-keys (alt+letter), the actual letter must match.  We normalise
+	// to lowercase so users typing "alt+r" config still match Alt+r typed at
+	// the terminal regardless of caps-lock state.
+	if kb.key == tcell.KeyRune {
+		evRune := ev.Rune()
+		if evRune >= 'A' && evRune <= 'Z' {
+			evRune += 'a' - 'A'
+		}
+		if evRune != kb.r {
+			return false
+		}
 	}
 	evMod := ev.Modifiers()
 	// ctrl+letter keys (ctrl+a … ctrl+z) have the Ctrl baked into the key
@@ -135,6 +155,13 @@ func parseKey(s string) (Keybinding, error) {
 		return Keybinding{key: key, mod: mod &^ tcell.ModCtrl, raw: orig}, nil
 	}
 
+	// alt+<letter> (and bare letter, though we have no defaults using it):
+	// tcell delivers these as KeyRune with the letter rune and the Alt bit
+	// in Modifiers().
+	if len(keyName) == 1 && keyName[0] >= 'a' && keyName[0] <= 'z' {
+		return Keybinding{key: tcell.KeyRune, r: rune(keyName[0]), mod: mod, raw: orig}, nil
+	}
+
 	key, ok := keybindingNames[keyName]
 	if !ok {
 		return Keybinding{}, fmt.Errorf("unknown key name %q in keybinding %q", keyName, orig)
@@ -170,6 +197,7 @@ type Keybindings struct {
 	SearchNext   Keybinding
 	SearchPrev   Keybinding
 	SearchExit   Keybinding
+	ReinitHost   Keybinding
 }
 
 // keybindingDefaults is the single source of truth for action names, their
@@ -199,6 +227,7 @@ var keybindingDefaults = []kbEntry{
 	{"copy", func(k *Keybindings) *Keybinding { return &k.Copy }, "ctrl+c", "Copy selection; forwards Ctrl+C to shell if nothing selected"},
 	{"paste", func(k *Keybindings) *Keybinding { return &k.Paste }, "ctrl+v", "Paste from system clipboard"},
 	{"quit", func(k *Keybindings) *Keybinding { return &k.Quit }, "ctrl+q", "Quit bunk"},
+	{"reinit_host", func(k *Keybindings) *Keybinding { return &k.ReinitHost }, "alt+r", "Re-initialise host terminal (use after binary corruption)"},
 }
 
 // keybindingsHelpText returns a formatted key-bindings table for --help.
@@ -533,6 +562,7 @@ nav_left     = "alt+left"    # move focus to the pane on the left
 nav_right    = "alt+right"   # move focus to the pane on the right
 scroll_up    = "shift+pgup"  # scroll up in scrollback buffer
 scroll_down  = "shift+pgdn"  # scroll down / return toward live output
+reinit_host  = "alt+r"       # re-initialise host terminal after binary corruption
 
 # Search mode keys (active only while Ctrl+F search bar is open).
 search_next  = "ctrl+n"   # jump to next match  (Enter always works too)

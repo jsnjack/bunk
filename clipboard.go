@@ -3,7 +3,7 @@
 // Strategy (in order):
 //  1. OSC 52: the host terminal sets its own clipboard directly.  Works in
 //     Kitty, Alacritty, foot, WezTerm, xterm (with allowWindowOps), and many
-//     others.  Routed through the render loop's oscCh so it is emitted to
+//     others.  Routed through the render loop's oscBuf so it is emitted to
 //     os.Stdout just before tcell.Show() - the only safe write window.
 //  2. wl-copy  - Wayland clipboard tool (wl-clipboard package).
 //  3. xclip    - X11 clipboard tool.
@@ -35,10 +35,7 @@ func (app *App) copyToClipboard(text string) {
 	// 'c' selects the CLIPBOARD selection (as opposed to primary 'p').
 	encoded := base64.StdEncoding.EncodeToString([]byte(text))
 	osc := fmt.Sprintf("\x1b]52;c;%s\x07", encoded)
-	select {
-	case app.oscCh <- []byte(osc):
-	default:
-	}
+	app.oscBuf.append([]byte(osc))
 
 	// Native clipboard as best-effort fallback.
 	go func() {

@@ -20,9 +20,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"bunk/internal/vt10x"
 
@@ -130,9 +132,10 @@ func (app *App) render() {
 			app.screen.HideCursor()
 		}
 
-		drainOSC(app.oscCh)
+		app.oscBuf.flush(os.Stdout)
 		app.emitTitle(active)
 		app.emitCursorStyle(zp)
+		closeHostHyperlink(os.Stdout)
 		zp.mu.Lock()
 		needsSync := zp.needsSync
 		zp.needsSync = false
@@ -204,9 +207,10 @@ func (app *App) render() {
 	}
 
 	// Step 5 - drain OSC passthrough sequences and update host tab title.
-	drainOSC(app.oscCh)
+	app.oscBuf.flush(os.Stdout)
 	app.emitTitle(active)
 	app.emitCursorStyle(active)
+	closeHostHyperlink(os.Stdout)
 
 	if checkAndClearNeedsSync(root) {
 		app.screen.Sync()
@@ -234,18 +238,33 @@ func checkAndClearNeedsSync(n *Node) bool {
 	return l || r
 }
 
-// drainOSC flushes any queued OSC sequences to os.Stdout.
-// Written before tcell.Show() so the host terminal receives OSC 7/8/52
-// in the correct order relative to screen content.
-func drainOSC(ch <-chan []byte) {
-	for {
-		select {
-		case seq := <-ch:
-			os.Stdout.Write(seq) //nolint:errcheck
-		default:
-			return
-		}
-	}
+// closeHostHyperlink writes an OSC 8 close to w.  The render loop calls this
+// before every tcell screen.Show()/Sync() to clear any active OSC 8 hyperlink
+// state on the host terminal.
+//
+// Why we need it:
+//
+// tcell's diff-based painting (tscreen.go's draw()) sets t.curstyle =
+// styleInvalid at the start of every frame.  styleInvalid.url is "" (zero
+// value).  When the previous frame's last dirty cell had url="X", the host
+// terminal is in hyperlink-X state but tcell's internal curstyle has been
+// reset to invalid for the new frame.  If the new frame's first dirty cell
+// has url="", the URL-transition check
+//
+//	t.curstyle.url ("") != style.url ("")
+//
+// is false, so tcell does NOT emit exitUrl.  The host terminal stays inside
+// hyperlink X and the new frame's characters render as part of that link —
+// which is how `ls --hyperlink=auto` followed by a fresh PS1 prompt produces
+// a clickable PS1.
+//
+// Emitting the close here, BEFORE tcell paints, sidesteps the tcell quirk
+// without touching tcell's internal state: the host's URL state is now
+// closed, and tcell will re-emit enterUrl for the first dirty cell that has
+// url != "" (because styleInvalid.url="" still differs from "X").  Existing
+// hyperlinks keep working; new ones don't leak.
+func closeHostHyperlink(w io.Writer) {
+	w.Write([]byte("\x1b]8;;\x1b\\")) //nolint:errcheck
 }
 
 // emitTitle writes an OSC 0 window-title sequence to the host terminal if the
@@ -302,12 +321,42 @@ func (app *App) emitTitle(active *Pane) {
 		}
 	}
 
+	// Strip control bytes and invalid UTF-8 that would corrupt the host
+	// terminal. Pane titles are set by the shell via OSC 0/1/2 — but a pane
+	// that displayed binary content (cat /bin/ls) may have a title full of
+	// arbitrary bytes that must not be re-emitted to the host.
+	title = sanitizeTitle(title)
+
 	if title == app.lastEmittedTitle {
 		return
 	}
 	app.lastEmittedTitle = title
 	// OSC 0 sets both icon name and window title; BEL-terminated.
 	os.Stdout.Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
+}
+
+// sanitizeTitle keeps only printable runes (no C0/C1 controls), validates
+// UTF-8, and caps the length to keep OSC 0 sequences small enough that any
+// host terminal will accept them.
+func sanitizeTitle(s string) string {
+	const maxTitleBytes = 512
+	if len(s) > maxTitleBytes {
+		s = s[:maxTitleBytes]
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == utf8.RuneError:
+			continue
+		case r < 0x20:
+			continue
+		case r >= 0x7F && r <= 0x9F:
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // emitCursorStyle updates the tcell cursor style when the active pane's
@@ -502,6 +551,11 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 				isBlank = true
 			}
 			if !isBlank {
+				if cell.Link != 0 {
+					if url := p.term.Link(cell.Link); url != "" {
+						style = style.Url(url)
+					}
+				}
 				if cell.Mode&vtAttrBold != 0 {
 					style = style.Bold(true)
 				}

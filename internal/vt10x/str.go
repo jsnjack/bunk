@@ -112,6 +112,17 @@ func (t *State) handleSTR() {
 			if err := t.setColorName(colorNum, nil); err != nil {
 				t.logf("failed to reset OSC color %d\n", d)
 			}
+		case 8: // hyperlink: OSC 8 ; <params> ; <URL> ST
+			// params is an optional id=val list (currently ignored — tcell
+			// doesn't surface IDs separately enough to matter for grouping).
+			// URL empty = close the active hyperlink. Anything else opens
+			// a new one. URLs may legitimately contain ';' so we re-join
+			// the trailing args with ';' to undo s.parse()'s split.
+			var url string
+			if len(s.args) >= 3 {
+				url = strings.Join(s.args[2:], ";")
+			}
+			t.cur.Attr.Link = t.internLink(url)
 		case 4: // color set
 			if len(s.args) < 3 {
 				break

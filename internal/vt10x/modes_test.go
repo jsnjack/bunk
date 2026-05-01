@@ -291,3 +291,159 @@ func TestOSC110_111_112_ResetOverrides(t *testing.T) {
 		t.Fatal("DefaultCursor override still present after OSC 112 reset")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// OSC 8 — hyperlinks land on glyphs and resolve back via Link()
+// ---------------------------------------------------------------------------
+
+func TestOSC8_HyperlinkOnGlyph(t *testing.T) {
+	term := newTestTerm(40, 4)
+	// Open hyperlink, write "foo", close, write " bar" (no link).
+	term.Write([]byte("\x1b]8;;https://example.com/\x1b\\foo\x1b]8;;\x1b\\ bar")) //nolint:errcheck
+
+	// "foo" cells should carry a non-zero Link ID resolving to the URL.
+	for i, want := range []rune{'f', 'o', 'o'} {
+		g := term.Cell(i, 0)
+		if g.Char != want {
+			t.Errorf("cell(%d,0).Char = %q, want %q", i, g.Char, want)
+		}
+		if g.Link == 0 {
+			t.Errorf("cell(%d,0).Link = 0, want non-zero", i)
+		}
+		if got := term.Link(g.Link); got != "https://example.com/" {
+			t.Errorf("Link(%d) = %q, want example.com URL", g.Link, got)
+		}
+	}
+	// " bar" cells (col 3..6) must NOT carry a link.
+	for i := 3; i < 7; i++ {
+		if g := term.Cell(i, 0); g.Link != 0 {
+			t.Errorf("cell(%d,0).Link = %d, want 0 (after close)", i, g.Link)
+		}
+	}
+}
+
+func TestOSC8_LinkInterning(t *testing.T) {
+	// Same URL emitted twice should reuse a single ID.
+	term := newTestTerm(40, 4)
+	term.Write([]byte("\x1b]8;;u\x1b\\a\x1b]8;;\x1b\\b\x1b]8;;u\x1b\\c")) //nolint:errcheck
+	id1 := term.Cell(0, 0).Link // 'a' under url u
+	id2 := term.Cell(2, 0).Link // 'c' under url u (after close + re-open)
+	if id1 == 0 {
+		t.Fatal("first 'a' should have a link ID")
+	}
+	if id1 != id2 {
+		t.Errorf("same URL produced different IDs: %d vs %d", id1, id2)
+	}
+}
+
+// Reproduce the user's actual chunks from /tmp/bunk.log to find why PS1
+// renders as a link. Stream is verbatim from production, including the OSCs
+// from bash/vte between commands and the SGR-styled prompt.
+func TestOSC8_RealUserChunks(t *testing.T) {
+	term := newTestTerm(80, 24)
+	// chunk 1+2: ls --hyperlink output (truncated for test)
+	term.Write([]byte( //nolint:errcheck
+		"\x1b]8;;file://ydell/home/jsn/workspace/bunk/AGENTS.MD\x1b\\AGENTS.MD\x1b]8;;\x1b\\      " +
+			"\x1b]8;;file://ydell/home/jsn/workspace/bunk/go.mod\x1b\\go.mod\x1b]8;;\x1b\\\r\n" +
+			"\x1b]8;;file://ydell/home/jsn/workspace/bunk/reflow_test.go\x1b\\reflow_test.go\x1b]8;;\x1b\\\r\n",
+	))
+	// chunks 42-50: OSCs that arrive between ls and PS1
+	term.Write([]byte("\x1b]0;jsn@ydell:~/workspace/bunk\a"))                                                      //nolint:errcheck
+	term.Write([]byte("\x1b]3008;end=12fb10d4-9155-4970-8bb1-bd06ff65691f;exit=success\x1b\\"))                    //nolint:errcheck
+	term.Write([]byte("\x1b]3008;start=ed2246a1-e4f1-437b-a965-10f98e6428cd;machineid=2edfbf51e2e34d64a9096ebdb31f64a9;user=jsn;hostname=ydell;bootid=54980873-4669-47b6-9af5-b9462259d4ee;pid=00000000000000390800;type=shell;cwd=/home/jsn/workspace/bunk\x1b\\")) //nolint:errcheck
+	term.Write([]byte("\x1b]666;vte.shell.postexec=0\x1b\\"))                                                      //nolint:errcheck
+	term.Write([]byte("\x1b]666;vte.shell.precmd!\x1b\\"))                                                         //nolint:errcheck
+	term.Write([]byte("\x1b]7;file://ydell/home/jsn/workspace/bunk\x1b\\"))                                        //nolint:errcheck
+	// chunk 51: PS1 with SGR-only styling
+	term.Write([]byte("\x1b[?2004h\x1b[01;32mjsn@ydell\x1b[0m \x1b[01;34m~/workspace/bunk\x1b[0m [\x1b[0;33mmaster\x1b[0m \x1b[1;31m!\x1b[0m]\r\r\n$ ")) //nolint:errcheck
+
+	// Find the row containing "$ " — should be the PS1 row.
+	// Then verify NO cell on that row carries a Link.
+	for row := 0; row < 24; row++ {
+		// Build the row's text to identify it.
+		var line string
+		for col := 0; col < 80; col++ {
+			c := term.Cell(col, row).Char
+			if c == 0 {
+				c = ' '
+			}
+			line += string(c)
+		}
+		if !contains(line, "jsn@ydell") && !contains(line, "$ ") {
+			continue
+		}
+		// This row contains PS1 content. Inspect every cell.
+		for col := 0; col < 80; col++ {
+			g := term.Cell(col, row)
+			if g.Link != 0 {
+				t.Errorf("row %d col %d (%q) carries Link=%d (URL=%q) — PS1 row should be link-free", row, col, g.Char, g.Link, term.Link(g.Link))
+			}
+		}
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+// Trailing cells after a hyperlink (cleared by clear-to-EOL or scroll while
+// the link is open) must NOT carry the link ID. These are the "right of $ "
+// cells visible on the prompt line.
+func TestOSC8_NoLeakIntoTrailingClearedCells(t *testing.T) {
+	term := newTestTerm(20, 4)
+	// Open a link, write a few chars, then ESC[K (clear to EOL) WHILE the
+	// link is still open — this is what bash's clear-to-eol after PS1 would
+	// look like if the prompt itself is inside a link.
+	term.Write([]byte("\x1b]8;;url\x1b\\foo\x1b[K\x1b]8;;\x1b\\")) //nolint:errcheck
+	// Cells past col 3 must not carry the link.
+	for col := 3; col < 20; col++ {
+		if g := term.Cell(col, 0); g.Link != 0 {
+			t.Fatalf("cleared cell at col %d carried Link=%d while link was open", col, g.Link)
+		}
+	}
+}
+
+// Regression for "PS1 highlighted as link": after a sequence of opens/closes
+// (ls --hyperlink output), text printed AFTER the final close must not carry
+// any hyperlink ID — even when sandwiched between other OSCs (title, CWD).
+func TestOSC8_NoLeakIntoSubsequentText(t *testing.T) {
+	term := newTestTerm(80, 4)
+	stream := []byte("" +
+		// Mini ls --hyperlink burst
+		"\x1b]8;;file://a\x1b\\AAA\x1b]8;;\x1b\\ " +
+		"\x1b]8;;file://b\x1b\\BBB\x1b]8;;\x1b\\\r\n" +
+		// Bash post-exec OSCs (similar to what vte/bash emits between commands)
+		"\x1b]0;title\a" +
+		"\x1b]7;file:///tmp\x1b\\" +
+		// New PS1 with SGR codes
+		"\x1b[01;32mPS1text\x1b[0m" +
+		"")
+	term.Write(stream) //nolint:errcheck
+
+	// Find the PS1text on row 1 and verify no link.
+	for col := 0; col < 7; col++ {
+		g := term.Cell(col, 1)
+		if g.Char != rune("PS1text"[col]) {
+			t.Fatalf("row 1 col %d expected %q, got %q", col, "PS1text"[col], g.Char)
+		}
+		if g.Link != 0 {
+			t.Errorf("PS1text col %d has Link=%d (was %q), should be 0", col, g.Link, term.Link(g.Link))
+		}
+	}
+}
+
+func TestOSC8_URLContainingSemicolon(t *testing.T) {
+	// Pathological: URL with embedded ';' must not be truncated by the
+	// strings.Split in handleSTR — handleSTR re-joins args[2:] with ';'.
+	term := newTestTerm(40, 4)
+	term.Write([]byte("\x1b]8;;https://x.example/?a=1;b=2\x1b\\z")) //nolint:errcheck
+	g := term.Cell(0, 0)
+	if got := term.Link(g.Link); got != "https://x.example/?a=1;b=2" {
+		t.Errorf("URL with ';' was mangled: got %q", got)
+	}
+}

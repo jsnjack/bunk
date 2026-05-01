@@ -15,15 +15,13 @@ import (
 
 // helper: collect all sequences emitted by scanning chunk(s).
 func scanAll(chunks ...[]byte) [][]byte {
-	ch := make(chan []byte, 16)
-	var s oscScanner
-	for _, c := range chunks {
-		s.Scan(c, ch)
-	}
-	close(ch)
 	var out [][]byte
-	for seq := range ch {
-		out = append(out, seq)
+	var s oscScanner
+	emit := func(seq []byte) {
+		out = append(out, append([]byte(nil), seq...))
+	}
+	for _, c := range chunks {
+		s.Scan(c, emit)
 	}
 	return out
 }
@@ -133,22 +131,152 @@ func TestOSC_MultiChunk(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Channel full — sequence dropped (no panic)
+// oscBuffer: bursty hyperlink output (ls --hyperlink=auto on a large dir)
+// must never drop OSC 8 closes — that was the chan<-based bug.
 // ---------------------------------------------------------------------------
 
-func TestOSC_ChannelFull(t *testing.T) {
-	// Use a channel with zero capacity so it is always full.
-	ch := make(chan []byte)
+func TestOSCBuffer_NoDropsUnderBurst(t *testing.T) {
+	// Regression test for the chan<-based design that dropped OSC sequences
+	// under burst load.  Use OSC 133 prompt markers as a stand-in for any
+	// forwarded sequence; the buffer must accumulate every one.
+	buf := newOSCBuffer()
 	var s oscScanner
-	data := []byte("\x1b]7;file:///tmp\x07")
-	// This must not panic or block.
-	s.Scan(data, ch)
-	// Nothing should be in the channel (it has no buffer).
-	select {
-	case <-ch:
-		t.Error("expected channel to have no sequence (dropped), but got one")
-	default:
-		// OK — sequence was dropped as expected.
+	const n = 5000
+	one := []byte("\x1b]133;A\x07")
+	var stream []byte
+	for i := 0; i < n; i++ {
+		stream = append(stream, one...)
+	}
+	s.Scan(stream, buf.append)
+
+	var sink bytes.Buffer
+	buf.flush(&sink)
+
+	got := bytes.Count(sink.Bytes(), one)
+	if got != n {
+		t.Errorf("forwarded %d/%d OSC 133 markers under burst (was the dropped-OSC bug)", got, n)
+	}
+}
+
+func TestOSCBuffer_FlushClearsBuffer(t *testing.T) {
+	buf := newOSCBuffer()
+	buf.append([]byte("\x1b]7;file:///x\x07"))
+	var sink bytes.Buffer
+	buf.flush(&sink)
+	if sink.Len() == 0 {
+		t.Fatal("first flush emitted nothing")
+	}
+	sink.Reset()
+	buf.flush(&sink)
+	if sink.Len() != 0 {
+		t.Errorf("second flush should be empty, got %d bytes", sink.Len())
+	}
+}
+
+func TestOSCBuffer_CapEnforced(t *testing.T) {
+	buf := newOSCBuffer()
+	// Fill near the cap, then try to overshoot.
+	big := make([]byte, oscBufferMax-10)
+	buf.append(big)
+	buf.append([]byte("12345678901234567890")) // 20 bytes; would exceed cap, dropped
+	var sink bytes.Buffer
+	buf.flush(&sink)
+	if sink.Len() != len(big) {
+		t.Errorf("buffered = %d, want %d (over-cap append should be dropped)", sink.Len(), len(big))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sanitization: binary content from `cat /bin/ls` must not reach the host
+// terminal. Each forwarded OSC has format-specific validation.
+// ---------------------------------------------------------------------------
+
+func TestSanitize_OSC52_BinaryDropped(t *testing.T) {
+	// OSC 52 with a payload containing raw control bytes — exactly the kind
+	// of garbage `cat /bin/ls` produces. Must be dropped, not forwarded.
+	data := []byte("\x1b]52;c;\x01\x02\x03ABC\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 0 {
+		t.Errorf("binary OSC 52 should be dropped, got %d sequences: %q", len(seqs), seqs)
+	}
+}
+
+func TestSanitize_OSC52_BadBase64Dropped(t *testing.T) {
+	// Characters outside the base64 alphabet (e.g. '!' or space) → drop.
+	data := []byte("\x1b]52;c;Hello World!\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 0 {
+		t.Errorf("non-base64 OSC 52 payload should be dropped, got %d", len(seqs))
+	}
+}
+
+func TestSanitize_OSC52_BadSelectionDropped(t *testing.T) {
+	// 'X' is not a valid selection char.
+	data := []byte("\x1b]52;X;SGVsbG8=\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 0 {
+		t.Errorf("OSC 52 with invalid selection should be dropped, got %d", len(seqs))
+	}
+}
+
+func TestSanitize_OSC52_QueryAccepted(t *testing.T) {
+	data := []byte("\x1b]52;c;?\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 1 {
+		t.Fatalf("OSC 52 query should pass, got %d", len(seqs))
+	}
+}
+
+func TestSanitize_OSC52_EmptyDataAccepted(t *testing.T) {
+	// Empty data = clear clipboard, valid.
+	data := []byte("\x1b]52;c;\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 1 {
+		t.Fatalf("OSC 52 empty data (clear) should pass, got %d", len(seqs))
+	}
+}
+
+func TestOSC8_NotForwarded(t *testing.T) {
+	// OSC 8 must not be forwarded by the scanner — vt10x parses it into
+	// per-glyph hyperlink IDs and the renderer emits OSC 8 inline with cell
+	// paint via tcell.Style.Url. Forwarding here would emit the open/close
+	// pair before any characters are drawn, attributing the link to nothing.
+	data := []byte("\x1b]8;;https://example.com/\x1b\\")
+	seqs := scanAll(data)
+	if len(seqs) != 0 {
+		t.Errorf("OSC 8 should not be forwarded by the scanner, got %d sequences", len(seqs))
+	}
+}
+
+func TestSanitize_OSC7_BinaryDropped(t *testing.T) {
+	data := []byte("\x1b]7;file:///\x01\x02\x03\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 0 {
+		t.Errorf("OSC 7 with binary content should be dropped, got %d", len(seqs))
+	}
+}
+
+func TestSanitize_OSC7_UnicodePathPasses(t *testing.T) {
+	data := []byte("\x1b]7;file:///home/üser/café\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 1 {
+		t.Fatalf("OSC 7 with Unicode path should pass, got %d", len(seqs))
+	}
+}
+
+func TestSanitize_OSC133_ASCIIPasses(t *testing.T) {
+	data := []byte("\x1b]133;A;cl=cmd\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 1 {
+		t.Fatalf("OSC 133 ASCII should pass, got %d", len(seqs))
+	}
+}
+
+func TestSanitize_OSC133_BinaryDropped(t *testing.T) {
+	data := []byte("\x1b]133;A;\x01\x02\x07")
+	seqs := scanAll(data)
+	if len(seqs) != 0 {
+		t.Errorf("OSC 133 with control bytes should be dropped, got %d", len(seqs))
 	}
 }
 

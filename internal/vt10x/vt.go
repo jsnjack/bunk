@@ -38,6 +38,10 @@ type View interface {
 	// Title represents the title of the console window.
 	Title() string
 
+	// Link returns the OSC 8 hyperlink URL for the given Glyph.Link ID, or
+	// "" if id is 0 (no link). Callers must hold Lock().
+	Link(id uint16) string
+
 	// Cell returns the glyph containing the character code, foreground color, and
 	// background color at position (x, y) relative to the top left of the terminal.
 	Cell(x, y int) Glyph

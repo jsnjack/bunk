@@ -59,6 +59,7 @@ fi
 | `Ctrl+V` | Paste |
 | `Ctrl+Q` | Quit |
 | `Ctrl+D` / `exit` | Close active pane |
+| `Alt+R` | Re-initialise host terminal (recovery after binary corruption) |
 | Mouse drag | Select text (hold Shift to override app mouse mode) |
 | Double-click | Select word |
 | Drag to edge | Auto-scroll into history while selecting |

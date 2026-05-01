@@ -104,7 +104,8 @@ type Glyph struct {
 	Char   rune
 	Mode   int16
 	FG, BG Color
-	UL     Color // SGR 58 underline color; DefaultUL means inherit from FG
+	UL     Color  // SGR 58 underline color; DefaultUL means inherit from FG
+	Link   uint16 // OSC 8 hyperlink ID; 0 = no link, otherwise index into State.links (1-based)
 }
 
 type line []Glyph
@@ -152,6 +153,21 @@ type State struct {
 	tabs          []bool
 	title         string
 	colorOverride map[Color]Color
+	// links / linkIDs together form the OSC 8 hyperlink intern table.
+	//
+	// links[id-1] = URL gives the slice for ID→URL lookup (used by render).
+	// linkIDs[url] = id gives O(1) dedup when the same URL is seen multiple
+	// times — without it, ls --hyperlink in a 5k-file directory does
+	// quadratic string compares.
+	//
+	// Index 0 is reserved for "no link" so a zero-valued Glyph.Link means
+	// "this cell isn't part of a hyperlink". Slots are append-only —
+	// scrollback rows keep their IDs valid for the lifetime of the State.
+	// Capped at 0xFFFF (uint16 max) per pane; past that new URLs degrade
+	// silently to "no link", which is the right failure mode (rendering
+	// stays correct, just no clickable link for the overflow URLs).
+	links   []string
+	linkIDs map[string]uint16
 	// scrollRowCb, if non-nil, is called once per row that scrolls off the
 	// top of the primary screen (orig == 0 in scrollUp).  It fires before
 	// the row's backing storage is cleared, so the content is still intact.
@@ -163,6 +179,7 @@ func newState(w io.Writer) *State {
 	return &State{
 		w:             w,
 		colorOverride: make(map[Color]Color),
+		linkIDs:       make(map[string]uint16),
 	}
 }
 
@@ -289,6 +306,37 @@ func (t *State) privateModeFlag(mode int) (ModeFlag, bool) {
 // Title returns the current title set via the tty.
 func (t *State) Title() string {
 	return t.title
+}
+
+// Link returns the OSC 8 hyperlink URL for the given ID, or "" if id is 0
+// (meaning "no link") or out of range. Callers must hold the State lock.
+func (t *State) Link(id uint16) string {
+	if id == 0 || int(id) > len(t.links) {
+		return ""
+	}
+	return t.links[id-1]
+}
+
+// internLink interns url and returns its 1-based ID. Returns 0 for "" or when
+// the per-pane table is full (uint16 max ≈ 65k unique URLs). The table is
+// append-only so existing IDs remain valid for scrollback rows.
+//
+// Lookup is O(1) via linkIDs; ls --hyperlink in a large directory used to
+// be quadratic before this map was added.
+func (t *State) internLink(url string) uint16 {
+	if url == "" {
+		return 0
+	}
+	if id, ok := t.linkIDs[url]; ok {
+		return id
+	}
+	if len(t.links) >= 0xFFFF {
+		return 0
+	}
+	t.links = append(t.links, url)
+	id := uint16(len(t.links))
+	t.linkIDs[url] = id
+	return id
 }
 
 /*
@@ -514,6 +562,14 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 		for x := x0; x <= x1; x++ {
 			t.lines[y][x] = t.cur.Attr
 			t.lines[y][x].Char = ' '
+			// Erase operations must NOT carry the cursor's hyperlink onto
+			// blank cells. If cur.Attr.Link != 0 (we're between an OSC 8
+			// open and close, or just inside a link region), copying it
+			// here would tag every cleared cell as part of that link —
+			// making "ESC[K right of $ " or scrollUp during a link region
+			// turn the entire trailing row into a clickable link. Per
+			// OSC 8 spec, links bracket character output, not whitespace.
+			t.lines[y][x].Link = 0
 		}
 	}
 }

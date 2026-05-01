@@ -17,6 +17,67 @@ func keyEv(k tcell.Key, mod tcell.ModMask) *tcell.EventKey {
 	return tcell.NewEventKey(k, 0, mod)
 }
 
+// ---------------------------------------------------------------------------
+// parseKey + Keybinding.Matches: alt+letter, ctrl+letter, case-fold.
+// ---------------------------------------------------------------------------
+
+func TestParseKey_AltLetter(t *testing.T) {
+	kb, err := parseKey("alt+r")
+	if err != nil {
+		t.Fatalf("parseKey(alt+r): %v", err)
+	}
+	if kb.key != tcell.KeyRune {
+		t.Errorf("key = %v, want KeyRune", kb.key)
+	}
+	if kb.r != 'r' {
+		t.Errorf("rune = %q, want 'r'", kb.r)
+	}
+	if kb.mod != tcell.ModAlt {
+		t.Errorf("mod = %v, want ModAlt", kb.mod)
+	}
+}
+
+func TestKeybinding_Matches_AltR(t *testing.T) {
+	kb, err := parseKey("alt+r")
+	if err != nil {
+		t.Fatalf("parseKey: %v", err)
+	}
+	cases := []struct {
+		name string
+		ev   *tcell.EventKey
+		want bool
+	}{
+		{"alt+r matches", runeEv('r', tcell.ModAlt), true},
+		{"alt+R (caps) matches via case-fold", runeEv('R', tcell.ModAlt), true},
+		{"plain r does NOT match", runeEv('r', 0), false},
+		{"ctrl+r does NOT match (different key encoding)", keyEv(tcell.KeyCtrlR, 0), false},
+		{"alt+s does NOT match", runeEv('s', tcell.ModAlt), false},
+		{"alt+shift+r does NOT match (different mod set)", runeEv('R', tcell.ModAlt|tcell.ModShift), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := kb.Matches(c.ev); got != c.want {
+				t.Errorf("Matches = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestKeybinding_Matches_CtrlLetterUnaffected(t *testing.T) {
+	// Ensure the new alt+letter path didn't break the existing
+	// ctrl+letter encoding (KeyCtrlA…KeyCtrlZ).
+	kb, err := parseKey("ctrl+c")
+	if err != nil {
+		t.Fatalf("parseKey: %v", err)
+	}
+	if !kb.Matches(tcell.NewEventKey(tcell.KeyCtrlC, 0, 0)) {
+		t.Error("ctrl+c should match KeyCtrlC")
+	}
+	if kb.Matches(runeEv('c', tcell.ModAlt)) {
+		t.Error("ctrl+c should NOT match alt+c")
+	}
+}
+
 func TestKeyToBytes(t *testing.T) {
 	tests := []struct {
 		name       string
