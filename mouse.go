@@ -141,23 +141,19 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			}
 
 			// If button1 is currently held (drag-select in progress), extend
-			// the selection to the newly visible edge so the user can select
-			// content beyond the visible viewport by scrolling.
+			// the selection to the mouse's current position. screenToVirtual
+			// uses the post-scroll sbOff, so a stationary cursor naturally
+			// walks back through history as the viewport shifts.
 			target.mu.Lock()
-			if target.selActive && prevBtn == tcell.Button1 {
-				cols, rows := target.term.Size()
-				if btn == tcell.WheelUp {
-					// Scrolled toward the past: extend cursor to top-left of new view.
-					vRow := target.sb.count - target.sbOff
-					target.selCursor = selPos{row: vRow, col: 0}
-				} else {
-					// Scrolled toward present: extend cursor to bottom-right.
-					vRow := (target.sb.count - target.sbOff) + rows - 1
-					target.selCursor = selPos{row: vRow, col: cols - 1}
-				}
-				L.Debug("mouse: wheel-extend selection", "pane", target.id, "vrow", target.selCursor.row)
-			}
+			extend := target.selActive && prevBtn == tcell.Button1
 			target.mu.Unlock()
+			if extend {
+				vPos := screenToVirtual(target, x, y)
+				target.mu.Lock()
+				target.selCursor = vPos
+				target.mu.Unlock()
+				L.Debug("mouse: wheel-extend selection", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
+			}
 
 			app.triggerRedraw()
 			return
