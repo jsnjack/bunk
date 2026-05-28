@@ -296,8 +296,11 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 
 			L.Log(nil, LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
 
-			// Step 1 - OSC passthrough (CWD, hyperlinks, clipboard).
-			p.oscScan.Scan(chunk, oscBuf.append)
+			// Step 1 - OSC passthrough (CWD, clipboard, prompt markers).
+			p.oscScan.Scan(chunk, func(seq []byte) {
+				oscBuf.append(seq)
+				mirrorOSC52ToNativeClipboard(seq)
+			})
 
 			// Steps 2–4 under a single lock: captureAndWrite feeds chunk into
 			// vt10x, which updates all mode flags (2004, 2026, cursor shape, etc.)

@@ -16,11 +16,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf8"
 
 	"bunk/internal/vt10x"
 )
@@ -38,15 +40,84 @@ func (app *App) copyToClipboard(text string) {
 	app.oscBuf.append([]byte(osc))
 
 	// Native clipboard as best-effort fallback.
+	go copyTextToNativeClipboard(text)
+}
+
+// mirrorOSC52ToNativeClipboard mirrors a child application's OSC 52 clipboard
+// write through native clipboard tools. Forwarding OSC 52 to the host terminal
+// remains the primary path; this covers terminals that ignore or disable it.
+func mirrorOSC52ToNativeClipboard(seq []byte) {
+	text, ok := osc52ClipboardText(seq)
+	if !ok {
+		return
+	}
 	go func() {
-		if tryClipboardCmd(exec.Command("wl-copy"), text) {
-			return
+		if copyTextToNativeClipboard(text) {
+			L.Debug("osc52: mirrored to native clipboard", "bytes", len(text))
+		} else {
+			L.Debug("osc52: native clipboard mirror failed", "bytes", len(text))
 		}
-		if tryClipboardCmd(exec.Command("xclip", "-selection", "clipboard"), text) {
-			return
-		}
-		tryClipboardCmd(exec.Command("xsel", "--clipboard", "--input"), text) //nolint:errcheck
 	}()
+}
+
+// osc52ClipboardText decodes an OSC 52 clipboard text write. It ignores
+// queries, clear requests, binary data, and non-clipboard selections so those
+// can continue to be handled by the host.
+func osc52ClipboardText(seq []byte) (string, bool) {
+	if len(seq) < 3 || seq[0] != 0x1b || seq[1] != ']' {
+		return "", false
+	}
+	body := oscPayloadStripTerm(seq[2:])
+	semi := bytes.IndexByte(body, ';')
+	if semi < 0 || string(body[:semi]) != "52" {
+		return "", false
+	}
+	payload := body[semi+1:]
+	if !isSafeOSC52(payload) {
+		return "", false
+	}
+	semi = bytes.IndexByte(payload, ';')
+	if semi < 0 {
+		return "", false
+	}
+	selection, data := payload[:semi], payload[semi+1:]
+	if len(data) == 1 && data[0] == '?' {
+		return "", false
+	}
+	if len(data) == 0 {
+		return "", false
+	}
+	if !osc52TargetsClipboard(selection) {
+		return "", false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(data))
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(string(data))
+	}
+	if err != nil {
+		return "", false
+	}
+	if len(decoded) == 0 || !utf8.Valid(decoded) || bytes.IndexByte(decoded, 0) >= 0 {
+		return "", false
+	}
+	return string(decoded), true
+}
+
+func osc52TargetsClipboard(selection []byte) bool {
+	if len(selection) == 0 {
+		return true
+	}
+	return bytes.IndexByte(selection, 'c') >= 0
+}
+
+func copyTextToNativeClipboard(text string) bool {
+	if tryClipboardCmd(exec.Command("wl-copy"), text) {
+		return true
+	}
+	if tryClipboardCmd(exec.Command("xclip", "-selection", "clipboard"), text) {
+		return true
+	}
+	return tryClipboardCmd(exec.Command("xsel", "--clipboard", "--input"), text)
 }
 
 // pasteFromClipboard reads the system clipboard and writes it to the active

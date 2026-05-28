@@ -72,6 +72,75 @@ func TestOSC52_Forwarded(t *testing.T) {
 	}
 }
 
+func TestOSC52ClipboardText_DecodesClipboardWrite(t *testing.T) {
+	data := []byte("\x1b]52;c;d29ya3NwYWNlL2J1bms=\x07")
+	got, ok := osc52ClipboardText(data)
+	if !ok {
+		t.Fatal("expected OSC 52 clipboard write to decode")
+	}
+	if got != "workspace/bunk" {
+		t.Errorf("decoded text = %q, want %q", got, "workspace/bunk")
+	}
+}
+
+func TestOSC52ClipboardText_STTerminator(t *testing.T) {
+	data := []byte("\x1b]52;c;SGVsbG8=\x1b\\")
+	got, ok := osc52ClipboardText(data)
+	if !ok {
+		t.Fatal("expected ST-terminated OSC 52 clipboard write to decode")
+	}
+	if got != "Hello" {
+		t.Errorf("decoded text = %q, want %q", got, "Hello")
+	}
+}
+
+func TestOSC52ClipboardText_UnpaddedBase64(t *testing.T) {
+	data := []byte("\x1b]52;c;SGVsbG8\x07")
+	got, ok := osc52ClipboardText(data)
+	if !ok {
+		t.Fatal("expected unpadded OSC 52 clipboard write to decode")
+	}
+	if got != "Hello" {
+		t.Errorf("decoded text = %q, want %q", got, "Hello")
+	}
+}
+
+func TestOSC52ClipboardText_EmptySelectionTargetsClipboard(t *testing.T) {
+	data := []byte("\x1b]52;;SGVsbG8=\x07")
+	got, ok := osc52ClipboardText(data)
+	if !ok {
+		t.Fatal("expected empty OSC 52 selection to target clipboard")
+	}
+	if got != "Hello" {
+		t.Errorf("decoded text = %q, want %q", got, "Hello")
+	}
+}
+
+func TestOSC52ClipboardText_IgnoresQueriesAndPrimary(t *testing.T) {
+	for _, data := range [][]byte{
+		[]byte("\x1b]52;c;?\x07"),
+		[]byte("\x1b]52;p;SGVsbG8=\x07"),
+	} {
+		if got, ok := osc52ClipboardText(data); ok {
+			t.Errorf("osc52ClipboardText(%q) = %q, true; want ignored", data, got)
+		}
+	}
+}
+
+func TestOSC52ClipboardText_IgnoresClearClipboard(t *testing.T) {
+	data := []byte("\x1b]52;c;\x07")
+	if got, ok := osc52ClipboardText(data); ok {
+		t.Errorf("osc52ClipboardText(%q) = %q, true; want clear request ignored", data, got)
+	}
+}
+
+func TestOSC52ClipboardText_IgnoresBinaryClipboardData(t *testing.T) {
+	data := []byte("\x1b]52;c;//4=\x07")
+	if got, ok := osc52ClipboardText(data); ok {
+		t.Errorf("osc52ClipboardText(%q) = %q, true; want binary data ignored", data, got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OSC 133 (shell prompt markers)
 // ---------------------------------------------------------------------------
