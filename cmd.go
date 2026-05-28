@@ -38,9 +38,9 @@ func bunkLogo() string {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "config file path (default: ~/.config/bunk/config.toml)")
+	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path (default: ~/.config/bunk/config.toml)")
 	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
-	rootCmd.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable debug-level logging")
+	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug-level logging")
 	rootCmd.PersistentFlags().BoolVar(&flagTrace, "trace", false, "enable trace-level logging (logs raw PTY byte chunks)")
 
 	// Override help to load the config first so effective (user-overridden)

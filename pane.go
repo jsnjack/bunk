@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"bunk/internal/vt10x"
+
 	"github.com/creack/pty"
 )
 

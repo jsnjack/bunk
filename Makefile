@@ -1,46 +1,83 @@
-BINARY:=bunk
-PWD:=$(shell pwd)
-VERSION=0.0.0
-MONOVA:=$(shell which monova 2> /dev/null)
+BINARY  := bunk
+PWD     := $(shell pwd)
+PKG     := ./...
+VERSION := 0.0.0
+MONOVA  := $(shell which monova 2> /dev/null)
+LDFLAGS  = -ldflags="-X main.Version=$(VERSION)"
+
+export PATH := $(PATH):$(shell go env GOPATH)/bin
 
 version:
 ifdef MONOVA
-override VERSION=$(shell monova)
+override VERSION = $(shell monova)
+override LDFLAGS = -ldflags="-X main.Version=$(VERSION)"
 else
-	$(info "Install monova (https://github.com/jsnjack/monova) to calculate version")
+	$(info "Install monova with: grm install jsnjack/monova")
 endif
 
-bin/${BINARY}: bin/${BINARY}_linux_amd64
-	cp bin/${BINARY}_linux_amd64 bin/${BINARY}
-
 test:
-	gofmt -w .
-	go test ./... -count=1 -race
+	go test $(PKG) -count=1 -race
 
-bin/${BINARY}_linux_amd64: version test *.go
-	GOOS=linux GOARCH=amd64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_linux_amd64
+vet:
+	go vet $(PKG)
 
-bin/${BINARY}_linux_arm64: version test *.go
-	GOOS=linux GOARCH=arm64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_linux_arm64
+fmt:
+	@command -v goimports >/dev/null 2>&1 || { \
+	  echo "goimports is not installed. Install it with:"; \
+	  echo "  go install golang.org/x/tools/cmd/goimports@latest"; \
+	  exit 1; \
+	}
+	goimports -w .
 
-bin/${BINARY}_darwin_amd64: version test *.go
-	GOOS=darwin GOARCH=amd64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_darwin_amd64
+lint: vet
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+	  echo "golangci-lint is not installed. Install it with:"; \
+	  echo "  grm install golangci/golangci-lint"; \
+	  exit 1; \
+	}
+	golangci-lint run
 
-bin/${BINARY}_darwin_arm64: version test *.go
-	GOOS=darwin GOARCH=arm64 go build -ldflags="-X main.Version=${VERSION}" -o bin/${BINARY}_darwin_arm64
+check: fmt vet build test lint
+	@echo "==> make check: all green"
 
-build: bin/${BINARY} bin/${BINARY}_linux_amd64 bin/${BINARY}_linux_arm64 bin/${BINARY}_darwin_amd64 bin/${BINARY}_darwin_arm64
+standards:
+	curl -sL https://raw.githubusercontent.com/jsnjack/standards/master/AGENTS.universal.md \
+	    -o AGENTS.universal.md
+	curl -sL https://raw.githubusercontent.com/jsnjack/standards/master/AGENTS.go.md \
+	    -o AGENTS.go.md
+
+bin/$(BINARY): bin/$(BINARY)_linux_amd64
+	cp $< $@
+	ln -sf bin/$(BINARY) $(BINARY)
+bin/$(BINARY)_linux_amd64: version
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $@
+bin/$(BINARY)_linux_arm64: version
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $@
+bin/$(BINARY)_darwin_amd64: version
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $@
+bin/$(BINARY)_darwin_arm64: version
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $@
+
+build: bin/$(BINARY) bin/$(BINARY)_linux_amd64 bin/$(BINARY)_linux_arm64 bin/$(BINARY)_darwin_amd64 bin/$(BINARY)_darwin_arm64
 
 release: build
-	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_linux_amd64.tar.gz bin/${BINARY}_linux_amd64
-	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_linux_arm64.tar.gz bin/${BINARY}_linux_arm64
-	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_darwin_amd64.tar.gz bin/${BINARY}_darwin_amd64
-	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_darwin_arm64.tar.gz bin/${BINARY}_darwin_arm64
-	grm release jsnjack/${BINARY} -f bin/${BINARY}_linux_amd64.tar.gz -f bin/${BINARY}_linux_arm64.tar.gz -f bin/${BINARY}_darwin_amd64.tar.gz -f bin/${BINARY}_darwin_arm64.tar.gz -t "v`monova`"
+	tar -czf bin/$(BINARY)_linux_amd64.tar.gz  --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_amd64
+	tar -czf bin/$(BINARY)_linux_arm64.tar.gz  --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_arm64
+	tar -czf bin/$(BINARY)_darwin_amd64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_darwin_amd64
+	tar -czf bin/$(BINARY)_darwin_arm64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_darwin_arm64
+	grm release jsnjack/$(BINARY) \
+		-f bin/$(BINARY)_linux_amd64.tar.gz \
+		-f bin/$(BINARY)_linux_arm64.tar.gz \
+		-f bin/$(BINARY)_darwin_amd64.tar.gz \
+		-f bin/$(BINARY)_darwin_arm64.tar.gz \
+		-t "v`monova`"
 
 run:
-	go build -o ${BINARY} .
+	go build -o $(BINARY) .
 	> /tmp/bunk.log
-	BUNK=1 gnome-terminal -- bash -c 'cd $(PWD) && BUNK= ./${BINARY} --trace'
+	BUNK=1 gnome-terminal -- bash -c 'cd $(PWD) && BUNK= ./$(BINARY) --trace'
 
-.PHONY: version release build test run
+clean:
+	rm -rf bin/ $(BINARY)
+
+.PHONY: version build release test vet fmt lint check standards run clean

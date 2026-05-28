@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"bunk/internal/vt10x"
+
 	"github.com/gdamore/tcell/v2"
 )
 
