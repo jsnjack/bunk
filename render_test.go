@@ -655,14 +655,14 @@ func TestRenderPane_WideChar_CombiningPlaceholderPreserved(t *testing.T) {
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 
 	renderPane(scr, p, testTheme())
 
 	// Col 0: the wide emoji must be present.
-	mainc, _, _, width := scr.GetContent(0, 0)
+	mainc, _, _, width := scr.GetContent(0, 0) //nolint:staticcheck // rune-level access; Get() returns string
 	if mainc != '🔴' {
 		t.Errorf("col 0: got rune %q, want '🔴'", mainc)
 	}
@@ -674,13 +674,13 @@ func TestRenderPane_WideChar_CombiningPlaceholderPreserved(t *testing.T) {
 	// means col 1 is the visual right-half of the emoji (the combining slot).
 	// In tcell's SimulationScreen the combining placeholder is not auto-set,
 	// but we must NOT have called SetContent(1, 'X') there (column shift).
-	mainc, _, _, _ = scr.GetContent(1, 0)
+	mainc, _, _, _ = scr.GetContent(1, 0) //nolint:staticcheck // rune-level access
 	if mainc == 'X' {
 		t.Errorf("col 1: got 'X', want the combining slot to be empty — column shift bug present")
 	}
 
 	// Col 2: narrow 'X' must be at exactly column 2, not shifted to 3.
-	mainc, _, _, _ = scr.GetContent(2, 0)
+	mainc, _, _, _ = scr.GetContent(2, 0) //nolint:staticcheck // rune-level access
 	if mainc != 'X' {
 		t.Errorf("col 2: got rune %q, want 'X' — column shifted after wide char", mainc)
 	}
@@ -711,7 +711,7 @@ func TestRenderPane_WideChar_TableBordersAligned(t *testing.T) {
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 
@@ -730,7 +730,7 @@ func TestRenderPane_WideChar_TableBordersAligned(t *testing.T) {
 		{5, 'C', "col 5: 'C' after table border"},
 	}
 	for _, tc := range wants {
-		mainc, _, _, _ := scr.GetContent(tc.col, 0)
+		mainc, _, _, _ := scr.GetContent(tc.col, 0) //nolint:staticcheck // rune-level access
 		if mainc != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.desc, mainc, tc.want)
 		}
@@ -761,7 +761,7 @@ func TestRenderPane_WideChar_MultipleConsecutive(t *testing.T) {
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 
@@ -776,14 +776,14 @@ func TestRenderPane_WideChar_MultipleConsecutive(t *testing.T) {
 		{1, '🟡'}, // right-half of 🔴 — must not hold the next wide char
 		{3, 'Z'}, // right-half of 🟡 — must not hold 'Z'
 	} {
-		mainc, _, _, _ := scr.GetContent(tc.col, 0)
+		mainc, _, _, _ := scr.GetContent(tc.col, 0) //nolint:staticcheck // rune-level access
 		if mainc == tc.notWant {
 			t.Errorf("col %d: got %q, which indicates a column-shift bug (char should be at col+1)",
 				tc.col, tc.notWant)
 		}
 	}
 	// 'Z' must be at column 4, not shifted to 5 or 6.
-	mainc, _, _, _ := scr.GetContent(4, 0)
+	mainc, _, _, _ := scr.GetContent(4, 0) //nolint:staticcheck // rune-level access
 	if mainc != 'Z' {
 		t.Errorf("col 4: got %q, want 'Z' — column shift after consecutive wide chars", mainc)
 	}
@@ -842,12 +842,12 @@ func renderAndGetStyle(t *testing.T, ansi string) tcell.Style {
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 
 	renderPane(scr, p, testTheme())
-	_, _, style, _ := scr.GetContent(0, 0)
+	_, _, style, _ := scr.GetContent(0, 0) //nolint:staticcheck // rune-level access
 	return style
 }
 
@@ -902,12 +902,12 @@ func TestRenderPane_SGR8_Invisible_RendersSpace(t *testing.T) {
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 
 	renderPane(scr, p, testTheme())
-	mainc, _, _, _ := scr.GetContent(0, 0)
+	mainc, _, _, _ := scr.GetContent(0, 0) //nolint:staticcheck // rune-level access
 	if mainc != ' ' {
 		t.Errorf("SGR 8 (invisible): got rune %q at col 0, want ' ' (space)", mainc)
 	}
@@ -1111,7 +1111,7 @@ func TestRenderPane_ScrollbackBeyondWidth_UsesThemeBG(t *testing.T) {
 	p.sbOff = 1
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(paneW, rows)
 
@@ -1121,7 +1121,7 @@ func TestRenderPane_ScrollbackBeyondWidth_UsesThemeBG(t *testing.T) {
 	// columns oldCols..newCols-1 are beyond sbRow's width and must render
 	// with rt.bg (DefaultBG), NOT rt.palette[0] (ANSI black = Color 0).
 	for col := oldCols; col < newCols; col++ {
-		_, _, style, _ := scr.GetContent(col, 0)
+		_, _, style, _ := scr.GetContent(col, 0) //nolint:staticcheck // rune-level access
 		_, bg, _ := style.Decompose()
 		if bg != rt.bg {
 			t.Errorf("scrollback row 0 col %d: bg = %v, want rt.bg = %v (got ANSI black seam)",
@@ -1139,7 +1139,7 @@ func TestRenderPane_ScrollbackBeyondWidth_UsesThemeBG(t *testing.T) {
 func screenRowFingerprints(scr tcell.SimulationScreen, rows int) []rune {
 	fp := make([]rune, rows)
 	for r := 0; r < rows; r++ {
-		ch, _, _, _ := scr.GetContent(0, r)
+		ch, _, _, _ := scr.GetContent(0, r) //nolint:staticcheck // rune-level access
 		fp[r] = ch
 	}
 	return fp
@@ -1148,7 +1148,7 @@ func screenRowFingerprints(scr tcell.SimulationScreen, rows int) []rune {
 func screenRowString(scr tcell.SimulationScreen, y, cols int) string {
 	runes := make([]rune, cols)
 	for x := 0; x < cols; x++ {
-		ch, _, _, _ := scr.GetContent(x, y)
+		ch, _, _, _ := scr.GetContent(x, y) //nolint:staticcheck // rune-level access
 		if ch == 0 {
 			ch = ' '
 		}
@@ -1176,7 +1176,7 @@ func TestRenderPane_DirtyOnlyRepaintsChangedRow(t *testing.T) {
 	p.term = vt10x.New(vt10x.WithSize(termCols, rows), vt10x.WithScrollCallback(p.onScrollRow))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(cols, rows)
 	rt := testTheme()
@@ -1230,7 +1230,7 @@ func TestRenderPane_IdlePaneSkipsAllRows(t *testing.T) {
 	p.term = vt10x.New(vt10x.WithSize(cols-1, rows))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(cols, rows)
 	rt := testTheme()
@@ -1269,7 +1269,7 @@ func TestRenderPane_FullRepaintOnScrollChange(t *testing.T) {
 	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.onScrollRow))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(cols, rows)
 	rt := testTheme()
@@ -1327,7 +1327,7 @@ func TestRenderPane_FullRepaintOnStatusOverlayChange(t *testing.T) {
 	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.onScrollRow))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(cols, rows)
 	rt := testTheme()
@@ -1381,7 +1381,7 @@ func TestSanitizeTitle(t *testing.T) {
 		{"strip C0 controls", "before\x01\x02\x03after", "beforeafter"},
 		{"strip ESC", "evil\x1b]0;hijack\x07tail", "evil]0;hijacktail"},
 		{"strip DEL", "x\x7fy", "xy"},
-		{"strip C1 controls", "xy", "xy"},
+		{"strip C1 controls", "x\u0080\u009fy", "xy"},
 		{"strip nul", "a\x00b", "ab"},
 		{"invalid utf8 stripped", "good\xff\xfetail", "goodtail"},
 	}
@@ -1459,14 +1459,14 @@ func TestRenderPane_HyperlinkCellsCarryURL(t *testing.T) {
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 	renderPane(scr, p, testTheme())
 
 	// Cells 0..2 ("foo") must carry the URL.
 	for col := 0; col < 3; col++ {
-		_, _, style, _ := scr.GetContent(col, 0)
+		_, _, style, _ := scr.GetContent(col, 0) //nolint:staticcheck // rune-level access
 		if !hasURL(style) {
 			t.Errorf("col %d (inside link): style has no URL set", col)
 		}
@@ -1477,7 +1477,7 @@ func TestRenderPane_HyperlinkCellsCarryURL(t *testing.T) {
 
 	// Cells 3+ (" bar") must NOT carry a URL — the link was closed.
 	for col := 3; col < 7; col++ {
-		_, _, style, _ := scr.GetContent(col, 0)
+		_, _, style, _ := scr.GetContent(col, 0) //nolint:staticcheck // rune-level access
 		if hasURL(style) {
 			t.Errorf("col %d (after close): style still carries a URL — leak past close", col)
 		}
@@ -1516,7 +1516,7 @@ func TestRenderPane_PS1AfterLsDoesNotCarryURL(t *testing.T) {
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 	renderPane(scr, p, testTheme())
@@ -1527,7 +1527,7 @@ func TestRenderPane_PS1AfterLsDoesNotCarryURL(t *testing.T) {
 	for row := 0; row < h; row++ {
 		var rowText []rune
 		for col := 0; col < w; col++ {
-			r, _, _, _ := scr.GetContent(col, row)
+			r, _, _, _ := scr.GetContent(col, row) //nolint:staticcheck // rune-level access
 			rowText = append(rowText, r)
 		}
 		s := string(rowText)
@@ -1535,7 +1535,7 @@ func TestRenderPane_PS1AfterLsDoesNotCarryURL(t *testing.T) {
 			continue
 		}
 		for col := 0; col < w; col++ {
-			_, _, style, _ := scr.GetContent(col, row)
+			_, _, style, _ := scr.GetContent(col, row) //nolint:staticcheck // rune-level access
 			if hasURL(style) {
 				t.Errorf("PS1 row %d col %d (%q) carries a URL — link leaked past ls output",
 					row, col, rowText[col])
@@ -1578,7 +1578,7 @@ func readBarRow(t *testing.T, scr tcell.SimulationScreen, x, y, w int) string {
 	t.Helper()
 	var b strings.Builder
 	for col := x; col < x+w; col++ {
-		r, _, _, _ := scr.GetContent(col, y)
+		r, _, _, _ := scr.GetContent(col, y) //nolint:staticcheck // rune-level access
 		b.WriteRune(r)
 	}
 	return b.String()
@@ -1590,7 +1590,7 @@ func TestDrawSearchBar_WideEnoughShowsHint(t *testing.T) {
 	kb := resolveKeybindings(nil) // built-in defaults
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 	drawSearchBar(scr, p, &kb, "needle", 2, 5)
@@ -1619,7 +1619,7 @@ func TestDrawSearchBar_NarrowSuppressesHint(t *testing.T) {
 	kb := resolveKeybindings(nil)
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 	drawSearchBar(scr, p, &kb, "x", 0, 1)
@@ -1638,7 +1638,7 @@ func TestDrawSearchBar_RemappedKeysAppearInHint(t *testing.T) {
 	kb := resolveKeybindings(map[string]string{"search_next": "f3"})
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 	drawSearchBar(scr, p, &kb, "x", 0, 1)
@@ -1764,21 +1764,21 @@ func TestRenderPane_TrailingClearedCellsAfterLink(t *testing.T) {
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
-	scr.Init()
+	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
 	defer scr.Fini()
 	scr.SetSize(w, h)
 	renderPane(scr, p, testTheme())
 
 	// "foo" carries the link.
 	for col := 0; col < 3; col++ {
-		_, _, style, _ := scr.GetContent(col, 0)
+		_, _, style, _ := scr.GetContent(col, 0) //nolint:staticcheck // rune-level access
 		if !hasURL(style) {
 			t.Errorf("col %d (inside link): style has no URL", col)
 		}
 	}
 	// Trailing cells must not.
 	for col := 3; col < w-1; col++ {
-		_, _, style, _ := scr.GetContent(col, 0)
+		_, _, style, _ := scr.GetContent(col, 0) //nolint:staticcheck // rune-level access
 		if hasURL(style) {
 			t.Errorf("col %d (trailing cleared cell): carries URL — clear() leaked Link", col)
 		}

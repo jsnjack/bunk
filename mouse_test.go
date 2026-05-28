@@ -118,7 +118,7 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pr.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	p := &Pane{
@@ -151,7 +151,7 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			pr.Read(buf)
+			pr.Read(buf) //nolint:errcheck // best-effort drain in test
 			return
 		}
 	}()
@@ -161,9 +161,9 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pr2.Close()
-	pw.Close()   // close old write end
-	p.ptmx = pw2 // point pane at new pipe
+	defer pr2.Close() //nolint:errcheck // test pipe cleanup
+	pw.Close()        //nolint:errcheck // close old write end
+	p.ptmx = pw2      // point pane at new pipe
 
 	// Now fire many mouse events with the double-check guard.
 	// Since mode is disabled, none should be written.
@@ -202,7 +202,7 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	pw2.Close()
+	pw2.Close() //nolint:errcheck // test pipe cleanup
 
 	// Read everything from the post-disable pipe.
 	var total int
@@ -273,7 +273,7 @@ func TestMouseToBytes_TableDriven(t *testing.T) {
 
 func TestSendFocusIn_Enabled(t *testing.T) {
 	pr, pw, _ := os.Pipe()
-	defer pr.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	term.Write([]byte("\x1b[?1004h")) //nolint:errcheck // enable focus events
@@ -285,7 +285,7 @@ func TestSendFocusIn_Enabled(t *testing.T) {
 	}
 
 	sendFocusIn(p)
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf := make([]byte, 64)
 	n, _ := pr.Read(buf)
@@ -297,7 +297,7 @@ func TestSendFocusIn_Enabled(t *testing.T) {
 
 func TestSendFocusOut_Enabled(t *testing.T) {
 	pr, pw, _ := os.Pipe()
-	defer pr.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	term.Write([]byte("\x1b[?1004h")) //nolint:errcheck
@@ -309,7 +309,7 @@ func TestSendFocusOut_Enabled(t *testing.T) {
 	}
 
 	sendFocusOut(p)
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf := make([]byte, 64)
 	n, _ := pr.Read(buf)
@@ -321,7 +321,7 @@ func TestSendFocusOut_Enabled(t *testing.T) {
 
 func TestSendFocusIn_Disabled(t *testing.T) {
 	pr, pw, _ := os.Pipe()
-	defer pr.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	// Don't enable focus events.
@@ -333,7 +333,7 @@ func TestSendFocusIn_Disabled(t *testing.T) {
 	}
 
 	sendFocusIn(p)
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf := make([]byte, 64)
 	n, _ := pr.Read(buf)
@@ -358,7 +358,7 @@ func TestSendFocusOut_Nil(t *testing.T) {
 
 func TestSendFocusOut_Disabled(t *testing.T) {
 	pr, pw, _ := os.Pipe()
-	defer pr.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	p := &Pane{
@@ -369,7 +369,7 @@ func TestSendFocusOut_Disabled(t *testing.T) {
 	}
 
 	sendFocusOut(p)
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf := make([]byte, 64)
 	n, _ := pr.Read(buf)

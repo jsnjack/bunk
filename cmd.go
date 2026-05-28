@@ -47,7 +47,7 @@ func init() {
 	// keybindings are shown rather than built-in defaults.
 	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		cfg := LoadConfig(flagConfig, flagTheme)
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s\nUsage:\n  %s\n\nFlags:\n%s",
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s\nUsage:\n  %s\n\nFlags:\n%s", //nolint:errcheck // help text write
 			bunkLogo(),
 			keybindingsHelpText(&cfg.Keybindings),
 			cmd.UseLine(),
@@ -182,7 +182,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		"\033[2J\033[H" // clear screen + cursor home
 	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
 		tty.WriteString(vtreset) //nolint:errcheck
-		tty.Close()
+		tty.Close()              //nolint:errcheck // /dev/tty close on shutdown path
 	} else {
 		os.Stdout.WriteString(vtreset) //nolint:errcheck
 	}

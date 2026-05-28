@@ -230,9 +230,9 @@ func saveClipboardImageWl() string {
 	cmd := exec.Command("wl-paste", "--no-newline", "--type", mime)
 	cmd.Stdout = f
 	runErr := cmd.Run()
-	f.Close()
+	f.Close() //nolint:errcheck // temp file; reopened by caller via path
 	if runErr != nil {
-		os.Remove(f.Name())
+		os.Remove(f.Name()) //nolint:errcheck // best-effort temp-file cleanup
 		return ""
 	}
 	return f.Name()
@@ -268,9 +268,9 @@ func saveClipboardImageX11() string {
 	cmd := exec.Command("xclip", "-selection", "clipboard", "-o", "-target", target)
 	cmd.Stdout = f
 	runErr := cmd.Run()
-	f.Close()
+	f.Close() //nolint:errcheck // temp file; reopened by caller via path
 	if runErr != nil {
-		os.Remove(f.Name())
+		os.Remove(f.Name()) //nolint:errcheck // best-effort temp-file cleanup
 		return ""
 	}
 	return f.Name()

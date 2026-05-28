@@ -270,8 +270,8 @@ func TestEmitColorCode(t *testing.T) {
 
 		// Truecolor: encoded as r<<16 | g<<8 | b, but only for values >= 256.
 		// 256 is the first value that falls into the truecolor branch.
-		{"truecolor r=255,g=128,b=0 FG", vt10x.Color(255<<16 | 128<<8 | 0), true, ";38;2;255;128;0"},
-		{"truecolor r=255,g=128,b=0 BG", vt10x.Color(255<<16 | 128<<8 | 0), false, ";48;2;255;128;0"},
+		{"truecolor r=255,g=128,b=0 FG", vt10x.Color(255<<16 | 128<<8), true, ";38;2;255;128;0"},
+		{"truecolor r=255,g=128,b=0 BG", vt10x.Color(255<<16 | 128<<8), false, ";48;2;255;128;0"},
 		{"truecolor r=0,g=0,b=0 FG", vt10x.Color(256), true, ";38;2;0;1;0"},
 		{"truecolor r=1,g=2,b=3 FG", vt10x.Color(1<<16 | 2<<8 | 3), true, ";38;2;1;2;3"},
 	}

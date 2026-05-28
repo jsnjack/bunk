@@ -106,9 +106,8 @@ func (t *State) handleCSI() {
 	case 'B', 'e': // CUD, VPR - cursor <n> down
 		t.moveTo(t.cur.X, t.cur.Y+c.maxarg(0, 1))
 	case 'c': // DA - device attributes
-		if c.arg(0, 0) == 0 {
-			// TODO: write vt102 id
-		}
+		// TODO: when c.arg(0, 0) == 0, write the VT102 device-attributes
+		// reply back to the host.
 	case 'C', 'a': // CUF, HPR - cursor <n> forward
 		t.moveTo(t.cur.X+c.maxarg(0, 1), t.cur.Y)
 	case 'D': // CUB - cursor <n> backward
@@ -199,9 +198,9 @@ func (t *State) handleCSI() {
 	case 'n':
 		switch c.arg(0, 0) {
 		case 5: // DSR - device status report
-			t.w.Write([]byte("\033[0n"))
+			t.w.Write([]byte("\033[0n")) //nolint:errcheck // reply write to host PTY; nothing actionable on failure
 		case 6: // CPR - cursor position report
-			t.w.Write([]byte(fmt.Sprintf("\033[%d;%dR", t.cur.Y+1, t.cur.X+1)))
+			fmt.Fprintf(t.w, "\033[%d;%dR", t.cur.Y+1, t.cur.X+1) //nolint:errcheck // reply write to host PTY
 		}
 	case 'r': // DECSTBM - set scrolling region
 		if c.priv {

@@ -56,7 +56,7 @@ func probeHostOSCColors() hostOSCColors {
 		L.Debug("probeHostOSCColors: open /dev/tty", "err", err)
 		return hostOSCColors{}
 	}
-	defer tty.Close()
+	defer tty.Close() //nolint:errcheck // /dev/tty close on shutdown path
 
 	oldState, err := term.MakeRaw(int(tty.Fd()))
 	if err != nil {
@@ -67,7 +67,7 @@ func probeHostOSCColors() hostOSCColors {
 
 	queries := []int{10, 11, 12}
 	for _, num := range queries {
-		if _, err := tty.WriteString(fmt.Sprintf("\x1b]%d;?\x1b\\", num)); err != nil {
+		if _, err := fmt.Fprintf(tty, "\x1b]%d;?\x1b\\", num); err != nil {
 			L.Debug("probeHostOSCColors: write query", "osc_num", num, "err", err)
 			return hostOSCColors{}
 		}

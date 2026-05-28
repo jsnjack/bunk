@@ -57,8 +57,8 @@ func TestReadHostOSCReplies_NoReplyBailsAtInitialTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	start := time.Now()
 	got := readHostOSCReplies(int(pr.Fd()), []int{10, 11, 12}, 50*time.Millisecond, 50*time.Millisecond)
@@ -77,11 +77,11 @@ func TestReadHostOSCReplies_FirstReplyExtendsDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	// Write one reply immediately so the deadline extends.
-	pw.Write([]byte("\x1b]10;rgb:aaaa/bbbb/cccc\x1b\\"))
+	pw.Write([]byte("\x1b]10;rgb:aaaa/bbbb/cccc\x1b\\")) //nolint:errcheck // test pipe write
 
 	got := readHostOSCReplies(int(pr.Fd()), []int{10, 11, 12}, 50*time.Millisecond, 50*time.Millisecond)
 	if got[10] != "rgb:aaaa/bbbb/cccc" {

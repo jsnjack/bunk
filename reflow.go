@@ -263,7 +263,7 @@ func reflowInject(term vt10x.Terminal, rows [][]vt10x.Glyph) {
 	var buf bytes.Buffer
 	buf.WriteString("\x1b[0m\x1b[2J\x1b[H") // reset attrs, clear, cursor home
 
-	var prevFG, prevBG vt10x.Color = vt10x.DefaultFG, vt10x.DefaultBG
+	prevFG, prevBG := vt10x.DefaultFG, vt10x.DefaultBG
 	var prevMode int16
 
 	for r := 0; r <= lastContent; r++ {

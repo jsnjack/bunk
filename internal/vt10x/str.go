@@ -96,9 +96,8 @@ func (t *State) handleSTR() {
 				t.oscColorResponse(colorNum, d)
 			} else if err := t.setColorName(colorNum, p); err != nil {
 				t.logf("invalid %s color: %s\n", colorName, maybe(p))
-			} else {
-				// TODO: redraw
 			}
+			// TODO: redraw on successful colour set
 		case 110, 111, 112: // reset dynamic fg/bg/cursor color to default
 			var colorNum int
 			switch d {
@@ -139,12 +138,11 @@ func (t *State) handleSTR() {
 			if p != nil && *p == "?" { // report
 				t.osc4ColorResponse(j)
 			} else if err := t.setColorName(j, p); err != nil {
-				if !(d == 104 && len(s.args) <= 1) {
+				if d != 104 || len(s.args) > 1 {
 					t.logf("invalid color j=%d, p=%s\n", j, maybe(p))
 				}
-			} else {
-				// TODO: redraw
 			}
+			// TODO: redraw on successful colour set
 		default:
 			t.logf("unknown OSC command %d\n", d)
 			// TODO: s.dump()
@@ -197,7 +195,7 @@ func (t *State) oscColorResponse(j, num int) {
 	}
 
 	r, g, b := rgb(j)
-	t.w.Write([]byte(fmt.Sprintf("\033]%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", num, r, r, g, g, b, b)))
+	fmt.Fprintf(t.w, "\033]%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", num, r, r, g, g, b, b) //nolint:errcheck // reply write to host PTY
 }
 
 func (t *State) osc4ColorResponse(j int) {
@@ -212,7 +210,7 @@ func (t *State) osc4ColorResponse(j int) {
 	}
 
 	r, g, b := rgb(j)
-	t.w.Write([]byte(fmt.Sprintf("\033]4;%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", j, r, r, g, g, b, b)))
+	fmt.Fprintf(t.w, "\033]4;%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", j, r, r, g, g, b, b) //nolint:errcheck // reply write to host PTY
 }
 
 func rgb(j int) (r, g, b int) {

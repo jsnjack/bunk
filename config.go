@@ -242,7 +242,7 @@ func keybindingsHelpText(kb *Keybindings) string {
 		if kb != nil {
 			key = e.field(kb).raw
 		}
-		b.WriteString(fmt.Sprintf("  %-16s  %s\n", key, e.desc))
+		fmt.Fprintf(&b, "  %-16s  %s\n", key, e.desc)
 	}
 	return b.String()
 }

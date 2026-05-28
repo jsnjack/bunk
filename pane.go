@@ -13,6 +13,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -279,7 +280,6 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 			// Prepend any incomplete UTF-8 / ANSI bytes carried from the previous read.
 			if len(carry) > 0 {
 				chunk = append(carry, chunk...)
-				carry = nil
 			}
 
 			// Hold back a trailing incomplete UTF-8 rune or ANSI control
@@ -295,7 +295,7 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 				continue
 			}
 
-			L.Log(nil, LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
+			L.Log(context.Background(), LevelTrace, "readPTY: chunk", "pane", p.id, "data", fmt.Sprintf("%q", chunk))
 
 			// Step 1 - OSC passthrough (CWD, clipboard, prompt markers).
 			p.oscScan.Scan(chunk, func(seq []byte) {
@@ -389,9 +389,9 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 // scrollback, rawBuf replay, alt-screen hygiene, and kitty-keyboard handling.
 func (p *Pane) writeTerminalChunk(chunk []byte) {
 	altScreen := p.term.Mode()&vt10x.ModeAltScreen != 0
-	if L.Enabled(nil, LevelTrace) {
+	if L.Enabled(context.Background(), LevelTrace) {
 		cur := p.term.Cursor()
-		L.Log(nil, LevelTrace, "writeTerminalChunk: start", "pane", p.id, "cursor_y", cur.Y, "cursor_x", cur.X, "alt", altScreen, "chunk_len", len(chunk))
+		L.Log(context.Background(), LevelTrace, "writeTerminalChunk: start", "pane", p.id, "cursor_y", cur.Y, "cursor_x", cur.X, "alt", altScreen, "chunk_len", len(chunk))
 	}
 
 	// Kitty keyboard protocol — bunk acts as the "terminal" for pane apps.
@@ -447,7 +447,7 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 				}
 				cur := p.term.Cursor()
 				p.altEntryCursorX, p.altEntryCursorY = cur.X, cur.Y
-				L.Log(nil, LevelTrace, "captureAndWrite: alt-screen entry", "pane", p.id, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
+				L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen entry", "pane", p.id, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
 
 				end := i + len(b)
 				p.term.Write(chunk[i:end])            //nolint:errcheck
@@ -479,9 +479,9 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 				// Restore primary cursor here — before any trailing output
 				// in this chunk (e.g. prompt text) — so the prompt text
 				// advances the cursor naturally to the correct position.
-				L.Log(nil, LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
+				L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
 				curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
-				L.Log(nil, LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
+				L.Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore", "pane", p.id, "seq", curRestore)
 				p.term.Write([]byte(curRestore)) //nolint:errcheck
 				if end < len(chunk) {
 					p.term.Write(chunk[end:]) //nolint:errcheck
@@ -519,9 +519,9 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 			p.rawBuf = append(p.rawBuf, chunk...)
 			p.term.Write([]byte(sgrReset)) //nolint:errcheck
 			p.rawBuf = append(p.rawBuf, sgrReset...)
-			L.Log(nil, LevelTrace, "captureAndWrite: alt-screen exit (fallback)", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
+			L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit (fallback)", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
 			curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
-			L.Log(nil, LevelTrace, "captureAndWrite: injecting curRestore (fallback)", "pane", p.id, "seq", curRestore)
+			L.Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore (fallback)", "pane", p.id, "seq", curRestore)
 			p.term.Write([]byte(curRestore)) //nolint:errcheck
 		}
 		rawMax := p.scrollbackLines * 200
@@ -566,20 +566,20 @@ func (p *Pane) replyTerminalQuery(q terminalQuery) {
 	switch q.kind {
 	case terminalQueryDA:
 		p.ptmx.Write([]byte("\x1b[?62;1;2;4;6;9;15;22c")) //nolint:errcheck
-		L.Log(nil, LevelTrace, "captureAndWrite: DA response", "pane", p.id)
+		L.Log(context.Background(), LevelTrace, "captureAndWrite: DA response", "pane", p.id)
 	case terminalQueryDA2:
 		p.ptmx.Write([]byte("\x1b[>0;279;0c")) //nolint:errcheck
-		L.Log(nil, LevelTrace, "captureAndWrite: DA2 response", "pane", p.id)
+		L.Log(context.Background(), LevelTrace, "captureAndWrite: DA2 response", "pane", p.id)
 	case terminalQueryXTVERSION:
 		p.ptmx.Write([]byte("\x1bP>|VTE(8203)\x1b\\")) //nolint:errcheck
-		L.Log(nil, LevelTrace, "captureAndWrite: XTVERSION response", "pane", p.id)
+		L.Log(context.Background(), LevelTrace, "captureAndWrite: XTVERSION response", "pane", p.id)
 	case terminalQueryXTGETTCAP:
 		for _, hexCap := range strings.Split(q.payload, ";") {
 			if resp := xtgettcapResponse(hexCap); resp != "" {
 				p.ptmx.Write([]byte(resp)) //nolint:errcheck
 			}
 		}
-		L.Log(nil, LevelTrace, "captureAndWrite: XTGETTCAP response", "pane", p.id, "payload", q.payload)
+		L.Log(context.Background(), LevelTrace, "captureAndWrite: XTGETTCAP response", "pane", p.id, "payload", q.payload)
 	case terminalQueryCPR:
 		if p.term.Mode()&vt10x.ModeAltScreen != 0 {
 			return
@@ -587,12 +587,12 @@ func (p *Pane) replyTerminalQuery(q terminalQuery) {
 		cur := p.term.Cursor()
 		resp := fmt.Sprintf("\x1b[%d;%dR", cur.Y+1, cur.X+1)
 		p.ptmx.Write([]byte(resp)) //nolint:errcheck
-		L.Log(nil, LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
+		L.Log(context.Background(), LevelTrace, "captureAndWrite: CPR response", "pane", p.id, "row", cur.Y+1, "col", cur.X+1)
 	case terminalQueryDECRQM:
 		status := p.term.QueryPrivateMode(q.mode)
 		resp := fmt.Sprintf("\x1b[?%d;%c$y", q.mode, status)
 		p.ptmx.Write([]byte(resp)) //nolint:errcheck
-		L.Log(nil, LevelTrace, "captureAndWrite: DECRQM response", "pane", p.id, "mode", q.mode, "status", string(status))
+		L.Log(context.Background(), LevelTrace, "captureAndWrite: DECRQM response", "pane", p.id, "mode", q.mode, "status", string(status))
 	case terminalQueryOSC10:
 		p.replyOSCColorQuery(10, vt10x.DefaultFG, p.themeFGColor)
 	case terminalQueryOSC11:
@@ -612,7 +612,7 @@ func (p *Pane) replyOSCColorQuery(num int, def vt10x.Color, fallback string) {
 	}
 	resp := fmt.Sprintf("\x1b]%d;%s\x1b\\", num, color)
 	p.ptmx.Write([]byte(resp)) //nolint:errcheck
-	L.Log(nil, LevelTrace, "captureAndWrite: OSC color response", "pane", p.id, "osc_num", num, "color", color)
+	L.Log(context.Background(), LevelTrace, "captureAndWrite: OSC color response", "pane", p.id, "osc_num", num, "color", color)
 }
 
 func (p *Pane) currentOSCColor(def vt10x.Color, fallback string) string {
@@ -1299,7 +1299,6 @@ func ansiTailLen(b []byte) int {
 // fn with each parsed mode number. Multiple queries can appear in one chunk.
 func scanDECRQM(data []byte, fn func(n int)) {
 	const prefix = "\x1b[?"
-	const suffix = "$p"
 	i := 0
 	for i < len(data) {
 		idx := bytes.Index(data[i:], []byte(prefix))
@@ -1405,7 +1404,7 @@ func (p *Pane) cwd() string {
 // closePTX closes the PTY master exactly once.  Closing the master causes the
 // kernel to send HUP to the shell's controlling terminal.
 func (p *Pane) closePTX() {
-	p.ptmxOnce.Do(func() { p.ptmx.Close() })
+	p.ptmxOnce.Do(func() { p.ptmx.Close() }) //nolint:errcheck // PTY master close on shutdown
 }
 
 // ---------------------------------------------------------------------------
@@ -1471,7 +1470,7 @@ func (p *Pane) selText() string {
 			// Only insert \n if the previous row ended with a hard break.
 			// Soft-wrapped rows have attrWrap on their last cell.
 			softWrap := false
-			if prevCells != nil && len(prevCells) > 0 {
+			if len(prevCells) > 0 {
 				softWrap = prevCells[len(prevCells)-1].Mode&vtAttrWrap != 0
 			}
 			if !softWrap {
@@ -1498,7 +1497,7 @@ func (p *Pane) selText() string {
 		// Only trim trailing spaces on hard-break rows; soft-wrapped rows
 		// are full-width by definition.
 		s := line.String()
-		if cells == nil || len(cells) == 0 || cells[len(cells)-1].Mode&vtAttrWrap == 0 {
+		if len(cells) == 0 || cells[len(cells)-1].Mode&vtAttrWrap == 0 {
 			s = strings.TrimRight(s, " ")
 		}
 		buf.WriteString(s)
@@ -1551,7 +1550,7 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 				if len(p.kittyStack) > 0 {
 					flags = p.kittyStack[len(p.kittyStack)-1]
 				}
-				p.ptmx.Write([]byte(fmt.Sprintf("\x1b[?%du", flags))) //nolint:errcheck
+				fmt.Fprintf(p.ptmx, "\x1b[?%du", flags) //nolint:errcheck // reply write to PTY; nothing actionable
 				newI = j + 2
 				stripped = true
 			}
@@ -1563,7 +1562,7 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 			}
 			if k < len(chunk) && chunk[k] == 'u' {
 				flags := 0
-				fmt.Sscanf(string(chunk[j+1:k]), "%d", &flags)
+				fmt.Sscanf(string(chunk[j+1:k]), "%d", &flags) //nolint:errcheck // best-effort parse; flags defaults to 0
 				p.kittyStack = append(p.kittyStack, flags)
 				newI = k + 1
 				stripped = true
@@ -1576,7 +1575,7 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 			}
 			if k < len(chunk) && chunk[k] == 'u' {
 				count := 1
-				fmt.Sscanf(string(chunk[j+1:k]), "%d", &count)
+				fmt.Sscanf(string(chunk[j+1:k]), "%d", &count) //nolint:errcheck // best-effort parse; count defaults to 1
 				if count < 1 {
 					count = 1
 				}
@@ -1634,7 +1633,6 @@ func xtgettcapResponse(hexCap string) string {
 	if err != nil || len(capBytes) == 0 {
 		return ""
 	}
-	capName := string(capBytes)
 	// Capabilities we actively support — values are standard terminfo strings.
 	// Smulx: extended underline style (SGR 4:N)
 	// Setulc: underline colour (SGR 58:2::R:G:B)
@@ -1644,7 +1642,7 @@ func xtgettcapResponse(hexCap string) string {
 		"Setulc": "\x1b[58:2::%p1%d:%p2%d:%p3%dm",
 		"Su":     "\x1b[4:%p1%dm",
 	}
-	if val, ok := caps[capName]; ok {
+	if val, ok := caps[string(capBytes)]; ok {
 		hexVal := hex.EncodeToString([]byte(val))
 		return "\x1bP1+r" + hexCap + "=" + hexVal + "\x1b\\"
 	}

@@ -574,10 +574,6 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 	}
 }
 
-func (t *State) clearAll() {
-	t.clear(0, 0, t.cols-1, t.rows-1)
-}
-
 func (t *State) moveAbsTo(x, y int) {
 	if t.cur.State&cursorOrigin != 0 {
 		y += t.top
@@ -705,11 +701,8 @@ func (t *State) setMode(priv bool, set bool, args []int) {
 			case 1: // DECCKM - cursor key
 				t.modMode(set, ModeAppCursor)
 			case 5: // DECSCNM - reverse video
-				mode := t.mode
 				t.modMode(set, ModeReverse)
-				if mode != t.mode {
-					// TODO: redraw
-				}
+				// TODO: redraw when reverse-video mode actually changes
 			case 6: // DECOM - origin
 				if set {
 					t.cur.State |= cursorOrigin
@@ -729,7 +722,7 @@ func (t *State) setMode(priv bool, set bool, args []int) {
 				19, // DECPEX - printer extent
 				42, // DECNRCM - national characters
 				12: // att610 - start blinking cursor
-				break
+				// modes we intentionally ignore
 			case 25: // DECTCEM - text cursor enable mode
 				t.modMode(!set, ModeHide)
 			case 9: // X10 mouse compatibility mode
@@ -819,7 +812,7 @@ func (t *State) setAttr(attr []int) {
 		// Decode sub-parameter: params with a ':' sub-param are encoded as
 		// main*10000+(sub+1) by csiEscape.parse().  sub == -1 means no colon
 		// sub-parameter was present (plain arg like "4" vs "4:3").
-		var sub int = -1
+		sub := -1
 		if a >= 10000 {
 			sub = (a % 10000) - 1 // recover original: 40001→0, 40002→1, …
 			a = a / 10000
@@ -899,7 +892,8 @@ func (t *State) setAttr(attr []int) {
 			if colorMode < 0 && i+1 < len(attr) {
 				colorMode = attr[i+1]
 			}
-			if colorMode == 5 {
+			switch colorMode {
+			case 5:
 				if sub < 0 {
 					i++
 				} // skip the "5" arg only for the ';' form
@@ -909,7 +903,7 @@ func (t *State) setAttr(attr []int) {
 				} else {
 					t.logf("bad fgcolor\n")
 				}
-			} else if colorMode == 2 {
+			case 2:
 				if sub < 0 {
 					i++
 				} // skip the "2" arg only for the ';' form
@@ -922,7 +916,7 @@ func (t *State) setAttr(attr []int) {
 						t.cur.Attr.FG = Color(r<<16 | g<<8 | b)
 					}
 				}
-			} else {
+			default:
 				t.logf("gfx attr %d unknown\n", a)
 			}
 		case 39:
@@ -932,7 +926,8 @@ func (t *State) setAttr(attr []int) {
 			if colorMode < 0 && i+1 < len(attr) {
 				colorMode = attr[i+1]
 			}
-			if colorMode == 5 {
+			switch colorMode {
+			case 5:
 				if sub < 0 {
 					i++
 				}
@@ -942,7 +937,7 @@ func (t *State) setAttr(attr []int) {
 				} else {
 					t.logf("bad bgcolor\n")
 				}
-			} else if colorMode == 2 {
+			case 2:
 				if sub < 0 {
 					i++
 				}
@@ -955,7 +950,7 @@ func (t *State) setAttr(attr []int) {
 						t.cur.Attr.BG = Color(r<<16 | g<<8 | b)
 					}
 				}
-			} else {
+			default:
 				t.logf("gfx attr %d unknown\n", a)
 			}
 		case 49:
@@ -966,7 +961,8 @@ func (t *State) setAttr(attr []int) {
 			if colorMode < 0 && i+1 < len(attr) {
 				colorMode = attr[i+1]
 			}
-			if colorMode == 5 {
+			switch colorMode {
+			case 5:
 				if sub < 0 {
 					i++
 				}
@@ -977,7 +973,7 @@ func (t *State) setAttr(attr []int) {
 				} else {
 					t.logf("bad ulcolor\n")
 				}
-			} else if colorMode == 2 {
+			case 2:
 				if sub < 0 {
 					i++
 				}
@@ -991,7 +987,7 @@ func (t *State) setAttr(attr []int) {
 						t.cur.Attr.Mode |= attrHasULColor
 					}
 				}
-			} else {
+			default:
 				t.logf("gfx attr %d unknown\n", a)
 			}
 		case 59:

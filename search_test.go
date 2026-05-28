@@ -345,7 +345,7 @@ func TestStripForSearchQuery(t *testing.T) {
 		{"strip C0 controls", "x\x01\x02y", "xy"},
 		{"strip ESC", "evil\x1bhijack", "evilhijack"},
 		{"strip DEL", "x\x7fy", "xy"},
-		{"strip C1 controls", "abc", "abc"},
+		{"strip C1 controls", "a\u0085b\u009fc", "abc"},
 		{"empty input", "", ""},
 		{"only controls → empty", "\r\n\t\x00", ""},
 	}

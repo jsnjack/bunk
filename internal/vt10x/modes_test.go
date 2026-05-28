@@ -111,11 +111,11 @@ func TestDECSCUSR_CursorShape_AllValues(t *testing.T) {
 func TestDECSCUSR_CursorShape_DefaultReset(t *testing.T) {
 	// ESC [ SP q (no explicit digit → Ps=0) should reset to 0 (default).
 	term := newTestTerm(80, 24)
-	term.Write([]byte{0x1b, '[', '5', ' ', 'q'}) //nolint:errcheck — set blinking bar
+	term.Write([]byte{0x1b, '[', '5', ' ', 'q'}) //nolint:errcheck // set blinking bar
 	if got := term.Cursor().Shape; got != 5 {
 		t.Fatalf("prerequisite failed: shape = %d after ESC[5 q, want 5", got)
 	}
-	term.Write([]byte{0x1b, '[', ' ', 'q'}) //nolint:errcheck — ESC[ SP q = reset
+	term.Write([]byte{0x1b, '[', ' ', 'q'}) //nolint:errcheck // ESC[ SP q = reset
 	if got := term.Cursor().Shape; got != 0 {
 		t.Fatalf("shape = %d after ESC[ q, want 0 (default)", got)
 	}
@@ -123,10 +123,10 @@ func TestDECSCUSR_CursorShape_DefaultReset(t *testing.T) {
 
 func TestDECSCUSR_CursorShape_LastOccurrence(t *testing.T) {
 	term := newTestTerm(80, 24)
-	term.Write([]byte{
+	term.Write([]byte{ //nolint:errcheck
 		0x1b, '[', '2', ' ', 'q', // steady underline
 		0x1b, '[', '4', ' ', 'q', // blinking underline
-	}) //nolint:errcheck
+	})
 	if got := term.Cursor().Shape; got != 4 {
 		t.Errorf("last DECSCUSR wins: shape = %d, want 4", got)
 	}

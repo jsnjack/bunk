@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"io/ioutil"
 )
 
 // Terminal represents the virtual terminal emulator.
@@ -111,7 +110,7 @@ func WithScrollCallback(fn func(row []Glyph)) TerminalOption {
 // New returns a new virtual terminal emulator.
 func New(opts ...TerminalOption) Terminal {
 	info := TerminalInfo{
-		w:    ioutil.Discard,
+		w:    io.Discard,
 		cols: 80,
 		rows: 24,
 	}

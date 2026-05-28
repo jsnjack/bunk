@@ -48,7 +48,7 @@ func TestConsumeDirty_MarksCorrectRow(t *testing.T) {
 	term.ConsumeDirty() // drain initial all-dirty
 
 	// Move cursor to row 2 and write a character.
-	term.Write([]byte("\x1b[3;1H" + "X")) // CSI 3;1H = row 3, col 1 (1-based)
+	term.Write([]byte("\x1b[3;1H" + "X")) //nolint:errcheck // CSI 3;1H = row 3, col 1 (1-based)
 
 	dirty, any := term.ConsumeDirty()
 	if !any {

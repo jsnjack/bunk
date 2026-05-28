@@ -206,7 +206,7 @@ func findLXCAncestorCmdline(pid int) []string {
 		ppid := 0
 		for _, line := range strings.Split(string(statusData), "\n") {
 			if strings.HasPrefix(line, "PPid:") {
-				fmt.Sscanf(strings.TrimPrefix(line, "PPid:"), "%d", &ppid)
+				fmt.Sscanf(strings.TrimPrefix(line, "PPid:"), "%d", &ppid) //nolint:errcheck // best-effort parse; ppid<=1 check below catches failure
 				break
 			}
 		}

@@ -27,7 +27,7 @@ var L *slog.Logger = slog.Default() // fallback: discard until initLogger runs
 // If path is empty, logging is disabled (output goes to io.Discard).
 // level must be one of: "trace", "debug", "info", "warn", "error".
 func initLogger(path, level string) (cleanup func()) {
-	var w io.Writer = io.Discard
+	var w = io.Discard
 	var f *os.File
 
 	if path != "" {
@@ -61,7 +61,7 @@ func initLogger(path, level string) (cleanup func()) {
 
 	return func() {
 		if f != nil {
-			f.Close()
+			f.Close() //nolint:errcheck // logger shutdown; nothing to log the error to
 		}
 	}
 }

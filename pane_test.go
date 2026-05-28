@@ -133,8 +133,8 @@ func TestCaptureAndWrite_SplitXTVersionResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
 		term:            vt10x.New(vt10x.WithSize(40, 10)),
@@ -144,7 +144,7 @@ func TestCaptureAndWrite_SplitXTVersionResponse(t *testing.T) {
 	}
 
 	feedSplitPTYChunks(t, p, []byte("\x1b[>"), []byte("0q"))
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP>|VTE(8203)\x1b\\"
@@ -158,8 +158,8 @@ func TestCaptureAndWrite_SplitXTGETTCAPResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
 		term:            vt10x.New(vt10x.WithSize(40, 10)),
@@ -169,7 +169,7 @@ func TestCaptureAndWrite_SplitXTGETTCAPResponse(t *testing.T) {
 	}
 
 	feedSplitPTYChunks(t, p, []byte("\x1bP+q536d"), []byte("756c78\x1b\\"))
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	wantHexVal := "1b5b343a25703125646d"
@@ -188,8 +188,8 @@ func TestCaptureAndWrite_SplitOSC10Response(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
 		term:            vt10x.New(vt10x.WithSize(40, 10)),
@@ -203,7 +203,7 @@ func TestCaptureAndWrite_SplitOSC10Response(t *testing.T) {
 	// of the OSC are in the first chunk so splitPTYChunk carries the partial
 	// OSC into the second chunk — this exercises the carry/split path.
 	feedSplitPTYChunks(t, p, []byte("\x1b[?1049h\x1b]10"), []byte(";?\x1b\\"))
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
@@ -221,8 +221,8 @@ func TestCaptureAndWrite_OSC10NormalModeNoResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
 		term:            vt10x.New(vt10x.WithSize(40, 10)),
@@ -238,7 +238,7 @@ func TestCaptureAndWrite_OSC10NormalModeNoResponse(t *testing.T) {
 	p.captureAndWrite([]byte("\x1b]10;?\x1b\\"))
 	p.captureAndWrite([]byte("\x1b]11;?\x1b\\"))
 	p.mu.Unlock()
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	if len(buf) != 0 {
@@ -251,8 +251,8 @@ func TestCaptureAndWrite_OSC10SameChunkAltScreenResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
 		term:            vt10x.New(vt10x.WithSize(40, 10)),
@@ -265,7 +265,7 @@ func TestCaptureAndWrite_OSC10SameChunkAltScreenResponse(t *testing.T) {
 	p.mu.Lock()
 	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
 	p.mu.Unlock()
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
@@ -279,8 +279,8 @@ func TestCaptureAndWrite_OSC10QueryUsesDynamicOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
 		term:            vt10x.New(vt10x.WithSize(40, 10)),
@@ -293,7 +293,7 @@ func TestCaptureAndWrite_OSC10QueryUsesDynamicOverride(t *testing.T) {
 	p.mu.Lock()
 	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]10;?\x1b\\"))
 	p.mu.Unlock()
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:1111/2222/3333\x1b\\"
@@ -307,8 +307,8 @@ func TestCaptureAndWrite_OSC10ResetRestoresTheme(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
 		term:            vt10x.New(vt10x.WithSize(40, 10)),
@@ -321,7 +321,7 @@ func TestCaptureAndWrite_OSC10ResetRestoresTheme(t *testing.T) {
 	p.mu.Lock()
 	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]110\x07\x1b]10;?\x1b\\"))
 	p.mu.Unlock()
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
@@ -335,8 +335,8 @@ func TestCaptureAndWrite_DECRQMSameChunkUsesUpdatedState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
 		term:            vt10x.New(vt10x.WithSize(40, 10)),
@@ -348,7 +348,7 @@ func TestCaptureAndWrite_DECRQMSameChunkUsesUpdatedState(t *testing.T) {
 	p.mu.Lock()
 	p.captureAndWrite([]byte("\x1b[?2004h\x1b[?2004$p\x1b[?2004l\x1b[?2004$p"))
 	p.mu.Unlock()
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b[?2004;1$y\x1b[?2004;2$y"
@@ -362,8 +362,8 @@ func TestCaptureAndWrite_OSC10UnknownThemeNoResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
 		term:            vt10x.New(vt10x.WithSize(40, 10)),
@@ -375,7 +375,7 @@ func TestCaptureAndWrite_OSC10UnknownThemeNoResponse(t *testing.T) {
 	p.mu.Lock()
 	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
 	p.mu.Unlock()
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	if len(buf) != 0 {
@@ -1587,14 +1587,14 @@ func TestXTVersion_Response(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
 	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
 
 	p.captureAndWrite([]byte("\x1b[>0q"))
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP>|VTE(8203)\x1b\\"
@@ -1608,14 +1608,14 @@ func TestXTVersion_ShortForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
 	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
 
 	p.captureAndWrite([]byte("\x1b[>q"))
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP>|VTE(8203)\x1b\\"
@@ -1629,15 +1629,15 @@ func TestXTGETTCAP_Smulx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
 	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
 
 	// "Smulx" hex-encoded = 536d756c78
 	p.captureAndWrite([]byte("\x1bP+q536d756c78\x1b\\"))
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	// value = "\x1b[4:%p1%dm" hex-encoded
@@ -1653,15 +1653,15 @@ func TestXTGETTCAP_Unknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
 	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
 
 	// "colors" hex-encoded = 636f6c6f7273
 	p.captureAndWrite([]byte("\x1bP+q636f6c6f7273\x1b\\"))
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP0+r636f6c6f7273\x1b\\"
@@ -1700,7 +1700,7 @@ func TestXTGETTCAPResponse_Setulc_Valid(t *testing.T) {
 func TestSGR53_Overline(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(10, 5))
 	// SGR 53 = overline on, SGR 55 = overline off
-	term.Write([]byte("\x1b[53mA\x1b[55mB"))
+	term.Write([]byte("\x1b[53mA\x1b[55mB")) //nolint:errcheck // in-memory terminal write
 	cellA := term.Cell(0, 0)
 	cellB := term.Cell(1, 0)
 	if cellA.Mode&vt10x.AttrOverline == 0 {
@@ -1713,7 +1713,7 @@ func TestSGR53_Overline(t *testing.T) {
 
 func TestSGR53_ResetBy0(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(10, 5))
-	term.Write([]byte("\x1b[53mA\x1b[0mB"))
+	term.Write([]byte("\x1b[53mA\x1b[0mB")) //nolint:errcheck // in-memory terminal write
 	cellA := term.Cell(0, 0)
 	cellB := term.Cell(1, 0)
 	if cellA.Mode&vt10x.AttrOverline == 0 {
@@ -1731,7 +1731,7 @@ func TestSGR53_ResetBy0(t *testing.T) {
 func TestPrivateModeSGR_vim_slash4m(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(10, 5))
 	// Plain text, then the vim sequence, then more text.
-	term.Write([]byte("A\x1b[?4mB"))
+	term.Write([]byte("A\x1b[?4mB")) //nolint:errcheck // in-memory terminal write
 	cellA := term.Cell(0, 0)
 	cellB := term.Cell(1, 0)
 	if cellA.Mode&vt10x.AttrUnderline != 0 {
@@ -1745,7 +1745,7 @@ func TestPrivateModeSGR_vim_slash4m(t *testing.T) {
 // TestPrivateModeSGR_realSGR4_still_works ensures the real \x1b[4m still works.
 func TestPrivateModeSGR_realSGR4_still_works(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(10, 5))
-	term.Write([]byte("\x1b[4mU\x1b[0mN"))
+	term.Write([]byte("\x1b[4mU\x1b[0mN")) //nolint:errcheck // in-memory terminal write
 	cellU := term.Cell(0, 0)
 	cellN := term.Cell(1, 0)
 	if cellU.Mode&vt10x.AttrUnderline == 0 {
@@ -1770,8 +1770,8 @@ func TestHandleKittyKeyboard_PushQueryPop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
 	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
@@ -1811,7 +1811,7 @@ func TestHandleKittyKeyboard_PushQueryPop(t *testing.T) {
 	}
 	p.mu.Unlock()
 
-	pw.Close()
+	pw.Close() //nolint:errcheck // test pipe cleanup
 	buf, _ := io.ReadAll(pr)
 	// Only the query should have produced a response.
 	want := "\x1b[?3u"
@@ -1832,8 +1832,8 @@ func TestKittyStack_StaleAfterExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	defer pr.Close()
-	pw.Close() // no responses expected
+	defer pr.Close() //nolint:errcheck // test pipe cleanup
+	pw.Close()       //nolint:errcheck // no responses expected
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
 	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
