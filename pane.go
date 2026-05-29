@@ -131,6 +131,21 @@ type Pane struct {
 	// Protected by mu.
 	needsSync bool
 
+	// transientLineClear is set after a CR-space-CR clear-only progress chunk.
+	// The vt10x state is temporarily blank, but a replacement chunk usually
+	// follows immediately. Render skips frames while this is set so it doesn't
+	// sample and paint the transient blank row.
+	// Protected by mu.
+	transientLineClear      bool
+	transientLineClearUntil time.Time
+
+	// progressCursorHiddenUntil suppresses the host cursor during rapid
+	// carriage-return status/progress rewrites. Some CLI progress bars do not
+	// hide the cursor themselves; showing a block cursor while the row is
+	// rewritten hundreds of times per second reads as flicker.
+	// Protected by mu.
+	progressCursorHiddenUntil time.Time
+
 	// kittyStack is the per-pane kitty keyboard protocol flag stack.
 	// When pane apps send \x1b[=<flags>u (push), we push onto this stack
 	// and respond with the saved value on \x1b[?u (query).
@@ -272,6 +287,48 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, col
 func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 	buf := make([]byte, 32768)
 	var carry []byte // incomplete UTF-8 / ANSI tail from previous read
+	var transientClearTimer *time.Timer
+	var progressCursorTimer *time.Timer
+	defer func() {
+		if transientClearTimer != nil {
+			transientClearTimer.Stop()
+		}
+		if progressCursorTimer != nil {
+			progressCursorTimer.Stop()
+		}
+	}()
+
+	scheduleTransientClearRedraw := func(until time.Time) {
+		if transientClearTimer == nil {
+			transientClearTimer = time.AfterFunc(transientLineClearDelay, func() {
+				p.clearTransientLineClearIfUntil(until)
+				select {
+				case redraw <- struct{}{}:
+				default:
+				}
+			})
+			return
+		}
+		transientClearTimer.Reset(transientLineClearDelay)
+	}
+	cancelTransientClearRedraw := func() {
+		if transientClearTimer != nil {
+			transientClearTimer.Stop()
+		}
+	}
+	scheduleProgressCursorRedraw := func() {
+		if progressCursorTimer == nil {
+			progressCursorTimer = time.AfterFunc(progressCursorHideDelay, func() {
+				select {
+				case redraw <- struct{}{}:
+				default:
+				}
+			})
+			return
+		}
+		progressCursorTimer.Reset(progressCursorHideDelay)
+	}
+
 	for {
 		n, err := p.ptmx.Read(buf)
 		if n > 0 {
@@ -303,13 +360,30 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 				mirrorOSC52ToNativeClipboard(seq)
 			})
 
+			transientClear := isTransientLineClear(chunk)
+			inPlaceLineUpdate := isInPlaceLineUpdate(chunk)
+
 			// Steps 2–4 under a single lock: captureAndWrite feeds chunk into
 			// vt10x, which updates all mode flags (2004, 2026, cursor shape, etc.)
 			// atomically before render can read them.
+			now := time.Now()
 			p.mu.Lock()
 			p.captureAndWrite(chunk)
 			scrolling := p.sbOff > 0
 			syncing := p.term.Mode()&vt10x.ModeSync != 0
+			visibleTransientClear := transientClear && !scrolling && !syncing
+			p.transientLineClear = visibleTransientClear
+			transientClearUntil := time.Time{}
+			if visibleTransientClear {
+				transientClearUntil = now.Add(transientLineClearDelay)
+			}
+			p.transientLineClearUntil = transientClearUntil
+			visibleInPlaceLineUpdate := inPlaceLineUpdate && !scrolling && !syncing
+			if visibleInPlaceLineUpdate {
+				p.progressCursorHiddenUntil = now.Add(progressCursorHideDelay)
+			} else if bytes.Contains(chunk, []byte("\n")) {
+				p.progressCursorHiddenUntil = time.Time{}
+			}
 			p.mu.Unlock()
 
 			// Step 5 - wake the render loop (coalesced).
@@ -318,9 +392,17 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 			// Skip during synchronized updates (DEC 2026): the app is
 			// building a frame — repaint only when the end marker arrives.
 			if !scrolling && !syncing {
-				select {
-				case redraw <- struct{}{}:
-				default:
+				if visibleTransientClear {
+					scheduleTransientClearRedraw(transientClearUntil)
+				} else {
+					cancelTransientClearRedraw()
+					if visibleInPlaceLineUpdate {
+						scheduleProgressCursorRedraw()
+					}
+					select {
+					case redraw <- struct{}{}:
+					default:
+					}
 				}
 			}
 		}
@@ -330,6 +412,50 @@ func (p *Pane) readPTY(redraw chan struct{}, oscBuf *oscBuffer) {
 		}
 	}
 	p.closePTX()
+}
+
+func (p *Pane) clearTransientLineClearIfUntil(until time.Time) {
+	p.mu.Lock()
+	if p.transientLineClearUntil.Equal(until) {
+		p.transientLineClear = false
+		p.transientLineClearUntil = time.Time{}
+	}
+	p.mu.Unlock()
+}
+
+const transientLineClearDelay = 40 * time.Millisecond
+const progressCursorHideDelay = 120 * time.Millisecond
+
+func isTransientLineClear(chunk []byte) bool {
+	if len(chunk) < 3 || bytes.ContainsAny(chunk, "\n\x1b") {
+		return false
+	}
+
+	sawClear := false
+	for i := 0; i < len(chunk); {
+		if chunk[i] != '\r' {
+			return false
+		}
+		i++
+
+		spaces := 0
+		for i < len(chunk) && chunk[i] == ' ' {
+			i++
+			spaces++
+		}
+		if spaces == 0 || i >= len(chunk) || chunk[i] != '\r' {
+			return false
+		}
+		i++
+		sawClear = true
+	}
+	return sawClear
+}
+
+func isInPlaceLineUpdate(chunk []byte) bool {
+	return len(chunk) > 0 &&
+		bytes.Contains(chunk, []byte("\r")) &&
+		!bytes.ContainsAny(chunk, "\n\x1b")
 }
 
 // onScrollRow is the vt10x scroll callback installed in NewPane via

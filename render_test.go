@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +13,21 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 )
+
+type countingScreen struct {
+	tcell.Screen
+	shows atomic.Int32
+}
+
+func (s *countingScreen) Show() {
+	s.shows.Add(1)
+	s.Screen.Show()
+}
+
+func (s *countingScreen) Sync() {
+	s.shows.Add(1)
+	s.Screen.Sync()
+}
 
 // testTheme returns a resolvedTheme with distinct, recognisable colours for
 // fg, bg, and a partial ANSI palette.  Slots not explicitly set are left as
@@ -617,6 +633,265 @@ func TestCheckAndClearNeedsSync_Tree_AllDirty(t *testing.T) {
 	}
 	if p1.needsSync || p2.needsSync {
 		t.Error("not all needsSync flags cleared")
+	}
+}
+
+func TestNextRenderDelay(t *testing.T) {
+	now := time.Unix(100, 0)
+	cases := []struct {
+		name       string
+		lastRender time.Time
+		want       time.Duration
+	}{
+		{
+			name: "first frame waits for burst settle",
+			want: renderSettleInterval,
+		},
+		{
+			name:       "recent frame honours minimum interval",
+			lastRender: now.Add(-time.Millisecond),
+			want:       renderMinInterval - time.Millisecond,
+		},
+		{
+			name:       "stale frame still waits for burst settle",
+			lastRender: now.Add(-time.Second),
+			want:       renderSettleInterval,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nextRenderDelay(tc.lastRender, now)
+			if got != tc.want {
+				t.Errorf("nextRenderDelay() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderLoop_CoalescesEraseAndRedrawBurst(t *testing.T) {
+	const (
+		w = 24
+		h = 1
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	p := &Pane{
+		term:            term,
+		cmd:             &exec.Cmd{},
+		x:               0,
+		y:               0,
+		w:               w,
+		h:               h,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+
+	base := tcell.NewSimulationScreen("UTF-8")
+	base.Init() //nolint:errcheck // simulation screen init does not fail in tests
+	defer base.Fini()
+	base.SetSize(w, h)
+	screen := &countingScreen{Screen: base}
+
+	app := &App{
+		screen: screen,
+		root:   &Node{pane: p},
+		active: p,
+		redraw: make(chan struct{}, 2),
+		done:   make(chan struct{}),
+		oscBuf: newOSCBuffer(),
+		theme:  testTheme(),
+	}
+
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\r                       \r"))
+	p.mu.Unlock()
+	app.triggerRedraw()
+
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\r  99% |████████████|"))
+	p.mu.Unlock()
+	app.triggerRedraw()
+
+	app.renderWg.Add(1)
+	go app.renderLoop()
+
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for screen.shows.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	close(app.done)
+	app.renderWg.Wait()
+
+	if got := screen.shows.Load(); got != 1 {
+		t.Fatalf("renderLoop painted %d frames, want 1 coalesced frame", got)
+	}
+	mainc, _, _, _ := base.GetContent(2, 0) //nolint:staticcheck // rune-level access
+	if mainc != '9' {
+		t.Fatalf("rendered content at progress column = %q, want '9'", mainc)
+	}
+}
+
+func TestRender_SkipsTransientLineClear(t *testing.T) {
+	const (
+		w = 24
+		h = 1
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	term.Write([]byte("  99% |████████████|")) //nolint:errcheck
+	p := &Pane{
+		term:               term,
+		cmd:                &exec.Cmd{},
+		x:                  0,
+		y:                  0,
+		w:                  w,
+		h:                  h,
+		scrollbackLines:    100,
+		sb:                 sbRing{maxLines: 100},
+		transientLineClear: true,
+	}
+
+	base := tcell.NewSimulationScreen("UTF-8")
+	base.Init() //nolint:errcheck // simulation screen init does not fail in tests
+	defer base.Fini()
+	base.SetSize(w, h)
+	screen := &countingScreen{Screen: base}
+
+	app := &App{
+		screen: screen,
+		root:   &Node{pane: p},
+		active: p,
+		oscBuf: newOSCBuffer(),
+		theme:  testTheme(),
+	}
+
+	base.SetContent(2, 0, 'Z', nil, tcell.StyleDefault)
+	app.render()
+	if got := screen.shows.Load(); got != 1 {
+		t.Fatalf("render painted %d frames while transient clear was pending, want 1 unchanged frame", got)
+	}
+	mainc, _, _, _ := base.GetContent(2, 0) //nolint:staticcheck // rune-level access
+	if mainc != 'Z' {
+		t.Fatalf("transient clear changed screen content to %q, want previous 'Z'", mainc)
+	}
+	_, _, visible := base.GetCursor()
+	if visible {
+		t.Fatal("cursor visible during transient clear, want hidden")
+	}
+
+	p.mu.Lock()
+	p.transientLineClear = false
+	p.mu.Unlock()
+	app.render()
+	if got := screen.shows.Load(); got != 2 {
+		t.Fatalf("render painted %d frames after transient clear resolved, want 2", got)
+	}
+	mainc, _, _, _ = base.GetContent(2, 0) //nolint:staticcheck // rune-level access
+	if mainc != '9' {
+		t.Fatalf("rendered content after transient clear resolved = %q, want '9'", mainc)
+	}
+}
+
+func TestRender_InactiveTransientLineClearDoesNotBlockActivePane(t *testing.T) {
+	const h = 1
+	activeTerm := vt10x.New(vt10x.WithSize(4, h))
+	activeTerm.Write([]byte("OK")) //nolint:errcheck
+	active := &Pane{
+		term:            activeTerm,
+		cmd:             &exec.Cmd{},
+		x:               0,
+		y:               0,
+		w:               5,
+		h:               h,
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+	inactiveTerm := vt10x.New(vt10x.WithSize(4, h))
+	inactiveTerm.Write([]byte("OLD")) //nolint:errcheck
+	inactive := &Pane{
+		term:               inactiveTerm,
+		cmd:                &exec.Cmd{},
+		x:                  6,
+		y:                  0,
+		w:                  5,
+		h:                  h,
+		scrollbackLines:    100,
+		sb:                 sbRing{maxLines: 100},
+		transientLineClear: true,
+	}
+
+	base := tcell.NewSimulationScreen("UTF-8")
+	base.Init() //nolint:errcheck // simulation screen init does not fail in tests
+	defer base.Fini()
+	base.SetSize(11, h)
+	screen := &countingScreen{Screen: base}
+
+	root := &Node{
+		x: 0, y: 0, w: 11, h: h, dir: splitVertical,
+		left:  &Node{x: 0, y: 0, w: 5, h: h, pane: active},
+		right: &Node{x: 6, y: 0, w: 5, h: h, pane: inactive},
+	}
+	app := &App{
+		screen: screen,
+		root:   root,
+		active: active,
+		oscBuf: newOSCBuffer(),
+		theme:  testTheme(),
+	}
+
+	app.render()
+	if got := screen.shows.Load(); got != 1 {
+		t.Fatalf("render painted %d frames, want 1", got)
+	}
+	mainc, _, _, _ := base.GetContent(0, 0) //nolint:staticcheck // rune-level access
+	if mainc != 'O' {
+		t.Fatalf("active pane was not rendered while inactive pane was transient: got %q", mainc)
+	}
+}
+
+func TestRender_HidesCursorDuringInPlaceLineUpdate(t *testing.T) {
+	const (
+		w = 24
+		h = 1
+	)
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	term.Write([]byte("  99% |==========|")) //nolint:errcheck
+	p := &Pane{
+		term:                      term,
+		cmd:                       &exec.Cmd{},
+		x:                         0,
+		y:                         0,
+		w:                         w,
+		h:                         h,
+		scrollbackLines:           100,
+		sb:                        sbRing{maxLines: 100},
+		progressCursorHiddenUntil: time.Now().Add(time.Second),
+	}
+
+	base := tcell.NewSimulationScreen("UTF-8")
+	base.Init() //nolint:errcheck // simulation screen init does not fail in tests
+	defer base.Fini()
+	base.SetSize(w, h)
+
+	app := &App{
+		screen: base,
+		root:   &Node{pane: p},
+		active: p,
+		oscBuf: newOSCBuffer(),
+		theme:  testTheme(),
+	}
+
+	app.render()
+	_, _, visible := base.GetCursor()
+	if visible {
+		t.Fatal("cursor visible during in-place line update, want hidden")
+	}
+
+	p.mu.Lock()
+	p.progressCursorHiddenUntil = time.Now().Add(-time.Second)
+	p.mu.Unlock()
+	app.render()
+	_, _, visible = base.GetCursor()
+	if !visible {
+		t.Fatal("cursor hidden after in-place line update settled, want visible")
 	}
 }
 

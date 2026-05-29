@@ -55,27 +55,70 @@ const (
 // Render loop
 // ---------------------------------------------------------------------------
 
+const (
+	// renderMinInterval caps painting at ~120 fps, which prevents burning CPU
+	// when PTY output arrives faster than the terminal can display it.
+	renderMinInterval = 8 * time.Millisecond
+
+	// renderSettleInterval lets bursty erase-and-redraw output land in the
+	// virtual terminal before we sample a frame.  Download progress bars often
+	// emit "\r <spaces> \r" in one PTY read and the replacement text in the
+	// next; rendering the intermediate clear produces visible flicker.
+	renderSettleInterval = 2 * time.Millisecond
+)
+
 // renderLoop drains the redraw channel and repaints the screen.
-// A minimum interval of ~8ms (~120 fps cap) prevents burning CPU when PTY
-// output arrives faster than the terminal can display it (e.g. cat /dev/urandom).
 func (app *App) renderLoop() {
 	defer app.renderWg.Done()
-	const minInterval = 8 * time.Millisecond
 	var lastRender time.Time
 	for {
 		select {
 		case <-app.redraw:
-			if dt := time.Since(lastRender); dt < minInterval {
-				time.Sleep(minInterval - dt)
-				// Drain any signals that arrived during sleep.
-				select {
-				case <-app.redraw:
-				default:
-				}
+			if !app.waitForNextRender(lastRender) {
+				return
 			}
+			drainRedraw(app.redraw)
 			app.render()
 			lastRender = time.Now()
 		case <-app.done:
+			return
+		}
+	}
+}
+
+func (app *App) waitForNextRender(lastRender time.Time) bool {
+	delay := nextRenderDelay(lastRender, time.Now())
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-app.done:
+		return false
+	}
+}
+
+func nextRenderDelay(lastRender, now time.Time) time.Duration {
+	delay := renderSettleInterval
+	if !lastRender.IsZero() {
+		if minDelay := renderMinInterval - now.Sub(lastRender); minDelay > delay {
+			delay = minDelay
+		}
+	}
+	if delay < 0 {
+		return 0
+	}
+	return delay
+}
+
+func drainRedraw(redraw <-chan struct{}) {
+	for {
+		select {
+		case <-redraw:
+		default:
 			return
 		}
 	}
@@ -114,6 +157,9 @@ func (app *App) render() {
 		if syncing {
 			return
 		}
+		if paneHasTransientLineClear(zp) {
+			return
+		}
 
 		zNode := &Node{pane: zp}
 		drawPaneContents(app.screen, zNode, rt)
@@ -125,8 +171,10 @@ func (app *App) render() {
 		sbOff := zp.sbOff
 		cur := zp.term.Cursor()
 		visible := zp.term.CursorVisible()
+		transientLineClear := zp.transientLineClear
+		progressCursorHidden := zp.progressCursorHiddenUntil.After(time.Now())
 		zp.mu.Unlock()
-		if !dead && visible && sbOff == 0 {
+		if !dead && visible && sbOff == 0 && !transientLineClear && !progressCursorHidden {
 			app.screen.ShowCursor(zp.x+cur.X, zp.y+cur.Y)
 		} else {
 			app.screen.HideCursor()
@@ -190,8 +238,10 @@ func (app *App) render() {
 		sbOff := active.sbOff
 		cur := active.term.Cursor()
 		visible := active.term.CursorVisible()
+		transientLineClear := active.transientLineClear
+		progressCursorHidden := active.progressCursorHiddenUntil.After(time.Now())
 		active.mu.Unlock()
-		if !dead && visible && sbOff == 0 {
+		if !dead && visible && sbOff == 0 && !transientLineClear && !progressCursorHidden {
 			app.screen.ShowCursor(active.x+cur.X, active.y+cur.Y)
 		} else {
 			app.screen.HideCursor()
@@ -236,6 +286,13 @@ func checkAndClearNeedsSync(n *Node) bool {
 	l := checkAndClearNeedsSync(n.left)
 	r := checkAndClearNeedsSync(n.right)
 	return l || r
+}
+
+func paneHasTransientLineClear(p *Pane) bool {
+	p.mu.Lock()
+	v := p.transientLineClear
+	p.mu.Unlock()
+	return v
 }
 
 // closeHostHyperlink writes an OSC 8 close to w.  The render loop calls this
@@ -418,7 +475,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	// check and this vt10x read. readPTY may have started a new sync frame
 	// (blanking vt10x) in between. Returning here leaves tcell's cell buffer
 	// unchanged, so Show() sends nothing — no blank flash reaches the terminal.
-	if p.term.Mode()&vt10x.ModeSync != 0 {
+	if p.term.Mode()&vt10x.ModeSync != 0 || p.transientLineClear {
 		return
 	}
 

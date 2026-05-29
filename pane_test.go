@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime"
 	"testing"
+	"time"
 
 	"bunk/internal/vt10x"
 
@@ -76,6 +77,120 @@ func feedSplitPTYChunks(t *testing.T, p *Pane, chunks ...[]byte) {
 
 	if len(carry) != 0 {
 		t.Fatalf("splitPTYChunk left %q buffered after final chunk", carry)
+	}
+}
+
+func TestIsTransientLineClear(t *testing.T) {
+	cases := []struct {
+		name  string
+		chunk string
+		want  bool
+	}{
+		{
+			name:  "grm progress clear",
+			chunk: "\r                                                                      \r",
+			want:  true,
+		},
+		{
+			name:  "multiple clears",
+			chunk: "\r   \r\r    \r",
+			want:  true,
+		},
+		{
+			name:  "progress text is not transient clear",
+			chunk: "\r  99% |████|",
+			want:  false,
+		},
+		{
+			name:  "clear plus progress text is not transient clear",
+			chunk: "\r     \r\r  99% |████|",
+			want:  false,
+		},
+		{
+			name:  "newline commit is not transient clear",
+			chunk: "\r     \r\n",
+			want:  false,
+		},
+		{
+			name:  "escape clear is not treated as progress clear",
+			chunk: "\r\x1b[K",
+			want:  false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isTransientLineClear([]byte(tc.chunk))
+			if got != tc.want {
+				t.Errorf("isTransientLineClear(%q) = %v, want %v", tc.chunk, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsInPlaceLineUpdate(t *testing.T) {
+	cases := []struct {
+		name  string
+		chunk string
+		want  bool
+	}{
+		{
+			name:  "progress text",
+			chunk: "\r  99% |████|",
+			want:  true,
+		},
+		{
+			name:  "progress clear",
+			chunk: "\r       \r",
+			want:  true,
+		},
+		{
+			name:  "final progress line commits with newline",
+			chunk: "\r 100% |████|\r\n",
+			want:  false,
+		},
+		{
+			name:  "prompt is not in-place update",
+			chunk: "$ ",
+			want:  false,
+		},
+		{
+			name:  "escape sequence is not progress rewrite",
+			chunk: "\x1b[?2004h",
+			want:  false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isInPlaceLineUpdate([]byte(tc.chunk))
+			if got != tc.want {
+				t.Errorf("isInPlaceLineUpdate(%q) = %v, want %v", tc.chunk, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClearTransientLineClearIfUntilIgnoresStaleTimer(t *testing.T) {
+	oldUntil := time.Unix(100, 0)
+	newUntil := time.Unix(101, 0)
+	p := &Pane{
+		transientLineClear:      true,
+		transientLineClearUntil: newUntil,
+	}
+
+	p.clearTransientLineClearIfUntil(oldUntil)
+	if !p.transientLineClear {
+		t.Fatal("stale timer cleared transientLineClear")
+	}
+	if !p.transientLineClearUntil.Equal(newUntil) {
+		t.Fatalf("stale timer changed transientLineClearUntil to %v, want %v", p.transientLineClearUntil, newUntil)
+	}
+
+	p.clearTransientLineClearIfUntil(newUntil)
+	if p.transientLineClear {
+		t.Fatal("current timer did not clear transientLineClear")
+	}
+	if !p.transientLineClearUntil.IsZero() {
+		t.Fatalf("current timer left transientLineClearUntil = %v, want zero", p.transientLineClearUntil)
 	}
 }
 
