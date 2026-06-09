@@ -847,6 +847,82 @@ func TestRender_InactiveTransientLineClearDoesNotBlockActivePane(t *testing.T) {
 	}
 }
 
+// TestRender_ZoomOutRepaintsStalePanes_BtopOverflow reproduces the zoom-exit
+// bug: with two vertical panes, zooming the right pane (btop) fullscreen
+// paints its frame over the left pane's region of the tcell cell buffer.  On
+// zoom-out the left pane has no vt10x dirty rows and no overlay change, so
+// without forceFullRepaint renderPane skips it and the zoomed pane's overflow
+// stays on screen until some overlay change (e.g. a mouse click starting a
+// selection) forces a repaint.
+func TestRender_ZoomOutRepaintsStalePanes_BtopOverflow(t *testing.T) {
+	const (
+		screenW = 11
+		h       = 1
+	)
+	leftTerm := vt10x.New(vt10x.WithSize(4, h))
+	left := &Pane{
+		term: leftTerm, cmd: &exec.Cmd{},
+		x: 0, y: 0, w: 5, h: h,
+		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+	}
+	rightTerm := vt10x.New(vt10x.WithSize(4, h))
+	right := &Pane{
+		id:   1,
+		term: rightTerm, cmd: &exec.Cmd{},
+		x: 6, y: 0, w: 5, h: h,
+		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+	}
+	left.mu.Lock()
+	left.captureAndWrite([]byte("LLLL"))
+	left.mu.Unlock()
+	right.mu.Lock()
+	right.captureAndWrite([]byte("RRRR"))
+	right.mu.Unlock()
+
+	base := tcell.NewSimulationScreen("UTF-8")
+	base.Init() //nolint:errcheck // simulation screen init does not fail in tests
+	defer base.Fini()
+	base.SetSize(screenW, h)
+
+	root := &Node{
+		x: 0, y: 0, w: screenW, h: h, dir: splitVertical,
+		left:  &Node{x: 0, y: 0, w: 5, h: h, pane: left},
+		right: &Node{x: 6, y: 0, w: 5, h: h, pane: right},
+	}
+	app := &App{
+		screen: base,
+		root:   root,
+		active: right,
+		oscBuf: newOSCBuffer(),
+		theme:  testTheme(),
+	}
+
+	app.render()
+	mainc, _, _, _ := base.GetContent(0, 0) //nolint:staticcheck // rune-level access
+	if mainc != 'L' {
+		t.Fatalf("pre-zoom left pane cell = %q, want 'L'", mainc)
+	}
+
+	// Zoom the right pane fullscreen and have it paint across the whole
+	// width — like btop redrawing after the zoom SIGWINCH.
+	app.zoomIn()
+	right.mu.Lock()
+	right.captureAndWrite([]byte("\rBBBBBBBBBB"))
+	right.mu.Unlock()
+	app.render()
+	mainc, _, _, _ = base.GetContent(0, 0) //nolint:staticcheck // rune-level access
+	if mainc != 'B' {
+		t.Fatalf("zoomed pane cell over left pane region = %q, want 'B'", mainc)
+	}
+
+	app.zoomOut()
+	app.render()
+	mainc, _, _, _ = base.GetContent(0, 0) //nolint:staticcheck // rune-level access
+	if mainc != 'L' {
+		t.Fatalf("post-zoom left pane cell = %q, want 'L' (stale zoomed content not repainted)", mainc)
+	}
+}
+
 func TestRender_HidesCursorDuringInPlaceLineUpdate(t *testing.T) {
 	const (
 		w = 24

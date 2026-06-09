@@ -495,7 +495,8 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	//
 	// When sbOff > 0 the viewport mixes ring rows (no dirty tracking) with
 	// live terminal rows, so full repaint is always used in scroll mode.
-	fullRepaint := sbOff > 0 ||
+	fullRepaint := p.forceFullRepaint ||
+		sbOff > 0 ||
 		sbOff != p.lastRenderSbOff ||
 		hasSel != p.lastRenderSelActive ||
 		p.selAnchor != p.lastRenderSelAnchor ||
@@ -514,6 +515,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	p.lastRenderSelCursor = p.selCursor
 	p.lastRenderSearchHLGen = p.searchHLGen
 	p.lastRenderStatusKey = statusKey
+	p.forceFullRepaint = false
 
 	// Nothing to draw: pane is in live view, no overlay changed, and vt10x
 	// reports no cell writes since the last render.

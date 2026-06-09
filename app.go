@@ -669,6 +669,16 @@ func (app *App) zoomOut() {
 	g := app.zoomGeom
 	L.Debug("zoomOut", "pane", p.id, "restore", g)
 	p.resize(g[0], g[1], g[2], g[3])
+
+	// While zoomed, the zoomed pane's frame filled the entire tcell cell
+	// buffer, so every other pane's screen region now holds stale zoomed
+	// content.  Those panes have no vt10x dirty rows (nothing wrote to
+	// them), so renderPane would skip them — force one full repaint.
+	if app.root != nil {
+		for _, leaf := range app.root.leaves() {
+			leaf.pane.markFullRepaint()
+		}
+	}
 	app.triggerRedraw()
 }
 
@@ -758,7 +768,8 @@ func (app *App) removePane(p *Pane) {
 	}
 
 	// If the zoomed pane died, unzoom (no geometry restore needed — it's gone).
-	if app.zoomedPane == p {
+	wasZoomed := app.zoomedPane == p
+	if wasZoomed {
 		app.zoomedPane = nil
 	}
 
@@ -776,6 +787,13 @@ func (app *App) removePane(p *Pane) {
 
 	app.root = removeFromTree(app.root, p)
 	shutdown := app.root == nil
+	if wasZoomed && !shutdown {
+		// Same staleness as zoomOut: the dead pane's fullscreen frame is
+		// still in tcell's cell buffer over every surviving pane.
+		for _, leaf := range app.root.leaves() {
+			leaf.pane.markFullRepaint()
+		}
+	}
 	app.mu.Unlock()
 
 	if shutdown {

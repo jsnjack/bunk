@@ -92,6 +92,12 @@ type Pane struct {
 	lastRenderSearchHLGen int
 	lastRenderStatusKey   string
 
+	// forceFullRepaint makes the next renderPane call repaint every row
+	// regardless of vt10x dirty state.  Set when tcell's cell buffer no
+	// longer reflects this pane's content — e.g. after another pane was
+	// zoomed fullscreen on top of it.  Protected by mu.
+	forceFullRepaint bool
+
 	// oscScan is the per-pane OSC pre-scanner (value, no alloc).
 	// Forwards OSC 7 (CWD), OSC 8 (hyperlinks), OSC 52 (clipboard) to the
 	// host terminal so those features work through the multiplexer.
@@ -975,6 +981,15 @@ func (p *Pane) resize(x, y, w, h int) {
 			Cols: uint16(w - 1), // last column reserved for scrollbar
 		})
 	}
+}
+
+// markFullRepaint forces the next renderPane call to repaint every row of
+// this pane, even when vt10x reports no dirty rows.  Used when the tcell
+// cell buffer under this pane holds another pane's content (zoom exit).
+func (p *Pane) markFullRepaint() {
+	p.mu.Lock()
+	p.forceFullRepaint = true
+	p.mu.Unlock()
 }
 
 // resizePTYOnly updates the pane's screen coordinates and PTY size without
