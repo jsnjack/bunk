@@ -1174,6 +1174,43 @@ func TestTcellColorToXParse_Default_Unknown(t *testing.T) {
 // SGR 2 (dim), SGR 8 (invisible), SGR 9 (strikethrough) rendering
 // ---------------------------------------------------------------------------
 
+// TestCursorDisplayX_WideChars is the regression test for the cursor landing one
+// column too far left after a wide character.  Pasting an image into Copilot
+// inserts a "[📷 …]" chip; the 📷 emoji is double-width, so vt10x's cursor column
+// trails the real screen column by one per wide char.  cursorDisplayX must map
+// the vt10x column back to the painted screen column.
+func TestCursorDisplayX_WideChars(t *testing.T) {
+	const w, h = 40, 3
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	// "❯ [📷 ab]" — one wide emoji before the cursor, which ends after ']'.
+	term.Write([]byte("❯ [📷 ab]")) //nolint:errcheck
+	p := &Pane{
+		term: term, cmd: &exec.Cmd{},
+		x: 0, y: 0, w: w, h: h,
+		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+	}
+
+	cur := term.Cursor()
+	got := cursorDisplayX(p, cur)
+	// 8 runes precede the cursor ("❯ [📷 ab]" = ❯,SP,[,📷,SP,a,b,] => cursor at
+	// vt10x col 8); the 📷 occupies 2 screen cols, so the screen column is 9.
+	if cur.X != 8 {
+		t.Fatalf("precondition: vt10x cursor col = %d, want 8", cur.X)
+	}
+	if got != 9 {
+		t.Errorf("cursorDisplayX = %d, want 9 (off-by-one left from wide emoji)", got)
+	}
+
+	// No wide chars: display column must equal the vt10x column.
+	term2 := vt10x.New(vt10x.WithSize(w-1, h))
+	term2.Write([]byte("hello")) //nolint:errcheck
+	p2 := &Pane{term: term2, cmd: &exec.Cmd{}, x: 0, y: 0, w: w, h: h, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	c2 := term2.Cursor()
+	if got := cursorDisplayX(p2, c2); got != c2.X {
+		t.Errorf("ASCII: cursorDisplayX = %d, want %d (== vt10x col)", got, c2.X)
+	}
+}
+
 // TestRenderPane_OSC11RepaintsBlankRows is the regression test for the Copilot
 // welcome-screen background banding: an app clears the screen (blank rows get
 // the theme bg), THEN sets a new default background via OSC 11.  vt10x's Cell()

@@ -134,7 +134,7 @@ N/A in practice for cell-based multiplexer without passthrough support.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | UTF-8 | OK | Boundary detection prevents split-rune corruption |
-| CJK double-width | **FIXED** | displayCol tracking in renderPane decouples vt10x column from screen column |
+| CJK double-width | **FIXED** | displayCol tracking in renderPane decouples vt10x column from screen column. Hardware cursor position also mapped through `cursorDisplayX` so it lands on the painted column — otherwise the cursor sat one column left per wide char ahead of it (e.g. after pasting an image into Copilot, whose "[📷 …]" chip contains a double-width emoji) |
 | Combining characters | **PARTIAL** | vt10x stores one rune per cell |
 | Emoji (multi-codepoint) | **MISSING** | No grapheme clustering (mode 2027) |
 

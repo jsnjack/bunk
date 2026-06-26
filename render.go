@@ -170,12 +170,13 @@ func (app *App) render() {
 		dead := zp.dead
 		sbOff := zp.sbOff
 		cur := zp.term.Cursor()
+		curDisplayX := cursorDisplayX(zp, cur)
 		visible := zp.term.CursorVisible()
 		transientLineClear := zp.transientLineClear
 		progressCursorHidden := zp.progressCursorHiddenUntil.After(time.Now())
 		zp.mu.Unlock()
 		if !dead && visible && sbOff == 0 && !transientLineClear && !progressCursorHidden {
-			app.screen.ShowCursor(zp.x+cur.X, zp.y+cur.Y)
+			app.screen.ShowCursor(zp.x+curDisplayX, zp.y+cur.Y)
 		} else {
 			app.screen.HideCursor()
 		}
@@ -237,12 +238,13 @@ func (app *App) render() {
 		dead := active.dead
 		sbOff := active.sbOff
 		cur := active.term.Cursor()
+		curDisplayX := cursorDisplayX(active, cur)
 		visible := active.term.CursorVisible()
 		transientLineClear := active.transientLineClear
 		progressCursorHidden := active.progressCursorHiddenUntil.After(time.Now())
 		active.mu.Unlock()
 		if !dead && visible && sbOff == 0 && !transientLineClear && !progressCursorHidden {
-			app.screen.ShowCursor(active.x+cur.X, active.y+cur.Y)
+			app.screen.ShowCursor(active.x+curDisplayX, active.y+cur.Y)
 		} else {
 			app.screen.HideCursor()
 		}
@@ -293,6 +295,34 @@ func paneHasTransientLineClear(p *Pane) bool {
 	v := p.transientLineClear
 	p.mu.Unlock()
 	return v
+}
+
+// cursorDisplayX converts a vt10x cursor column to the actual screen column,
+// accounting for wide characters (emoji, CJK) earlier on the cursor's row.
+// vt10x advances one column per character, but renderPane paints wide glyphs
+// across two screen columns (tracked via displayCol).  Positioning the hardware
+// cursor at the raw vt10x column would place it one column too far left for
+// every wide char before it — e.g. after pasting an image, Copilot's "[📷 …]"
+// chip leaves the cursor one column left of the text.  Mirror renderPane's
+// width logic so the cursor lands where the glyphs were actually drawn.
+//
+// Must be called with p.mu held (it reads p.term cells).
+func cursorDisplayX(p *Pane, cur vt10x.Cursor) int {
+	cols, _ := p.term.Size()
+	displayCol := 0
+	for col := 0; col < cur.X && col < cols; col++ {
+		cell := p.term.Cell(col, cur.Y)
+		ch := cell.Char
+		if ch == 0 || cell.Mode&vtAttrInvisible != 0 {
+			ch = ' '
+		}
+		if ch != ' ' && uniseg.StringWidth(string(ch)) == 2 {
+			displayCol += 2
+		} else {
+			displayCol++
+		}
+	}
+	return displayCol
 }
 
 // closeHostHyperlink writes an OSC 8 close to w.  The render loop calls this
