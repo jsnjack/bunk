@@ -485,6 +485,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	hasSel := p.selActive
 	hasSearch := p.searchHL != nil
 	statusKey := statusOverlayKeyLocked(p, time.Now())
+	colorGen := p.term.ColorGen()
 
 	// Determine whether a full repaint is needed.
 	//
@@ -502,7 +503,8 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 		p.selAnchor != p.lastRenderSelAnchor ||
 		p.selCursor != p.lastRenderSelCursor ||
 		p.searchHLGen != p.lastRenderSearchHLGen ||
-		statusKey != p.lastRenderStatusKey
+		statusKey != p.lastRenderStatusKey ||
+		colorGen != p.lastRenderColorGen
 
 	// Always consume dirty to keep vt10x state clean (avoids accumulating
 	// dirty rows while the pane is scrolled that would confuse later renders).
@@ -515,6 +517,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	p.lastRenderSelCursor = p.selCursor
 	p.lastRenderSearchHLGen = p.searchHLGen
 	p.lastRenderStatusKey = statusKey
+	p.lastRenderColorGen = colorGen
 	p.forceFullRepaint = false
 
 	// Nothing to draw: pane is in live view, no overlay changed, and vt10x

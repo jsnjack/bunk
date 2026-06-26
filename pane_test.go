@@ -1935,6 +1935,41 @@ func TestHandleKittyKeyboard_PushQueryPop(t *testing.T) {
 	}
 }
 
+// TestHandleKittyKeyboard_SetFlagsForm is the regression test for the Copilot
+// CLI welcome-screen corruption: Copilot sends the kitty "set flags" sequence
+// \x1b[=1;1u (form CSI = flags ; mode u, two ';'-separated params) right before
+// drawing its mascot with cursor-relative moves inside a DEC 2026 sync frame.
+//
+// The old handler scanned only a single digit run after '=', stopped at the
+// ';', failed to recognise the sequence, and let it through to vt10x — which
+// reads the trailing 'u' as DECRC (restore cursor), jumping the cursor to the
+// saved slot.  Every relative-positioned draw afterwards then landed on the
+// wrong row, splitting the tab bar across two rows ("multiple backgrounds")
+// and bleeding the mascot's eyes into its top border.
+func TestHandleKittyKeyboard_SetFlagsForm(t *testing.T) {
+	term := vt10x.New(vt10x.WithSize(40, 10))
+	p := &Pane{term: term, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+
+	// Park the cursor away from the origin, then send the set-flags sequence
+	// followed by a printable char.  If \x1b[=1;1u leaks to vt10x it triggers
+	// DECRC and 'X' lands at (0,0); when stripped, 'X' lands at the cursor.
+	p.captureAndWrite([]byte("\x1b[5;5H\x1b[=1;1uX"))
+
+	if got := term.Cell(0, 0).Char; got == 'X' {
+		t.Fatalf("'X' rendered at (0,0): \\x1b[=1;1u leaked to vt10x as DECRC")
+	}
+	if got := term.Cell(4, 4).Char; got != 'X' {
+		t.Errorf("cursor desynced: cell(4,4) = %q, want 'X'", got)
+	}
+
+	// The "set" form replaces the current flags rather than nesting forever.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.kittyStack) != 1 || p.kittyStack[0] != 1 {
+		t.Errorf("after set-flags: kittyStack = %v, want [1]", p.kittyStack)
+	}
+}
+
 // TestKittyStack_StaleAfterExit is the regression test for the bug where a
 // non-alt-screen app (e.g. Claude Code) enables KKP but exits without sending
 // \x1b[<u.  The stale kittyStack causes bunk to encode all subsequent

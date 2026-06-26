@@ -91,6 +91,7 @@ type Pane struct {
 	lastRenderSelCursor   selPos
 	lastRenderSearchHLGen int
 	lastRenderStatusKey   string
+	lastRenderColorGen    uint64
 
 	// forceFullRepaint makes the next renderPane call repaint every row
 	// regardless of vt10x dirty state.  Set when tcell's cell buffer no
@@ -1696,15 +1697,25 @@ func (p *Pane) handleKittyKeyboard(chunk []byte) []byte {
 				stripped = true
 			}
 		case '>', '=':
-			// \x1b[><digits>u (spec) or \x1b[=<digits>u (legacy)
+			// \x1b[><flags>u   — push flags onto the stack (spec).
+			// \x1b[=<flags>;<mode>u — set current flags (mode 1=all, 2=set,
+			//   3=reset); the trailing ";<mode>" param means the scan must skip
+			//   ';' as well as digits, otherwise the sequence is not recognised
+			//   and leaks to vt10x, which misreads the final 'u' as DECRC
+			//   (restore cursor) and corrupts cursor-relative drawing.
 			k := j + 1
-			for k < len(chunk) && chunk[k] >= '0' && chunk[k] <= '9' {
+			for k < len(chunk) && ((chunk[k] >= '0' && chunk[k] <= '9') || chunk[k] == ';') {
 				k++
 			}
 			if k < len(chunk) && chunk[k] == 'u' {
 				flags := 0
-				fmt.Sscanf(string(chunk[j+1:k]), "%d", &flags) //nolint:errcheck // best-effort parse; flags defaults to 0
-				p.kittyStack = append(p.kittyStack, flags)
+				fmt.Sscanf(string(chunk[j+1:k]), "%d", &flags) //nolint:errcheck // best-effort parse of the first param; flags defaults to 0
+				if intro == '=' && len(p.kittyStack) > 0 {
+					// "set" replaces the current flags rather than pushing.
+					p.kittyStack[len(p.kittyStack)-1] = flags
+				} else {
+					p.kittyStack = append(p.kittyStack, flags)
+				}
 				newI = k + 1
 				stripped = true
 			}

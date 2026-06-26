@@ -1174,6 +1174,63 @@ func TestTcellColorToXParse_Default_Unknown(t *testing.T) {
 // SGR 2 (dim), SGR 8 (invisible), SGR 9 (strikethrough) rendering
 // ---------------------------------------------------------------------------
 
+// TestRenderPane_OSC11RepaintsBlankRows is the regression test for the Copilot
+// welcome-screen background banding: an app clears the screen (blank rows get
+// the theme bg), THEN sets a new default background via OSC 11.  vt10x's Cell()
+// resolves DefaultBG through the override, so every cell — including blank rows
+// the renderer skips via dirty tracking — should now show the override colour.
+// Without a colour-generation check the blank rows keep their stale theme bg,
+// producing horizontal bands of mismatched background.
+func TestRenderPane_OSC11RepaintsBlankRows(t *testing.T) {
+	const w, h = 10, 4
+	rt := testTheme()
+	term := vt10x.New(vt10x.WithSize(w-1, h))
+	p := &Pane{
+		term: term, cmd: &exec.Cmd{},
+		x: 0, y: 0, w: w, h: h,
+		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+	}
+	scr := tcell.NewSimulationScreen("UTF-8")
+	scr.Init() //nolint:errcheck
+	defer scr.Fini()
+	scr.SetSize(w, h)
+
+	// 1. Clear the screen (no override yet) and render: blank cells show theme bg.
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\x1b[2J\x1b[HX")) // an X on row 0, rest blank
+	p.mu.Unlock()
+	renderPane(scr, p, rt)
+	scr.Show()
+
+	// A blank cell on row 2 (never written) currently carries the theme bg.
+	if _, bg, _ := getCellStyle(scr, 0, 2); bg != rt.bg {
+		t.Fatalf("setup: blank cell bg = %v, want theme bg %v", bg, rt.bg)
+	}
+
+	// 2. App sets a new default background via OSC 11, then render again WITHOUT
+	//    touching the blank row.  The colour-generation change must force a full
+	//    repaint so the blank row picks up the new background.
+	p.mu.Lock()
+	p.captureAndWrite([]byte("\x1b]11;#0D1117\x07"))
+	p.mu.Unlock()
+	renderPane(scr, p, rt)
+	scr.Show()
+
+	want := tcell.NewRGBColor(0x0D, 0x11, 0x17)
+	if _, bg, _ := getCellStyle(scr, 0, 2); bg != want {
+		t.Errorf("after OSC 11: blank cell bg = %v, want %v (stale theme bg => banding)", bg, want)
+	}
+	// The written cell on row 0 must agree, so the whole pane is unified.
+	if _, bg, _ := getCellStyle(scr, 0, 0); bg != want {
+		t.Errorf("after OSC 11: written cell bg = %v, want %v", bg, want)
+	}
+}
+
+func getCellStyle(scr tcell.SimulationScreen, x, y int) (tcell.Color, tcell.Color, tcell.AttrMask) {
+	_, _, st, _ := scr.GetContent(x, y) //nolint:staticcheck // rune-level access
+	return st.Decompose()
+}
+
 // renderAndGetStyle builds a minimal Pane+SimulationScreen, writes ANSI bytes
 // into the vt10x terminal, renders into the screen, and returns the tcell.Style
 // stored at cell (0, 0).

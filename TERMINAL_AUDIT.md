@@ -47,7 +47,7 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 4 | Set palette color | OK | vt10x handles |
 | 7 | CWD notification | OK | Forwarded to host |
 | 8 | Hyperlinks | OK | Forwarded to host |
-| 10/11/12 | Query fg/bg/cursor color | **PARTIAL** | Queries are answered in-stream from bunk's current dynamic colour state. Replies are gated to alt-screen mode to avoid leaking into normal-mode apps. In `theme="terminal"` mode bunk now probes the outer terminal's OSC 10/11/12 defaults at startup and uses them when available; replies are still suppressed if the host terminal does not answer or the cursor colour is genuinely unknown |
+| 10/11/12 | Query/set fg/bg/cursor color | **PARTIAL** | Queries are answered in-stream from bunk's current dynamic colour state. Replies are gated to alt-screen mode to avoid leaking into normal-mode apps. In `theme="terminal"` mode bunk now probes the outer terminal's OSC 10/11/12 defaults at startup and uses them when available; replies are still suppressed if the host terminal does not answer or the cursor colour is genuinely unknown. Set form (e.g. `\x1b]11;#0D1117`) is honoured per pane: vt10x resolves DefaultBG/FG through the override. Fixed: a colour change now forces a full repaint (`State.ColorGen`) so blank rows already painted with the old default are updated too — otherwise the screen showed horizontal bands of mismatched background (e.g. Copilot CLI welcome screen) |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles |
 | 110/111/112 | Reset fg/bg/cursor color | **PARTIAL** | Clears bunk's dynamic fg/bg/cursor overrides. Cursor-colour state is tracked for query/reset semantics, but bunk does not visibly render a separate cursor colour |
@@ -103,7 +103,7 @@ Highest impact: XTVERSION (feature detection by newer apps).
 | Alt+key (ESC prefix) | OK | |
 | Arrow keys | OK | |
 | Shift+Tab (BackTab) | **FIXED** | Was sending `\x1b[9;3u` (Alt+Tab) in kitty mode; now correctly `\x1b[9;2u` |
-| Kitty keyboard protocol | **FIXED** | Push/pop/query stack; CSI u encoding for Enter, Tab, Backspace, Ctrl+letter. Fixed: stale stack after non-alt-screen KKP app exits without `\x1b[<u` — cleared by `trackFgProcess` on PGID change |
+| Kitty keyboard protocol | **FIXED** | Push/pop/query stack; CSI u encoding for Enter, Tab, Backspace, Ctrl+letter. Fixed: stale stack after non-alt-screen KKP app exits without `\x1b[<u` — cleared by `trackFgProcess` on PGID change. Fixed: set-flags form `\x1b[=<flags>;<mode>u` (two params) was not stripped — the `;` broke the single-digit scan, leaking the sequence to vt10x which read the trailing `u` as DECRC, corrupting cursor-relative drawing (e.g. Copilot CLI welcome screen / mascot) |
 | F1–F12 | OK | Any key bound to a bunk action (default: F1=split, F12=zoom) is consumed and not forwarded; this is config-dependent |
 | F13-F24 | OK | Shift+F1-F12; handled both via `KeyF13`–`KeyF24` and via `KeyF1`+`ModShift` modifier path |
 | Home/End/PgUp/PgDn/Ins/Del | OK | All modifiers forwarded as `\x1b[<code>;<mod>~` / `\x1b[1;<mod>H/F`; Shift+PgUp/PgDn consumed by default for scrollback (config-dependent) |

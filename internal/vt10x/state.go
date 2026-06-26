@@ -153,6 +153,12 @@ type State struct {
 	tabs          []bool
 	title         string
 	colorOverride map[Color]Color
+	// colorGen bumps every time a dynamic-colour override changes (OSC
+	// 10/11/12/4 set or reset).  Because Cell() resolves DefaultBG/FG through
+	// colorOverride, a change repaints the appearance of EVERY cell — including
+	// blank ones the renderer would otherwise skip via dirty tracking.  The
+	// renderer watches this counter to force a full repaint when it changes.
+	colorGen uint64
 	// links / linkIDs together form the OSC 8 hyperlink intern table.
 	//
 	// links[id-1] = URL gives the slice for ID→URL lookup (used by render).
@@ -270,6 +276,14 @@ func (t *State) QueryPrivateMode(mode int) byte {
 func (t *State) ColorOverride(c Color) (Color, bool) {
 	v, ok := t.colorOverride[c]
 	return v, ok
+}
+
+// ColorGen returns a counter that increments every time a dynamic-colour
+// override changes.  The renderer compares it against the value seen on the
+// previous frame to decide whether a full repaint is needed (a colour change
+// affects every DefaultBG/FG cell, not just dirty rows).
+func (t *State) ColorGen() uint64 {
+	return t.colorGen
 }
 
 // privateModeFlag maps a DEC private mode number to its ModeFlag.
