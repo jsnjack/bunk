@@ -2026,3 +2026,118 @@ func TestKittyStack_StaleAfterExit(t *testing.T) {
 		t.Errorf("after clear: Enter = %q, want \\r", gotCleared)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Scrollback erase
+//
+// clear(1) sends CSI 3 J (the xterm E3 capability) and reset(1) sends RIS
+// (ESC c); both must empty the scrollback ring, snap the view back to live,
+// and cut rawBuf so a later resize replay cannot resurrect the erased
+// history.  Plain CSI 2 J (readline Ctrl+L, clear -x) must keep scrollback,
+// matching xterm.
+// ---------------------------------------------------------------------------
+
+func newScrollbackClearPane(cols, rows int) *Pane {
+	p := &Pane{
+		scrollbackLines: 100,
+		sb:              sbRing{maxLines: 100},
+	}
+	p.term = vt10x.New(vt10x.WithSize(cols, rows),
+		vt10x.WithScrollCallback(p.onScrollRow),
+		vt10x.WithScrollbackClearCallback(p.onScrollbackClear))
+	return p
+}
+
+// fillScrollback overflows the pane so rows scroll into the ring.
+func fillScrollback(t *testing.T, p *Pane) {
+	t.Helper()
+	var burst []byte
+	for i := 0; i < 12; i++ {
+		burst = append(burst, []byte("history-line\r\n")...)
+	}
+	p.captureAndWrite(burst)
+	if p.sb.count == 0 {
+		t.Fatal("setup: expected scrollback rows after overflow")
+	}
+}
+
+func TestScrollbackClear_ED3(t *testing.T) {
+	p := newScrollbackClearPane(20, 5)
+	fillScrollback(t, p)
+	p.sbOff = 2 // user is scrolled back
+
+	// clear(1) output: cursor home + erase display + erase saved lines,
+	// with the follow-up prompt coalesced into the same PTY chunk.
+	p.captureAndWrite([]byte("\x1b[H\x1b[2J\x1b[3J$ "))
+
+	if p.sb.count != 0 {
+		t.Errorf("sb.count = %d after CSI 3 J, want 0", p.sb.count)
+	}
+	if p.sbOff != 0 {
+		t.Errorf("sbOff = %d after CSI 3 J, want 0 (live view)", p.sbOff)
+	}
+	if got := string(p.rawBuf); got != "$ " {
+		t.Errorf("rawBuf = %q after CSI 3 J, want %q (history cut, same-chunk tail kept)", got, "$ ")
+	}
+}
+
+func TestScrollbackClear_ED2KeepsHistory(t *testing.T) {
+	p := newScrollbackClearPane(20, 5)
+	fillScrollback(t, p)
+	before := p.sb.count
+
+	// Readline Ctrl+L sends only cursor home + CSI 2 J.
+	p.captureAndWrite([]byte("\x1b[H\x1b[2J"))
+
+	if p.sb.count != before {
+		t.Errorf("sb.count = %d after CSI 2 J, want %d (2J must not touch scrollback)", p.sb.count, before)
+	}
+}
+
+func TestScrollbackClear_RIS(t *testing.T) {
+	p := newScrollbackClearPane(20, 5)
+	fillScrollback(t, p)
+
+	p.captureAndWrite([]byte("\x1bc$ "))
+
+	if p.sb.count != 0 {
+		t.Errorf("sb.count = %d after RIS, want 0", p.sb.count)
+	}
+	if got := string(p.rawBuf); got != "$ " {
+		t.Errorf("rawBuf = %q after RIS, want %q (history cut, same-chunk tail kept)", got, "$ ")
+	}
+}
+
+func TestScrollbackClear_SurvivesReflow(t *testing.T) {
+	p := newScrollbackClearPane(20, 5)
+	fillScrollback(t, p)
+
+	p.captureAndWrite([]byte("\x1b[H\x1b[2J\x1b[3J$ "))
+
+	// Column change forces the full rawBuf replay path.
+	p.resizeAndReflow(40, 5)
+
+	if p.sb.count != 0 {
+		t.Errorf("sb.count = %d after reflow, want 0 — erased history must not be resurrected", p.sb.count)
+	}
+}
+
+// TestScrollbackClear_RingReuse verifies the ring accepts pushes again after
+// clear() and that cleared storage is not visible via get().
+func TestScrollbackClear_RingReuse(t *testing.T) {
+	p := newScrollbackClearPane(20, 5)
+	fillScrollback(t, p)
+
+	p.captureAndWrite([]byte("\x1b[3J"))
+	if p.sb.count != 0 {
+		t.Fatalf("sb.count = %d after clear, want 0", p.sb.count)
+	}
+	if row := p.sb.get(0); row != nil {
+		t.Errorf("sb.get(0) = %v after clear, want nil", row)
+	}
+
+	fillScrollback(t, p)
+	if got := p.sb.get(0); got == nil {
+		t.Error("sb.get(0) = nil after post-clear refill, want a row")
+	}
+}

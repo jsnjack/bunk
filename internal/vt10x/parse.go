@@ -75,6 +75,9 @@ func (t *State) parseEsc(c rune) {
 		// TODO: write to our writer our id
 	case 'c': // RIS - reset to initial state
 		t.reset()
+		if t.sbClearCb != nil {
+			t.sbClearCb()
+		}
 	case '=': // DECPAM - application keypad
 		t.mode |= ModeAppKeypad
 	case '>': // DECPNM - normal keypad

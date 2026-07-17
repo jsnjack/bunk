@@ -179,6 +179,11 @@ type State struct {
 	// the row's backing storage is cleared, so the content is still intact.
 	// The caller must copy any data it wants to retain after the call.
 	scrollRowCb func(row []Glyph)
+	// sbClearCb, if non-nil, is called when the application requests
+	// scrollback erasure via ED 3 (CSI 3 J) or RIS (ESC c).  Scrollback
+	// lives outside this State (which only holds the visible grid), so
+	// erasure is delegated to the owner.  Not fired by init-time reset().
+	sbClearCb func()
 }
 
 func newState(w io.Writer) *State {

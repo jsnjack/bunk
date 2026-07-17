@@ -76,6 +76,13 @@ func (s *sbRing) push(row []vt10x.Glyph) {
 	copy(s.lines[slot], row)
 }
 
+// clear empties the ring in place.  Backing row storage is kept so
+// subsequent pushes can reuse it without reallocating.
+func (s *sbRing) clear() {
+	s.head = 0
+	s.count = 0
+}
+
 // get returns the line at logical index i, where 0 is the OLDEST surviving
 // line and count-1 is the most recently pushed line.  Returns nil on bounds
 // violation.

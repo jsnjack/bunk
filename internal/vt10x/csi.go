@@ -153,6 +153,10 @@ func (t *State) handleCSI() {
 			t.clear(0, t.cur.Y, t.cur.X, t.cur.Y)
 		case 2: // all
 			t.clear(0, 0, t.cols-1, t.rows-1)
+		case 3: // saved lines (xterm E3) — scrollback only, screen untouched
+			if t.sbClearCb != nil {
+				t.sbClearCb()
+			}
 		default:
 			goto unknown
 		}

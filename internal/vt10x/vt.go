@@ -88,6 +88,10 @@ type TerminalInfo struct {
 	// backing storage is cleared.  The slice is only valid for the duration
 	// of the call; the receiver must copy any content it wants to retain.
 	scrollCb func(row []Glyph)
+	// sbClearCb is called when the application requests scrollback erasure:
+	// ED 3 (CSI 3 J, the xterm E3 extension sent by clear(1)) or RIS
+	// (ESC c, sent by reset(1)).
+	sbClearCb func()
 }
 
 func WithWriter(w io.Writer) TerminalOption {
@@ -110,6 +114,18 @@ func WithSize(cols, rows int) TerminalOption {
 func WithScrollCallback(fn func(row []Glyph)) TerminalOption {
 	return func(info *TerminalInfo) {
 		info.scrollCb = fn
+	}
+}
+
+// WithScrollbackClearCallback installs a callback that fires when the
+// application requests scrollback erasure: ED 3 (CSI 3 J, the xterm E3
+// extension sent by clear(1)) or RIS (ESC c, sent by reset(1)).  The State
+// only holds the visible grid — scrollback lives with the caller — so
+// erasure is delegated through this callback.  It runs synchronously inside
+// terminal mutation code; it must be fast and non-blocking.
+func WithScrollbackClearCallback(fn func()) TerminalOption {
+	return func(info *TerminalInfo) {
+		info.sbClearCb = fn
 	}
 }
 

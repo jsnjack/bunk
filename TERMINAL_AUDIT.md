@@ -149,6 +149,16 @@ N/A in practice for cell-based multiplexer without passthrough support.
 
 ---
 
+## 9. Erase / Scrollback Management
+
+| Sequence | Feature | Status | Notes |
+|----------|---------|--------|-------|
+| ED 0/1/2 (CSI J) | Erase in display | OK | Never touches scrollback — Ctrl+L / `clear -x` keep history, matching xterm |
+| ED 3 (CSI 3 J) | Erase saved lines (xterm E3, sent by clear(1)) | OK | vt10x fires a scrollback-clear callback (`WithScrollbackClearCallback`); the pane empties sbRing, snaps sbOff to live, drops any active selection, and cuts rawBuf just past the sequence so resize replay can't resurrect the erased history |
+| RIS (ESC c) | Full reset (sent by reset(1)) | OK | Same scrollback-clear callback, fired after vt10x state reset; init-time reset() does not fire it |
+
+---
+
 ## Priority Implementation Plan
 
 ### Tier 1 — High impact, affects common apps daily

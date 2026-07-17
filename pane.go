@@ -258,7 +258,8 @@ func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, col
 		themeBGColor:     colors.bg,
 		themeCursorColor: colors.cursor,
 	}
-	p.term = vt10x.New(vt10x.WithSize(w-1, h), vt10x.WithScrollCallback(p.onScrollRow))
+	p.term = vt10x.New(vt10x.WithSize(w-1, h), vt10x.WithScrollCallback(p.onScrollRow),
+		vt10x.WithScrollbackClearCallback(p.onScrollbackClear))
 
 	// One-time container detection: read the shell process's own environ.
 	if cmd.Process != nil {
@@ -483,6 +484,37 @@ func (p *Pane) onScrollRow(row []vt10x.Glyph) {
 	oldSbOff := p.sbOff
 	p.sb.push(row)
 	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
+}
+
+// onScrollbackClear is the vt10x scrollback-erase callback installed in
+// NewPane via WithScrollbackClearCallback.  It fires synchronously inside
+// vt10x.Write() when the application requests scrollback erasure: ED 3
+// (CSI 3 J, sent by clear(1) via the xterm E3 capability) or RIS (ESC c,
+// sent by reset(1)).  p.mu is already held by captureAndWrite, same as
+// onScrollRow.
+//
+// Besides emptying the ring, rawBuf is cut just past the erase sequence so
+// a later resize/reflow replay cannot resurrect the erased history.  The
+// sequence was appended to rawBuf by writeTerminalChunk before term.Write
+// parsed it, so searching from the end finds it; any same-chunk bytes after
+// it (e.g. the prompt redraw that follows clear's output) are kept.  If no
+// known spelling is found (e.g. the erase arrived while the alt screen was
+// active and was never appended to rawBuf), rawBuf is left intact — for the
+// clear(1)/reset(1) streams the replayed 2J/RIS still wipes the scratch
+// terminal, so reflow stays correct.
+func (p *Pane) onScrollbackClear() {
+	L.Debug("scrollback clear requested", "pane", p.id, "dropped", p.sb.count)
+	p.sb.clear()
+	p.sbOff = 0
+	p.selActive = false
+
+	cut := 0
+	for _, seq := range [][]byte{[]byte("\x1b[3J"), []byte("\x1bc")} {
+		if i := bytes.LastIndex(p.rawBuf, seq); i >= 0 && i+len(seq) > cut {
+			cut = i + len(seq)
+		}
+	}
+	p.rawBuf = p.rawBuf[cut:]
 }
 
 // captureAndWrite writes chunk to vt10x and answers terminal capability
