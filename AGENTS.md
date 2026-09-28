@@ -84,7 +84,9 @@ Key local extensions to vendored vt10x:
    redraw), `waitForExit`, `trackFgProcess`. One shared `renderLoop` drains
    `app.redraw` (buffered 1).
 3. **Resize / reflow** — `App.handleResize()` coalesces host resizes and
-   updates the BSP tree. `Pane.resizeAndReflow()` replays `rawBuf` into a
+   updates the BSP tree. Emulator reflow finishes before the PTY receives its
+   new size and SIGWINCH; both are deferred together during resize bursts.
+   `Pane.resizeAndReflow()` replays `rawBuf` into a
    scratch grid, then replaces the live grid without resetting terminal state.
 4. **OSC passthrough** — bounded `ptyStream` framing precedes `osc.go` scanning.
    OSC 7/52/133 reach the host through `app.oscBuf`; OSC 8 links are stored on

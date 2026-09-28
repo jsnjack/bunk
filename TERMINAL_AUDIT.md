@@ -253,3 +253,14 @@ Protocol references: [xterm control sequences](https://invisible-island.net/xter
 Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/),
 [iTerm2 inline images](https://iterm2.com/documentation-images.html),
 [DEC VT300 reference](https://vt100.net/dec/ek-vt3xx-hr-002.pdf).
+
+### Resize ordering (2026-09-28)
+
+- Host resize bursts coalesce emulator reflow and PTY size notification together.
+  The emulator reaches the new dimensions before SIGWINCH can trigger a redraw;
+  superseded resize callbacks are ignored.
+- Regression coverage exercises primary and alternate screens across two width
+  reductions and an expansion, with redraws at the notified right margin.
+- Remaining limitation: primary-screen history replays raw cursor-positioning
+  commands at the new width. Positions beyond the new right margin clamp there,
+  so old cursor-positioned output can still fragment after narrowing.

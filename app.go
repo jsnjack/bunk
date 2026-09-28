@@ -110,10 +110,10 @@ type App struct {
 	zoomedPane *Pane
 	zoomGeom   [4]int // saved {x, y, w, h} to restore on unzoom
 
-	// resizeTimer coalesces rapid terminal resize events.  The lightweight
-	// PTY-size update happens immediately; the expensive rawBuf replay is
-	// deferred until 50ms after the last resize event.
+	// Resize state is protected by mu. Emulator reflow and PTY notification
+	// are coalesced together so redraws use the notified dimensions.
 	resizeTimer *time.Timer
+	resizeGen   uint64
 }
 
 // shutdown is safe to call multiple times.  It closes every pane (sending
@@ -253,52 +253,35 @@ func (app *App) eventLoop() {
 	}
 }
 
-// handleResize is called when the host terminal changes size.
-// During a drag-resize the host terminal fires many SIGWINCH events in rapid
-// succession.  Each resize involves an expensive rawBuf replay (O(rawBuf) per
-// pane).  We coalesce events by postponing the actual reflow if another resize
-// arrives within 50ms.  A lightweight PTY-size-only update is applied
-// immediately so the shell receives SIGWINCH promptly and can redraw, while
-// the costly rawBuf replay is deferred to the final size.
+// handleResize coalesces emulator reflow and PTY notification. Sending
+// SIGWINCH before reflow lets applications redraw into the old-sized grid.
 func (app *App) handleResize() {
 	app.screen.Sync()
 	w, h := app.screen.Size()
 	L.Debug("handleResize", "w", w, "h", h)
 
-	// Cancel any pending deferred resize.
+	app.mu.Lock()
+	defer app.mu.Unlock()
 	if app.resizeTimer != nil {
 		app.resizeTimer.Stop()
 	}
-
-	// Immediate lightweight pass: update pane x/y/w/h and PTY sizes so
-	// the shells receive SIGWINCH right away.  Skip the expensive rawBuf
-	// replay (resizeAndReflow) — that's deferred below.
-	app.mu.Lock()
-	if app.root != nil {
-		app.root.resizePTYOnly(0, 0, w, h)
-	}
-	if p := app.zoomedPane; p != nil {
-		app.zoomGeom = [4]int{p.x, p.y, p.w, p.h}
-		p.resizePTYOnly(0, 0, w, h)
-	}
-	app.mu.Unlock()
-	app.triggerRedraw()
-
-	// Deferred reflow: wait 50ms for more resize events before doing the
-	// expensive rawBuf replay.  If another resize arrives, the timer is
-	// reset and only the final size triggers the replay.
+	app.resizeGen++
+	gen := app.resizeGen
 	app.resizeTimer = time.AfterFunc(50*time.Millisecond, func() {
-		sw, sh := app.screen.Size()
-		L.Debug("handleResize: deferred reflow", "w", sw, "h", sh)
 		app.mu.Lock()
+		defer app.mu.Unlock()
+		// Stop cannot cancel a callback that is already waiting for mu.
+		if gen != app.resizeGen {
+			return
+		}
+		L.Debug("handleResize: deferred reflow", "w", w, "h", h)
 		if app.root != nil {
-			app.root.resize(0, 0, sw, sh)
+			app.root.resize(0, 0, w, h)
 		}
 		if p := app.zoomedPane; p != nil {
 			app.zoomGeom = [4]int{p.x, p.y, p.w, p.h}
-			p.resize(0, 0, sw, sh)
+			p.resize(0, 0, w, h)
 		}
-		app.mu.Unlock()
 		app.triggerRedraw()
 	})
 }
