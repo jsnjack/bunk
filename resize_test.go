@@ -94,3 +94,33 @@ func TestResizeRedrawUsesNotifiedSize(t *testing.T) {
 		})
 	}
 }
+
+func TestResizeDoesNotReplayCursorPositions(t *testing.T) {
+	for _, width := range []int{80, 40} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			p := regressionPane(160, 24)
+			p.captureAndWrite([]byte("prefix\x1b[120Ghistory\r\n\x1b[120Gis\r\n\x1b[120Gkept."))
+			for _, cols := range []int{width, 160, width} {
+				p.resize(0, 0, cols+1, 24)
+				var output strings.Builder
+				for y := 0; y < 24; y++ {
+					row := captureRow(p.term, y, cols)
+					if row[cols-1].Mode&vt10x.AttrWrap != 0 {
+						for _, g := range row {
+							if g.Width >= 0 {
+								output.WriteRune(g.Char)
+							}
+						}
+					} else {
+						output.WriteString(string(rowChars(row)))
+						output.WriteByte('\n')
+					}
+				}
+				want := "prefix" + strings.Repeat(" ", 113) + "history\n" + strings.Repeat(" ", 119) + "is\n" + strings.Repeat(" ", 119) + "kept."
+				if got := strings.TrimRight(output.String(), "\n"); got != want {
+					t.Fatalf("width %d changed positioned text:\ngot  %q\nwant %q", cols, got, want)
+				}
+			}
+		})
+	}
+}

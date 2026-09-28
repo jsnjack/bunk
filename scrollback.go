@@ -12,11 +12,6 @@
 // screen apps use absolute positioning and their scrolls must not appear in
 // primary scrollback.
 //
-// rawBuf (in pane.go) retains the raw PTY byte stream for resize/reflow:
-// when the terminal is resized, the entire raw history is replayed through a
-// scratch terminal at the new width so that line wrapping is recalculated.
-// This is separate from scrollback capture and is not affected by this change.
-//
 // Scrollback ring buffer
 // ──────────────────────
 // sbRing is a fixed-capacity circular buffer of captured lines.  Each entry

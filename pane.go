@@ -33,7 +33,6 @@ import (
 // defaultScrollbackLines is the default maximum number of scrollback lines
 // retained per pane.  Overridden by the "scrollback" config field.
 // Memory cost per pane:
-//   - rawBuf:  scrollbackLines × ~200 bytes/line (raw ANSI, varies by content)
 //   - sbRing:  scrollbackLines × cols × ~24 bytes (rendered glyphs, on demand)
 const defaultScrollbackLines = 10_000
 
@@ -117,12 +116,6 @@ type Pane struct {
 	// process is not inside any container.  Protected by mu.
 	baseContainerType string
 	baseContainerID   string
-
-	// rawBuf stores the raw PTY byte stream (capped at rawBufMax) so that the
-	// terminal content can be replayed into a fresh vt10x on resize, giving
-	// correct line-wrap reflow at the new column width.  Protected by mu.
-	rawBuf      []byte
-	hasGraphics bool
 
 	// altEntryCursor remembers the primary-screen cursor position at the moment
 	// the pane entered the alternate screen.  vt10x shares a single saved-cursor
@@ -506,29 +499,11 @@ func (p *Pane) onScrollRow(row []vt10x.Glyph) {
 // (CSI 3 J, sent by clear(1) via the xterm E3 capability) or RIS (ESC c,
 // sent by reset(1)).  p.mu is already held by captureAndWrite, same as
 // onScrollRow.
-//
-// Besides emptying the ring, rawBuf is cut just past the erase sequence so
-// a later resize/reflow replay cannot resurrect the erased history.  The
-// sequence was appended to rawBuf by writeTerminalChunk before term.Write
-// parsed it, so searching from the end finds it; any same-chunk bytes after
-// it (e.g. the prompt redraw that follows clear's output) are kept.  If no
-// known spelling is found (e.g. the erase arrived while the alt screen was
-// active and was never appended to rawBuf), rawBuf is left intact — for the
-// clear(1)/reset(1) streams the replayed 2J/RIS still wipes the scratch
-// terminal, so reflow stays correct.
 func (p *Pane) onScrollbackClear() {
 	L.Debug("scrollback clear requested", "pane", p.id, "dropped", p.sb.count)
 	p.sb.clear()
 	p.sbOff = 0
 	p.selActive = false
-
-	cut := 0
-	for _, seq := range [][]byte{[]byte("\x1b[3J"), []byte("\x1bc")} {
-		if i := bytes.LastIndex(p.rawBuf, seq); i >= 0 && i+len(seq) > cut {
-			cut = i + len(seq)
-		}
-	}
-	p.rawBuf = p.rawBuf[cut:]
 }
 
 // captureAndWrite writes chunk to vt10x and answers terminal capability
@@ -560,11 +535,8 @@ func (p *Pane) captureAndWrite(chunk []byte) {
 }
 
 // writeTerminalChunk feeds chunk into vt10x while preserving bunk's
-// scrollback, rawBuf replay, alt-screen hygiene, and kitty-keyboard handling.
+// scrollback, alt-screen hygiene, and kitty-keyboard handling.
 func (p *Pane) writeTerminalChunk(chunk []byte) {
-	if !p.hasGraphics {
-		p.hasGraphics = containsGraphics(chunk)
-	}
 	altScreen := p.term.Mode()&vt10x.ModeAltScreen != 0
 	if L.Enabled(context.Background(), LevelTrace) {
 		cur := p.term.Cursor()
@@ -580,14 +552,6 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 	// final byte as DECRC (restore cursor), jumping the cursor to 0,0.
 	if bytes.ContainsAny(chunk, "u") && bytes.Contains(chunk, []byte("\x1b[")) {
 		chunk = p.handleKittyKeyboard(chunk)
-	}
-
-	// Accumulate raw bytes for replay-based reflow on resize.
-	// Skip while alternate screen is active (vim, htop, etc.) — those apps
-	// paint absolute-position content that doesn't replay meaningfully.
-	if !altScreen {
-		p.rawBuf = append(p.rawBuf, chunk...)
-		p.trimRawHistory()
 	}
 
 	// If this chunk crosses an alt-screen entry point:
@@ -662,9 +626,6 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 		p.term.Write(chunk) //nolint:errcheck
 	}
 
-	// When alt screen exits, append the chunk to rawBuf (skipped above because
-	// altScreen=true) and insert the SGR reset at the split point so rawBuf
-	// replay uses default colours for subsequent clears.
 	if altScreen && p.term.Mode()&vt10x.ModeAltScreen == 0 {
 		// Reset kitty keyboard protocol stack.  TUI apps push onto the stack
 		// when entering alt-screen but may not pop if they crash, are killed,
@@ -673,25 +634,13 @@ func (p *Pane) writeTerminalChunk(chunk []byte) {
 		p.kittyStack = p.kittyStack[:0]
 
 		const sgrReset = "\x1b[0m"
-		if exitSplitAt > 0 {
-			// Insert sgrReset into rawBuf right after the exit sequence so
-			// replay sees the same colour-reset behaviour as the live path.
-			p.rawBuf = append(p.rawBuf, chunk[:exitSplitAt]...)
-			p.rawBuf = append(p.rawBuf, sgrReset...)
-			p.rawBuf = append(p.rawBuf, chunk[exitSplitAt:]...)
-		} else {
-			// Fallback: exit sequence not found in this chunk (e.g. split
-			// across two reads).  curRestore was not injected above, so do it
-			// now before any further output from this chunk.
-			p.rawBuf = append(p.rawBuf, chunk...)
+		if exitSplitAt == 0 {
 			p.term.Write([]byte(sgrReset)) //nolint:errcheck
-			p.rawBuf = append(p.rawBuf, sgrReset...)
 			L.Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit (fallback)", "pane", p.id, "cursor_x", p.altEntryCursorX, "cursor_y", p.altEntryCursorY)
 			curRestore := fmt.Sprintf("\x1b[%d;%dH", p.altEntryCursorY+1, p.altEntryCursorX+1)
 			L.Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore (fallback)", "pane", p.id, "seq", curRestore)
 			p.term.Write([]byte(curRestore)) //nolint:errcheck
 		}
-		p.trimRawHistory()
 
 		// Signal the render loop to do a full Sync() repaint so any residual
 		// background colour from the TUI app is cleared from the terminal.
@@ -1061,17 +1010,8 @@ func (p *Pane) markFullRepaint() {
 	p.mu.Unlock()
 }
 
-// resizeAndReflow resizes the pane terminal to (newCols × newRows).
-//
-// When raw PTY bytes are available, the entire output history is replayed
-// into a temporary vt10x at the new width so lines wrap correctly at the
-// new column count.  The resulting state is split into a new glyph scrollback
-// (rows that don't fit in newRows) and the replacement live grid (the rest).
-//
-// For alt-screen apps (vim, htop, …) reflow is skipped — they redraw
-// themselves after SIGWINCH.
-//
-// Must be called with p.mu held.
+// resizeAndReflow preserves primary-screen logical lines and lets alternate-screen
+// applications redraw at their new dimensions. Must be called with p.mu held.
 func (p *Pane) resizeAndReflow(newCols, newRows int) {
 	if newCols < 1 || newRows < 1 {
 		return // terminal too small to be usable
@@ -1092,138 +1032,17 @@ func (p *Pane) resizeAndReflow(newCols, newRows int) {
 		return
 	}
 
-	if len(p.rawBuf) == 0 {
-		// No history yet (brand-new pane); plain resize is sufficient.
-		p.term.Resize(newCols, newRows)
-		return
-	}
-
-	// Fast path: when only the height changed (cols unchanged), we don't
-	// need to re-wrap text.  Just redistribute rows between the scrollback
-	// ring and the live terminal grid.
 	if oldCols == newCols {
 		p.resizeHeightOnly(newCols, oldRows, newRows)
 		return
 	}
+	p.reflowCells(newCols, newRows)
 
-	// Replay raw bytes into a tall scratch terminal so nothing scrolls off
-	// during replay and we can read back all rows.
-	//
-	// Alt-screen sessions (vim, htop, etc.) are stripped from the replay
-	// buffer — their absolute-position content doesn't replay meaningfully,
-	// and stripping avoids allocating a large alt-screen buffer in the
-	// scratch terminal.  Pre-vim shell history is preserved.
-	replay := stripAltScreen(p.rawBuf)
-
-	// Hard line breaks consume rows independently of line wrapping. Count
-	// both, capped at the history limit, so short lines survive replay.
-	estimatedLines := len(replay)/max(newCols, 1) + bytes.Count(replay, []byte{'\n'}) + newRows
-	replayH := min(estimatedLines, p.scrollbackLines+newRows)
-	if replayH < newRows {
-		replayH = newRows
-	}
-
-	cw, ch := p.term.CellPixels()
-	scratch := vt10x.New(vt10x.WithSize(newCols, replayH), vt10x.WithCellPixels(cw, ch), vt10x.WithGraphicsState(p.term.GraphicsState()), vt10x.WithGraphicsViewportRows(newRows))
-	// Prepend a full SGR reset so trimmed attribute state doesn't bleed.
-	scratch.Write(append([]byte("\x1b[0m"), replay...)) //nolint:errcheck
-
-	contentRows := findContentRows(scratch, newCols, replayH)
-
-	// Split: rows [0, firstVisible) → scrollback; [firstVisible, contentRows) → live terminal.
-	firstVisible := contentRows - newRows
-	if firstVisible < 0 {
-		firstVisible = 0
-	}
-
-	// Always rebuild the scrollback ring from the replay on a column-width
-	// change.  Any rows currently in the ring are at oldCols width; keeping
-	// them at newCols would produce garbled wrapping when the user scrolls.
-	//
-	// When firstVisible > 0 the ring is populated from the replay rows.
-	// When firstVisible == 0 (all rawBuf content fits in the new terminal)
-	// the ring is reset to empty — the live terminal holds everything that
-	// rawBuf covers, so there are no rows to archive.
-	//
-	// This means any scrollback that rawBuf's rolling window no longer covers
-	// is discarded on a column-width resize.  That is an accepted limitation;
-	// the alternative (keeping stale-width rows) produces visible corruption.
-
-	// Before rebuilding, capture the character content of the viewport's
-	// centre row so we can find the same line in the new ring after reflow.
-	// The centre row is chosen because it is the most stable landmark: the
-	// top row can disappear when the ring shrinks, and the bottom row is
-	// already at the live-view boundary.
-	const anchorMinLen = 6
-	var anchorChars []rune
-	anchorOldRingIdx := -1 // ring index (0=oldest) of the anchor row before rebuild
-	if p.sbOff > 0 {
-		midRingIdx := p.sb.count - p.sbOff + oldRows/2
-		if midRingIdx >= 0 && midRingIdx < p.sb.count {
-			anchorChars = rowChars(p.sb.get(midRingIdx))
-			anchorOldRingIdx = midRingIdx
-		}
-	}
-
-	oldSbOff := p.sbOff
-	oldSbCount := p.sb.count
-	p.sb = sbRing{maxLines: p.scrollbackLines}
-	for r := 0; r < firstVisible; r++ {
-		row := captureRow(scratch, r, newCols)
-		for c := range row {
-			row[c] = p.term.ImportGlyph(row[c], scratch)
-		}
-		p.sb.push(row)
-	}
-
-	// Reposition the viewport so the same content line appears in the
-	// centre of the pane after reflow.
-	//
-	// Strategy:
-	//   1. If we have a valid anchor (centre row had ≥ anchorMinLen visible
-	//      characters), search the scratch terminal for a row whose character
-	//      content matches the anchor (prefix match handles wrap changes in
-	//      both directions).  Use the proportional estimate as a tiebreaker
-	//      when the same content appears multiple times.  Set sbOff to put the
-	//      matched row at newRows/2 from the top of the viewport.
-	//   2. If no anchor, no match, or user was in live view: fall back to
-	//      proportional mapping of the viewport's top row.
-	p.sbOff = reflowSbOff(
-		oldSbOff, oldSbCount, oldRows,
-		p.sb.count, newRows,
-		anchorChars, anchorOldRingIdx, anchorMinLen,
-		scratch, newCols,
-	)
-
-	// Replace only the visible grid, retaining the live terminal state.
-	visibleRows := make([][]vt10x.Glyph, newRows)
-	for r := 0; r < newRows; r++ {
-		srcRow := firstVisible + r
-		if srcRow < contentRows {
-			visibleRows[r] = captureRow(scratch, srcRow, newCols)
-		} else {
-			visibleRows[r] = make([]vt10x.Glyph, newCols) // blank padding
-		}
-	}
-
-	// Translate the replay cursor into the visible slice, retaining the
-	// live terminal's modes, attributes, colours, and callbacks.
-	scratchCur := scratch.Cursor()
-	visCurRow := scratchCur.Y - firstVisible
-	scratchCur.Y = max(0, min(visCurRow, newRows-1))
-	p.term.ReplaceScreen(newCols, newRows, visibleRows, scratchCur, scratch)
-
-	L.Debug("resizeAndReflow: raw replay done", "pane", p.id,
-		"old", fmt.Sprintf("%dx%d", oldCols, oldRows),
-		"new", fmt.Sprintf("%dx%d", newCols, newRows),
-		"content_rows", contentRows, "sb_rows", firstVisible)
 }
 
 // resizeHeightOnly handles the common case where only the row count changed
 // (columns stayed the same).  No text re-wrapping is needed — we just
 // redistribute existing rows between the scrollback ring and the live grid.
-// This avoids the expensive rawBuf replay that resizeAndReflow does for
-// column-width changes.
 //
 // Must be called with p.mu held.
 func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
@@ -1385,9 +1204,7 @@ func scanDECRQM(data []byte, fn func(n int)) {
 	}
 }
 
-// findContentRows scans backwards from the bottom of a scratch terminal to
-// find the last non-blank row.  Returns the number of rows with content
-// (i.e. the first blank-only row index from the top).
+// findContentRows includes the cursor row and styled blank cells.
 func findContentRows(t vt10x.Terminal, cols, totalRows int) int {
 	cur := t.Cursor()
 	contentRows := cur.Y + 1
@@ -1395,7 +1212,7 @@ func findContentRows(t vt10x.Terminal, cols, totalRows int) int {
 		blank := true
 		for c := 0; c < cols; c++ {
 			g := t.Cell(c, r)
-			if g.Char != 0 && g.Char != ' ' {
+			if reflowCellHasContent(g) {
 				blank = false
 				break
 			}

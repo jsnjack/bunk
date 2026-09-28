@@ -172,7 +172,7 @@ CSI 14/16/18 and PTY pixel sizes describe the same virtual cell geometry.
 | Sequence | Feature | Status | Notes |
 |----------|---------|--------|-------|
 | ED 0/1/2 (CSI J) | Erase in display | OK | Never touches scrollback — Ctrl+L / `clear -x` keep history, matching xterm |
-| ED 3 (CSI 3 J) | Erase saved lines (xterm E3, sent by clear(1)) | OK | vt10x fires a scrollback-clear callback (`WithScrollbackClearCallback`); the pane empties sbRing, snaps sbOff to live, drops any active selection, and cuts rawBuf just past the sequence so resize replay can't resurrect the erased history |
+| ED 3 (CSI 3 J) | Erase saved lines (xterm E3, sent by clear(1)) | OK | vt10x fires a scrollback-clear callback (`WithScrollbackClearCallback`); the pane empties sbRing, snaps sbOff to live, drops any active selection, and reflows only the remaining cells so erased history cannot return |
 | RIS (ESC c) | Full reset (sent by reset(1)) | OK | Same scrollback-clear callback, fired after vt10x state reset; init-time reset() does not fire it |
 
 ---
@@ -193,7 +193,7 @@ an exhaustive claim of terminal-protocol conformance.
 - **Host dependencies:** unknown default colours, physical keypad identity when
   the host sends ordinary keys, and font/emoji shaping cannot be recovered from
   information the host does not provide.
-- **Intentional bounds:** transfer, image, cache, and replay limits remain part
+- **Intentional bounds:** transfer, image, cache, and scrollback limits remain part
   of the design. Kitty file/shared-memory access is intentionally rejected.
 
 ## Completed implementation history
@@ -242,7 +242,7 @@ an exhaustive claim of terminal-protocol conformance.
 - Implemented the agreed portable, cell-rendered static subset of all three
   graphics protocols; no protocol remains entirely missing.
 - Added bounded decoding/transfer/cache limits, malformed-input recovery,
-  pane-local clipping, alpha blending, placement deletion, and replay support.
+  pane-local clipping, alpha blending, placement deletion, and cell reflow support.
 - Added `terminal_features.sh graphics`, simulation-screen and PTY-path tests,
   and decoder fuzz coverage. Native graphics and the extensions excluded above
   are not claimed as implemented.
@@ -261,6 +261,12 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
   superseded resize callbacks are ignored.
 - Regression coverage exercises primary and alternate screens across two width
   reductions and an expansion, with redraws at the notified right margin.
-- Remaining limitation: primary-screen history replays raw cursor-positioning
-  commands at the new width. Positions beyond the new right margin clamp there,
-  so old cursor-positioned output can still fragment after narrowing.
+- Primary-screen resize reflows stored glyphs instead of replaying historical
+  cursor commands. Soft wraps are joined before repacking; hard breaks remain.
+  Cursor position, scroll anchoring, glyph styles, hyperlinks, and image samples
+  are preserved. Raw PTY replay storage and its serializer have been removed.
+- Reflow output is bounded by the configured scrollback limit plus pane height.
+  A two-cell glyph becomes a replacement character if the pane is only one
+  column wide, matching the emulator's handling of new output at that width.
+- When narrowing would move the cursor into scrollback, the cursor's line
+  stays visible and excess rows below it are clipped, as with screen shrinking.

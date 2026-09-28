@@ -66,6 +66,9 @@ const (
 	cursorOrigin
 )
 
+// CursorWrapNext marks a cursor waiting to wrap before the next printable glyph.
+const CursorWrapNext = cursorWrapNext
+
 // ModeFlag represents various terminal mode states.
 type ModeFlag uint32
 

@@ -141,7 +141,6 @@ func newSearchPane(t *testing.T, cols, rows int, content string) *Pane {
 	}
 	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
 	p.mu.Lock()
-	p.rawBuf = []byte(content)
 	p.captureAndWrite([]byte(content))
 	p.mu.Unlock()
 	return p

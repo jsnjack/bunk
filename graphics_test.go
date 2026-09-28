@@ -10,7 +10,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"bunk/internal/graphics"
 	"bunk/internal/vt10x"
@@ -83,9 +82,6 @@ func TestGraphicsColorsAlphaAndReflow(t *testing.T) {
 	if got := imageColor(color.NRGBA{R: 255, A: 128}, tcell.NewRGBColor(0, 0, 255)); got != tcell.NewRGBColor(128, 0, 127) {
 		t.Fatalf("alpha=%v", got)
 	}
-	// The upload may fall outside the rolling replay window; cached image
-	// placements must still survive a width change without sending new replies.
-	p.rawBuf = []byte("\x1b_Ga=p,i=9,c=2,r=1,C=1\x1b\\")
 	p.resize(0, 0, 8, 4)
 	if cell := p.term.Cell(0, 0); cell.Image == nil || cell.Image.Bottom.B != 255 {
 		t.Fatal("cached image lost on width reflow")
@@ -112,7 +108,7 @@ func TestGraphicsPercentageReflowUsesPaneHeight(t *testing.T) {
 	}
 }
 
-func TestGraphicsFramingAndHistoryBounds(t *testing.T) {
+func TestGraphicsFramingBounds(t *testing.T) {
 	for _, prefix := range []string{"\x1b_G", "\x1b]1337;File=inline=1:", "\x1bPq"} {
 		var stream ptyStream
 		sequence := []byte(prefix + strings.Repeat("A", oscMaxBuf+1) + "\x1b\\")
@@ -126,20 +122,7 @@ func TestGraphicsFramingAndHistoryBounds(t *testing.T) {
 			t.Fatal("graphics buffer retained after completion")
 		}
 	}
-	seq := []byte("prefix\x1b_Gpayload\nmorepayload\x1b\\界suffix")
-	for target := 7; target < 28; target++ {
-		cut := controlBoundary(seq, target)
-		if cut < target || !utf8.Valid(seq[cut:]) || bytes.Contains(seq[cut:], []byte("payload")) {
-			t.Fatalf("unsafe trim at %d: %q", target, seq[cut:])
-		}
-	}
-	p := regressionPane(8, 2)
-	p.hasGraphics = true
-	p.rawBuf = append(bytes.Repeat([]byte{'a'}, graphics.MaxSequenceBytes+10), []byte("\x1b_G"+strings.Repeat("A", graphics.MaxSequenceBytes-10)+"\x1b\\OK")...)
-	p.trimRawHistory()
-	if len(p.rawBuf) > 2*graphics.MaxSequenceBytes {
-		t.Fatal("raw history exceeded graphics budget")
-	}
+
 }
 
 func TestGraphicsPaneQueries(t *testing.T) {

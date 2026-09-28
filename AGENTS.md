@@ -25,10 +25,10 @@ input_modes.go      Application cursor/keypad encoding and host focus forwarding
 pane.go             Pane struct, PTY spawn, readPTY, captureAndWrite, scrollback capture
 ptystream.go        Bounded streaming UTF-8/control framing before PTY parsing
 render.go           render(), renderPane(), vtColor(), border/scrollbar drawing
-graphics.go         Image colour blending, virtual pixels, control-safe history trimming
+graphics.go         Image colour blending and virtual pixels
 layout.go           BSP tree: Node, split/remove/resize math
 scrollback.go       sbRing ring buffer, scroll-detection algorithm
-reflow.go           Reflow helpers, scroll anchoring, stripAltScreen()
+reflow.go           Cell-based reflow and scroll anchoring
 osc.go              OSC pre-scanner, passthrough of OSC 7/52/133 to host
 mouse.go            Mouse events → PTY byte sequences
 status.go           Status badges (scroll count, container, SSH, flash messages)
@@ -86,8 +86,8 @@ Key local extensions to vendored vt10x:
 3. **Resize / reflow** — `App.handleResize()` coalesces host resizes and
    updates the BSP tree. Emulator reflow finishes before the PTY receives its
    new size and SIGWINCH; both are deferred together during resize bursts.
-   `Pane.resizeAndReflow()` replays `rawBuf` into a
-   scratch grid, then replaces the live grid without resetting terminal state.
+   `Pane.resizeAndReflow()` joins soft-wrapped rows from scrollback and the live
+   grid, repacks their cells at the new width, and preserves terminal state.
 4. **OSC passthrough** — bounded `ptyStream` framing precedes `osc.go` scanning.
    OSC 7/52/133 reach the host through `app.oscBuf`; OSC 8 links are stored on
    glyphs and emitted with their rendered text.
@@ -171,8 +171,13 @@ Key fields agents may need to know about:
   escape is forwarded to the host. Kitty file/shared-memory access is rejected.
   PTYs and CSI 14/16/18 replies use virtual pixels (8 wide, height from cell aspect).
   Transfers are capped at 8 MiB, decoded images at 4 million pixels / 4096 per
-  axis, and Kitty caches at 32 MiB / 32 images. Graphics-bearing raw history gets
-  a 16 MiB minimum budget and is never trimmed inside a control sequence.
+  axis, and Kitty caches at 32 MiB / 32 images. Reflow retains cell samples
+  without replaying image transfers.
+- **Primary-screen reflow uses stored cells.** Soft-wrap markers join physical
+  rows into logical lines; explicit line breaks remain separate. Cursor and
+  scroll anchors follow their cells. Styles, links, and image samples survive
+  reflow, and output storage is bounded by scrollback capacity plus pane height.
+  Width changes clear selections whose coordinates are no longer valid.
 - **Cursor colour follows the active pane.** OSC 12 overrides and OSC 112 resets
   are emitted through tcell; shutdown restores the host cursor colour.
 - **Synchronized updates are per pane.** Other panes continue repainting;

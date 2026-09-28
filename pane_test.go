@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -1099,279 +1100,35 @@ func TestCaptureAndWrite_NativeCallback_AltScreenNoScrollback(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// resizeAndReflow — column-width change always resets the scrollback ring
-//
-// Any rows in the ring are at oldCols width.  Keeping them at newCols would
-// produce garbled wrapping when the user scrolls (wide→narrow→wide shows
-// narrow wrapped rows above wide live rows).
-//
-// When firstVisible==0 (rawBuf content fits in the new terminal), the ring
-// is reset to empty — the live terminal holds everything rawBuf covers.
-// Pre-rawBuf history that rawBuf's rolling window no longer covers is
-// discarded; that is an accepted limitation of the rawBuf replay approach.
-// ---------------------------------------------------------------------------
-
-func TestResizeAndReflow_ResetsScrollbackOnExpand(t *testing.T) {
-	const cols, rows = 40, 10
-	term := vt10x.New(vt10x.WithSize(cols, rows))
-	p := &Pane{
-		term:            term,
-		scrollbackLines: 200,
-		sb:              sbRing{maxLines: 200},
-	}
-
-	// Pre-fill p.sb with 30 rows at cols width (simulating real output).
-	for i := 0; i < 30; i++ {
-		row := make([]vt10x.Glyph, cols)
-		for c := range row {
-			row[c] = vt10x.Glyph{Char: rune('A' + i%26)}
-		}
-		p.sb.push(row)
-	}
-
-	// rawBuf holds only 5 lines (rolling window, older content trimmed).
-	p.rawBuf = []byte("line1\r\nline2\r\nline3\r\nline4\r\nline5\r\n")
-
-	// Expand: double both dimensions.  replay will produce only 5 rows of
-	// content that fit in the taller/wider terminal → firstVisible=0.
-	// The ring must be reset: the old cols-wide rows would show at the wrong
-	// column width (garbled wrapping) and the live terminal covers rawBuf.
-	p.mu.Lock()
-	p.resizeAndReflow(cols*2, rows*2)
-	p.mu.Unlock()
-
-	if p.sb.count != 0 {
-		t.Errorf("resizeAndReflow kept stale-width rows in ring on expand: count = %d, want 0",
-			p.sb.count)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// resizeAndReflow must reflow scrollback when going from narrow → wide
-//
-// Bug: wide→narrow→wide leaves scrollback rows at the narrow width.
-//
-// After a narrow resize, the ring holds N rows at narrow width.  When
-// resizing back to wide, the replay at wide width produces M < N rows
-// (lines don't wrap).  The guard `firstVisible > p.sb.count` prevented
-// the rebuild because M < N, leaving the ring full of narrow-width rows.
-// Scrollback content then appeared garbled (wrong wrapping) after widening.
-//
-// Fix: rebuild whenever firstVisible > 0 (any scrollback exists at new
-// width), regardless of whether it is more or less than the current ring.
-// ---------------------------------------------------------------------------
-
 func TestResizeAndReflow_ReflowsScrollbackOnWiden(t *testing.T) {
-	const narrowCols, wideCols, rows = 6, 10, 3
-
-	// rawBuf holds 5 lines of 10 chars each.
-	// At wideCols=10: each fits in 1 row → 5 content rows.
-	//   firstVisible = 5 - rows = 2 (2 rows go to scrollback).
-	// At narrowCols=6: each wraps to 2 rows → 10 content rows.
-	//   firstVisible = 10 - rows = 7.
-	rawBuf := []byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n")
-
-	term := vt10x.New(vt10x.WithSize(narrowCols, rows))
-	p := &Pane{
-		term:            term,
-		scrollbackLines: 200,
-		sb:              sbRing{maxLines: 200},
-		rawBuf:          rawBuf,
-	}
-
-	// Simulate the ring state AFTER a narrow resize: 7 rows of width narrowCols.
-	for i := 0; i < 7; i++ {
-		row := make([]vt10x.Glyph, narrowCols)
-		for c := range row {
-			row[c] = vt10x.Glyph{Char: rune('a' + i%26)}
-		}
-		p.sb.push(row)
-	}
-	if p.sb.count != 7 {
-		t.Fatalf("pre-condition: sb.count = %d, want 7", p.sb.count)
-	}
-
-	// Widen: resize from narrowCols to wideCols.
-	p.mu.Lock()
-	p.resizeAndReflow(wideCols, rows)
-	p.mu.Unlock()
-
-	// The replay at wideCols produces 3 scrollback rows (trailing \r\n leaves
-	// cursor one row below content, so findContentRows returns 6;
-	// firstVisible = 6 - rows = 3).  The ring must be rebuilt to 3 wide rows.
+	p := regressionPane(6, 3)
+	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n"))
+	p.resizeAndReflow(10, 3)
 	if p.sb.count != 3 {
-		t.Fatalf("after widen: sb.count = %d, want 3 (ring not reflowed at new width)", p.sb.count)
+		t.Fatalf("scrollback count = %d, want 3", p.sb.count)
 	}
-	row0 := p.sb.get(0)
-	if len(row0) != wideCols {
-		t.Errorf("after widen: sb.get(0) width = %d, want %d (still narrow!)", len(row0), wideCols)
-	}
-	if row0[0].Char != 'A' {
-		t.Errorf("after widen: sb.get(0)[0] = %q, want 'A'", row0[0].Char)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// resizeAndReflow — wide → narrow → wide must clear stale narrow rows
-//
-// Bug: after going wide(W) → narrow(N) → wide(W), the ring retained N-width
-// rows from the narrow phase.  At the final wide resize firstVisible==0 (the
-// rawBuf content that was in the narrow ring now fits in the wider terminal),
-// and the old `if firstVisible > 0` guard left those N-width rows in place.
-// Scrolling then showed narrow-wrapped lines above wide-wrapped live rows.
-// ---------------------------------------------------------------------------
-
-func TestResizeAndReflow_ClearsStaleNarrowRowsOnWiden(t *testing.T) {
-	// Use content that fits the wide terminal so firstVisible==0 on the final
-	// wide resize, exercising the guard that used to skip the ring reset.
-	const narrowCols, wideCols, rows = 6, 20, 10
-
-	// rawBuf: 3 short lines that fit easily at wideCols.
-	rawBuf := []byte("ABC\r\nDEF\r\nGHI\r\n")
-
-	term := vt10x.New(vt10x.WithSize(narrowCols, rows))
-	p := &Pane{
-		term:            term,
-		scrollbackLines: 200,
-		sb:              sbRing{maxLines: 200},
-		rawBuf:          rawBuf,
-	}
-
-	// Simulate the ring state AFTER a narrow resize: fill with narrow-width rows.
-	for i := 0; i < 5; i++ {
-		row := make([]vt10x.Glyph, narrowCols)
-		for c := range row {
-			row[c] = vt10x.Glyph{Char: rune('a' + i)}
-		}
-		p.sb.push(row)
-	}
-	if p.sb.count != 5 {
-		t.Fatalf("pre-condition: sb.count = %d, want 5", p.sb.count)
-	}
-
-	// Widen: rawBuf content (3 short lines) fits in the new terminal (10 rows)
-	// → firstVisible=0. The ring must be reset: no narrow rows may survive.
-	p.mu.Lock()
-	p.resizeAndReflow(wideCols, rows)
-	p.mu.Unlock()
-
-	if p.sb.count != 0 {
-		t.Errorf("stale narrow-width rows persisted after widen: sb.count = %d, want 0", p.sb.count)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Scroll position is preserved across resize
-// ---------------------------------------------------------------------------
-
-// TestResizeAndReflow_PreservesScrollOffset verifies that sbOff is mapped
-// proportionally (not simply reset) when a column-width change rebuilds
-// the ring.  No wrap change here — content fits in one row at both widths.
-// rawBuf holds 5 lines; at cols=6,rows=3 the replay produces contentRows=6
-// (cursorY=5 after trailing \r\n), firstVisible=3, newSbCount=3.
-// The pre-pushed 2-row ring has single-char anchor content ('A','B') which
-// is below anchorMinLen=6, so proportional mapping kicks in.
-// sbOff=2 → oldTopRow=0 → newTopRow=0 → sbOff=3 (top of new ring).
-func TestResizeAndReflow_PreservesScrollOffset(t *testing.T) {
-	// 5 lines of 6 chars each (no wrapping at either width).
-	// At cols=6  : contentRows=6 (cursorY=5), firstVisible=3, ring=3.
-	// At cols=10 : contentRows=6 (cursorY=5), firstVisible=3, ring=3.
-	// oldSbCount=2 (pre-pushed), oldRows=3; sbOff=2 → oldTopRow=0.
-	rawBuf := []byte("AAAAAA\r\nBBBBBB\r\nCCCCCC\r\nDDDDDD\r\nEEEEEE\r\n")
-	const cols, rows = 6, 3
-
-	term := vt10x.New(vt10x.WithSize(cols, rows))
-	p := &Pane{
-		term:            term,
-		scrollbackLines: 200,
-		sb:              sbRing{maxLines: 200},
-		rawBuf:          rawBuf,
-	}
-	for i := 0; i < 2; i++ {
-		row := make([]vt10x.Glyph, cols)
-		row[0] = vt10x.Glyph{Char: rune('A' + i)}
-		p.sb.push(row)
-	}
-	p.sbOff = 2 // user scrolled to the very top of the 2-row ring
-
-	p.mu.Lock()
-	p.resizeAndReflow(10, rows)
-	p.mu.Unlock()
-
-	// User was at the very top; must stay at the very top (sbOff==sb.count).
-	if p.sbOff != p.sb.count {
-		t.Errorf("resizeAndReflow changed sbOff: got %d, want %d (sb.count)", p.sbOff, p.sb.count)
-	}
-	if p.sbOff == 0 && p.sb.count > 0 {
-		t.Errorf("resizeAndReflow dropped sbOff to 0 despite ring holding %d rows", p.sb.count)
-	}
-}
-
-// TestResizeAndReflow_ProportionalScrollOnWrap verifies the proportional mapping
-// when widening causes lines to unwrap (ring shrinks).
-//
-// 5 lines of 10 chars each.
-// At cols=6  : each wraps to 2 rows → contentRows=11 (cursorY=10), firstVisible=8.
-//
-//	Test pre-fills ring with 7 rows; oldSbCount=7, oldRows=3, oldTotal=10.
-//
-// At cols=20 : each fits in 1 row  → contentRows=6  (cursorY=5),  firstVisible=3.
-//
-//	newSbCount=3, newRows=3, newTotal=6.
-//
-// Proportional mapping: newTopRow = oldTopRow * newTotal / oldTotal = oldTopRow*6/10
-//
-//	sbOff=7 (top): oldTopRow=0 → newTopRow=0 → sbOff=3 (top of new ring).
-//	sbOff=4 (mid): oldTopRow=3 → newTopRow=1 → sbOff=2 (BBBBBBBBBB at top).
-//	sbOff=1 (near bottom): oldTopRow=6 → newTopRow=3 → in live terminal → sbOff=0.
-func TestResizeAndReflow_ProportionalScrollOnWrap(t *testing.T) {
-	rawBuf := []byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n")
-	const narrowCols, wideCols, rows = 6, 20, 3
-
-	cases := []struct {
-		oldSbOff  int
-		wantSbOff int
-	}{
-		{7, 3}, // top of old ring → top of new ring
-		{4, 2}, // mid → BBBBBBBBBB row at top of viewport
-		{1, 0}, // near-bottom content now in live terminal
-	}
-
-	for _, tc := range cases {
-		term := vt10x.New(vt10x.WithSize(narrowCols, rows))
-		p := &Pane{
-			term:            term,
-			scrollbackLines: 200,
-			sb:              sbRing{maxLines: 200},
-			rawBuf:          rawBuf,
-		}
-		for i := 0; i < 7; i++ {
-			p.sb.push(make([]vt10x.Glyph, narrowCols))
-		}
-		p.sbOff = tc.oldSbOff
-
-		p.mu.Lock()
-		p.resizeAndReflow(wideCols, rows)
-		p.mu.Unlock()
-
-		if p.sbOff != tc.wantSbOff {
-			t.Errorf("sbOff=%d → after widen got %d, want %d (sb.count=%d)",
-				tc.oldSbOff, p.sbOff, tc.wantSbOff, p.sb.count)
-		}
-		if p.sbOff > p.sb.count {
-			t.Errorf("sbOff=%d exceeds sb.count=%d", p.sbOff, p.sb.count)
+	for i := 0; i < p.sb.count; i++ {
+		row := p.sb.get(i)
+		if len(row) != 10 || row[0].Char != rune('A'+i) {
+			t.Fatalf("unexpected row %d: %v", i, row)
 		}
 	}
 }
 
-// TestResizeAndReflow_ContentAnchorWiden verifies that content matching
-// correctly repositions the viewport when widening causes lines to unwrap.
-//
-// The pane has real scrollback content (captured via the scroll callback), so
-// the ring rows have actual character content that reflowSbOff can match.
-// The user is looking at "CCCCCCCCCC" in the centre of their viewport.  After
-// widening, that line unwraps and should still appear at the centre.
+func TestResizeAndReflow_ScrollAnchor(t *testing.T) {
+	for _, tc := range []struct{ offset, want int }{{8, 3}, {4, 2}, {1, 0}} {
+		t.Run(fmt.Sprint(tc.offset), func(t *testing.T) {
+			p := regressionPane(6, 3)
+			p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n"))
+			p.sbOff = tc.offset
+			p.resizeAndReflow(20, 3)
+			if p.sbOff != tc.want {
+				t.Fatalf("scroll offset = %d, want %d", p.sbOff, tc.want)
+			}
+		})
+	}
+}
+
 func TestResizeAndReflow_ContentAnchorWiden(t *testing.T) {
 	const narrowCols, wideCols, rows = 6, 20, 5
 	rawBuf := []byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\nFFFFFFFFFF\r\nGGGGGGGGGG\r\n")
@@ -1381,7 +1138,6 @@ func TestResizeAndReflow_ContentAnchorWiden(t *testing.T) {
 
 	// Feed the content so the scroll callback populates the ring with real rows.
 	p.mu.Lock()
-	p.rawBuf = rawBuf
 	p.captureAndWrite(rawBuf)
 	// Scroll back so "CCCCCCCCCC" (split into "CCCCCC"+"CCCC") is near centre.
 	// Ring holds the rows that scrolled off; live terminal holds the last 5.
@@ -1540,7 +1296,6 @@ func TestScrollCallback_PreservedAfterResize(t *testing.T) {
 	}
 
 	// Resize (new column width forces resizeAndReflow).
-	p.rawBuf = []byte("AAAAAA\r\nBBBBBB\r\nCCCCCC\r\nDDDDDD")
 	p.mu.Lock()
 	p.resizeAndReflow(8, rows)
 	p.mu.Unlock()
@@ -1565,8 +1320,7 @@ func TestScrollCallback_PreservedAfterHeightResize(t *testing.T) {
 	}
 	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
 
-	// rawBuf required by resizeHeightOnly's path detection.
-	p.rawBuf = []byte("AAAAAA\r\nBBBBBB\r\n")
+	// Preserve the rows that shrink into scrollback.
 
 	// Shrink height → resizeHeightOnly (same cols, fewer rows).
 	p.mu.Lock()
@@ -2030,8 +1784,7 @@ func TestKittyStack_StaleAfterExit(t *testing.T) {
 //
 // clear(1) sends CSI 3 J (the xterm E3 capability) and reset(1) sends RIS
 // (ESC c); both must empty the scrollback ring, snap the view back to live,
-// and cut rawBuf so a later resize replay cannot resurrect the erased
-// history.  Plain CSI 2 J (readline Ctrl+L, clear -x) must keep scrollback,
+// and keep erased history from returning after a resize.  Plain CSI 2 J (readline Ctrl+L, clear -x) must keep scrollback,
 // matching xterm.
 // ---------------------------------------------------------------------------
 
@@ -2074,8 +1827,8 @@ func TestScrollbackClear_ED3(t *testing.T) {
 	if p.sbOff != 0 {
 		t.Errorf("sbOff = %d after CSI 3 J, want 0 (live view)", p.sbOff)
 	}
-	if got := string(p.rawBuf); got != "$ " {
-		t.Errorf("rawBuf = %q after CSI 3 J, want %q (history cut, same-chunk tail kept)", got, "$ ")
+	if got := string(rowChars(captureRow(p.term, 0, 20))); got != "$" {
+		t.Errorf("prompt = %q, want $", got)
 	}
 }
 
@@ -2101,8 +1854,8 @@ func TestScrollbackClear_RIS(t *testing.T) {
 	if p.sb.count != 0 {
 		t.Errorf("sb.count = %d after RIS, want 0", p.sb.count)
 	}
-	if got := string(p.rawBuf); got != "$ " {
-		t.Errorf("rawBuf = %q after RIS, want %q (history cut, same-chunk tail kept)", got, "$ ")
+	if got := string(rowChars(captureRow(p.term, 0, 20))); got != "$" {
+		t.Errorf("prompt = %q, want $", got)
 	}
 }
 
@@ -2112,7 +1865,7 @@ func TestScrollbackClear_SurvivesReflow(t *testing.T) {
 
 	p.captureAndWrite([]byte("\x1b[H\x1b[2J\x1b[3J$ "))
 
-	// Column change forces the full rawBuf replay path.
+	// Erased history must stay absent after a width change.
 	p.resizeAndReflow(40, 5)
 
 	if p.sb.count != 0 {

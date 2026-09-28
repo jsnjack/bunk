@@ -293,13 +293,14 @@ func TestRegressionWideSelectionAndSearch(t *testing.T) {
 func TestRegressionResizePreservesLinkIdentities(t *testing.T) {
 	p := regressionPane(20, 3)
 	p.captureAndWrite([]byte("\x1b]8;;https://old.example\x07old\x1b]8;;\x07\r\n"))
-	p.rawBuf = nil // simulate the rolling raw buffer having evicted the first URL
 	p.captureAndWrite([]byte("\x1b]8;;https://new.example\x07new\x1b]8;;\x07\r\none\r\ntwo\r\nthree\r\n"))
 	p.resize(0, 0, 20, 3)
 	if p.sb.count == 0 {
 		t.Fatal("missing rebuilt scrollback")
 	}
-	if got := p.term.Link(p.sb.get(0)[0].Link); got != "https://new.example" {
-		t.Fatalf("scrollback link = %q", got)
+	for i, want := range []string{"https://old.example", "https://new.example"} {
+		if got := p.term.Link(p.sb.get(i)[0].Link); got != want {
+			t.Fatalf("scrollback link %d = %q, want %q", i, got, want)
+		}
 	}
 }

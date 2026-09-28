@@ -1,105 +1,48 @@
 package main
 
 import (
-	"bytes"
-	"testing"
-
 	"bunk/internal/vt10x"
+	"fmt"
+	"strings"
+	"testing"
 )
 
-// ---------------------------------------------------------------------------
-// stripAltScreen
-//
-// Bug: btop background leak after resize+exit
-//
-// During reflow, the raw PTY buffer is replayed through vt10x. Alt-screen
-// content (btop, vim, etc.) must be stripped out so it doesn't contaminate
-// the normal-screen buffer with stale colours and content.
-// ---------------------------------------------------------------------------
-
-func TestStripAltScreen_BtopBackgroundLeak_NoSequences(t *testing.T) {
-	input := []byte("hello world, no alt screen here")
-	got := stripAltScreen(input)
-	if !bytes.Equal(got, input) {
-		t.Errorf("stripAltScreen changed input that has no sequences")
+// rowContentEnd returns the index one past the last non-blank cell in row.
+// Only cells with an actual visible character (non-NUL, non-space) are
+// considered content.  Trailing spaces are ignored regardless of their
+// background colour — shells commonly use \x1b[K (erase-to-EOL) to fill
+// the rest of a prompt line with a coloured background; we must not replay
+// those filled cells or they tint the entire pane.
+func rowContentEnd(row []vt10x.Glyph) int {
+	end := len(row)
+	for end > 0 {
+		g := row[end-1]
+		if g.Width < 0 || (g.Char != 0 && g.Char != ' ') {
+			break
+		}
+		end--
 	}
+	return end
 }
 
-func TestStripAltScreen_BtopBackgroundLeak_OnePair(t *testing.T) {
-	before := []byte("before")
-	entry := []byte("\x1b[?1049h")
-	middle := []byte("alt screen content")
-	exit := []byte("\x1b[?1049l")
-	after := []byte("after")
-
-	input := concat(before, entry, middle, exit, after)
-	got := stripAltScreen(input)
-	want := concat(before, after)
-	if !bytes.Equal(got, want) {
-		t.Errorf("stripAltScreen one pair:\n got %q\nwant %q", got, want)
+// rowChars extracts the visible rune sequence from a Glyph row (up to the
+// last non-blank character).  Interior spaces are included — they are
+// meaningful content that distinguishes e.g. "Mar 23" from "Mar23".
+// Trailing blank cells (NUL or space) are excluded via rowContentEnd.
+func rowChars(row []vt10x.Glyph) []rune {
+	end := rowContentEnd(row)
+	if end == 0 {
+		return nil
 	}
-}
-
-func TestStripAltScreen_BtopBackgroundLeak_EntryWithoutExit(t *testing.T) {
-	before := []byte("before")
-	entry := []byte("\x1b[?1049h")
-	trailing := []byte("stuff after entry with no exit")
-
-	input := concat(before, entry, trailing)
-	got := stripAltScreen(input)
-	// Entry without exit: everything from entry onward is discarded.
-	if !bytes.Equal(got, before) {
-		t.Errorf("stripAltScreen entry without exit:\n got %q\nwant %q", got, before)
+	chars := make([]rune, 0, end)
+	for i := 0; i < end; i++ {
+		if c := row[i].Char; c != 0 { // include spaces, exclude only unset cells
+			chars = append(chars, c)
+			chars = append(chars, []rune(row[i].Combining)...)
+		}
 	}
+	return chars
 }
-
-func TestStripAltScreen_BtopBackgroundLeak_MultiplePairs(t *testing.T) {
-	seg1 := []byte("seg1")
-	entry1 := []byte("\x1b[?1049h")
-	alt1 := []byte("alt1")
-	exit1 := []byte("\x1b[?1049l")
-	seg2 := []byte("seg2")
-	entry2 := []byte("\x1b[?47h")
-	alt2 := []byte("alt2")
-	exit2 := []byte("\x1b[?47l")
-	seg3 := []byte("seg3")
-
-	input := concat(seg1, entry1, alt1, exit1, seg2, entry2, alt2, exit2, seg3)
-	got := stripAltScreen(input)
-	want := concat(seg1, seg2, seg3)
-	if !bytes.Equal(got, want) {
-		t.Errorf("stripAltScreen multiple pairs:\n got %q\nwant %q", got, want)
-	}
-}
-
-func TestStripAltScreen_BtopBackgroundLeak_AlternateVariants(t *testing.T) {
-	// Use the ?1047h/l variant.
-	before := []byte("A")
-	entry := []byte("\x1b[?1047h")
-	middle := []byte("X")
-	exit := []byte("\x1b[?1047l")
-	after := []byte("B")
-
-	input := concat(before, entry, middle, exit, after)
-	got := stripAltScreen(input)
-	want := concat(before, after)
-	if !bytes.Equal(got, want) {
-		t.Errorf("stripAltScreen ?1047 variant:\n got %q\nwant %q", got, want)
-	}
-}
-
-// concat joins multiple byte slices.
-func concat(parts ...[]byte) []byte {
-	var out []byte
-	for _, p := range parts {
-		out = append(out, p...)
-	}
-	return out
-}
-
-// ---------------------------------------------------------------------------
-// rowContentEnd
-// ---------------------------------------------------------------------------
 
 func TestRowContentEnd(t *testing.T) {
 	tests := []struct {
@@ -154,47 +97,6 @@ func TestRowContentEnd(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// rowVisualHeight
-// ---------------------------------------------------------------------------
-
-func TestRowVisualHeight(t *testing.T) {
-	tests := []struct {
-		name string
-		end  int // number of content glyphs in the row
-		cols int
-		want int
-	}{
-		{"end=0", 0, 10, 1},
-		{"fits in one row", 5, 10, 1},
-		{"exactly one row", 10, 10, 1},
-		{"one char overflow", 11, 10, 2},
-		{"exactly two rows", 20, 10, 2},
-		{"two rows plus one", 21, 10, 3},
-		{"single column", 5, 1, 5},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Build a row with tt.end content characters followed by blanks.
-			row := make([]vt10x.Glyph, tt.end+5) // extra blanks at end
-			for i := 0; i < tt.end; i++ {
-				row[i] = vt10x.Glyph{Char: 'X'}
-			}
-			// Remaining glyphs default to Char==0 (blank).
-			got := rowVisualHeight(row, tt.cols)
-			if got != tt.want {
-				t.Errorf("rowVisualHeight(end=%d, cols=%d) = %d, want %d",
-					tt.end, tt.cols, got, tt.want)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// isWordChar
-// ---------------------------------------------------------------------------
-
 func TestIsWordChar(t *testing.T) {
 	tests := []struct {
 		name string
@@ -235,188 +137,6 @@ func TestIsWordChar(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// emitColorCode
-// ---------------------------------------------------------------------------
-
-func TestEmitColorCode(t *testing.T) {
-	tests := []struct {
-		name string
-		c    vt10x.Color
-		isFG bool
-		want string
-	}{
-		// Default colours should produce no output.
-		{"DefaultFG as FG", vt10x.DefaultFG, true, ""},
-		{"DefaultBG as BG", vt10x.DefaultBG, false, ""},
-
-		// Standard ANSI colours 0-7.
-		{"ANSI 0 FG (black)", 0, true, ";30"},
-		{"ANSI 0 BG (black)", 0, false, ";40"},
-		{"ANSI 7 FG (white)", 7, true, ";37"},
-		{"ANSI 7 BG (white)", 7, false, ";47"},
-
-		// Bright colours 8-15.
-		{"bright 8 FG", 8, true, ";90"},
-		{"bright 8 BG", 8, false, ";100"},
-		{"bright 15 FG", 15, true, ";97"},
-		{"bright 15 BG", 15, false, ";107"},
-
-		// 256-colour palette (16-255).
-		{"256-color 128 FG", 128, true, ";38;5;128"},
-		{"256-color 128 BG", 128, false, ";48;5;128"},
-		{"256-color 16 FG", 16, true, ";38;5;16"},
-		{"256-color 255 FG", 255, true, ";38;5;255"},
-
-		// Truecolor: encoded as r<<16 | g<<8 | b, but only for values >= 256.
-		// 256 is the first value that falls into the truecolor branch.
-		{"truecolor r=255,g=128,b=0 FG", vt10x.Color(255<<16 | 128<<8), true, ";38;2;255;128;0"},
-		{"truecolor r=255,g=128,b=0 BG", vt10x.Color(255<<16 | 128<<8), false, ";48;2;255;128;0"},
-		{"truecolor r=0,g=0,b=0 FG", vt10x.Color(256), true, ";38;2;0;1;0"},
-		{"truecolor r=1,g=2,b=3 FG", vt10x.Color(1<<16 | 2<<8 | 3), true, ";38;2;1;2;3"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			emitColorCode(&buf, tt.c, tt.isFG)
-			got := buf.String()
-			if got != tt.want {
-				t.Errorf("emitColorCode(%d, isFG=%v) = %q, want %q",
-					tt.c, tt.isFG, got, tt.want)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// emitSGR (integration-level: verify full sequence structure)
-//
-// Bug: btop background leak — SGR reset before vt10x resize
-//
-// We write \x1b[0m before resize to clear cursor attributes. emitSGR must
-// generate correct reset sequences so the reflow replay produces clean output.
-// ---------------------------------------------------------------------------
-
-func TestEmitSGR_BtopBackgroundLeak_DefaultAttrs(t *testing.T) {
-	g := vt10x.Glyph{FG: vt10x.DefaultFG, BG: vt10x.DefaultBG, Mode: 0}
-	var buf bytes.Buffer
-	emitSGR(&buf, g)
-	got := buf.String()
-	// With all defaults, should produce a simple reset: \x1b[0m
-	want := "\x1b[0m"
-	if got != want {
-		t.Errorf("emitSGR(default) = %q, want %q", got, want)
-	}
-}
-
-func TestEmitSGR_BtopBackgroundLeak_BoldAndColor(t *testing.T) {
-	g := vt10x.Glyph{
-		FG:   1, // ANSI red
-		BG:   vt10x.DefaultBG,
-		Mode: vtAttrBold,
-	}
-	var buf bytes.Buffer
-	emitSGR(&buf, g)
-	got := buf.String()
-	want := "\x1b[0;1;31m"
-	if got != want {
-		t.Errorf("emitSGR(bold+red) = %q, want %q", got, want)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// reflowInject cursor position
-//
-// Bug: log lines merge after panel resize
-//
-// reflowInject places the cursor at the end of the last content row. The
-// caller is responsible for advancing to the next line if the original
-// cursor was on a blank row (trailing \r\n).  These tests verify that
-// reflowInject leaves the cursor in the correct place so the caller can
-// make an informed decision.
-// ---------------------------------------------------------------------------
-
-func TestReflowInject_CursorAfterLastContent(t *testing.T) {
-	// 3 content rows, 2 trailing blank rows.
-	// reflowInject should put cursor at end of row 2 (last content row).
-	rows := [][]vt10x.Glyph{
-		makeGlyphRow('A', 'B', 'C'),
-		makeGlyphRow('D', 'E', 'F'),
-		makeGlyphRow('G', 'H', 'I'),
-		makeGlyphRow(0, 0, 0),
-		makeGlyphRow(0, 0, 0),
-	}
-	term := vt10x.New(vt10x.WithSize(3, 5))
-	reflowInject(term, rows)
-
-	cur := term.Cursor()
-	// Cursor should be on row 2 (the last content row), at column 3 (end).
-	if cur.Y != 2 {
-		t.Errorf("cursor Y = %d, want 2", cur.Y)
-	}
-}
-
-func TestReflowInject_AllContent(t *testing.T) {
-	// All rows have content, no trailing blanks.
-	rows := [][]vt10x.Glyph{
-		makeGlyphRow('A', 'B'),
-		makeGlyphRow('C', 'D'),
-		makeGlyphRow('E', 'F'),
-	}
-	term := vt10x.New(vt10x.WithSize(2, 3))
-	reflowInject(term, rows)
-
-	cur := term.Cursor()
-	if cur.Y != 2 {
-		t.Errorf("cursor Y = %d, want 2 (last row)", cur.Y)
-	}
-}
-
-func TestReflowInject_EmptyRows(t *testing.T) {
-	// All rows blank — nothing should be injected.
-	rows := [][]vt10x.Glyph{
-		makeGlyphRow(0, 0),
-		makeGlyphRow(0, 0),
-	}
-	term := vt10x.New(vt10x.WithSize(2, 2))
-	reflowInject(term, rows)
-
-	cur := term.Cursor()
-	// Nothing written; cursor should stay at origin.
-	if cur.Y != 0 || cur.X != 0 {
-		t.Errorf("cursor = (%d,%d), want (0,0)", cur.X, cur.Y)
-	}
-}
-
-func TestReflowInject_SingleRowContent(t *testing.T) {
-	// One content row, rest blank.
-	rows := [][]vt10x.Glyph{
-		makeGlyphRow('$', ' '),
-		makeGlyphRow(0, 0),
-	}
-	term := vt10x.New(vt10x.WithSize(5, 2))
-	reflowInject(term, rows)
-
-	cur := term.Cursor()
-	// Cursor on row 0 (last content row).
-	if cur.Y != 0 {
-		t.Errorf("cursor Y = %d, want 0", cur.Y)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Resize cursor newline injection
-//
-// Bug: log lines merge after panel resize
-//
-// After reflowInject, the caller checks if the cursor was on a blank row
-// (below content) and injects \r\n to advance.  This test verifies the
-// complete resize path preserves cursor positioning for both cases:
-//   - Log output ending with \r\n → cursor should be on new blank line
-//   - Shell prompt mid-line → cursor should stay on prompt row
-// ---------------------------------------------------------------------------
-
 func TestResizePreservesCursorOnBlankLine(t *testing.T) {
 	// Simulate a terminal with log output ending in \r\n.
 	term := vt10x.New(vt10x.WithSize(40, 10))
@@ -429,7 +149,6 @@ func TestResizePreservesCursorOnBlankLine(t *testing.T) {
 	// Write three log lines each ending with \r\n.
 	data := []byte("11:55:41 | log line 1\r\n11:55:42 | log line 2\r\n11:55:43 | log line 3\r\n")
 	p.captureAndWrite(data)
-	p.rawBuf = append(p.rawBuf, data...)
 
 	// Cursor should be on row 3 (the blank row after the last \r\n).
 	cur := p.term.Cursor()
@@ -470,19 +189,13 @@ func TestResizePreservesCursorOnPrompt(t *testing.T) {
 	// Resize.
 	p.resizeAndReflow(40, 8)
 
-	// Cursor should still be on row 0, column 13.  reflowInject strips
-	// trailing spaces, so without explicit cursor restoration the cursor
-	// would land at column 12 (right after `$`).
+	// The trailing prompt space must count toward the cursor position.
 	cur = p.term.Cursor()
 	if cur.Y != 0 || cur.X != 13 {
 		t.Errorf("after height resize cursor (X=%d,Y=%d), want (13,0)", cur.X, cur.Y)
 	}
 }
 
-// Bug: after maximizing the host terminal (column-width change), the cursor
-// for a fresh `$ ` prompt landed right after `$` instead of after `$ ` —
-// reflowInject's row content-trimming dropped the trailing space, and the
-// caller did not restore the cursor X.
 func TestResizeColumnChangePreservesCursorAfterTrailingSpace(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(40, 5))
 	p := &Pane{
@@ -507,76 +220,168 @@ func TestResizeColumnChangePreservesCursorAfterTrailingSpace(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// emitSGR round-trip: SGR 2/8/9 survive reflow injection
-// ---------------------------------------------------------------------------
+func paneLogicalText(p *Pane) string {
+	cols, rows := p.term.Size()
+	var text strings.Builder
+	for r := 0; r < p.sb.count+findContentRows(p.term, cols, rows); r++ {
+		row := p.sb.get(r)
+		if r >= p.sb.count {
+			row = captureRow(p.term, r-p.sb.count, cols)
+		}
+		wrapped := row[len(row)-1].Mode&vt10x.AttrWrap != 0
+		end := len(row)
+		if !wrapped {
+			end = rowContentEnd(row)
+		}
+		for _, g := range row[:end] {
+			if g.Width < 0 {
+				continue
+			}
+			ch := g.Char
+			if ch == 0 {
+				ch = ' '
+			}
+			text.WriteRune(ch)
+			text.WriteString(g.Combining)
+		}
+		if !wrapped {
+			text.WriteByte('\n')
+		}
+	}
+	return strings.TrimRight(text.String(), "\n")
+}
 
-func TestEmitSGR_Dim_RoundTrip(t *testing.T) {
-	// Build a row with a dim 'X', inject it into a fresh terminal, and
-	// confirm the dim attribute is restored.
-	const cols = 10
-	src := vt10x.New(vt10x.WithSize(cols, 3))
-	src.Write([]byte("\x1b[2mX")) //nolint:errcheck
-
-	rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
-
-	dst := vt10x.New(vt10x.WithSize(cols, 3))
-	reflowInject(dst, rows)
-
-	cell := dst.Cell(0, 0)
-	if cell.Mode&vt10x.AttrDim == 0 {
-		t.Errorf("emitSGR dim round-trip: AttrDim not set after reflowInject; Mode=%b", cell.Mode)
+func TestCellReflowLogicalLines(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"soft_wraps", "abcdefghijklmnopqrstuvwxyz"},
+		{"hard_breaks", "abc\r\ndefghijk\r\n\r\nlmnop"},
+		{"wide_wrap_padding", "abcd界ef界ghi"},
+		{"graphemes", "abcd👩‍👩‍👧‍👦é🇳🇱❤️tail"},
+		{"spaces_at_wrap", "abc     def   ghi"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := regressionPane(5, 3)
+			p.captureAndWrite([]byte(tc.text))
+			want := paneLogicalText(p)
+			for _, cols := range []int{3, 20, 4, 5, 30} {
+				p.resize(0, 0, cols+1, 3)
+				if got := paneLogicalText(p); got != want {
+					t.Fatalf("width %d: got %q, want %q", cols, got, want)
+				}
+				for r := 0; r < p.sb.count; r++ {
+					if len(p.sb.get(r)) != cols {
+						t.Fatal("stale-width scrollback")
+					}
+				}
+			}
+		})
 	}
 }
 
-func TestEmitSGR_Strikethrough_RoundTrip(t *testing.T) {
-	const cols = 10
-	src := vt10x.New(vt10x.WithSize(cols, 3))
-	src.Write([]byte("\x1b[9mX")) //nolint:errcheck
-
-	rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
-
-	dst := vt10x.New(vt10x.WithSize(cols, 3))
-	reflowInject(dst, rows)
-
-	cell := dst.Cell(0, 0)
-	if cell.Mode&vt10x.AttrStrikethrough == 0 {
-		t.Errorf("emitSGR strikethrough round-trip: AttrStrikethrough not set; Mode=%b", cell.Mode)
+func TestCellReflowCursor(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, want string
+		initial, resized  int
+	}{
+		{"new_pending_wrap", "abcdef", "abcdef!", 10, 3},
+		{"existing_pending_wrap", "abcdefghij", "abcdefghij!", 10, 5},
+		{"pending_wrap_widened", "abcde", "abcde!", 5, 10},
+		{"cursor_within_text", "abcdef\r\x1b[3C", "abc!ef", 10, 3},
+		{"wide_pending_wrap", "abc界", "abc界!", 5, 3},
+		{"trailing_prompt_space", "$ ", "$ !", 10, 5},
+		{"blank_line", "abc\r\n", "abc\n!", 10, 3},
+		{"cursor_addressed_blank", "\x1b[3;7H", "\n\n      !", 10, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := regressionPane(tc.initial, 10)
+			p.captureAndWrite([]byte(tc.input))
+			p.resize(0, 0, tc.resized+1, 10)
+			p.captureAndWrite([]byte("!"))
+			if got := paneLogicalText(p); got != tc.want {
+				t.Fatalf("got %q, want %q; cursor=%+v", got, tc.want, p.term.Cursor())
+			}
+		})
 	}
 }
 
-func TestEmitSGR_Invisible_RoundTrip(t *testing.T) {
-	const cols = 10
-	src := vt10x.New(vt10x.WithSize(cols, 3))
-	src.Write([]byte("\x1b[8mX")) //nolint:errcheck
-
-	rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
-
-	dst := vt10x.New(vt10x.WithSize(cols, 3))
-	reflowInject(dst, rows)
-
-	cell := dst.Cell(0, 0)
-	if cell.Mode&vt10x.AttrInvisible == 0 {
-		t.Errorf("emitSGR invisible round-trip: AttrInvisible not set; Mode=%b", cell.Mode)
+func TestCellReflowPreservesGlyphs(t *testing.T) {
+	p := regressionPane(12, 4)
+	p.captureAndWrite([]byte("\x1b[2;3;4:3;9;53;38;2;1;2;3;48;2;4;5;6;58;2;7;8;9m\x1b]8;;https://example.org\a界é\x1b]8;;\a\x1b[0m"))
+	wantWide, wantComb := p.term.RawCell(0, 0), p.term.RawCell(2, 0)
+	for _, cols := range []int{2, 12} {
+		p.resize(0, 0, cols+1, 4)
+		gotWide := p.term.RawCell(0, 0)
+		x, y := 2, 0
+		if cols == 2 {
+			x, y = 0, 1
+		}
+		gotComb := p.term.RawCell(x, y)
+		gotWide.Mode &^= vt10x.AttrWrap
+		gotComb.Mode &^= vt10x.AttrWrap
+		if gotWide != wantWide || gotComb != wantComb {
+			t.Fatalf("width %d lost glyph metadata: %+v %+v", cols, gotWide, gotComb)
+		}
 	}
 }
 
-func TestEmitSGR_CurlyUnderline_RoundTrip(t *testing.T) {
-	const cols = 10
-	src := vt10x.New(vt10x.WithSize(cols, 3))
-	src.Write([]byte("\x1b[4:3mX")) //nolint:errcheck
-
-	rows := [][]vt10x.Glyph{captureRow(src, 0, cols)}
-
-	dst := vt10x.New(vt10x.WithSize(cols, 3))
-	reflowInject(dst, rows)
-
-	cell := dst.Cell(0, 0)
-	if cell.Mode&vt10x.AttrUnderline == 0 {
-		t.Fatalf("curly underline round-trip: AttrUnderline not set; Mode=%b", cell.Mode)
+func TestCellReflowHistoryLimit(t *testing.T) {
+	for _, limit := range []int{0, 3} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			p := regressionPane(20, 2)
+			p.scrollbackLines = limit
+			p.sb = sbRing{maxLines: limit}
+			p.captureAndWrite([]byte("abcdefghijklmnopqrst"))
+			p.resize(0, 0, 3, 2)
+			if p.sb.count != limit {
+				t.Fatalf("scrollback=%d, want %d", p.sb.count, limit)
+			}
+			p.captureAndWrite([]byte("!"))
+			if !strings.HasSuffix(paneLogicalText(p), "mnopqrst!") && limit == 3 {
+				t.Fatalf("tail lost: %q", paneLogicalText(p))
+			}
+		})
 	}
-	styleBits := (cell.Mode & vt10x.AttrUnderlineStyleMask) / vt10x.AttrUnderlineStyleBit0
-	if styleBits != 2 { // 2 = curly
-		t.Errorf("curly underline round-trip: style bits = %d, want 2 (curly)", styleBits)
+}
+
+func TestCellReflowDoesNotResurrectErasedText(t *testing.T) {
+	p := regressionPane(80, 10)
+	p.captureAndWrite([]byte("discard me\x1b[H\x1b[2Jkeep me"))
+	for _, cols := range []int{20, 100, 40} {
+		p.resize(0, 0, cols+1, 10)
+		if got := paneLogicalText(p); got != "keep me" {
+			t.Fatalf("width %d: %q", cols, got)
+		}
+	}
+}
+
+func TestCellReflowKeepsCursorVisible(t *testing.T) {
+	p := regressionPane(20, 4)
+	p.captureAndWrite([]byte("first line\r\nsecond line\r\nthird line\r\nfourth line\x1b[H"))
+	p.resize(0, 0, 6, 4)
+	p.captureAndWrite([]byte("!"))
+	if got := p.term.Cell(0, 0).Char; got != '!' {
+		t.Fatalf("cursor output = %q", got)
+	}
+	if got := paneLogicalText(p); !strings.HasPrefix(got, "!irst line\n") {
+		t.Fatalf("resize archived cursor's line: %q", got)
+	}
+}
+
+func TestCellReflowPreservesStyledBlankRows(t *testing.T) {
+	p := regressionPane(8, 4)
+	p.captureAndWrite([]byte("\x1b[4;1H\x1b[48;2;10;20;30m  \x1b[0m\x1b[H"))
+	p.resize(0, 0, 5, 4)
+	if got := p.term.Cell(0, 3).BG; got != vt10x.Color(10<<16|20<<8|30) {
+		t.Fatalf("blank background lost: %v", got)
+	}
+}
+
+func TestCellReflowOneColumn(t *testing.T) {
+	p := regressionPane(5, 6)
+	p.captureAndWrite([]byte("a界b"))
+	p.resize(0, 0, 2, 6)
+	p.captureAndWrite([]byte("!"))
+	if got := paneLogicalText(p); got != "a�b!" {
+		t.Fatalf("one column: %q", got)
 	}
 }
