@@ -19,7 +19,10 @@ func (p *Pane) reflowCells(cols, rows int) {
 	mappedAnchor, mappedCursorRow, mappedCursorCol := 0, 0, 0
 	pending, cursorMapped := false, false
 	result := sbRing{maxLines: p.scrollbackLines + rows}
+	// Zero glyphs carry palette colour 0, not the default colours.
+	blank := vt10x.Glyph{FG: vt10x.DefaultFG, BG: vt10x.DefaultBG, UL: vt10x.DefaultUL}
 	row := make([]vt10x.Glyph, cols)
+	fillRow(row, blank)
 	x, y := 0, 0
 	flush := func(wrapped bool) {
 		if wrapped {
@@ -28,7 +31,7 @@ func (p *Pane) reflowCells(cols, rows int) {
 		if !cursorMapped || y < mappedCursorRow+rows {
 			result.push(row)
 		}
-		clear(row)
+		fillRow(row, blank)
 		x = 0
 		y++
 	}
@@ -146,4 +149,10 @@ func reflowCellHasContent(g vt10x.Glyph) bool {
 		return true
 	}
 	return g.Char != 0 && (g.Char != ' ' || g.BG != vt10x.DefaultBG || g.Mode&^vt10x.AttrWrap != 0 || g.Link != 0)
+}
+
+func fillRow(row []vt10x.Glyph, g vt10x.Glyph) {
+	for i := range row {
+		row[i] = g
+	}
 }

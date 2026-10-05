@@ -385,3 +385,24 @@ func TestCellReflowOneColumn(t *testing.T) {
 		t.Fatalf("one column: %q", got)
 	}
 }
+
+func TestReflowScrollbackPaddingUsesDefaultColours(t *testing.T) {
+	p := &Pane{scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	p.term = vt10x.New(vt10x.WithSize(20, 4), vt10x.WithScrollCallback(p.onScrollRow))
+	for i := range 8 {
+		p.captureAndWrite(fmt.Appendf(nil, "line %d\r\n", i))
+	}
+	for _, cols := range []int{30, 12} {
+		p.resizeAndReflow(cols, 4)
+		if p.sb.count == 0 {
+			t.Fatal("reflow left no scrollback")
+		}
+		for r := range p.sb.count {
+			for c, g := range p.sb.get(r) {
+				if g.FG != vt10x.DefaultFG || g.BG != vt10x.DefaultBG || g.UL != vt10x.DefaultUL {
+					t.Fatalf("cols %d: sb[%d][%d] = %+v, want default colours", cols, r, c, g)
+				}
+			}
+		}
+	}
+}
