@@ -62,14 +62,24 @@ func randomStream(rng *rand.Rand, cols, rows int) []byte {
 	return b.Bytes()
 }
 
+// decodeRows returns rows as Glyphs. Unused side-table entries can differ
+// between two write sequences that leave the same cells.
+func decodeRows(rows []Row) [][]Glyph {
+	out := make([][]Glyph, len(rows))
+	for y, r := range rows {
+		out[y] = r.AppendGlyphs(nil)
+	}
+	return out
+}
+
 // wideCellError reports a wide lead without its continuation, or the reverse.
 func wideCellError(s *State) string {
 	for y, l := range s.lines {
-		for x, g := range l {
-			if g.Width == -1 && (x == 0 || l[x-1].Width != 2) {
+		for x, c := range l.cells {
+			if c.width() == -1 && (x == 0 || l.cells[x-1].width() != 2) {
 				return fmt.Sprintf("orphan continuation at (%d,%d)", x, y)
 			}
-			if g.Width == 2 && (x+1 == len(l) || l[x+1].Width != -1) {
+			if c.width() == 2 && (x+1 == len(l.cells) || l.cells[x+1].width() != -1) {
 				return fmt.Sprintf("wide lead without continuation at (%d,%d)", x, y)
 			}
 		}
@@ -84,8 +94,8 @@ func TestASCIIFastPathMatchesRuneParser(t *testing.T) {
 		data := randomStream(rng, cols, rows)
 
 		var fastRows, slowRows [][]Glyph
-		record := func(dst *[][]Glyph) func([]Glyph) []Glyph {
-			return func(row []Glyph) []Glyph { *dst = append(*dst, append([]Glyph(nil), row...)); return nil }
+		record := func(dst *[][]Glyph) func(Row) {
+			return func(row Row) { *dst = append(*dst, row.AppendGlyphs(nil)) }
 		}
 		fast := New(WithSize(cols, rows), WithScrollCallback(record(&fastRows))).(*terminal)
 		slow := New(WithSize(cols, rows), WithScrollCallback(record(&slowRows))).(*terminal)
@@ -113,8 +123,8 @@ func TestASCIIFastPathMatchesRuneParser(t *testing.T) {
 			name       string
 			fast, slow any
 		}{
-			{"lines", fs.lines, ss.lines},
-			{"altLines", fs.altLines, ss.altLines},
+			{"lines", decodeRows(fs.lines), decodeRows(ss.lines)},
+			{"altLines", decodeRows(fs.altLines), decodeRows(ss.altLines)},
 			{"cursor", fs.cur, ss.cur},
 			{"saved cursor", fs.curSaved, ss.curSaved},
 			{"mode", fs.mode, ss.mode},

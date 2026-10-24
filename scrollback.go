@@ -14,9 +14,10 @@
 //
 // Scrollback ring buffer
 // ──────────────────────
-// sbRing is a fixed-capacity circular buffer of captured lines.  Each entry
-// owns its backing []vt10x.Glyph storage (allocated or reused by push).  When
-// the ring is full the oldest line is evicted and its slot is reused.
+// sbRing is a fixed-capacity circular buffer of captured lines, stored as
+// compact vt10x.Rows without trailing blanks.  Each entry owns its backing
+// storage (allocated or reused by push).  When the ring is full the oldest
+// line is evicted and its slot is reused.
 //
 // User navigation (Shift+PgUp / Shift+PgDn):
 //
@@ -27,20 +28,21 @@ package main
 
 import "bunk/internal/vt10x"
 
-// sbRing is a fixed-capacity circular buffer of captured Glyph rows.
+// sbRing is a fixed-capacity circular buffer of captured rows.
 // maxLines must be set before the first push (typically from the config).
 type sbRing struct {
-	maxLines int             // ring capacity (from config scrollback setting)
-	lines    [][]vt10x.Glyph // allocated on first push, length = maxLines
-	head     int             // index of the oldest entry
-	count    int             // number of valid entries (0 … maxLines)
+	maxLines int         // ring capacity (from config scrollback setting)
+	lines    []vt10x.Row // allocated on first push, length = maxLines
+	head     int         // index of the oldest entry
+	count    int         // number of valid entries (0 … maxLines)
+	viewBuf  []vt10x.Glyph
 }
 
 // nextSlot returns the slot for a new line, evicting the oldest line when
 // the ring is full.
 func (s *sbRing) nextSlot() int {
 	if s.lines == nil {
-		s.lines = make([][]vt10x.Glyph, s.maxLines)
+		s.lines = make([]vt10x.Row, s.maxLines)
 	}
 	if s.count < s.maxLines {
 		s.count++
@@ -52,77 +54,33 @@ func (s *sbRing) nextSlot() int {
 	return slot
 }
 
-// push appends one captured row to the ring.  When the ring is full, the
-// oldest entry is evicted.  The ring owns its backing storage: each slot's
-// []vt10x.Glyph is reused when the incoming row fits (same or narrower width),
-// or reallocated when the row is wider.  The incoming row is always copied —
-// the ring never retains a reference into the caller's slice (e.g. a
-// captureGrid slab), so the caller's allocation can be freed immediately.
+// pushRow appends a copy of row without its trailing blanks.  Readers treat
+// cells past the end of a stored row as default blanks, so dropping them
+// changes nothing on screen, in copies or in search.
+func (s *sbRing) pushRow(row vt10x.Row) {
+	if s.maxLines <= 0 {
+		return
+	}
+	slot := s.nextSlot()
+	s.lines[slot].CopyFrom(row, row.TrimmedLen())
+}
+
+// push appends a row of glyphs without its trailing blanks.  The ring never
+// retains a reference to row.
 func (s *sbRing) push(row []vt10x.Glyph) {
 	if s.maxLines <= 0 {
 		return
 	}
 	slot := s.nextSlot()
-	row = row[:storedLen(row)]
-
-	// Reuse the slot's existing backing array when capacity allows;
-	// allocate a new one only when the row is wider than the current slot.
-	if cap(s.lines[slot]) >= len(row) {
-		s.lines[slot] = s.lines[slot][:len(row)]
-	} else {
-		s.lines[slot] = make([]vt10x.Glyph, len(row))
-	}
-	copy(s.lines[slot], row)
+	r := &s.lines[slot]
+	r.SetGlyphs(row)
+	r.Truncate(r.TrimmedLen())
 }
 
-// storedLen returns the length of row without its trailing plain blanks.
-// Readers treat cells past the end of a stored row as default blanks, so
-// dropping these cells changes nothing on screen, in copies or in search,
-// and keeps scrollback writes proportional to the text.
-func storedLen(row []vt10x.Glyph) int {
-	n := len(row)
-	for n > 0 && isPlainBlank(row[n-1]) {
-		n--
-	}
-	return n
-}
-
-// isPlainBlank reports whether g draws, copies, searches and reflows like a
-// missing cell. Its foreground colour is invisible without text or
-// decorations. A soft-wrapped row keeps its last cell, which carries the
-// wrap flag.
-func isPlainBlank(g vt10x.Glyph) bool {
-	return (g.Char == ' ' || g.Char == 0) && g.Width >= 0 && g.Width <= 1 &&
-		g.Mode == 0 && g.BG == vt10x.DefaultBG && g.Link == 0 &&
-		g.Combining == "" && g.Image == nil
-}
-
-// keep stores a row that vt10x is about to clear. A row with trailing
-// blanks is copied without them and keep returns nil. A row without any is
-// kept as is, and keep returns a spare row for vt10x to clear and reuse.
-func (s *sbRing) keep(row []vt10x.Glyph) []vt10x.Glyph {
-	if n := storedLen(row); n < len(row) {
-		s.push(row[:n])
-		return nil
-	}
-	return s.swapIn(row)
-}
-
-// swapIn appends row without copying it: the ring keeps row itself. It
-// returns a slice of the same length for the caller to reuse, taken from the
-// evicted slot when that storage is large enough. It returns nil, keeping
-// nothing, when scrollback is disabled.
-func (s *sbRing) swapIn(row []vt10x.Glyph) []vt10x.Glyph {
-	if s.maxLines <= 0 {
-		return nil
-	}
-	slot := s.nextSlot()
-	spare := s.lines[slot]
-	s.lines[slot] = row
-	if cap(spare) < len(row) {
-		return make([]vt10x.Glyph, len(row))
-	}
-	return spare[:len(row)]
+// row returns the stored row at logical index i without decoding it.  The
+// result must not be modified.
+func (s *sbRing) row(i int) vt10x.Row {
+	return s.lines[(s.head+i)%s.maxLines]
 }
 
 // clear empties the ring in place.  Backing row storage is kept so
@@ -132,14 +90,24 @@ func (s *sbRing) clear() {
 	s.count = 0
 }
 
-// get returns the line at logical index i, where 0 is the OLDEST surviving
-// line and count-1 is the most recently pushed line.  Returns nil on bounds
-// violation.
+// get returns a new slice holding the line at logical index i, where 0 is
+// the OLDEST surviving line and count-1 is the most recently pushed line.
+// Returns nil on bounds violation.
 func (s *sbRing) get(i int) []vt10x.Glyph {
 	if i < 0 || i >= s.count {
 		return nil
 	}
-	return s.lines[(s.head+i)%s.maxLines]
+	return s.row(i).AppendGlyphs(nil)
+}
+
+// view is get without allocating: the result is reused by the next call to
+// view.  Render, search and reflow read one row at a time this way.
+func (s *sbRing) view(i int) []vt10x.Glyph {
+	if i < 0 || i >= s.count {
+		return nil
+	}
+	s.viewBuf = s.row(i).AppendGlyphs(s.viewBuf[:0])
+	return s.viewBuf
 }
 
 // ---------------------------------------------------------------------------

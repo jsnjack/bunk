@@ -72,8 +72,10 @@ Key local extensions to vendored vt10x:
   `Glyph.Combining` stores an immutable grapheme suffix, bounded to 1 KiB/cell.
 - DECRQSS reports SGR, scroll margins, and cursor style; unsupported settings
   return a negative response. Unknown DECRQM modes return status 0, not 4.
-- `WithScrollCallback` may keep a departing row and return a spare one;
-  bunk's scrollback ring stores rows this way without copying them.
+- The grid stores 16-byte, pointer-free cells (`row.go`). Combining text,
+  underline colour, hyperlink and image samples live in a per-row side table.
+  `Cell`/`RawCell` still return `Glyph`; the scroll callback receives a `Row`,
+  which bunk's scrollback ring copies without trailing blanks.
 - `putASCII` writes printable ASCII runs without grapheme segmentation. Any
   change to `parse`/`setChar` must keep `TestASCIIFastPathMatchesRuneParser`
   green; track speed with `go test ./internal/vt10x -bench BenchmarkWrite`.

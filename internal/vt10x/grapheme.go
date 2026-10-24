@@ -25,7 +25,7 @@ func (t *State) extendGrapheme(c rune) bool {
 		return false
 	}
 	x, y := t.clusterX, t.clusterY
-	g := t.lines[y][x]
+	g := t.lines[y].Glyph(x)
 	// Build the candidate cluster in a stack buffer; most runes start a new
 	// cluster, and that check should not allocate.
 	var buf [64]byte
@@ -60,8 +60,8 @@ func (t *State) extendGrapheme(c rune) bool {
 			return true
 		}
 		t.eraseCell(x, y)
-		t.lines[y][x].Width = -2
-		t.lines[y][x].Mode |= attrWrap
+		t.lines[y].cells[x].setWidth(-2)
+		t.lines[y].cells[x].Mode |= attrWrap
 		t.markDirty(y)
 		t.newline(true)
 		x, y = t.cur.X, t.cur.Y
@@ -70,9 +70,9 @@ func (t *State) extendGrapheme(c rune) bool {
 		t.eraseWideAt(x+1, y)
 	}
 	g.Width = int8(width)
-	t.lines[y][x] = g
+	t.lines[y].set(x, g)
 	if width == 2 {
-		t.lines[y][x+1] = Glyph{Width: -1, Mode: g.Mode, FG: g.FG, BG: g.BG, UL: g.UL, Link: g.Link}
+		t.lines[y].set(x+1, Glyph{Width: -1, Mode: g.Mode, FG: g.FG, BG: g.BG, UL: g.UL, Link: g.Link})
 	}
 	t.markDirty(y)
 	t.clusterX, t.clusterY = x, y

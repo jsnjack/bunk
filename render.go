@@ -544,7 +544,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			case vRow < 0:
 				// Before the oldest captured line - render blank.
 			case vRow < sbCount:
-				cells = p.sb.get(vRow)
+				cells = p.sb.view(vRow)
 			default:
 				// In the live grid.  vRow - sbCount is the actual terminal row,
 				// which is NOT the same as screen row when sbOff > 0.

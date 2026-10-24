@@ -15,19 +15,16 @@ package vt10x
 import "testing"
 
 // newTestTermWithCb builds a terminal with a scroll callback installed.
-func newTestTermWithCb(cols, rows int, cb func(row []Glyph) []Glyph) *terminal {
+func newTestTermWithCb(cols, rows int, cb func(row Row)) *terminal {
 	return newTerminal(TerminalInfo{cols: cols, rows: rows, scrollCb: cb})
 }
 
 // collectRow copies a callback row and appends it to a slice.
 // The callback row slice is only valid for the duration of the call, so a
 // copy is required for any test that inspects content after the write.
-func collectRow(dst *[][]Glyph) func([]Glyph) []Glyph {
-	return func(row []Glyph) []Glyph {
-		cp := make([]Glyph, len(row))
-		copy(cp, row)
-		*dst = append(*dst, cp)
-		return nil
+func collectRow(dst *[][]Glyph) func(Row) {
+	return func(row Row) {
+		*dst = append(*dst, row.AppendGlyphs(nil))
 	}
 }
 
@@ -104,7 +101,7 @@ func TestScrollCallback_MultiRowCSIS(t *testing.T) {
 func TestScrollCallback_InPlaceRewriteNoCallback(t *testing.T) {
 	const cols, rows = 10, 5
 	fired := 0
-	term := newTestTermWithCb(cols, rows, func(_ []Glyph) []Glyph { fired++; return nil })
+	term := newTestTermWithCb(cols, rows, func(Row) { fired++ })
 
 	// Write two lines (no overflow).
 	term.Write([]byte("AAAAAAAAAA\r\nBBBBBBBBBB")) //nolint:errcheck
@@ -131,7 +128,7 @@ func TestScrollCallback_InPlaceRewriteNoCallback(t *testing.T) {
 func TestScrollCallback_PartialScrollRegionNoCallback(t *testing.T) {
 	const cols, rows = 8, 6
 	fired := 0
-	term := newTestTermWithCb(cols, rows, func(_ []Glyph) []Glyph { fired++; return nil })
+	term := newTestTermWithCb(cols, rows, func(Row) { fired++ })
 
 	// Set scroll region to rows 2–5 (1-indexed), i.e., 0-indexed rows 1–4.
 	// t.top will be 1, not 0.
@@ -179,47 +176,4 @@ func TestScrollCallback_ContentBeforeClear(t *testing.T) {
 			t.Errorf("live cell(%d,0).Char = %q after scroll, want 'Y'", x, g.Char)
 		}
 	}
-}
-
-// TestScrollCallback_RowHandoff verifies that a callback can keep the
-// departing row and give the terminal a spare one: the kept row is never
-// written again, and the spare's old content does not appear on screen.
-func TestScrollCallback_RowHandoff(t *testing.T) {
-	const cols, rows = 4, 2
-	var kept [][]Glyph
-	term := newTestTermWithCb(cols, rows, func(row []Glyph) []Glyph {
-		kept = append(kept, row)
-		spare := make([]Glyph, len(row))
-		for i := range spare {
-			spare[i] = Glyph{Char: 'X', Width: 1}
-		}
-		return spare
-	})
-	term.Write([]byte("AAAA\r\nBBBB\r\nCC\r\nDDDD")) //nolint:errcheck
-
-	if len(kept) != 2 {
-		t.Fatalf("callback fired %d times, want 2", len(kept))
-	}
-	for i, want := range []string{"AAAA", "BBBB"} {
-		if got := rowString(kept[i]); got != want {
-			t.Errorf("kept row %d = %q, want %q", i, got, want)
-		}
-	}
-	for y, want := range []string{"CC  ", "DDDD"} {
-		var got []rune
-		for x := 0; x < cols; x++ {
-			got = append(got, term.Cell(x, y).Char)
-		}
-		if string(got) != want {
-			t.Errorf("screen row %d = %q, want %q", y, string(got), want)
-		}
-	}
-}
-
-func rowString(row []Glyph) string {
-	s := make([]rune, len(row))
-	for i, g := range row {
-		s[i] = g.Char
-	}
-	return string(s)
 }

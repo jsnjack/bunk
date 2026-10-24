@@ -9,11 +9,11 @@ import (
 	"bunk/internal/vt10x"
 )
 
-// TestScrollbackHandoffWithEviction fills a small ring past capacity, with
-// short rows (copied without trailing blanks) and full rows (handed over).
-// Stored rows and the spare rows returned to vt10x must never share storage:
-// scrollback must keep its text while the screen keeps changing.
-func TestScrollbackHandoffWithEviction(t *testing.T) {
+// TestScrollbackEviction fills a small ring past capacity with short rows
+// (stored without trailing blanks) and full rows. Stored rows must never
+// share storage with the screen: scrollback must keep its text while the
+// screen keeps changing.
+func TestScrollbackEviction(t *testing.T) {
 	for _, suffix := range []string{"", "!"} {
 		t.Run(fmt.Sprintf("suffix %q", suffix), func(t *testing.T) {
 			testScrollbackEviction(t, suffix)

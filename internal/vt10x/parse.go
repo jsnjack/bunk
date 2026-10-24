@@ -25,11 +25,11 @@ func (t *State) parse(c rune) {
 			for x := t.cur.X; x < t.cols; x++ {
 				t.eraseWideAt(x, t.cur.Y)
 				t.eraseCell(x, t.cur.Y)
-				t.lines[t.cur.Y][x].Width = -2
+				t.lines[t.cur.Y].cells[x].setWidth(-2)
 			}
 			t.markDirty(t.cur.Y)
 		}
-		t.lines[t.cur.Y][t.cols-1].Mode |= attrWrap
+		t.lines[t.cur.Y].cells[t.cols-1].Mode |= attrWrap
 		t.newline(true)
 	}
 	if t.cur.X+width > t.cols {
@@ -67,8 +67,8 @@ func (t *State) putASCII(p []byte) int {
 		return 0
 	}
 	if t.clusterOpen && t.clusterX < t.cols && t.clusterY < t.rows {
-		g := t.lines[t.clusterY][t.clusterX]
-		if g.Width < 0 || g.Char >= 0x80 || g.Combining != "" {
+		row := &t.lines[t.clusterY]
+		if c := row.cells[t.clusterX]; c.width() < 0 || c.Char >= 0x80 || row.hasCombining(t.clusterX) {
 			return 0
 		}
 	}
@@ -82,34 +82,45 @@ func (t *State) putASCII(p []byte) int {
 
 	// The cell template matches what setChar stores for a narrow rune.
 	attr := &t.cur.Attr
-	cell := *attr
-	cell.Combining, cell.Width = "", 1
+	tmpl := *attr
+	tmpl.Combining, tmpl.Width = "", 1
 	if attr.Mode&attrBold != 0 && attr.FG < 8 {
-		cell.FG = attr.FG + 8
+		tmpl.FG = attr.FG + 8
 	}
 	if attr.Mode&attrReverse != 0 {
-		cell.FG, cell.BG = attr.BG, attr.FG
+		tmpl.FG, tmpl.BG = attr.BG, attr.FG
+	}
+	// Without side-table data the stored cell is the same on every row.
+	var plain cell
+	isPlain := tmpl.UL == DefaultUL && tmpl.Link == 0 && tmpl.Image == nil
+	if isPlain {
+		plain = cell{Char: tmpl.Char, FG: tmpl.FG, BG: tmpl.BG, Mode: tmpl.Mode}
+		plain.setWidth(1)
 	}
 	t.changed |= ChangedScreen
 	for i := 0; i < n; {
 		if t.cur.State&cursorWrapNext != 0 && t.mode&ModeWrap != 0 {
-			t.lines[t.cur.Y][t.cols-1].Mode |= attrWrap
+			t.lines[t.cur.Y].cells[t.cols-1].Mode |= attrWrap
 			t.newline(true)
 		}
 		// Write the part of the run that fits on this row. A wide character
 		// inside the segment is overwritten whole, so only the segment's
 		// edges can split one.
 		x, y := t.cur.X, t.cur.Y
-		row := t.lines[y]
+		row := &t.lines[y]
 		k := min(n-i, t.cols-x)
-		if row[x].Width == -1 {
+		if row.cells[x].width() == -1 {
 			t.eraseWideAt(x, y)
 		}
-		if row[x+k-1].Width == 2 {
+		if row.cells[x+k-1].width() == 2 {
 			t.eraseWideAt(x+k-1, y)
 		}
-		seg := row[x : x+k]
-		fillGlyphs(seg, cell)
+		if isPlain {
+			row.fillCell(x, x+k, plain)
+		} else {
+			row.fill(x, x+k, tmpl)
+		}
+		seg := row.cells[x : x+k]
 		for j, b := range p[i : i+k] {
 			seg[j].Char = rune(b)
 		}

@@ -484,17 +484,15 @@ func isInPlaceLineUpdate(chunk []byte) bool {
 // Alt-screen scrolls must be ignored: TUI apps (vim, htop, less) use the
 // alt-screen and their scroll events must not populate primary scrollback.
 //
-// Full rows are handed to the ring without copying; other rows are copied
-// without their trailing blanks.
-func (p *Pane) onScrollRow(row []vt10x.Glyph) []vt10x.Glyph {
+// The ring copies the row's compact cells without trailing blanks.
+func (p *Pane) onScrollRow(row vt10x.Row) {
 	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
-		return nil
+		return
 	}
 	oldCount := p.sb.count
 	oldSbOff := p.sbOff
-	spare := p.sb.keep(row)
+	p.sb.pushRow(row)
 	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
-	return spare
 }
 
 // onScrollbackClear is the vt10x scrollback-erase callback installed in
@@ -1077,7 +1075,7 @@ func (p *Pane) resizeHeightOnly(cols, oldRows, newRows int) {
 		if pull > 0 {
 			newSB := sbRing{maxLines: p.scrollbackLines}
 			for i := 0; i < p.sb.count-pull; i++ {
-				newSB.push(p.sb.get(i))
+				newSB.pushRow(p.sb.row(i))
 			}
 			p.sb = newSB
 		}

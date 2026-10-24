@@ -275,16 +275,22 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
 
 - Runs of printable ASCII skip grapheme segmentation and fill row segments in
   block copies. Parser state is an enum, and CSI parameters parse in place.
-- `BenchmarkWrite` (200×50, 1 MiB streams) went from about 9–10 MB/s with
-  ~2 allocations per byte to 240 MB/s ASCII, 86 MB/s SGR-heavy and
-  146 MB/s TUI redraws, with zero allocations. Unicode-heavy output reached
-  18 MB/s; uniseg property lookups now dominate it.
+- Steady-state parsing makes no allocations; it made about 2 per byte.
 - `TestASCIIFastPathMatchesRuneParser` compares the fast path with the
   rune-at-a-time parser on random streams, including wide-cell invariants.
 - Grapheme clusters are capped at two cells. uniseg adds Prepend widths
   (`\u0600\u0600a` reported 3), which left orphan continuation cells.
-- Scrollback keeps departing rows instead of copying them, and PTY framing
-  reuses its output buffer. `BenchmarkPaneOutput` (200×50, 10 000-line
-  scrollback) went from 71 to 84 MB/s ASCII. With a 100-line scrollback the
-  same path runs at about 200 MB/s: each stored row is 200 cells × 56 bytes,
-  so scrollback memory traffic now limits throughput.
+- PTY framing reuses its output buffer. Scrollback rows drop trailing blank
+  cells that render, copy and search like missing ones.
+- The grid and scrollback store 16-byte cells without pointers instead of
+  56-byte glyphs; rare data sits in a per-row side table. Scrollback for
+  10 000 lines in a 200-column pane takes 16 MB (90-character lines) or
+  33 MB (full lines) instead of 55 or 124 MB, and a full GC cycle over it
+  dropped from 3–5 ms to about 1 ms.
+- Rune widths are cached for code points below U+30000.
+- Measured pinned to a Zen 5 core (`taskset -c 0`), master → now:
+  `BenchmarkPaneOutput` ASCII 9.7 → 154 MB/s, full-width lines 11.9 →
+  357 MB/s, SGR-heavy 11.0 → 55 MB/s; `BenchmarkWrite` ASCII 11.9 → 493,
+  SGR 14.8 → 146, Unicode 14.6 → 36, TUI redraws 13.3 → 266 MB/s.
+  On the Zen 5c CPUs (4–11, 16–23) the same code runs about 35% slower, so
+  pin benchmarks before comparing.

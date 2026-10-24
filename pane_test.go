@@ -750,15 +750,10 @@ func TestSbRing_SlotReusedWhenFull(t *testing.T) {
 	r.push(makeGlyphRowN(width, 'A')) // slot 0
 	r.push(makeGlyphRowN(width, 'B')) // slot 1 — ring now full
 
-	// Record the backing-array pointer of physical slot 0.
-	ptr0 := &r.lines[0][0]
-
-	// Push again: ring is full, head=0, so slot 0 is overwritten.
-	r.push(makeGlyphRowN(width, 'C'))
-
-	// Slot 0 must have been reused (same backing array).
-	if &r.lines[0][0] != ptr0 {
-		t.Error("SlotReusedWhenFull: push allocated new backing array instead of reusing slot")
+	// Push again: ring is full, so the oldest slot is overwritten in place.
+	row := makeGlyphRowN(width, 'C')
+	if n := testing.AllocsPerRun(10, func() { r.push(row) }); n != 0 {
+		t.Errorf("SlotReusedWhenFull: push allocated %.0f times instead of reusing slots", n)
 	}
 	// Content must be correct.
 	got := r.get(1) // newest is at logical index 1
@@ -776,13 +771,10 @@ func TestSbRing_SlotReusedOnShrink(t *testing.T) {
 	r.push(makeGlyphRowN(wideW, 'W')) // slot 0, cap=8
 	r.push(makeGlyphRowN(wideW, 'W')) // slot 1, cap=8 — ring full
 
-	ptr0 := &r.lines[0][0]
-
 	narrow := makeGlyphRowN(narrowW, 'N')
-	r.push(narrow) // slot 0 overwritten, cap 8 >= len 3 → should reuse
-
-	if &r.lines[0][0] != ptr0 {
-		t.Error("SlotReusedOnShrink: push allocated new backing array despite sufficient capacity")
+	// Both slots have capacity 8 >= 3, so overwriting them must not allocate.
+	if n := testing.AllocsPerRun(10, func() { r.push(narrow) }); n != 0 {
+		t.Errorf("SlotReusedOnShrink: push allocated %.0f times despite sufficient capacity", n)
 	}
 	got := r.get(1) // newest
 	if got == nil || len(got) != narrowW {

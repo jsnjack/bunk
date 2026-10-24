@@ -132,7 +132,7 @@ func (app *App) runSearchScan() {
 	for vRow := 0; vRow < totalRows; vRow++ {
 		var cells []vt10x.Glyph
 		if vRow < sbCount {
-			cells = p.sb.get(vRow)
+			cells = p.sb.view(vRow)
 		} else {
 			cells = captureRow(p.term, vRow-sbCount, cols)
 		}

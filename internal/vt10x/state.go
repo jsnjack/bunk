@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rivo/uniseg"
 )
@@ -119,18 +120,6 @@ type Glyph struct {
 	Image     *ImageCell // immutable cell-local raster data, shared by scrollback snapshots
 }
 
-type line []Glyph
-
-// makeLine allocates a line of n Glyphs with UL pre-set to DefaultUL so that
-// the zero value of Color (Black) is never confused with "no underline color".
-func makeLine(n int) line {
-	l := make(line, n)
-	for i := range l {
-		l[i].UL = DefaultUL
-	}
-	return l
-}
-
 type Cursor struct {
 	Attr  Glyph
 	X, Y  int
@@ -162,8 +151,8 @@ type State struct {
 	mu                 sync.Mutex
 	changed            ChangeFlag
 	cols, rows         int
-	lines              []line
-	altLines           []line
+	lines              []Row
+	altLines           []Row
 	dirty              []bool // line dirtiness
 	anydirty           bool
 	cur, curSaved      Cursor
@@ -203,8 +192,7 @@ type State struct {
 	// scrollRowCb, if non-nil, is called once per row that scrolls off the
 	// top of the primary screen (orig == 0 in scrollUp).  It fires before
 	// the row's backing storage is cleared, so the content is still intact.
-	// A non-nil result replaces the row, which the callback then owns.
-	scrollRowCb func(row []Glyph) []Glyph
+	scrollRowCb func(row Row)
 	// sbClearCb, if non-nil, is called when the application requests
 	// scrollback erasure via ED 3 (CSI 3 J) or RIS (ESC c).  Scrollback
 	// lives outside this State (which only holds the visible grid), so
@@ -266,7 +254,7 @@ func (t *State) Unlock() {
 // Cell returns the glyph containing the character code, foreground color, and
 // background color at position (x, y) relative to the top left of the terminal.
 func (t *State) Cell(x, y int) Glyph {
-	cell := t.lines[y][x]
+	cell := t.lines[y].Glyph(x)
 	fg, ok := t.colorOverride[cell.FG]
 	if ok {
 		cell.FG = fg
@@ -279,7 +267,7 @@ func (t *State) Cell(x, y int) Glyph {
 }
 
 // RawCell returns a glyph without resolving dynamic colour overrides.
-func (t *State) RawCell(x, y int) Glyph { return t.lines[y][x] }
+func (t *State) RawCell(x, y int) Glyph { return t.lines[y].Glyph(x) }
 
 // ImportGlyph translates hyperlink identities. The caller must synchronize
 // access to both terminals, as for Cell and Link.
@@ -307,7 +295,8 @@ func (t *State) ReplaceScreen(cols, rows int, cells [][]Glyph, cursor Cursor, so
 	blank := t.defaultCursor().Attr
 	blank.Char = ' '
 	for y := range t.lines {
-		for x := range t.lines[y] {
+		t.lines[y].clearExtras() // every cell is rewritten below
+		for x := 0; x < cols; x++ {
 			g := blank
 			if y < len(cells) && x < len(cells[y]) {
 				g = cells[y][x]
@@ -316,7 +305,7 @@ func (t *State) ReplaceScreen(cols, rows int, cells [][]Glyph, cursor Cursor, so
 				}
 				g = t.ImportGlyph(g, source)
 			}
-			t.lines[y][x] = g
+			t.lines[y].set(x, g)
 		}
 		t.repairWideRow(y)
 	}
@@ -610,22 +599,36 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	if width == 2 {
 		t.eraseWideAt(x+1, y)
 	}
-	t.lines[y][x] = *attr
-	t.lines[y][x].Char = c
-	t.lines[y][x].Combining = ""
-	t.lines[y][x].Width = int8(width)
+	fg, bg := attr.FG, attr.BG
 	//if t.options.BrightBold && attr.Mode&attrBold != 0 && attr.FG < 8 {
 	if attr.Mode&attrBold != 0 && attr.FG < 8 {
-		t.lines[y][x].FG = attr.FG + 8
+		fg = attr.FG + 8
 	}
 	if attr.Mode&attrReverse != 0 {
-		t.lines[y][x].FG = attr.BG
-		t.lines[y][x].BG = attr.FG
+		fg, bg = attr.BG, attr.FG
 	}
+	if attr.UL == DefaultUL && attr.Link == 0 && attr.Image == nil {
+		// No side-table data: store the cell directly.
+		cl := cell{Char: c, FG: fg, BG: bg, Mode: attr.Mode}
+		cl.setWidth(int8(width))
+		t.lines[y].cells[x] = cl
+		if width == 2 {
+			cl.Char = 0
+			cl.setWidth(-1)
+			t.lines[y].cells[x+1] = cl
+		}
+		return
+	}
+	g := *attr
+	g.Char = c
+	g.Combining = ""
+	g.Width = int8(width)
+	g.FG, g.BG = fg, bg
+	t.lines[y].set(x, g)
 	if width == 2 {
-		t.lines[y][x+1] = t.lines[y][x]
-		t.lines[y][x+1].Char = 0
-		t.lines[y][x+1].Width = -1
+		g.Char = 0
+		g.Width = -1
+		t.lines[y].set(x+1, g)
 	}
 }
 
@@ -633,8 +636,29 @@ func runeCellWidth(c rune) int {
 	if c < 0x80 {
 		return 1
 	}
-	return max(1, uniseg.StringWidth(string(c)))
+	if c >= cachedWidthRunes {
+		return max(1, uniseg.StringWidth(string(c)))
+	}
+	// Each uint32 holds sixteen 2-bit entries: 0 = not cached, else the width.
+	word, shift := &runeWidths[c>>4], uint(c&15)*2
+	if w := word.Load() >> shift & 3; w != 0 {
+		return int(w)
+	}
+	w := max(1, uniseg.StringWidth(string(c)))
+	for {
+		old := word.Load()
+		if word.CompareAndSwap(old, old|uint32(w)<<shift) {
+			return w
+		}
+	}
 }
+
+// cachedWidthRunes covers the BMP, emoji and CJK extension planes.
+const cachedWidthRunes = 0x30000
+
+// runeWidths caches runeCellWidth, filled on first use. Panes parse
+// concurrently, so entries are read and set atomically.
+var runeWidths [cachedWidthRunes / 16]atomic.Uint32
 
 // blankCell returns the glyph that erase operations write: the current
 // colours without character attributes, link or image.
@@ -646,24 +670,12 @@ func (t *State) blankCell() Glyph {
 	return g
 }
 
-// fillGlyphs sets every glyph in row to g. Doubling copies move memory in
-// blocks instead of storing one 56-byte glyph at a time.
-func fillGlyphs(row []Glyph, g Glyph) {
-	if len(row) == 0 {
-		return
-	}
-	row[0] = g
-	for n := 1; n < len(row); n *= 2 {
-		copy(row[n:], row[:n])
-	}
-}
-
 func (t *State) eraseCell(x, y int) {
-	t.lines[y][x] = t.blankCell()
+	t.lines[y].set(x, t.blankCell())
 }
 
 func (t *State) eraseWideAt(x, y int) {
-	switch t.lines[y][x].Width {
+	switch t.lines[y].cells[x].width() {
 	case -1:
 		if x > 0 {
 			t.eraseCell(x-1, y)
@@ -677,9 +689,9 @@ func (t *State) eraseWideAt(x, y int) {
 
 func (t *State) repairWideRow(y int) {
 	for x := 0; x < t.cols; x++ {
-		switch t.lines[y][x].Width {
+		switch t.lines[y].cells[x].width() {
 		case 2:
-			if x+1 < t.cols && t.lines[y][x+1].Width == -1 {
+			if x+1 < t.cols && t.lines[y].cells[x+1].width() == -1 {
 				x++
 			} else {
 				t.eraseCell(x, y)
@@ -732,8 +744,8 @@ func (t *State) resize(cols, rows int) bool {
 	}
 
 	lines, altLines, tabs := t.lines, t.altLines, t.tabs
-	t.lines = make([]line, rows)
-	t.altLines = make([]line, rows)
+	t.lines = make([]Row, rows)
+	t.altLines = make([]Row, rows)
 	t.dirty = make([]bool, rows)
 	t.tabs = make([]bool, cols)
 
@@ -742,12 +754,12 @@ func (t *State) resize(cols, rows int) bool {
 	t.changed |= ChangedScreen
 	for i := 0; i < rows; i++ {
 		t.markDirty(i)
-		t.lines[i] = makeLine(cols)
-		t.altLines[i] = makeLine(cols)
+		t.lines[i] = newRow(cols)
+		t.altLines[i] = newRow(cols)
 	}
 	for i := 0; i < minrows; i++ {
-		copy(t.lines[i], lines[i])
-		copy(t.altLines[i], altLines[i])
+		t.lines[i].copyCells(lines[i])
+		t.altLines[i].copyCells(altLines[i])
 	}
 	copy(t.tabs, tabs)
 	if cols > t.cols {
@@ -795,13 +807,13 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 	for y := y0; y <= y1; y++ {
 		t.markDirty(y)
 		start, end := x0, x1
-		if t.lines[y][start].Width == -1 && start > 0 {
+		if t.lines[y].cells[start].width() == -1 && start > 0 {
 			start--
 		}
-		if t.lines[y][end].Width == 2 && end+1 < t.cols {
+		if t.lines[y].cells[end].width() == 2 && end+1 < t.cols {
 			end++
 		}
-		fillGlyphs(t.lines[y][start:end+1], blank)
+		t.lines[y].fill(start, end+1, blank)
 	}
 }
 
@@ -903,9 +915,7 @@ func (t *State) scrollUp(orig, n int) {
 	// Only fire when orig == 0 — rows leaving the top of the visible screen.
 	if t.scrollRowCb != nil && orig == 0 {
 		for i := 0; i < n; i++ {
-			if spare := t.scrollRowCb(t.lines[i]); spare != nil {
-				t.lines[i] = spare // cleared below with the departing rows
-			}
+			t.scrollRowCb(t.lines[i])
 		}
 	}
 	t.clear(0, orig, t.cols-1, orig+n-1)
@@ -1280,7 +1290,7 @@ func (t *State) insertBlanks(n int) {
 	if dst >= t.cols {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
-		copy(t.lines[t.cur.Y][dst:dst+size], t.lines[t.cur.Y][src:src+size])
+		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
 		for x := src; x < dst; x++ {
 			t.eraseCell(x, t.cur.Y)
 		}
@@ -1313,7 +1323,7 @@ func (t *State) deleteChars(n int) {
 	if src >= t.cols {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
-		copy(t.lines[t.cur.Y][dst:dst+size], t.lines[t.cur.Y][src:src+size])
+		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
 		for x := t.cols - n; x < t.cols; x++ {
 			t.eraseCell(x, t.cur.Y)
 		}

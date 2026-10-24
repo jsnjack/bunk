@@ -46,7 +46,7 @@ func (p *Pane) reflowCells(cols, rows int) {
 	contentRows := findContentRows(p.term, oldCols, oldRows)
 	total := p.sb.count + contentRows
 	for r := 0; r < total; r++ {
-		source := p.sb.get(r)
+		source := p.sb.view(r)
 		if r >= p.sb.count {
 			source = captureRow(p.term, r-p.sb.count, oldCols)
 		}
@@ -112,7 +112,7 @@ func (p *Pane) reflowCells(cols, rows int) {
 	dropped := storedRows - result.count
 	p.sb = sbRing{maxLines: p.scrollbackLines}
 	for r := dropped; r < firstVisible; r++ {
-		p.sb.push(result.get(r - dropped))
+		p.sb.pushRow(result.row(r - dropped))
 	}
 	visible := make([][]vt10x.Glyph, rows)
 	for r := 0; r < rows; r++ {
