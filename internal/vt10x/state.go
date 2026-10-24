@@ -203,8 +203,8 @@ type State struct {
 	// scrollRowCb, if non-nil, is called once per row that scrolls off the
 	// top of the primary screen (orig == 0 in scrollUp).  It fires before
 	// the row's backing storage is cleared, so the content is still intact.
-	// The caller must copy any data it wants to retain after the call.
-	scrollRowCb func(row []Glyph)
+	// A non-nil result replaces the row, which the callback then owns.
+	scrollRowCb func(row []Glyph) []Glyph
 	// sbClearCb, if non-nil, is called when the application requests
 	// scrollback erasure via ED 3 (CSI 3 J) or RIS (ESC c).  Scrollback
 	// lives outside this State (which only holds the visible grid), so
@@ -903,7 +903,9 @@ func (t *State) scrollUp(orig, n int) {
 	// Only fire when orig == 0 — rows leaving the top of the visible screen.
 	if t.scrollRowCb != nil && orig == 0 {
 		for i := 0; i < n; i++ {
-			t.scrollRowCb([]Glyph(t.lines[i]))
+			if spare := t.scrollRowCb(t.lines[i]); spare != nil {
+				t.lines[i] = spare // cleared below with the departing rows
+			}
 		}
 	}
 	t.clear(0, orig, t.cols-1, orig+n-1)

@@ -84,8 +84,8 @@ func TestASCIIFastPathMatchesRuneParser(t *testing.T) {
 		data := randomStream(rng, cols, rows)
 
 		var fastRows, slowRows [][]Glyph
-		record := func(dst *[][]Glyph) func([]Glyph) {
-			return func(row []Glyph) { *dst = append(*dst, append([]Glyph(nil), row...)) }
+		record := func(dst *[][]Glyph) func([]Glyph) []Glyph {
+			return func(row []Glyph) []Glyph { *dst = append(*dst, append([]Glyph(nil), row...)); return nil }
 		}
 		fast := New(WithSize(cols, rows), WithScrollCallback(record(&fastRows))).(*terminal)
 		slow := New(WithSize(cols, rows), WithScrollCallback(record(&slowRows))).(*terminal)

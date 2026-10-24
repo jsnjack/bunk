@@ -36,6 +36,22 @@ type sbRing struct {
 	count    int             // number of valid entries (0 … maxLines)
 }
 
+// nextSlot returns the slot for a new line, evicting the oldest line when
+// the ring is full.
+func (s *sbRing) nextSlot() int {
+	if s.lines == nil {
+		s.lines = make([][]vt10x.Glyph, s.maxLines)
+	}
+	if s.count < s.maxLines {
+		s.count++
+		return (s.head + s.count - 1) % s.maxLines
+	}
+	// Ring is full: overwrite oldest slot (head), advance head.
+	slot := s.head
+	s.head = (s.head + 1) % s.maxLines
+	return slot
+}
+
 // push appends one captured row to the ring.  When the ring is full, the
 // oldest entry is evicted.  The ring owns its backing storage: each slot's
 // []vt10x.Glyph is reused when the incoming row fits (same or narrower width),
@@ -46,20 +62,7 @@ func (s *sbRing) push(row []vt10x.Glyph) {
 	if s.maxLines <= 0 {
 		return
 	}
-	if s.lines == nil {
-		s.lines = make([][]vt10x.Glyph, s.maxLines)
-	}
-
-	// Determine the destination slot.
-	var slot int
-	if s.count < s.maxLines {
-		slot = (s.head + s.count) % s.maxLines
-		s.count++
-	} else {
-		// Ring is full: overwrite oldest slot (head), advance head.
-		slot = s.head
-		s.head = (s.head + 1) % s.maxLines
-	}
+	slot := s.nextSlot()
 
 	// Reuse the slot's existing backing array when capacity allows;
 	// allocate a new one only when the row is wider than the current slot.
@@ -69,6 +72,23 @@ func (s *sbRing) push(row []vt10x.Glyph) {
 		s.lines[slot] = make([]vt10x.Glyph, len(row))
 	}
 	copy(s.lines[slot], row)
+}
+
+// swapIn appends row without copying it: the ring keeps row itself. It
+// returns a slice of the same length for the caller to reuse, taken from the
+// evicted slot when that storage is large enough. It returns nil, keeping
+// nothing, when scrollback is disabled.
+func (s *sbRing) swapIn(row []vt10x.Glyph) []vt10x.Glyph {
+	if s.maxLines <= 0 {
+		return nil
+	}
+	slot := s.nextSlot()
+	spare := s.lines[slot]
+	s.lines[slot] = row
+	if cap(spare) < len(row) {
+		return make([]vt10x.Glyph, len(row))
+	}
+	return spare[:len(row)]
 }
 
 // clear empties the ring in place.  Backing row storage is kept so

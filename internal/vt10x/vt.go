@@ -106,9 +106,8 @@ type TerminalInfo struct {
 	cols, rows int
 	// scrollCb is called synchronously inside scrollUp() for each row that
 	// leaves the top of the primary screen (orig == 0), before that row's
-	// backing storage is cleared.  The slice is only valid for the duration
-	// of the call; the receiver must copy any content it wants to retain.
-	scrollCb func(row []Glyph)
+	// backing storage is cleared.  See WithScrollCallback for ownership.
+	scrollCb func(row []Glyph) []Glyph
 	// sbClearCb is called when the application requests scrollback erasure:
 	// ED 3 (CSI 3 J, the xterm E3 extension sent by clear(1)) or RIS
 	// (ESC c, sent by reset(1)).
@@ -158,9 +157,13 @@ func WithSize(cols, rows int) TerminalOption {
 
 // WithScrollCallback installs a callback that fires once per row scrolled off
 // the top of the primary screen.  The callback runs synchronously inside
-// terminal mutation code; it must be fast and non-blocking.  The row slice
-// is only valid for the duration of the call.
-func WithScrollCallback(fn func(row []Glyph)) TerminalOption {
+// terminal mutation code; it must be fast and non-blocking.
+//
+// A callback that returns nil leaves row with the terminal; row is only valid
+// for the duration of the call. A callback may instead keep row and return a
+// replacement slice of the same length, which the terminal clears and uses
+// in its place. Handing rows over this way avoids copying each row.
+func WithScrollCallback(fn func(row []Glyph) []Glyph) TerminalOption {
 	return func(info *TerminalInfo) {
 		info.scrollCb = fn
 	}

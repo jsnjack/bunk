@@ -283,3 +283,8 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
   rune-at-a-time parser on random streams, including wide-cell invariants.
 - Grapheme clusters are capped at two cells. uniseg adds Prepend widths
   (`\u0600\u0600a` reported 3), which left orphan continuation cells.
+- Scrollback keeps departing rows instead of copying them, and PTY framing
+  reuses its output buffer. `BenchmarkPaneOutput` (200×50, 10 000-line
+  scrollback) went from 71 to 84 MB/s ASCII. With a 100-line scrollback the
+  same path runs at about 200 MB/s: each stored row is 200 cells × 56 bytes,
+  so scrollback memory traffic now limits throughput.

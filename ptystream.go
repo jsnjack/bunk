@@ -1,6 +1,10 @@
 package main
 
-import "bunk/internal/graphics"
+import (
+	"bytes"
+
+	"bunk/internal/graphics"
+)
 
 type ptyParseState uint8
 
@@ -21,15 +25,29 @@ type ptyStream struct {
 	utf8     []byte
 	discard  bool
 	graphics bool
+	out      []byte // reused by scan; its result is valid until the next call
 }
 
+// maxReusedOutput caps the output buffer kept between scans, so one large
+// image transfer does not pin its memory.
+const maxReusedOutput = 1 << 20
+
+// scan returns the framed bytes of chunk. The result is valid until the next
+// call to scan.
 func (s *ptyStream) scan(chunk []byte) []byte {
-	out := append([]byte(nil), s.utf8...)
+	out := append(s.out[:0], s.utf8...)
 	s.utf8 = s.utf8[:0]
-	for _, b := range chunk {
+	for i := 0; i < len(chunk); i++ {
+		b := chunk[i]
 		if s.state == ptyText {
 			if b != 0x1b {
-				out = append(out, b)
+				// Copy the text up to the next ESC in one append.
+				end := len(chunk)
+				if j := bytes.IndexByte(chunk[i:], 0x1b); j >= 0 {
+					end = i + j
+				}
+				out = append(out, chunk[i:end]...)
+				i = end - 1
 				continue
 			}
 			s.state = ptyEscape
@@ -105,6 +123,10 @@ func (s *ptyStream) scan(chunk []byte) []byte {
 	}
 	split := utf8Boundary(out)
 	s.utf8 = append(s.utf8, out[split:]...)
+	s.out = out
+	if cap(out) > maxReusedOutput {
+		s.out = nil
+	}
 	return out[:split]
 }
 
