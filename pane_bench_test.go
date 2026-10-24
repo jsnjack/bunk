@@ -13,12 +13,15 @@ import (
 // output: framing, OSC scanning, query replies, vt10x parsing and scrollback
 // capture. Redraw signalling is left out.
 func BenchmarkPaneOutput(b *testing.B) {
-	for _, kind := range []string{"ascii", "sgr"} {
+	for _, kind := range []string{"ascii", "full-rows", "sgr"} {
 		var buf bytes.Buffer
 		for i := 0; buf.Len() < 1<<20; i++ {
-			if kind == "ascii" {
+			switch kind {
+			case "ascii":
 				fmt.Fprintf(&buf, "%06d the quick brown fox jumps over the lazy dog 0123456789 abcdefghijklmnopqrstuvwxyz\r\n", i)
-			} else {
+			case "full-rows":
+				fmt.Fprintf(&buf, "%06d %s\r\n", i, bytes.Repeat([]byte{'a' + byte(i%26)}, 193))
+			default:
 				fmt.Fprintf(&buf, "\x1b[38;2;%d;%d;%dm%06d\x1b[0m \x1b[1;34msrc/file_%d.go\x1b[0m:\x1b[33m%d\x1b[0m func main() {}\r\n",
 					i%256, (i*7)%256, (i*13)%256, i, i%97, i%400)
 			}

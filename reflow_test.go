@@ -268,8 +268,12 @@ func TestCellReflowLogicalLines(t *testing.T) {
 				if got := paneLogicalText(p); got != want {
 					t.Fatalf("width %d: got %q, want %q", cols, got, want)
 				}
+				// Stored rows drop trailing blanks, but none may be wider than
+				// the pane, and a soft-wrapped row must span it exactly.
 				for r := 0; r < p.sb.count; r++ {
-					if len(p.sb.get(r)) != cols {
+					row := p.sb.get(r)
+					wrapped := len(row) > 0 && row[len(row)-1].Mode&vt10x.AttrWrap != 0
+					if len(row) > cols || wrapped && len(row) != cols {
 						t.Fatal("stale-width scrollback")
 					}
 				}

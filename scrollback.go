@@ -63,6 +63,7 @@ func (s *sbRing) push(row []vt10x.Glyph) {
 		return
 	}
 	slot := s.nextSlot()
+	row = row[:storedLen(row)]
 
 	// Reuse the slot's existing backing array when capacity allows;
 	// allocate a new one only when the row is wider than the current slot.
@@ -72,6 +73,39 @@ func (s *sbRing) push(row []vt10x.Glyph) {
 		s.lines[slot] = make([]vt10x.Glyph, len(row))
 	}
 	copy(s.lines[slot], row)
+}
+
+// storedLen returns the length of row without its trailing plain blanks.
+// Readers treat cells past the end of a stored row as default blanks, so
+// dropping these cells changes nothing on screen, in copies or in search,
+// and keeps scrollback writes proportional to the text.
+func storedLen(row []vt10x.Glyph) int {
+	n := len(row)
+	for n > 0 && isPlainBlank(row[n-1]) {
+		n--
+	}
+	return n
+}
+
+// isPlainBlank reports whether g draws, copies, searches and reflows like a
+// missing cell. Its foreground colour is invisible without text or
+// decorations. A soft-wrapped row keeps its last cell, which carries the
+// wrap flag.
+func isPlainBlank(g vt10x.Glyph) bool {
+	return (g.Char == ' ' || g.Char == 0) && g.Width >= 0 && g.Width <= 1 &&
+		g.Mode == 0 && g.BG == vt10x.DefaultBG && g.Link == 0 &&
+		g.Combining == "" && g.Image == nil
+}
+
+// keep stores a row that vt10x is about to clear. A row with trailing
+// blanks is copied without them and keep returns nil. A row without any is
+// kept as is, and keep returns a spare row for vt10x to clear and reuse.
+func (s *sbRing) keep(row []vt10x.Glyph) []vt10x.Glyph {
+	if n := storedLen(row); n < len(row) {
+		s.push(row[:n])
+		return nil
+	}
+	return s.swapIn(row)
 }
 
 // swapIn appends row without copying it: the ring keeps row itself. It

@@ -484,15 +484,15 @@ func isInPlaceLineUpdate(chunk []byte) bool {
 // Alt-screen scrolls must be ignored: TUI apps (vim, htop, less) use the
 // alt-screen and their scroll events must not populate primary scrollback.
 //
-// The ring keeps row itself and hands vt10x a spare row in exchange, so no
-// row is copied.
+// Full rows are handed to the ring without copying; other rows are copied
+// without their trailing blanks.
 func (p *Pane) onScrollRow(row []vt10x.Glyph) []vt10x.Glyph {
 	if p.term.Mode()&vt10x.ModeAltScreen != 0 {
 		return nil
 	}
 	oldCount := p.sb.count
 	oldSbOff := p.sbOff
-	spare := p.sb.swapIn(row)
+	spare := p.sb.keep(row)
 	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
 	return spare
 }
