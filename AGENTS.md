@@ -20,8 +20,9 @@ other TUI apps.
 main.go             Entry point — calls Execute()
 cmd.go              cobra root command, run(), app initialization
 cmd_config.go       "bunk config" subcommand tree
-app.go              App struct, event loop, key handling (keyToBytes), triggerRedraw()
-input_modes.go      Application cursor/keypad encoding and host focus forwarding
+app.go              App struct, event loop, key handling, triggerRedraw()
+input_modes.go      Host focus forwarding
+input_tcell.go      tcell key/mouse events → internal/input (keyToBytesMode, mouseToBytes)
 pane.go             Pane struct, PTY spawn, readPTY, captureAndWrite, scrollback capture
 ptystream.go        Bounded streaming UTF-8/control framing before PTY parsing
 render.go           render(), renderPane(), vtColor(), border/scrollbar drawing
@@ -47,11 +48,15 @@ internal/vt10x/     Vendored VT100/ANSI emulator (fork of github.com/hinshun/vt1
   vt.go             Terminal / View interfaces, New() constructor
   vt_posix.go       terminal concrete type, Write, Parse (POSIX)
   color.go          Color type, named colour constants
+  row.go            16-byte cell storage, Row with per-row side table
   grapheme.go       Incremental grapheme assembly and bounded cell text
   status.go         DECRQSS setting serialization
   graphics.go       Image-to-cell painting, Kitty placement deletion
 
 internal/graphics/ Bounded SIXEL, Kitty, and iTerm2 static image decoders
+
+internal/input/     Toolkit-neutral key, mouse, focus and paste encoding
+                    (legacy, application cursor/keypad, Kitty CSI u)
 
 third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
                     (local go.mod replacement; see BUNK_PATCHES.md)

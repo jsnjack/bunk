@@ -24,10 +24,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"bunk/internal/input"
 	"bunk/internal/vt10x"
 
 	"github.com/creack/pty"
-	"github.com/gdamore/tcell/v2"
 )
 
 // defaultScrollbackLines is the default maximum number of scrollback lines
@@ -1590,8 +1590,8 @@ func xtgettcapResponse(hexCap string, flags int, mode vt10x.ModeFlag) string {
 	name := string(capBytes)
 	val, ok := caps[name]
 	if !ok {
-		if ev := capabilityKey(name); ev != nil {
-			val = string(keyToBytesMode(ev, flags, mode))
+		if ev, found := capabilityKey(name); found {
+			val = string(input.EncodeKey(ev, paneInputModes(flags, mode)))
 			ok = val != ""
 		}
 	}
@@ -1604,24 +1604,25 @@ func xtgettcapResponse(hexCap string, flags int, mode vt10x.ModeFlag) string {
 
 // capabilityKey maps terminfo/termcap names to the same events used for input.
 // Replies therefore follow the pane's negotiated modes, not the outer terminal.
-func capabilityKey(name string) *tcell.EventKey {
+func capabilityKey(name string) (input.Event, bool) {
 	for _, entry := range []struct {
 		info, cap string
-		key       tcell.Key
+		key       input.Key
 	}{
-		{"kcuu1", "ku", tcell.KeyUp}, {"kcud1", "kd", tcell.KeyDown},
-		{"kcub1", "kl", tcell.KeyLeft}, {"kcuf1", "kr", tcell.KeyRight},
-		{"khome", "kh", tcell.KeyHome}, {"kend", "@7", tcell.KeyEnd},
-		{"kich1", "kI", tcell.KeyInsert}, {"kdch1", "kD", tcell.KeyDelete},
-		{"kpp", "kP", tcell.KeyPgUp}, {"knp", "kN", tcell.KeyPgDn},
-		{"kbs", "kb", tcell.KeyBackspace2}, {"kcbt", "kB", tcell.KeyBacktab},
+		{"kcuu1", "ku", input.KeyUp}, {"kcud1", "kd", input.KeyDown},
+		{"kcub1", "kl", input.KeyLeft}, {"kcuf1", "kr", input.KeyRight},
+		{"khome", "kh", input.KeyHome}, {"kend", "@7", input.KeyEnd},
+		{"kich1", "kI", input.KeyInsert}, {"kdch1", "kD", input.KeyDelete},
+		{"kpp", "kP", input.KeyPgUp}, {"knp", "kN", input.KeyPgDn},
+		// bunk's tcell turns Backspace into BS, so kbs reports BS.
+		{"kbs", "kb", input.KeyBS}, {"kcbt", "kB", input.KeyBacktab},
 	} {
 		if name == entry.info || name == entry.cap {
-			return tcell.NewEventKey(entry.key, 0, 0)
+			return input.Event{Key: entry.key}, true
 		}
 	}
 	if name == "kent" || name == "@8" {
-		return tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModKeypad)
+		return input.Event{Key: input.KeyEnter, Mod: input.ModKeypad}, true
 	}
 	for n := 1; n <= 24; n++ {
 		capName := ""
@@ -1636,18 +1637,18 @@ func capabilityKey(name string) *tcell.EventKey {
 			capName = "F" + string(rune('A'+n-20))
 		}
 		if name == fmt.Sprintf("kf%d", n) || name == capName {
-			return tcell.NewEventKey(tcell.KeyF1+tcell.Key(n-1), 0, 0)
+			return input.Event{Key: input.KeyF(n)}, true
 		}
 	}
 	for _, entry := range []struct {
 		name string
-		key  tcell.Key
+		key  input.Key
 	}{
-		{"kUP", tcell.KeyUp}, {"kDN", tcell.KeyDown},
-		{"kLFT", tcell.KeyLeft}, {"kRIT", tcell.KeyRight},
-		{"kHOM", tcell.KeyHome}, {"kEND", tcell.KeyEnd},
-		{"kIC", tcell.KeyInsert}, {"kDC", tcell.KeyDelete},
-		{"kPRV", tcell.KeyPgUp}, {"kNXT", tcell.KeyPgDn},
+		{"kUP", input.KeyUp}, {"kDN", input.KeyDown},
+		{"kLFT", input.KeyLeft}, {"kRIT", input.KeyRight},
+		{"kHOM", input.KeyHome}, {"kEND", input.KeyEnd},
+		{"kIC", input.KeyInsert}, {"kDC", input.KeyDelete},
+		{"kPRV", input.KeyPgUp}, {"kNXT", input.KeyPgDn},
 	} {
 		modifier := 2
 		if name != entry.name {
@@ -1656,17 +1657,17 @@ func capabilityKey(name string) *tcell.EventKey {
 			}
 			modifier = int(name[len(name)-1] - '0')
 		}
-		var mod tcell.ModMask
+		var mod input.Mod
 		if (modifier-1)&1 != 0 {
-			mod |= tcell.ModShift
+			mod |= input.ModShift
 		}
 		if (modifier-1)&2 != 0 {
-			mod |= tcell.ModAlt
+			mod |= input.ModAlt
 		}
 		if (modifier-1)&4 != 0 {
-			mod |= tcell.ModCtrl
+			mod |= input.ModCtrl
 		}
-		return tcell.NewEventKey(entry.key, 0, mod)
+		return input.Event{Key: entry.key, Mod: mod}, true
 	}
-	return nil
+	return input.Event{}, false
 }

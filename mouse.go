@@ -46,7 +46,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"time"
 	"unicode"
@@ -463,84 +462,6 @@ func (app *App) handlePaste(ev *tcell.EventPaste) {
 	} else {
 		active.writeInput([]byte("\x1b[201~"))
 	}
-}
-
-// mouseToBytes encodes a tcell mouse event into the raw ANSI byte sequence
-// the PTY expects.  x and y are 1-indexed pane-local coordinates.
-//
-// Release detection: when btn is ButtonNone and prevBtn was a real button,
-// we generate a release for the button that was just released.
-func mouseToBytes(btn, prevBtn tcell.ButtonMask, mod tcell.ModMask, x, y int, sgr bool) []byte {
-	release := btn == tcell.ButtonNone && prevBtn != tcell.ButtonNone
-
-	// Which button is relevant for this event?
-	activebtn := btn
-	if release {
-		activebtn = prevBtn
-	}
-
-	// Map tcell buttons to ANSI button codes.
-	// Note: tcell.Button2=right, tcell.Button3=middle (not the usual ordering).
-	var cb int
-	switch activebtn {
-	case tcell.Button1:
-		cb = 0 // left
-	case tcell.Button3:
-		cb = 1 // middle
-	case tcell.Button2:
-		cb = 2 // right
-	case tcell.WheelUp:
-		cb = 64
-	case tcell.WheelDown:
-		cb = 65
-	case tcell.WheelLeft:
-		cb = 66
-	case tcell.WheelRight:
-		cb = 67
-	case tcell.ButtonNone:
-		cb = 35 // pure motion: base code 3 + 32
-	default:
-		return nil
-	}
-
-	if mod&tcell.ModShift != 0 {
-		cb |= 4
-	}
-	if mod&tcell.ModAlt != 0 {
-		cb |= 8
-	}
-	if mod&tcell.ModCtrl != 0 {
-		cb |= 16
-	}
-
-	// Set the motion bit (32) for button-held drag events.
-	// ANSI protocol: bit 5 indicates "motion" — same button as last event,
-	// not a fresh press.  Without this, every drag position looks like a
-	// new press and apps restart selection at each intermediate point.
-	// Pure motion (ButtonNone) already has it embedded in cb=35 above.
-	// Wheel events don't need it — they never produce drag sequences.
-	isWheel := activebtn == tcell.WheelUp || activebtn == tcell.WheelDown ||
-		activebtn == tcell.WheelLeft || activebtn == tcell.WheelRight
-	if !release && !isWheel && activebtn != tcell.ButtonNone && prevBtn == btn {
-		cb |= 32
-	}
-
-	if sgr {
-		final := 'M'
-		if release {
-			final = 'm'
-		}
-		return []byte(fmt.Sprintf("\x1b[<%d;%d;%d%c", cb, x, y, final))
-	}
-
-	// X10/normal encoding - coordinates capped at 223 (byte limit).
-	if x > 223 || y > 223 {
-		return nil
-	}
-	if release {
-		cb = 3
-	}
-	return []byte{'\x1b', '[', 'M', byte(cb + 32), byte(x + 32), byte(y + 32)}
 }
 
 // sendFocusIn sends ESC[I (focus gained) to p if it has DECSET 1004 enabled
