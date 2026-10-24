@@ -5,7 +5,7 @@ func isControlCode(c rune) bool {
 }
 
 func (t *State) parse(c rune) {
-	t.logf("%q", string(c))
+	t.logRune(c)
 	if isControlCode(c) {
 		if t.handleControlCodes(c) || t.cur.Attr.Mode&attrGfx == 0 {
 			return
@@ -52,17 +52,93 @@ func (t *State) parse(c rune) {
 	t.clusterOpen = true
 }
 
+// putASCII writes the leading run of printable ASCII in p and returns its
+// length. Each byte gets the same result as parse, without grapheme
+// segmentation: an ASCII character never joins a cluster whose lead is a
+// single ASCII character. It returns 0 when the next byte needs parse.
+func (t *State) putASCII(p []byte) int {
+	if t.state != stateGround || t.DebugLogger != nil ||
+		t.mode&ModeInsert != 0 || t.cur.Attr.Mode&attrGfx != 0 {
+		return 0
+	}
+	// parse moves the cursor into the scroll region after the first
+	// character; leave that case to it.
+	if t.cur.State&cursorOrigin != 0 && (t.cur.Y < t.top || t.cur.Y > t.bottom) {
+		return 0
+	}
+	if t.clusterOpen && t.clusterX < t.cols && t.clusterY < t.rows {
+		g := t.lines[t.clusterY][t.clusterX]
+		if g.Width < 0 || g.Char >= 0x80 || g.Combining != "" {
+			return 0
+		}
+	}
+	n := 0
+	for n < len(p) && p[n] >= 0x20 && p[n] < 0x7f {
+		n++
+	}
+	if n == 0 {
+		return 0
+	}
+
+	// The cell template matches what setChar stores for a narrow rune.
+	attr := &t.cur.Attr
+	cell := *attr
+	cell.Combining, cell.Width = "", 1
+	if attr.Mode&attrBold != 0 && attr.FG < 8 {
+		cell.FG = attr.FG + 8
+	}
+	if attr.Mode&attrReverse != 0 {
+		cell.FG, cell.BG = attr.BG, attr.FG
+	}
+	t.changed |= ChangedScreen
+	for i := 0; i < n; {
+		if t.cur.State&cursorWrapNext != 0 && t.mode&ModeWrap != 0 {
+			t.lines[t.cur.Y][t.cols-1].Mode |= attrWrap
+			t.newline(true)
+		}
+		// Write the part of the run that fits on this row. A wide character
+		// inside the segment is overwritten whole, so only the segment's
+		// edges can split one.
+		x, y := t.cur.X, t.cur.Y
+		row := t.lines[y]
+		k := min(n-i, t.cols-x)
+		if row[x].Width == -1 {
+			t.eraseWideAt(x, y)
+		}
+		if row[x+k-1].Width == 2 {
+			t.eraseWideAt(x+k-1, y)
+		}
+		seg := row[x : x+k]
+		fillGlyphs(seg, cell)
+		for j, b := range p[i : i+k] {
+			seg[j].Char = rune(b)
+		}
+		t.markDirty(y)
+		i += k
+		last := x + k - 1
+		t.clusterX, t.clusterY = last, y
+		if last+1 < t.cols {
+			t.moveTo(last+1, y)
+		} else {
+			t.cur.X = last
+			t.cur.State |= cursorWrapNext
+		}
+	}
+	t.clusterOpen = true
+	return n
+}
+
 func (t *State) parseEsc(c rune) {
 	if t.handleControlCodes(c) {
 		return
 	}
-	next := t.parse
-	t.logf("%q", string(c))
+	next := stateGround
+	t.logRune(c)
 	switch c {
 	case '[':
-		next = t.parseEscCSI
+		next = stateEscCSI
 	case '#':
-		next = t.parseEscTest
+		next = stateEscTest
 	case 'P', // DCS - Device Control String
 		'_', // APC - Application Program Command
 		'^', // PM - Privacy Message
@@ -70,9 +146,9 @@ func (t *State) parseEsc(c rune) {
 		'k': // old title set compatibility
 		t.str.reset()
 		t.str.typ = c
-		next = t.parseEscStr
+		next = stateEscStr
 	case '(': // set primary charset G0
-		next = t.parseEscAltCharset
+		next = stateEscAltCharset
 	case ')', // set secondary charset G1 (ignored)
 		'*', // set tertiary charset G2 (ignored)
 		'+': // set quaternary charset G3 (ignored)
@@ -118,26 +194,26 @@ func (t *State) parseEscCSI(c rune) {
 	if t.handleControlCodes(c) {
 		return
 	}
-	t.logf("%q", string(c))
+	t.logRune(c)
 	if t.csi.put(byte(c)) {
-		t.state = t.parse
+		t.state = stateGround
 		t.handleCSI()
 	}
 }
 
 func (t *State) parseEscStr(c rune) {
-	t.logf("%q", string(c))
+	t.logRune(c)
 	switch c {
 	case 0x18, 0x1a:
-		t.state = t.parse
+		t.state = stateGround
 		t.str.reset()
 		if t.graphics != nil {
 			t.graphics.Abort()
 		}
 	case '\033':
-		t.state = t.parseEscStrEnd
+		t.state = stateEscStrEnd
 	case '\a': // backwards compatiblity to xterm
-		t.state = t.parse
+		t.state = stateGround
 		t.handleSTR()
 	default:
 		t.str.put(c)
@@ -150,7 +226,7 @@ func (t *State) parseEscStrEnd(c rune) {
 		// embedded ESC [ must not turn corrupt image data into pane text.
 		switch c {
 		case '\\', '\a':
-			t.state = t.parse
+			t.state = stateGround
 			t.handleSTR()
 		case 0x18, 0x1a:
 			t.handleControlCodes(c)
@@ -159,15 +235,15 @@ func (t *State) parseEscStrEnd(c rune) {
 		default:
 			t.str.put('\x1b')
 			t.str.put(c)
-			t.state = t.parseEscStr
+			t.state = stateEscStr
 		}
 		return
 	}
 	if t.handleControlCodes(c) {
 		return
 	}
-	t.logf("%q", string(c))
-	t.state = t.parse
+	t.logRune(c)
+	t.state = stateGround
 	if c == '\\' {
 		t.handleSTR()
 	}
@@ -177,7 +253,7 @@ func (t *State) parseEscAltCharset(c rune) {
 	if t.handleControlCodes(c) {
 		return
 	}
-	t.logf("%q", string(c))
+	t.logRune(c)
 	switch c {
 	case '0': // line drawing set
 		t.cur.Attr.Mode |= attrGfx
@@ -191,7 +267,7 @@ func (t *State) parseEscAltCharset(c rune) {
 	default:
 		t.logf("unknown alt. charset '%c'\n", c)
 	}
-	t.state = t.parse
+	t.state = stateGround
 }
 
 func (t *State) parseEscTest(c rune) {
@@ -206,7 +282,7 @@ func (t *State) parseEscTest(c rune) {
 			}
 		}
 	}
-	t.state = t.parse
+	t.state = stateGround
 }
 
 func (t *State) handleControlCodes(c rune) bool {
@@ -235,7 +311,7 @@ func (t *State) handleControlCodes(c rune) bool {
 	// ESC
 	case 033:
 		t.csi.reset()
-		t.state = t.parseEsc
+		t.state = stateEsc
 	// SO, SI
 	case 016, 017:
 		// different charsets not supported. apps should use the correct
@@ -244,7 +320,7 @@ func (t *State) handleControlCodes(c rune) bool {
 	case 032, 030:
 		t.csi.reset()
 		t.str.reset()
-		t.state = t.parse
+		t.state = stateGround
 		if t.graphics != nil {
 			t.graphics.Abort()
 		}

@@ -72,6 +72,9 @@ Key local extensions to vendored vt10x:
   `Glyph.Combining` stores an immutable grapheme suffix, bounded to 1 KiB/cell.
 - DECRQSS reports SGR, scroll margins, and cursor style; unsupported settings
   return a negative response. Unknown DECRQM modes return status 0, not 4.
+- `putASCII` writes printable ASCII runs without grapheme segmentation. Any
+  change to `parse`/`setChar` must keep `TestASCIIFastPathMatchesRuneParser`
+  green; track speed with `go test ./internal/vt10x -bench BenchmarkWrite`.
 
 ---
 

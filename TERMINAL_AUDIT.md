@@ -270,3 +270,16 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
   column wide, matching the emulator's handling of new output at that width.
 - When narrowing would move the cursor into scrollback, the cursor's line
   stays visible and excess rows below it are clipped, as with screen shrinking.
+
+### Parser throughput (2026-10-24)
+
+- Runs of printable ASCII skip grapheme segmentation and fill row segments in
+  block copies. Parser state is an enum, and CSI parameters parse in place.
+- `BenchmarkWrite` (200×50, 1 MiB streams) went from about 9–10 MB/s with
+  ~2 allocations per byte to 240 MB/s ASCII, 86 MB/s SGR-heavy and
+  146 MB/s TUI redraws, with zero allocations. Unicode-heavy output reached
+  18 MB/s; uniseg property lookups now dominate it.
+- `TestASCIIFastPathMatchesRuneParser` compares the fast path with the
+  rune-at-a-time parser on random streams, including wide-cell invariants.
+- Grapheme clusters are capped at two cells. uniseg adds Prepend widths
+  (`\u0600\u0600a` reported 3), which left orphan continuation cells.

@@ -1,7 +1,8 @@
 package vt10x
 
 import (
-	"strings"
+	"bytes"
+	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
 )
@@ -25,20 +26,34 @@ func (t *State) extendGrapheme(c rune) bool {
 	}
 	x, y := t.clusterX, t.clusterY
 	g := t.lines[y][x]
-	text := g.Text() + string(c)
-	_, rest, width, _ := uniseg.FirstGraphemeClusterInString(text, -1)
+	// Build the candidate cluster in a stack buffer; most runes start a new
+	// cluster, and that check should not allocate.
+	var buf [64]byte
+	text := buf[:0]
+	if g.Width >= 0 {
+		if g.Char == 0 {
+			text = append(text, ' ')
+		} else {
+			text = utf8.AppendRune(text, g.Char)
+			text = append(text, g.Combining...)
+		}
+	}
+	text = utf8.AppendRune(text, c)
+	_, rest, width, _ := uniseg.FirstGraphemeCluster(text, -1)
 	// uniseg 0.4.7 does not widen emoji keycap sequences.
-	if strings.ContainsRune(text, '\u20e3') && (g.Char >= '0' && g.Char <= '9' || g.Char == '#' || g.Char == '*') {
+	if bytes.ContainsRune(text, '\u20e3') && (g.Char >= '0' && g.Char <= '9' || g.Char == '#' || g.Char == '*') {
 		width = 2
 	}
-	if rest != "" || (t.mode&ModeGrapheme == 0 && uniseg.StringWidth(string(c)) != 0) {
+	if len(rest) != 0 || (t.mode&ModeGrapheme == 0 && uniseg.StringWidth(string(c)) != 0) {
 		return false
 	}
 	// A pathological combining sequence must not grow per-cell storage forever.
 	if len(text) > 1024 {
 		return true
 	}
-	width = min(t.cols, max(int(g.Width), width))
+	// Cells hold at most two columns. uniseg adds up Prepend widths, so
+	// "\u0600\u0600a" reports 3.
+	width = min(min(t.cols, 2), max(int(g.Width), width))
 	g.Combining += string(c)
 	if x+width > t.cols {
 		if t.mode&ModeWrap == 0 {

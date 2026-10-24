@@ -1,9 +1,9 @@
 package vt10x
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
-	"strings"
 )
 
 // CSI (Control Sequence Introducer)
@@ -36,50 +36,72 @@ func (c *csiEscape) parse() {
 	if len(c.buf) == 1 {
 		return
 	}
-	s := string(c.buf)
+	s := c.buf
 	c.args = c.args[:0]
 	if s[0] == '?' {
 		c.priv = true
 		s = s[1:]
 	}
 	s = s[:len(s)-1]
-	ss := strings.Split(s, ";")
-	for _, p := range ss {
+	// Parameters are split on ';' without converting the buffer to a string.
+	// The first unparseable parameter, including an empty one, ends the list.
+	for {
+		p, rest, more := cutByte(s, ';')
 		// Handle sub-parameters separated by ':' (e.g. "4:3" for curly underline,
 		// "38:2:R:G:B" for RGB colour).  Encode as main*10000+sub so setAttr can
 		// distinguish them from plain parameters without a separate data structure.
 		// Only the FIRST sub-parameter is encoded; deeper sub-params (e.g. the
 		// R:G:B in 38:2:R:G:B) are passed as separate ';'-equivalent args below.
-		if idx := strings.IndexByte(p, ':'); idx >= 0 {
-			main, err := strconv.Atoi(p[:idx])
+		if idx := bytes.IndexByte(p, ':'); idx >= 0 {
+			main, err := atoi(p[:idx])
 			if err != nil {
-				break
+				return
 			}
-			rest := p[idx+1:]
 			// For multi-sub-param forms (e.g. "38:2:255:0:128"), flatten all
 			// sub-params into individual args so the existing colour-parsing
 			// logic in setAttr can handle them identically to the ';' form.
-			subParts := strings.Split(rest, ":")
-			sub, err := strconv.Atoi(subParts[0])
+			first, subRest, subMore := cutByte(p[idx+1:], ':')
+			sub, err := atoi(first)
 			if err != nil {
 				sub = 0
 			}
 			c.args = append(c.args, main*10000+sub+1) // +1: distinguishes 4:0 (→40001) from plain 4 (→4)
-			for _, sp := range subParts[1:] {
-				v, err := strconv.Atoi(sp)
+			for subMore {
+				var sp []byte
+				sp, subRest, subMore = cutByte(subRest, ':')
+				v, err := atoi(sp)
 				if err != nil {
 					break
 				}
 				c.args = append(c.args, v)
 			}
 		} else {
-			i, err := strconv.Atoi(p)
+			i, err := atoi(p)
 			if err != nil {
-				break
+				return
 			}
 			c.args = append(c.args, i)
 		}
+		if !more {
+			return
+		}
+		s = rest
 	}
+}
+
+// cutByte splits s around the first sep, like bytes.Cut with a one-byte
+// separator.
+func cutByte(s []byte, sep byte) (before, after []byte, found bool) {
+	if i := bytes.IndexByte(s, sep); i >= 0 {
+		return s[:i], s[i+1:], true
+	}
+	return s, nil, false
+}
+
+// atoi parses a parameter with strconv.Atoi rules. Short parameters convert
+// to a string on the stack, so the common case does not allocate.
+func atoi(b []byte) (int, error) {
+	return strconv.Atoi(string(b))
 }
 
 func (c *csiEscape) arg(i, def int) int {

@@ -139,7 +139,19 @@ type Cursor struct {
 	// 3=blinking underline, 4=steady underline, 5=blinking bar, 6=steady bar.
 }
 
-type parseState func(c rune)
+// parseState selects the handler for the next rune. A small enum keeps state
+// changes free of the closure allocation a bound method value needs.
+type parseState uint8
+
+const (
+	stateGround parseState = iota
+	stateEsc
+	stateEscCSI
+	stateEscStr
+	stateEscStrEnd
+	stateEscAltCharset
+	stateEscTest
+)
 
 // State represents the terminal emulation state. Use Lock/Unlock
 // methods to synchronize data access with VT.
@@ -215,6 +227,14 @@ func newState(w io.Writer) *State {
 func (t *State) logf(format string, args ...interface{}) {
 	if t.DebugLogger != nil {
 		t.DebugLogger.Printf(format, args...)
+	}
+}
+
+// logRune logs one parsed rune. The nil check comes before string(c), so the
+// parser allocates nothing when debug logging is off.
+func (t *State) logRune(c rune) {
+	if t.DebugLogger != nil {
+		t.DebugLogger.Printf("%q", string(c))
 	}
 }
 
@@ -509,7 +529,22 @@ func (t *State) restoreCursor() {
 }
 
 func (t *State) put(c rune) {
-	t.state(c)
+	switch t.state {
+	case stateGround:
+		t.parse(c)
+	case stateEsc:
+		t.parseEsc(c)
+	case stateEscCSI:
+		t.parseEscCSI(c)
+	case stateEscStr:
+		t.parseEscStr(c)
+	case stateEscStrEnd:
+		t.parseEscStrEnd(c)
+	case stateEscAltCharset:
+		t.parseEscAltCharset(c)
+	case stateEscTest:
+		t.parseEscTest(c)
+	}
 }
 
 func (t *State) putTab(forward bool) {
@@ -601,12 +636,30 @@ func runeCellWidth(c rune) int {
 	return max(1, uniseg.StringWidth(string(c)))
 }
 
-func (t *State) eraseCell(x, y int) {
+// blankCell returns the glyph that erase operations write: the current
+// colours without character attributes, link or image.
+func (t *State) blankCell() Glyph {
 	g := t.cur.Attr
 	g.Char, g.Width, g.Link = ' ', 1, 0
 	g.Mode, g.Combining, g.UL = 0, "", DefaultUL
 	g.Image = nil
-	t.lines[y][x] = g
+	return g
+}
+
+// fillGlyphs sets every glyph in row to g. Doubling copies move memory in
+// blocks instead of storing one 56-byte glyph at a time.
+func fillGlyphs(row []Glyph, g Glyph) {
+	if len(row) == 0 {
+		return
+	}
+	row[0] = g
+	for n := 1; n < len(row); n *= 2 {
+		copy(row[n:], row[:n])
+	}
+}
+
+func (t *State) eraseCell(x, y int) {
+	t.lines[y][x] = t.blankCell()
 }
 
 func (t *State) eraseWideAt(x, y int) {
@@ -738,6 +791,7 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 	y0 = clamp(y0, 0, t.rows-1)
 	y1 = clamp(y1, 0, t.rows-1)
 	t.changed |= ChangedScreen
+	blank := t.blankCell()
 	for y := y0; y <= y1; y++ {
 		t.markDirty(y)
 		start, end := x0, x1
@@ -747,9 +801,7 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 		if t.lines[y][end].Width == 2 && end+1 < t.cols {
 			end++
 		}
-		for x := start; x <= end; x++ {
-			t.eraseCell(x, y)
-		}
+		fillGlyphs(t.lines[y][start:end+1], blank)
 	}
 }
 
@@ -856,6 +908,16 @@ func (t *State) scrollUp(orig, n int) {
 	}
 	t.clear(0, orig, t.cols-1, orig+n-1)
 	t.changed |= ChangedScreen
+	if n == 1 {
+		// Rotate the region up by one row, the common newline case.
+		first := t.lines[orig]
+		copy(t.lines[orig:t.bottom], t.lines[orig+1:t.bottom+1])
+		t.lines[t.bottom] = first
+		for i := orig; i <= t.bottom; i++ {
+			t.markDirty(i)
+		}
+		return
+	}
 	for i := orig; i <= t.bottom-n; i++ {
 		t.lines[i], t.lines[i+n] = t.lines[i+n], t.lines[i]
 		t.markDirty(i)
