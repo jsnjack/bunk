@@ -4,6 +4,7 @@ import (
 	"bunk/internal/notify"
 	"bunk/internal/session"
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -342,8 +343,9 @@ func threePanes(t *testing.T, keys map[string]string) (*App, [3]*Pane, [3]string
 		if err != nil {
 			t.Fatal(err)
 		}
+		// removePane closes a removed pane's PTY itself.
 		t.Cleanup(func() {
-			if err := f.Close(); err != nil {
+			if err := f.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 				t.Error(err)
 			}
 		})
