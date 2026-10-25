@@ -37,9 +37,7 @@ Both front ends run on one Go core. `internal/session` owns the PTY, the emulato
 
 These features are on other branches. This README and its screenshots do not show them yet.
 
-- **Parser speed.** Faster parsing of program output.
 - **Benchmark check.** `make bench-check` compares benchmarks with a stored baseline.
-- **Soak tests.** `make soak` runs long stress tests.
 - **New window.** Deferred: Ctrl+Shift+N shows "not built yet".
 
 ## bunk-gui
@@ -143,6 +141,7 @@ Both front ends share the emulator, so they support the same sequences.
 - **Unicode.** Wide characters, combining marks and emoji sequences stay together through copy, search and reflow.
 - **Images.** SIXEL, Kitty and iTerm2 static images. bunk-gui draws them at full resolution; bunk draws half-block cells.
 - **Queries.** Each pane answers DA, DECRQM, DECRQSS and XTGETTCAP itself, also over SSH.
+- **Throughput.** A session parses agent transcripts at about 180 MB/s and plain text at 400 MB/s on one core.
 
 [TERMINAL_AUDIT.md](TERMINAL_AUDIT.md) lists every feature with its status and limits.
 
@@ -307,6 +306,7 @@ make check         # bunk and the core: fmt, vet, race tests, build, lint
 make gui-test      # bunk-gui: vet, race tests on a headless compositor, packaging checks
 make check-all     # both; run it before calling work done
 make fuzz          # every Fuzz target for FUZZTIME each (default 30s); not in check-all
+make soak          # long leak and soak runs (2000 sessions, 500 MiB of output); not in check-all
 make screenshots   # render the README screenshots into assets/
 make run           # build bunk and open it with --trace in a new terminal
 ```
@@ -314,6 +314,7 @@ make run           # build bunk and open it with --trace in a new terminal
 - **No windows on the desktop.** GUI tests run on a private mutter from `scripts/headless-gui.sh`.
 - **Private session.** The compositor has one 2560x1600 monitor at 133%, its own D-Bus and its own clipboard.
 - **Checks in tests.** Pixel, idle-frame, allocation and latency checks are Go tests. Turn a manual check into a test.
+- **Leak checks.** check-all counts fds, goroutines, child processes and heap around session, TUI and GUI cycles.
 - **Package builds.** `go test -short` skips window tests; the RPM's `%check` uses it.
 - **Tools.** Window tests need mutter, gdctl and dbus-run-session. Packaging checks need desktop-file-validate and appstreamcli.
 - **Screenshots.** `TestGUIScreenshots` renders the README scenario in every `make gui-test`.
