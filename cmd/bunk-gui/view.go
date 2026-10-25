@@ -319,6 +319,47 @@ static guchar* tv_proxy_gl(TermView* v, unsigned int tex, uintptr_t sync, int w,
 }
 
 static guchar* tv_proxy_last(TermView* v) { return v->last ? tv_proxy_composite(v, v->last) : NULL; }
+
+// Renders the last drawn contents of w (a window, its chrome or a popover)
+// offscreen through its native's GSK renderer at the surface scale. The
+// fractional part of the native's surface offset is kept, so terminal
+// textures stay on the device-pixel grid as on screen.
+static guchar* bg_shot(uintptr_t wp, int* ow, int* oh) {
+	GtkWidget* w = (GtkWidget*)wp;
+	GtkNative* nat = gtk_widget_get_native(w);
+	if (!nat || !gtk_widget_get_mapped(w)) return NULL;
+	GskRenderer* r = gtk_native_get_renderer(nat);
+	GdkSurface* surf = gtk_native_get_surface(nat);
+	double scale = surf ? gdk_surface_get_scale(surf) : 1;
+	double sx = 0, sy = 0;
+	gtk_native_get_surface_transform(nat, &sx, &sy);
+	graphene_point_t at;
+	if (!gtk_widget_compute_point(w, GTK_WIDGET(nat), &GRAPHENE_POINT_INIT(0, 0), &at)) return NULL;
+	double dx = (at.x + sx) * scale, dy = (at.y + sy) * scale;
+	dx -= floor(dx);
+	dy -= floor(dy);
+	int lw = gtk_widget_get_width(w), lh = gtk_widget_get_height(w);
+	if (lw <= 0 || lh <= 0) return NULL;
+	GdkPaintable* p = gtk_widget_paintable_new(w);
+	GtkSnapshot* s = gtk_snapshot_new();
+	gtk_snapshot_translate(s, &GRAPHENE_POINT_INIT(dx, dy));
+	gtk_snapshot_scale(s, scale, scale);
+	gdk_paintable_snapshot(p, s, lw, lh);
+	GskRenderNode* n = gtk_snapshot_free_to_node(s);
+	g_object_unref(p);
+	if (!n) return NULL;
+	*ow = (int)floor(lw * scale);
+	*oh = (int)floor(lh * scale);
+	graphene_rect_t vp = GRAPHENE_RECT_INIT(0, 0, *ow, *oh);
+	GdkTexture* t = gsk_renderer_render_texture(r, n, &vp);
+	gsk_render_node_unref(n);
+	if (!t) return NULL;
+	*ow = gdk_texture_get_width(t);
+	*oh = gdk_texture_get_height(t);
+	guchar* data = tv_download(t);
+	g_object_unref(t);
+	return data;
+}
 */
 import "C"
 
@@ -398,6 +439,15 @@ func downloadLastC(v cview) (pix []byte, w, h int) {
 // proxyLastC composites the last texture through the window's GSK renderer.
 func proxyLastC(v cview, w, h int) []byte {
 	return takeC(C.tv_proxy_last(v), w*h*4)
+}
+
+// shotC renders a widget's last drawn contents offscreen at the surface
+// scale (BGRA premultiplied).
+func shotC(w uintptr) (pix []byte, wd, ht int) {
+	var cw, ch C.int
+	p := C.bg_shot(C.uintptr_t(w), &cw, &ch)
+	wd, ht = int(cw), int(ch)
+	return takeC(p, wd*ht*4), wd, ht
 }
 
 // proxyGLC wraps a GL texture, downloads it and composites it.

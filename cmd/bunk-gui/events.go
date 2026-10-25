@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"os"
 	"unicode"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -37,7 +38,10 @@ func (p *Pane) attachInput() {
 	w.AddController(keys)
 
 	focus := gtk.NewEventControllerFocus()
-	focus.ConnectEnter(func() { p.im.FocusIn() })
+	focus.ConnectEnter(func() {
+		p.im.FocusIn()
+		p.app.onPaneFocus(p)
+	})
 	focus.ConnectLeave(func() { p.im.FocusOut() })
 	w.AddController(focus)
 
@@ -72,18 +76,6 @@ func (a *App) onKey(p *Pane, keyval uint, state gdk.ModifierType) bool {
 	case ctrl && shift && (keyval == gdk.KEY_V || keyval == gdk.KEY_v):
 		a.paste(p, false)
 		return true
-	case ctrl && shift && (keyval == gdk.KEY_T || keyval == gdk.KEY_t):
-		a.newTab("", p.s.Cwd())
-		return true
-	case ctrl && shift && (keyval == gdk.KEY_W || keyval == gdk.KEY_w):
-		a.closeTab(p)
-		return true
-	case ctrl && !shift && keyval == gdk.KEY_Page_Up, ctrl && keyval == gdk.KEY_ISO_Left_Tab:
-		a.tabs.SelectPreviousPage()
-		return true
-	case ctrl && !shift && (keyval == gdk.KEY_Page_Down || keyval == gdk.KEY_Tab):
-		a.tabs.SelectNextPage()
-		return true
 	case shift && !ctrl && keyval == gdk.KEY_Page_Up:
 		p.scrollBy(max(1, p.tv.rows-1))
 		return true
@@ -111,9 +103,133 @@ func (a *App) onKey(p *Pane, keyval uint, state gdk.ModifierType) bool {
 	if len(data) == 0 {
 		return false
 	}
+	p.acknowledge()
 	p.snapToLive()
+	p.app.noteInjected()
 	p.write(data)
 	return true
+}
+
+// installShortcuts adds the window's shortcuts. They run in the capture
+// phase, before the focused pane or its input method sees the key, so they
+// work wherever the focus is. Keys that only make sense in some states (Alt+
+// arrows and F12 with a split, Ctrl+B with the rail) reach the terminal
+// otherwise.
+func (a *App) installShortcuts() {
+	keys := gtk.NewEventControllerKey()
+	keys.SetPropagationPhase(gtk.PhaseCapture)
+	keys.ConnectKeyPressed(func(keyval, _ uint, state gdk.ModifierType) bool {
+		return a.onShortcut(keyval, state)
+	})
+	a.win.AddController(keys)
+}
+
+func (a *App) onShortcut(keyval uint, state gdk.ModifierType) bool {
+	state &= gdk.ControlMask | gdk.ShiftMask | gdk.AltMask | gdk.SuperMask
+	ctrl, shift, alt := state&gdk.ControlMask != 0, state&gdk.ShiftMask != 0, state&gdk.AltMask != 0
+	if state&gdk.SuperMask != 0 {
+		return false
+	}
+	t, p := a.active, a.activePane()
+	split := t != nil && t.root != nil && t.root.pane == nil
+	run := func(f func()) bool {
+		if a.switcher != nil {
+			a.closeSwitcher()
+		}
+		f()
+		return true
+	}
+	switch {
+	case ctrl && !shift && !alt && keyval == gdk.KEY_space:
+		a.openSwitcher() // toggles
+		return true
+	case ctrl && !shift && !alt && (keyval == gdk.KEY_j || keyval == gdk.KEY_J):
+		return run(a.jumpNeedingYou)
+	case ctrl && !shift && !alt && keyval >= gdk.KEY_1 && keyval <= gdk.KEY_9:
+		if i := int(keyval - gdk.KEY_1); i < len(a.tabs) {
+			return run(func() { a.selectTab(a.tabs[i]) })
+		}
+		return true
+	case ctrl && !shift && !alt && (keyval == gdk.KEY_b || keyval == gdk.KEY_B) && a.layout == "rail":
+		return run(func() { a.setLayout("rail", !a.railOpen) })
+	case ctrl && !alt && (keyval == gdk.KEY_equal || keyval == gdk.KEY_plus || keyval == gdk.KEY_KP_Add):
+		return run(func() { a.zoom(+1) })
+	case ctrl && !shift && !alt && (keyval == gdk.KEY_minus || keyval == gdk.KEY_KP_Subtract):
+		// Ctrl+Shift+- (Ctrl+_, readline undo) still reaches the terminal.
+		return run(func() { a.zoom(-1) })
+	case ctrl && !shift && !alt && (keyval == gdk.KEY_0 || keyval == gdk.KEY_KP_0):
+		return run(func() { a.zoom(0) })
+	case ctrl && !shift && !alt && (keyval == gdk.KEY_q || keyval == gdk.KEY_Q):
+		return run(func() { a.finish("quit") })
+	// Ctrl+F (Find in the menu) reaches the terminal until Find exists:
+	// shells and vim use it.
+	case ctrl && !shift && !alt && keyval == gdk.KEY_comma:
+		return run(func() { a.menuButtons["Preferences"].Emit("clicked") })
+	case ctrl && !alt && keyval == gdk.KEY_question:
+		return run(func() { a.menuButtons["Keyboard shortcuts"].Emit("clicked") })
+	case ctrl && shift && (keyval == gdk.KEY_N || keyval == gdk.KEY_n):
+		return run(func() { a.toast("New window is not built yet") })
+	case ctrl && shift && (keyval == gdk.KEY_T || keyval == gdk.KEY_t):
+		return run(func() { a.newTab("", a.cwdForNew()) })
+	case ctrl && shift && (keyval == gdk.KEY_W || keyval == gdk.KEY_w):
+		return run(func() { a.closeTab(t) })
+	case ctrl && !shift && keyval == gdk.KEY_Page_Up, ctrl && keyval == gdk.KEY_ISO_Left_Tab:
+		return run(func() { a.selectOffset(-1) })
+	case ctrl && !shift && (keyval == gdk.KEY_Page_Down || keyval == gdk.KEY_Tab):
+		return run(func() { a.selectOffset(+1) })
+	case a.switcher != nil:
+		return false // the switcher's entry gets the rest
+	case !ctrl && !shift && keyval == gdk.KEY_F1 && p != nil:
+		a.splitActive(alt)
+		return true
+	case !ctrl && !shift && !alt && keyval == gdk.KEY_F12 && split:
+		t.toggleZoom(p)
+		return true
+	case alt && !ctrl && !shift && split && t.zoom == nil:
+		switch keyval {
+		case gdk.KEY_Left:
+			t.moveFocus(-1, 0)
+		case gdk.KEY_Right:
+			t.moveFocus(1, 0)
+		case gdk.KEY_Up:
+			t.moveFocus(0, -1)
+		case gdk.KEY_Down:
+			t.moveFocus(0, 1)
+		default:
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// splitActive splits the focused pane (F1). With sameContainer (Alt+F1) the
+// new pane runs $SHELL inside the container the focused pane is in.
+func (a *App) splitActive(sameContainer bool) {
+	p := a.activePane()
+	if p == nil {
+		return
+	}
+	var args []string
+	if sameContainer {
+		p.s.Lock()
+		ct, id := p.s.ContainerType, p.s.ContainerID
+		p.s.Unlock()
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/sh"
+		}
+		args = session.ContainerSpawnArgs(id, ct, shell)
+		switch {
+		case ct == "":
+			a.toast("This pane is not in a container")
+			return
+		case args == nil && ct != "lxd":
+			a.toast("Cannot open a shell in a " + ct + " container")
+			return
+		}
+	}
+	a.split(p, args)
 }
 
 // imCommit sends text the input method composed (plain typing, compose and
@@ -122,8 +238,19 @@ func (p *Pane) imCommit(text string) {
 	if text == "" {
 		return
 	}
+	p.acknowledge()
 	p.snapToLive()
+	p.app.noteInjected()
 	p.write([]byte(text))
+}
+
+// noteInjected records how long a key injected by a test took to reach the
+// PTY write (main thread).
+func (a *App) noteInjected() {
+	if a.injectAt != 0 {
+		a.st.injectWrite.Add(float64(monoNs()-a.injectAt) / 1e3)
+		a.injectAt = 0
+	}
 }
 
 // setPreedit shows IME composition text at the cursor. cursor counts

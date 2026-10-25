@@ -1,18 +1,25 @@
-// Command bunk-gui is a GTK4 terminal window around bunk's session core.
+// Command bunk-gui is a GTK4 terminal for coding agents, around bunk's
+// session core.
 //
-// One AdwApplicationWindow without a title bar holds tabs; each tab is a
-// TermView (view.go): a widget that renders one session with OpenGL into a
-// texture at the exact device-pixel size of the widget, so text stays on the
-// pixel grid at fractional scales. The emulator, PTY and scrollback come
-// from bunk/internal/session; keys and mouse reports are encoded by
+// One AdwApplicationWindow without a title bar holds tabs; a tab is a BSP
+// tree of panes (GtkPaned), and a pane is a TermView (view.go): a widget that
+// renders one session with OpenGL into a texture at the exact device-pixel
+// size of the widget, so text stays on the pixel grid at fractional scales.
+// Tabs show their agent's status in a bar on top or a rail on the side
+// (chrome.go). The emulator, PTY, scrollback and agent status come from
+// bunk/internal/session; keys and mouse reports are encoded by
 // bunk/internal/input.
 //
 //	bunk-gui                     # run $SHELL
 //	bunk-gui -e 'htop'           # run sh -c CMD; quit when it exits
 //	bunk-gui -e 'cat big.txt; sleep 1' -stats -timeout 10s
 //
-// Keys: Ctrl+Shift+C/V copy/paste, Ctrl+Shift+T/W new/close tab,
-// Ctrl+PgUp/PgDn and Ctrl+(Shift+)Tab switch tabs, Shift+PgUp/PgDn scroll.
+// Keys: Ctrl+Shift+T/W/N new/close tab, new window; Ctrl+PgUp/PgDn,
+// Ctrl+(Shift+)Tab and Ctrl+1…9 switch tabs; Ctrl+Space switcher; Ctrl+J next
+// tab needing you; Ctrl+B expand/collapse the rail; F1 / Alt+F1 split (in
+// the same container); F12 zoom pane; Alt+arrows move between panes;
+// Ctrl+= / Ctrl+- / Ctrl+0 text size; Ctrl+Shift+C/V copy/paste;
+// Shift+PgUp/PgDn scroll; Ctrl+Q quit.
 package main
 
 import (
@@ -21,7 +28,9 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -30,6 +39,7 @@ import (
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
 const appID = "io.github.jsnjack.BunkGui"
@@ -46,10 +56,15 @@ type config struct {
 	tabs       listFlag
 	font       string
 	size       string
+	configFile string
+	layout     string
 	dump       string
 	dumpSize   string
 	stats      bool
 	allocProbe bool
+	memProfile string
+	report     string
+	waitFocus  bool
 	verify     bool
 	timeout    time.Duration
 	typeEvery  time.Duration
@@ -63,15 +78,47 @@ type pendingFrame struct {
 	keyNs   int64 // monoNs of the key write drawn in that frame
 }
 
-type App struct {
-	cfg  config
-	app  *adw.Application
-	win  *adw.ApplicationWindow
-	tabs *adw.TabView
-	done chan struct{}
+type atlasKey struct {
+	font  string
+	scale float64
+}
 
+type App struct {
+	cfg      config
+	settings Settings
+	app      *adw.Application
+	win      *adw.ApplicationWindow
+	done     chan struct{}
+
+	// Window content: toasts > overlay (switcher) > rootBox = chrome + stack.
+	toasts     *adw.ToastOverlay
+	overlay    *gtk.Overlay
+	rootBox    *gtk.Box
+	stack      *gtk.Stack
+	chrome     gtk.Widgetter
+	tabsBox    *gtk.Box
+	optionsBtn *gtk.MenuButton
+	menuBox    *gtk.Box
+	zoomLabel  *gtk.Label
+	switcher   *switcher
+	lastToast  string
+	// Chrome widgets the report and the pointer-injection targets name.
+	tabItems    []tabItem
+	newTabBtn   gtk.Widgetter
+	closeWinBtn gtk.Widgetter
+	menuButtons map[string]*gtk.Button
+	about       *adw.AboutDialog
+	toastLog    []string
+	chromeKey   string // what the tab items show, to skip identical rebuilds
+	layout      string // "bar" or "rail"
+	railOpen    bool
+	fontSize    float64 // points; settings.FontSize is 100 %
+	fontDesc    string  // Pango description at fontSize; atlases are keyed by it
+
+	tabs               []*Tab
+	active             *Tab
 	panes              []*Pane // by id; nil once closed
-	atlases            map[float64]*Atlas
+	atlases            map[atlasKey]*Atlas
 	monScale           float64
 	initCols, initRows int
 	clock              uintptr
@@ -82,8 +129,17 @@ type App struct {
 	pending   [256]pendingFrame
 	pendHead  int
 	pendTail  int
-	probeMS   [2]runtime.MemStats
 	mem0      runtime.MemStats
+
+	// -report and test hooks.
+	rep                                *runReport
+	glRenderer, glVersion, gskRenderer string
+	ptrX, ptrY                         float64 // last pointer position over the window
+	injectAt                           int64   // monoNs of the last injected key, 0 if consumed
+	typingStop                         chan struct{}
+	pngJobs                            sync.WaitGroup
+	pngMu                              sync.Mutex
+	pngErrs                            []string
 
 	started            time.Time
 	childExit          atomic.Int64 // UnixNano when a child exited
@@ -96,6 +152,7 @@ type App struct {
 	}
 	exitArmed, finished bool
 	pendingClip         string // OSC 52 text waiting for the window to be active
+	configErr           error
 }
 
 var theApp *App
@@ -106,21 +163,26 @@ func main() {
 	var cfg config
 	flag.StringVar(&cfg.cmd, "e", "", "run `CMD` with sh -c instead of $SHELL in the first tab")
 	flag.Var(&cfg.tabs, "tab", "open another tab running `CMD` (repeatable); the first tab stays selected")
-	flag.StringVar(&cfg.font, "font", "Noto Sans Mono 11", "Pango font description")
+	flag.StringVar(&cfg.font, "font", "", "Pango font description, e.g. \"Noto Sans Mono 11\" (default: config file)")
 	flag.StringVar(&cfg.size, "size", "120x36", "initial size in cells, COLSxROWS")
+	flag.StringVar(&cfg.configFile, "config", configPath(), "settings `FILE` (optional)")
+	flag.StringVar(&cfg.layout, "layout", "", "tab layout: rail or bar (default: config file)")
 	flag.StringVar(&cfg.dump, "dump", "", "on exit, write a PNG crop of the last frame to `FILE`")
 	flag.StringVar(&cfg.dumpSize, "dump-size", "1280x720", "size of the -dump crop in device pixels")
 	flag.BoolVar(&cfg.stats, "stats", false, "print frame statistics on exit")
-	flag.BoolVar(&cfg.allocProbe, "alloc-probe", false, "count heap allocations inside the frame path (implies -stats)")
+	flag.BoolVar(&cfg.allocProbe, "alloc-probe", false, "record every allocation, so marks count objects allocated by the frame path (slow)")
+	flag.StringVar(&cfg.report, "report", "", "on exit, write a JSON record of the run (state snapshots, marks, latencies) to `FILE`")
+	flag.BoolVar(&cfg.waitFocus, "wait-focus", false, "headless tests: give the compositor a keyboard, wait for keyboard focus, then start -do")
+	flag.StringVar(&cfg.memProfile, "memprofile", "", "record every allocation and write the profile to `FILE` on exit (go tool pprof -sample_index=alloc_objects)")
 	flag.BoolVar(&cfg.verify, "verify", false, "on exit, check texel:pixel mapping through GSK")
 	flag.DurationVar(&cfg.timeout, "timeout", 0, "quit after this long (automated runs)")
-	flag.DurationVar(&cfg.typeEvery, "type-every", 0, "write 'x' to the selected tab's PTY at this interval (latency runs)")
+	flag.DurationVar(&cfg.typeEvery, "type-every", 0, "write 'x' to the selected pane's PTY at this interval (latency runs)")
 	flag.DurationVar(&cfg.maximize, "maximize-after", 0, "maximize the window after this long (resize checks)")
-	flag.StringVar(&cfg.script, "do", "", "run test `ACTIONS` on the main thread, e.g. '1s scroll-up 10; 2s dump x.png' (see script.go)")
+	flag.StringVar(&cfg.script, "do", "", "run test `ACTIONS` on the main thread, e.g. '1s scroll 10; 2s dump x.png' (see script.go)")
 	flag.StringVar(&cfg.gsk, "gsk", "gl", "GSK renderer to request when GSK_RENDERER is unset: gl, vulkan, or default")
 	flag.Parse()
-	if cfg.allocProbe {
-		cfg.stats = true
+	if cfg.allocProbe || cfg.memProfile != "" {
+		runtime.MemProfileRate = 1
 	}
 
 	// GTK 4.22 picks the Vulkan GSK renderer by default. With it, every GL
@@ -128,11 +190,33 @@ func main() {
 	// rejects, and GTK copies each frame through the CPU. The GL renderer
 	// samples our texture directly.
 	if os.Getenv("GSK_RENDERER") == "" && cfg.gsk != "default" {
-		os.Setenv("GSK_RENDERER", cfg.gsk)
+		_ = os.Setenv("GSK_RENDERER", cfg.gsk)
+	}
+	// With the GL renderer GDK need not probe Vulkan at all (it logs about
+	// forty loader lines at startup otherwise).
+	if os.Getenv("GSK_RENDERER") == "gl" && os.Getenv("GDK_DISABLE") == "" {
+		_ = os.Setenv("GDK_DISABLE", "vulkan")
 	}
 
-	a := &App{cfg: cfg, done: make(chan struct{}), st: &runStats{}, atlases: map[float64]*Atlas{}}
-	if cfg.stats {
+	a := &App{cfg: cfg, done: make(chan struct{}), st: &runStats{}, atlases: map[atlasKey]*Atlas{},
+		rep: &runReport{Marks: []markReport{}, Snapshots: []*uiSnapshot{}, Errors: []string{}}}
+	a.settings, a.configErr = loadSettings(cfg.configFile)
+	if cfg.font != "" {
+		// A full Pango description: split off a trailing size.
+		a.settings.Font = cfg.font
+		if i := strings.LastIndexByte(cfg.font, ' '); i > 0 {
+			var size float64
+			if _, err := fmt.Sscanf(cfg.font[i+1:], "%g", &size); err == nil && size > 0 {
+				a.settings.Font, a.settings.FontSize = cfg.font[:i], size
+			}
+		}
+	}
+	if cfg.layout == "rail" || cfg.layout == "bar" {
+		a.settings.Tabs = cfg.layout
+	}
+	a.layout, a.railOpen, a.fontSize = a.settings.Tabs, a.settings.RailOpen, a.settings.FontSize
+	a.fontDesc = a.font()
+	if cfg.stats || cfg.report != "" || cfg.allocProbe {
 		a.st = newRunStats()
 	}
 	theApp = a
@@ -151,6 +235,9 @@ func main() {
 	os.Exit(code)
 }
 
+// font returns the Pango description for the current text size.
+func (a *App) font() string { return fmt.Sprintf("%s %g", a.settings.Font, a.fontSize) }
+
 func (a *App) activate() {
 	mons := gdk.DisplayGetDefault().Monitors()
 	a.monScale = 1
@@ -166,16 +253,40 @@ func (a *App) activate() {
 		a.fatal("bad -size %q", a.cfg.size)
 		return
 	}
+	loadCSS()
 
 	a.win = adw.NewApplicationWindow(&a.app.Application)
 	a.win.SetTitle(defaultTitle)
-	a.win.SetContent(a.setupTabs())
+	a.win.AddCSSClass("bunk-window")
+	a.stack = gtk.NewStack()
+	a.stack.SetHExpand(true)
+	a.stack.SetVExpand(true)
+	a.stack.AddCSSClass("bunk-content")
+	a.rootBox = gtk.NewBox(gtk.OrientationHorizontal, 0)
+	a.rootBox.Append(a.stack)
+	a.overlay = gtk.NewOverlay()
+	a.overlay.SetChild(a.rootBox)
+	a.toasts = adw.NewToastOverlay()
+	a.toasts.SetChild(a.overlay)
+	a.win.SetContent(a.toasts)
+	a.buildChrome()
 	// Logical size that holds the grid in device pixels, plus one pixel for
-	// a fractional window origin.
+	// a fractional window origin, plus the chrome.
 	w := int(math.Ceil(float64(a.initCols*atlas.CellW)/a.monScale)) + 1
 	h := int(math.Ceil(float64(a.initRows*atlas.CellH)/a.monScale)) + 1
+	if a.layout == "bar" {
+		h += 44
+	} else if a.railOpen {
+		w += 268
+	} else {
+		w += 48
+	}
 	a.win.SetDefaultSize(w, h)
 	a.win.NotifyProperty("is-active", a.onActive)
+	a.installShortcuts()
+	ptr := gtk.NewEventControllerMotion()
+	ptr.ConnectMotion(func(x, y float64) { a.ptrX, a.ptrY = x, y })
+	a.win.AddController(ptr)
 
 	a.started = time.Now()
 	first := a.newTab(a.cfg.cmd, "")
@@ -185,9 +296,13 @@ func (a *App) activate() {
 	for _, cmd := range a.cfg.tabs {
 		a.newTab(cmd, "")
 	}
-	a.tabs.SetSelectedPage(first.page)
+	a.selectTab(first)
 	a.win.Present()
-	first.widget.GrabFocus()
+	first.focus.widget.GrabFocus()
+	if a.configErr != nil {
+		a.toast("Settings: " + a.configErr.Error())
+		fmt.Fprintln(os.Stderr, "bunk-gui:", a.configErr)
+	}
 
 	a.mainCPU0, a.procCPU0 = threadCPUNs(), procCPUNs()
 	runtime.ReadMemStats(&a.mem0)
@@ -209,7 +324,10 @@ func (a *App) activate() {
 		})
 	}
 	if a.cfg.typeEvery > 0 {
-		go a.typeDriver(a.cfg.typeEvery)
+		coreglib.TimeoutAdd(1000, func() bool { // let the shell start
+			a.startTyping(a.cfg.typeEvery)
+			return false
+		})
 	}
 	if a.cfg.maximize > 0 {
 		coreglib.TimeoutAdd(uint(a.cfg.maximize.Milliseconds()), func() bool {
@@ -217,23 +335,66 @@ func (a *App) activate() {
 			return false
 		})
 	}
+	switch {
+	case a.cfg.waitFocus:
+		a.waitFocus()
+	case a.cfg.script != "":
+		a.startScript()
+	}
+}
+
+// waitFocus readies input on the headless test compositor before -do
+// starts. It has no physical keyboard, so the window gets no keyboard focus
+// (and stays inactive) until the RemoteDesktop session creates a virtual
+// keyboard: tap Shift (and nudge the pointer, for a virtual pointer), wait
+// for the window to become active, then start the script. Script times
+// count from there.
+func (a *App) waitFocus() {
+	err := injectOpen()
+	if err == nil {
+		err = a.addDevices()
+	}
+	if err != nil {
+		a.reportError("-wait-focus: %v", err)
+		a.startScript()
+		return
+	}
+	tries := 0
+	coreglib.TimeoutAdd(50, func() bool {
+		switch {
+		case a.win.IsActive():
+		case tries == 100:
+			a.reportError("-wait-focus: the window did not become active within 5 s")
+		default:
+			tries++
+			return true
+		}
+		a.startScript()
+		return false
+	})
+}
+
+func (a *App) startScript() {
+	a.rep.ActiveMs = time.Since(a.started).Milliseconds()
 	if a.cfg.script != "" {
 		a.runScript(a.cfg.script)
 	}
 }
 
-// atlasFor returns the shared glyph atlas for a device scale.
+// atlasFor returns the shared glyph atlas for the current font at a device
+// scale.
 func (a *App) atlasFor(scale float64) (*Atlas, error) {
-	for s, at := range a.atlases {
-		if math.Abs(s-scale) < 1e-6 {
+	font := a.fontDesc
+	for k, at := range a.atlases {
+		if k.font == font && math.Abs(k.scale-scale) < 1e-6 {
 			return at, nil
 		}
 	}
-	at, err := BuildAtlas(a.cfg.font, scale)
+	at, err := BuildAtlas(font, scale)
 	if err != nil {
 		return nil, err
 	}
-	a.atlases[scale] = at
+	a.atlases[atlasKey{font, scale}] = at
 	return at, nil
 }
 
@@ -248,24 +409,37 @@ func (a *App) fatal(format string, args ...any) {
 	a.app.Quit()
 }
 
-// typeDriver stands in for a typist: it writes 'x' to the selected tab's PTY
-// at a fixed interval, so echo latency can be measured without synthesizing
-// GDK events.
-func (a *App) typeDriver(every time.Duration) {
-	time.Sleep(time.Second) // let the shell start
-	t := time.NewTicker(every)
-	defer t.Stop()
-	var target atomic.Pointer[Pane]
-	coreglib.IdleAdd(func() { target.Store(a.activePane()) })
-	for {
-		select {
-		case <-a.done:
-			return
-		case <-t.C:
-		}
-		if p := target.Load(); p != nil {
+// startTyping stands in for a typist: a goroutine writes 'x' to the
+// focused pane's PTY at a fixed interval, so echo latency can be measured
+// without going through the compositor. stopTyping ends it.
+func (a *App) startTyping(every time.Duration) {
+	a.stopTyping()
+	p := a.activePane()
+	if p == nil {
+		return
+	}
+	stop := make(chan struct{})
+	a.typingStop = stop
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-a.done:
+				return
+			case <-stop:
+				return
+			case <-t.C:
+			}
 			p.write(keyX)
 		}
+	}()
+}
+
+func (a *App) stopTyping() {
+	if a.typingStop != nil {
+		close(a.typingStop)
+		a.typingStop = nil
 	}
 }
 
@@ -307,6 +481,7 @@ func (a *App) finish(reason string) {
 		return
 	}
 	a.finished = true
+	a.stopTyping()
 	p := a.activePane()
 	if p == nil {
 		for _, q := range a.panes {
@@ -322,12 +497,23 @@ func (a *App) finish(reason string) {
 		a.verify(p)
 	}
 	if a.cfg.stats {
-		a.report(p, reason)
+		a.printStats(p, reason)
+	}
+	a.waitPNG()
+	if a.reportOn() {
+		a.writeReport(reason)
+	}
+	if a.cfg.memProfile != "" {
+		runtime.GC() // the profile shows allocations up to the last GC
+		if f, err := os.Create(a.cfg.memProfile); err == nil {
+			_ = pprof.Lookup("allocs").WriteTo(f, 0)
+			_ = f.Close()
+		}
 	}
 	a.app.Quit()
 }
 
-func (a *App) report(p *Pane, reason string) {
+func (a *App) printStats(p *Pane, reason string) {
 	wall := time.Since(a.started)
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
@@ -340,9 +526,9 @@ func (a *App) report(p *Pane, reason string) {
 	}
 	if p != nil {
 		g := viewGeomC(p.view)
-		fmt.Printf("- tabs open: %d; selected tab: window %dx%d logical at scale %.4f -> texture %dx%d device px; grid %dx%d cells of %dx%d px\n",
-			open, g.lw, g.lh, g.scale, g.dw, g.dh, p.cols, p.rows, p.atlas.CellW, p.atlas.CellH)
-		fmt.Printf("- selected view: snapshots %d, renders %d, reused %d, wake-ups %d, scale changes %d; keyboard focus: %v\n",
+		fmt.Printf("- tabs open: %d, panes open: %d; focused pane: view %dx%d logical at scale %.4f -> texture %dx%d device px; grid %dx%d cells of %dx%d px\n",
+			len(a.tabs), open, g.lw, g.lh, g.scale, g.dw, g.dh, p.cols, p.rows, p.atlas.CellW, p.atlas.CellH)
+		fmt.Printf("- focused view: snapshots %d, renders %d, reused %d, wake-ups %d, scale changes %d; keyboard focus: %v\n",
 			g.snapshots, g.renders, g.reused, g.wakes, g.scaleChg, p.widget.HasFocus())
 		fmt.Printf("- atlas: %d glyphs rasterized (%d as U+FFFD), %dx%d px, %d lookups found no slot\n",
 			p.atlas.Rasterized, p.atlas.Replaced, p.atlas.W, p.atlas.H, p.atlas.Full)
@@ -350,7 +536,12 @@ func (a *App) report(p *Pane, reason string) {
 	for _, q := range a.panes {
 		if q != nil && q != p && !q.removeOnce {
 			g := viewGeomC(q.view)
-			fmt.Printf("- hidden tab %d: snapshots %d, renders %d, wake-ups %d\n", q.id, g.snapshots, g.renders, g.wakes)
+			where := "hidden tab"
+			if q.tab == a.active {
+				where = "same tab"
+			}
+			fmt.Printf("- pane %d (%s, tab %d): snapshots %d, renders %d, wake-ups %d\n",
+				q.id, where, a.tabIndex(q.tab)+1, g.snapshots, g.renders, g.wakes)
 		}
 	}
 	if t := a.childExit.Load(); t != 0 {
@@ -385,6 +576,12 @@ func (a *App) writeDump(p *Pane, path string) {
 	cw, ch := 1280, 720
 	fmt.Sscanf(a.cfg.dumpSize, "%dx%d", &cw, &ch) //nolint:errcheck // keeps the defaults on error
 	cw, ch = min(cw, w), min(ch, h)
+	a.savePNG(path, pix, w, cw, ch)
+}
+
+// cropBGRA converts the top-left cw x ch pixels of a BGRA image w pixels
+// wide to RGBA.
+func cropBGRA(pix []byte, w, cw, ch int) []byte {
 	rgba := make([]byte, cw*ch*4)
 	for y := 0; y < ch; y++ {
 		for x := 0; x < cw; x++ {
@@ -392,9 +589,7 @@ func (a *App) writeDump(p *Pane, path string) {
 			rgba[di], rgba[di+1], rgba[di+2] = pix[si+2], pix[si+1], pix[si]
 		}
 	}
-	if err := writePNG(path, rgba, cw, ch); err != nil {
-		fmt.Fprintf(os.Stderr, "bunk-gui: -dump: %v\n", err)
-	}
+	return rgba
 }
 
 func threadCPUNs() int64 {
