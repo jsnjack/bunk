@@ -101,6 +101,10 @@ Key local extensions to vendored vt10x:
   The `Default*` values start at `1<<25`.
 - DECRQSS reports SGR, scroll margins, and cursor style; unsupported settings
   return a negative response. Unknown DECRQM modes return status 0, not 4.
+- CSI parameters are unsigned decimal numbers capped at 65535, as in xterm
+  (`MAX_I_PARAM`); a larger count acts as 65535 instead of wrapping negative.
+  OSC 4/104 take palette indices 0-255 only, because every cell colour goes
+  through the override table.
 - The grid stores 16-byte, pointer-free cells (`row.go`). Combining text,
   underline colour, hyperlink and image samples live in a per-row side table.
   Each Row tracks `used`: every cell from that index on equals `tail`, so

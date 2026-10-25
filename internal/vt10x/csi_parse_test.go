@@ -1,12 +1,32 @@
 package vt10x
 
 import (
+	"errors"
 	"math/rand/v2"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+// refParam is the parameter rule: decimal digits without a sign, capped at
+// 65535 as xterm caps them.
+func refParam(s string) (int, error) {
+	if strings.Trim(s, "0123456789") != "" {
+		return 0, strconv.ErrSyntax
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
+	if errors.Is(err, strconv.ErrRange) {
+		return 65535, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if v > 65535 {
+		return 65535, nil
+	}
+	return int(v), nil
+}
 
 // parseCSIWithSplit is the string-splitting parameter parser that
 // csiEscape.parse replaced; the two must agree on every input.
@@ -23,25 +43,25 @@ func parseCSIWithSplit(buf []byte) (args []int, priv bool, mode byte) {
 	s = s[:len(s)-1]
 	for _, p := range strings.Split(s, ";") {
 		if idx := strings.IndexByte(p, ':'); idx >= 0 {
-			main, err := strconv.Atoi(p[:idx])
+			main, err := refParam(p[:idx])
 			if err != nil {
 				break
 			}
 			subParts := strings.Split(p[idx+1:], ":")
-			sub, err := strconv.Atoi(subParts[0])
+			sub, err := refParam(subParts[0])
 			if err != nil {
 				sub = 0
 			}
 			args = append(args, main*10000+sub+1)
 			for _, sp := range subParts[1:] {
-				v, err := strconv.Atoi(sp)
+				v, err := refParam(sp)
 				if err != nil {
 					break
 				}
 				args = append(args, v)
 			}
 		} else {
-			i, err := strconv.Atoi(p)
+			i, err := refParam(p)
 			if err != nil {
 				break
 			}

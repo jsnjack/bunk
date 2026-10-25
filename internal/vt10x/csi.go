@@ -2,8 +2,8 @@ package vt10x
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"strconv"
 )
 
 // CSI (Control Sequence Introducer)
@@ -98,10 +98,27 @@ func cutByte(s []byte, sep byte) (before, after []byte, found bool) {
 	return s, nil, false
 }
 
-// atoi parses a parameter with strconv.Atoi rules. Short parameters convert
-// to a string on the stack, so the common case does not allocate.
+// maxParam caps numeric parameters, as xterm does (MAX_I_PARAM in ptyx.h).
+// Counts near 2^63 would otherwise wrap negative when added to the cursor
+// position.
+const maxParam = 65535
+
+var errParam = errors.New("parameter is not a decimal number")
+
+// atoi parses a parameter of decimal digits, capped at maxParam. A sign is
+// an intermediate byte in a control sequence, not part of a number.
 func atoi(b []byte) (int, error) {
-	return strconv.Atoi(string(b))
+	if len(b) == 0 {
+		return 0, errParam
+	}
+	n := 0
+	for _, c := range b {
+		if c < '0' || c > '9' {
+			return 0, errParam
+		}
+		n = min(n*10+int(c-'0'), maxParam)
+	}
+	return n, nil
 }
 
 func (c *csiEscape) arg(i, def int) int {
@@ -249,7 +266,7 @@ func (t *State) handleCSI() {
 			ps := 0
 			for _, b := range c.buf[:len(c.buf)-2] {
 				if b >= '0' && b <= '9' {
-					ps = ps*10 + int(b-'0')
+					ps = min(ps*10+int(b-'0'), maxParam)
 				}
 			}
 			t.cur.Shape = ps

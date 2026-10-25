@@ -8,9 +8,11 @@ import (
 	"hash/fnv"
 	"math/rand/v2"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // Fuzz inputs are cut to these sizes so seed runs in go test stay fast.
@@ -168,6 +170,16 @@ func checkInvariants(s *State, maxSide int) error {
 	if s.top < 0 || s.top > s.bottom || s.bottom >= s.rows {
 		return fmt.Errorf("scroll region %d-%d outside %d rows", s.top, s.bottom, s.rows)
 	}
+	// Cell colours go through the override table, so a key outside the
+	// palette and the defaults would recolour truecolour cells.
+	for k, v := range s.colorOverride {
+		if k >= 256 && k != DefaultFG && k != DefaultBG && k != DefaultCursor {
+			return fmt.Errorf("colour override for %#x, which is neither a palette index nor a default", k)
+		}
+		if v < rgbFlag || v >= DefaultFG {
+			return fmt.Errorf("colour override %#x for %#x is not a truecolour value", v, k)
+		}
+	}
 	for _, screen := range []struct {
 		name string
 		rows []*Row
@@ -264,6 +276,7 @@ func checkReplies(replies []byte) error {
 			for i < len(replies) && replies[i] >= 0x20 && replies[i] <= 0x7e {
 				i++
 			}
+			body := string(replies[start+2 : i])
 			switch {
 			case i < len(replies) && replies[i] == 0x07 && replies[start+1] == ']':
 				i++
@@ -272,11 +285,106 @@ func checkReplies(replies []byte) error {
 			default:
 				return fmt.Errorf("string reply %q holds a control byte or no terminator", replies[start:min(len(replies), i+1)])
 			}
+			if replies[start+1] == ']' {
+				if err := checkColorReply(body); err != nil {
+					return fmt.Errorf("OSC reply %q: %w", body, err)
+				}
+			}
 		default:
 			return fmt.Errorf("unknown reply introducer %q", replies[start:start+2])
 		}
 	}
 	return nil
+}
+
+// checkColorReply checks the body of an OSC reply: "4;<index>;rgb:..."
+// with a palette index, or "10", "11" or "12" then ";rgb:...". Each
+// component repeats one byte, as XParseColor expects of an 8-bit colour.
+func checkColorReply(body string) error {
+	num, rest, _ := strings.Cut(body, ";")
+	switch num {
+	case "10", "11", "12":
+	case "4":
+		var index string
+		index, rest, _ = strings.Cut(rest, ";")
+		if n, err := strconv.Atoi(index); err != nil || n < 0 || n > 255 || strconv.Itoa(n) != index {
+			return fmt.Errorf("palette index %q outside 0-255", index)
+		}
+	default:
+		return fmt.Errorf("OSC %q is not a colour reply", num)
+	}
+	spec, ok := strings.CutPrefix(rest, "rgb:")
+	parts := strings.Split(spec, "/")
+	if !ok || len(parts) != 3 {
+		return fmt.Errorf("colour %q is not rgb:rrrr/gggg/bbbb", rest)
+	}
+	for _, part := range parts {
+		if len(part) != 4 || part[:2] != part[2:] || strings.Trim(part, "0123456789abcdef") != "" {
+			return fmt.Errorf("colour component %q is not one repeated hex byte", part)
+		}
+	}
+	return nil
+}
+
+// cappedCSIParams returns data with every CSI parameter above maxParam
+// rewritten as maxParam, or nil when there is none. A probe terminal marks
+// the digit runs the parser reads as parameters of a CSI sequence that ends
+// with a final byte. A run's digits may join others across a skipped byte,
+// but a capped value stays capped whatever digits come before it.
+func cappedCSIParams(cols, rows int, data []byte) []byte {
+	probe := newFuzzTerm(cols, rows)
+	probe.lock()
+	defer probe.unlock()
+	type span struct{ start, end int }
+	var pending, runs []span // digit runs of the open CSI, and of finished ones
+	start := -1
+	for i := 0; i < len(data); {
+		if !utf8.FullRune(data[i:]) {
+			break
+		}
+		c, sz := utf8.DecodeRune(data[i:])
+		if c == utf8.RuneError && sz == 1 {
+			if start >= 0 {
+				pending, start = append(pending, span{start, i}), -1
+			}
+			i++
+			continue
+		}
+		before := probe.state
+		probe.put(c)
+		digit := before == stateEscCSI && c >= '0' && c <= '9'
+		switch {
+		case digit && start < 0:
+			start = i
+		case !digit && start >= 0:
+			pending, start = append(pending, span{start, i}), -1
+		}
+		i += sz
+		if before == stateEscCSI && probe.state != stateEscCSI {
+			if start >= 0 {
+				pending, start = append(pending, span{start, i}), -1
+			}
+			buf := probe.csi.buf
+			if probe.state == stateGround && c != 0x18 && c != 0x1a && len(buf) > 0 && buf[len(buf)-1] >= 0x40 && buf[len(buf)-1] <= 0x7e {
+				runs = append(runs, pending...)
+			}
+			pending = pending[:0]
+		}
+	}
+	var out []byte
+	last := 0
+	for _, r := range runs {
+		digits := strings.TrimLeft(string(data[r.start:r.end]), "0")
+		if len(digits) < 5 || len(digits) == 5 && digits <= "65535" {
+			continue
+		}
+		out = append(append(out, data[last:r.start]...), "65535"...)
+		last = r.end
+	}
+	if out == nil {
+		return nil
+	}
+	return append(out, data[last:]...)
 }
 
 // maxReplyBytes bounds the replies to n bytes of output. Every query is a
@@ -341,6 +449,8 @@ var parseSeeds = []string{
 	"\x1b]0;unterminated\x18text\x1b[12\x1aafter\x1b[3J\x1bc",
 	"\t\tx\x1b[3g\x1b[g\x1bH\x1b[2I\x1b[2Z\x1b[5`\x1b[3d\x1b[2E\x1b[F\x1b[2a\x1b[e",
 	"\xe6\x97\xa5\xe6\x97\xff\xc3(\xf0\x9f\x98\x80\xed\xa0\x80\xf4\x90\x80\x80",
+	"abcdefgh\x1b[1;5H\x1b[9223372036854775807C\x1b[2;5H\x1b[9223372036854775807X\x1b[099999999999999999999B\x1b[-5X\x1b[+3C\x1b[1;9223372036854775807H\x1b[0000070000 q",
+	"\x1b[38;2;255;0;0mR\x1b]4;16711680;#00ff00\x07\x1b]4;33488896;#00ff00\x07\x1b]4;256;#fff\x07\x1b]4;x;#fff\x07\x1b]4;7;?\x07\x1b]4;3;rgb:12/34/56\x07\x1b]4;3;?\x07\x1b]104;3\x07\x1b]4;3;?\x07",
 }
 
 func FuzzParse(f *testing.F) {
@@ -392,6 +502,17 @@ func FuzzParse(f *testing.F) {
 		}
 		if len(replies) > maxReplyBytes(len(data)) {
 			t.Fatalf("%d bytes of replies to %d bytes of output", len(replies), len(data))
+		}
+		// A CSI parameter above maxParam must act exactly like maxParam:
+		// counts near 2^63 used to wrap negative.
+		if capped := cappedCSIParams(c, r, data); capped != nil {
+			variant := newFuzzTerm(c, r)
+			variant.write(capped, false)
+			a, b := whole.snapshot(), variant.snapshot()
+			a.CSI, b.CSI = "", "" // the raw text of the last sequence differs
+			if d := snapshotDiff(a, b); d != "" {
+				t.Fatalf("%dx%d: CSI parameters capped at %d differ in %s\ncapped: %q", c, r, maxParam, d, capped)
+			}
 		}
 	})
 }
