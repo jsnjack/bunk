@@ -313,8 +313,9 @@ func (t *State) handleControlCodes(c rune) bool {
 		t.newline(t.mode&ModeCRLF != 0)
 	// BEL
 	case '\a':
-		// TODO: emit sound
-		// TODO: window alert if not focused
+		if t.bellCb != nil {
+			t.bellCb()
+		}
 	// ESC
 	case 033:
 		t.csi.reset()

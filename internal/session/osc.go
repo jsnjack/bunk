@@ -27,6 +27,11 @@ var oscForwardNums = map[int]bool{
 	133: true, // Shell prompt markers   (semantic shell integration)
 }
 
+// statusOSCNums are the OSC numbers that report attention requests (9:
+// iTerm2/Windows Terminal, 99: kitty, 777: urxvt/VTE notify) and command
+// results (133;D).
+var statusOSCNums = map[int]bool{9: true, 99: true, 133: true, 777: true}
+
 // oscMaxBuf is the maximum bytes we accumulate for a single OSC sequence.
 // OSC 7 (CWD) is typically <300 bytes; OSC 8 (hyperlink) rarely exceeds 2 KB.
 // OSC 52 clipboard can be large - we cap at 64 KB and let the host handle it.
@@ -46,6 +51,10 @@ const (
 // from a raw PTY byte stream that may arrive in arbitrary chunk sizes.
 // One instance lives per Session; keep it as a value inside Session (no allocation).
 type oscScanner struct {
+	// status, when set, receives the payload of each OSC 9, 99, 777 and 133
+	// sequence (terminator removed) for agent status, forwarded or not.
+	status func(num int, payload []byte)
+
 	state   oscParseState
 	buf     []byte // accumulates bytes of the current in-progress OSC
 	overrun bool   // set when buf was capped; discard this OSC silently
@@ -121,7 +130,13 @@ func (s *oscScanner) dispatch(emit func([]byte)) {
 		numBytes = bytes.TrimRight(body, "\x07\x1b\\")
 	}
 	n, err := strconv.Atoi(string(numBytes))
-	if err != nil || !oscForwardNums[n] {
+	if err != nil {
+		return
+	}
+	if s.status != nil && statusOSCNums[n] {
+		s.status(n, StripOSCTerminator(payload))
+	}
+	if !oscForwardNums[n] {
 		return
 	}
 	if !sanitizeOSC(n, StripOSCTerminator(payload)) {

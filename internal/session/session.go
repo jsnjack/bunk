@@ -117,6 +117,10 @@ type Session struct {
 	notice            string      // text of the latest attention request
 	lastOutput        time.Time   // when the last chunk of output arrived
 	cwd, repo, branch string      // foreground cwd and its git work tree
+	statusDirty       bool        // an attention request or failure arrived; report it
+	agentGone         bool        // the failed agent has exited; keep showing it
+	lastAgent         string      // the agent that most recently left the foreground
+	agentLeft         time.Time   // when lastAgent left
 
 	// syncDeadline releases an abandoned synchronized update (DEC 2026).
 	// Protected by mu.
@@ -245,7 +249,8 @@ func Start(o Options) (*Session, error) {
 		backspace:       o.Backspace,
 		agents:          o.Agents,
 	}
-	s.Term = vt10x.New(vt10x.WithSize(o.Cols, o.Rows), vt10x.WithScrollCallback(s.OnScrollRow),
+	s.oscScan.status = s.onStatusOSC
+	s.Term = vt10x.New(vt10x.WithSize(o.Cols, o.Rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithBellCallback(s.onBell),
 		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.WriteInput), vt10x.WithCellPixels(cellWidth, cellHeight))
 
 	// One-time container detection: read the shell process's own environ.
@@ -310,6 +315,10 @@ func (s *Session) Run(h Hooks, done <-chan struct{}) {
 func (s *Session) ReadLoop(h Hooks) {
 	buf := make([]byte, 32768)
 	var stream ptyStream
+	emitOSC := h.OSC
+	if emitOSC == nil {
+		emitOSC = func([]byte) {}
+	}
 	var syncTimer, idleTimer *time.Timer
 	defer func() {
 		if syncTimer != nil {
@@ -337,9 +346,9 @@ func (s *Session) ReadLoop(h Hooks) {
 				L().Log(context.Background(), LevelTrace, "readPTY: chunk", "pane", s.ID, "data", fmt.Sprintf("%q", chunk))
 			}
 
-			if h.OSC != nil {
-				s.oscScan.Scan(chunk, h.OSC)
-			}
+			// Always scan: attention requests (OSC 9, 99, 777, 133) feed Status
+			// even when the front end forwards nothing.
+			s.oscScan.Scan(chunk, emitOSC)
 
 			// Query replies, mode flags and the sync state change together
 			// under one lock, before any front end can read them.
@@ -349,6 +358,8 @@ func (s *Session) ReadLoop(h Hooks) {
 			wasQuiet := now.Sub(s.lastOutput) >= IdleAfter
 			s.lastOutput = now
 			watched := s.agent != ""
+			attention := s.statusDirty
+			s.statusDirty = false
 			scrolled := s.ScrollOffset > 0
 			syncing := s.Term.Mode()&vt10x.ModeSync != 0
 			if syncing && s.syncDeadline.IsZero() {
@@ -375,10 +386,12 @@ func (s *Session) ReadLoop(h Hooks) {
 			}
 			// An agent's state follows its output: report when output starts,
 			// and again once it has stopped for IdleAfter.
+			if h.StatusChanged != nil && attention {
+				h.StatusChanged()
+			} else if watched && h.StatusChanged != nil && wasQuiet {
+				h.StatusChanged()
+			}
 			if watched && h.StatusChanged != nil {
-				if wasQuiet {
-					h.StatusChanged()
-				}
 				if idleTimer == nil {
 					idleTimer = time.AfterFunc(IdleAfter, h.StatusChanged)
 				} else {

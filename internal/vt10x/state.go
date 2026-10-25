@@ -199,6 +199,7 @@ type State struct {
 	// lives outside this State (which only holds the visible grid), so
 	// erasure is delegated to the owner.  Not fired by init-time reset().
 	sbClearCb             func()
+	bellCb                func() // BEL outside escape strings
 	graphics              *graphics.Decoder
 	graphicsReply         func([]byte)
 	cellWidth, cellHeight int

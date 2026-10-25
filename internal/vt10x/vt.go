@@ -121,6 +121,7 @@ type TerminalInfo struct {
 	// ED 3 (CSI 3 J, the xterm E3 extension sent by clear(1)) or RIS
 	// (ESC c, sent by reset(1)).
 	sbClearCb             func()
+	bellCb                func()
 	graphics              *graphics.Decoder
 	graphicsReply         func([]byte)
 	cellWidth, cellHeight int
@@ -185,6 +186,15 @@ func WithScrollCallback(fn func(row Row)) TerminalOption {
 func WithScrollbackClearCallback(fn func()) TerminalOption {
 	return func(info *TerminalInfo) {
 		info.sbClearCb = fn
+	}
+}
+
+// WithBellCallback installs a callback that fires on each BEL outside an
+// escape string. It runs synchronously inside terminal mutation code; it
+// must be fast and non-blocking.
+func WithBellCallback(fn func()) TerminalOption {
+	return func(info *TerminalInfo) {
+		info.bellCb = fn
 	}
 }
 

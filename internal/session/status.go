@@ -2,10 +2,13 @@
 package session
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // AgentState is what a session's agent appears to be doing.
@@ -70,10 +73,10 @@ func (s *Session) agentState(now time.Time) AgentState {
 	switch {
 	case s.agent == "":
 		return AgentNone
-	case s.needsYou:
-		return AgentNeedsYou
 	case s.failed:
 		return AgentFailed
+	case s.needsYou:
+		return AgentNeedsYou
 	case now.Sub(s.lastOutput) < IdleAfter:
 		return AgentWorking
 	}
@@ -207,6 +210,148 @@ func gitHead(dir string) (repo, branch string) {
 	}
 }
 
+// statusOSC is what an OSC sequence says about the agent.
+type statusOSC struct {
+	notice   string // attention request text
+	started  bool   // a command started (OSC 133;C)
+	finished bool   // a command finished (OSC 133;D)
+	exitCode int
+}
+
+// noticeLimit caps the notice text kept for tab labels.
+const noticeLimit = 200
+
+// parseStatusOSC reads an attention request (OSC 9, 99, 777) or a command
+// boundary (OSC 133;C, 133;D) from an OSC payload without its terminator.
+func parseStatusOSC(num int, p []byte) (statusOSC, bool) {
+	text := string(p)
+	switch num {
+	case 9:
+		// "9;4;…" and other "9;<digit>;…" forms are ConEmu commands such as
+		// progress bars, not notifications.
+		if code, _, ok := strings.Cut(text, ";"); ok {
+			if _, err := strconv.Atoi(code); err == nil {
+				return statusOSC{}, false
+			}
+		}
+		return noticeOSC(text)
+	case 777:
+		fields := strings.SplitN(text, ";", 3)
+		if fields[0] != "notify" || len(fields) < 2 {
+			return statusOSC{}, false
+		}
+		// VTE's shell integration sends this after every long command.
+		if fields[1] == "Command completed" {
+			return statusOSC{}, false
+		}
+		if len(fields) == 3 && strings.TrimSpace(fields[2]) != "" {
+			return noticeOSC(fields[2])
+		}
+		return noticeOSC(fields[1])
+	case 99:
+		// kitty: "metadata;payload"; metadata is key=value pairs joined by ':'.
+		meta, body, ok := strings.Cut(text, ";")
+		if !ok {
+			return statusOSC{}, false
+		}
+		encoded := false
+		for _, kv := range strings.Split(meta, ":") {
+			k, v, _ := strings.Cut(kv, "=")
+			switch {
+			case k == "e" && v == "1":
+				encoded = true
+			case k == "p" && v != "title" && v != "body":
+				return statusOSC{}, false // close, alive, icon, … are not text
+			}
+		}
+		if encoded {
+			b, err := base64.StdEncoding.DecodeString(body)
+			if err != nil {
+				return statusOSC{}, false
+			}
+			body = string(b)
+		}
+		return noticeOSC(body)
+	case 133:
+		mark, rest, _ := strings.Cut(text, ";")
+		switch mark {
+		case "C":
+			return statusOSC{started: true}, true
+		case "D":
+			code, _, _ := strings.Cut(rest, ";")
+			n, _ := strconv.Atoi(code)
+			return statusOSC{finished: true, exitCode: n}, true
+		}
+	}
+	return statusOSC{}, false
+}
+
+// noticeOSC makes a notice from untrusted text: control characters become
+// spaces and the result is trimmed and capped.
+func noticeOSC(text string) (statusOSC, bool) {
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, text)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		text = "Needs your attention"
+	}
+	if r := []rune(text); len(r) > noticeLimit {
+		text = string(r[:noticeLimit]) + "…"
+	}
+	return statusOSC{notice: text}, true
+}
+
+// recentlyLeft is how long after an agent leaves the foreground a command
+// result still counts as the agent's: the shell reports it once its prompt
+// returns, which can be after the next process poll.
+const recentlyLeft = 2 * time.Second
+
+// onStatusOSC is the OSC scanner's status callback. It runs on the reader
+// goroutine, without the session lock.
+func (s *Session) onStatusOSC(num int, payload []byte) {
+	st, ok := parseStatusOSC(num, payload)
+	if !ok {
+		return
+	}
+	s.Lock()
+	defer s.Unlock()
+	switch {
+	case st.notice != "" && s.agent != "" && !s.agentGone:
+		s.needsYou, s.notice = true, st.notice
+	case st.started:
+		if s.agentGone {
+			s.agent, s.agentGone = "", false
+		}
+		s.failed = false
+	case st.finished && st.exitCode != 0:
+		switch {
+		case s.agent != "" && !s.agentGone:
+			s.failed = true
+		case s.agent == "" && s.lastAgent != "" && time.Since(s.agentLeft) < recentlyLeft:
+			// The agent already left; show its failure until the next command.
+			s.agent, s.failed, s.agentGone = s.lastAgent, true, true
+		default:
+			return
+		}
+	default:
+		return
+	}
+	s.statusDirty = true
+}
+
+// onBell is vt10x's bell callback; it runs inside Write, with the session
+// lock held. A bell from an agent counts as an attention request.
+func (s *Session) onBell() {
+	if s.agent != "" && !s.agentGone && !s.needsYou {
+		s.needsYou = true
+		s.statusDirty = true
+	}
+}
+
 // refreshStatus updates the agent, cwd and git fields from the foreground
 // process. It reports whether anything changed. Called by trackFgProcess,
 // without the session lock.
@@ -225,8 +370,24 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 
 	s.Lock()
 	defer s.Unlock()
+	if pgidChanged {
+		switch {
+		case s.agentGone:
+			// A new command replaces the failed agent shown since it left.
+			s.agentGone = false
+		case agent == "" && s.agent != "" && s.failed:
+			// Keep showing the failed agent until the next command starts.
+			s.agentGone = true
+			agent = s.agent
+		}
+	} else if s.agentGone {
+		agent = s.agent
+	}
 	changed := agent != s.agent || cwd != s.cwd || repo != s.repo || branch != s.branch
 	if agent != s.agent {
+		if s.agent != "" {
+			s.lastAgent, s.agentLeft = s.agent, time.Now()
+		}
 		// A new agent starts with a clean slate.
 		s.needsYou, s.failed, s.notice = false, false, ""
 	}

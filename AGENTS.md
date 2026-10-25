@@ -63,6 +63,8 @@ internal/session/   One terminal session, shared by front ends
   osc.go            OSC pre-scanner and sanitising (7, 52, 133)
   process.go        Foreground process, SSH host and container detection
   search.go         Case-insensitive search over scrollback and the live grid
+  status.go         Agent status: AgentSpec detection, attention requests
+                    (OSC 9/99/777, BEL), failures (OSC 133;D), git branch
   winsize.go        PTY window size in cells and virtual pixels
 
 third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
@@ -213,6 +215,13 @@ Key fields agents may need to know about:
 - **Terminal cleanup runs synchronously in `main` after the event loop.**
   Background goroutines can't be relied on to finish their cleanup before
   the process exits.
+- **Agent status is inferred, not reported.** `session.Status` names the
+  foreground agent from `DefaultAgents` (add a CLI there, or via
+  `Options.Agents`), counts output in the last 2 s as working, and treats
+  OSC 9/99/777 notifications and BEL from an agent as "needs you". VTE's
+  "Command completed" notices are ignored. Claude Code only sends OSC
+  notifications to terminals it recognises; elsewhere set its
+  `preferredNotifChannel` to `terminal_bell`.
 - **Nested sessions are refused.** `BUNK=1` is exported into every pane's
   environment; the binary exits at startup if it sees it set.
 
