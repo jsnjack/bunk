@@ -1,0 +1,556 @@
+bunk-bench: 1
+commit: 3d7b4d6-dirty
+date: 2026-10-25T19:31:58Z
+go: go1.26.10-X:nodwarf5
+kernel: 7.2.11-200.fc44.x86_64
+cpu-model: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M
+pinned-cpu: 0
+smt-sibling: 12
+cpu-max-mhz: 5158
+cpu-governor: powersave
+cpu-epp: balance_performance
+count: 10
+suite-vt10x: bench=. benchtime=500ms gomaxprocs=1
+suite-session-output: bench=^BenchmarkOutput$ benchtime=500ms gomaxprocs=1
+suite-session-reflow: bench=^BenchmarkReflow$ benchtime=200ms gomaxprocs=1
+suite-gui-frame: bench=^BenchmarkFullScreenFrame$ benchtime=500ms gomaxprocs=1
+loadavg-start: 1.70
+loadavg-max: 2.07
+loadavg-end: 1.30
+cpu-mhz: 5138
+sibling-busy-median: 0.01
+sibling-busy-max: 0.09
+core-share-min: 0.99
+retried-runs: 0
+disturbed-runs: 0 of 40
+
+# round 1/10 vt10x: wall 5.35s cpu 5.33s share 1.00 clock 5140MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     415	   1360452 ns/op	 770.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     199	   2923314 ns/op	 358.73 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     126	   4748313 ns/op	 220.84 MB/s	      12 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     416	   1432235 ns/op	 732.16 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     242	   2473371 ns/op	 424.52 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     216	   2790540 ns/op	 390.66 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     309	   1951253 ns/op	 548.83 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     192	   3113856 ns/op	 336.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5780835 ns/op	 181.39 MB/s	     241 B/op	       2 allocs/op
+# round 1/10 session-output: wall 5.31s cpu 5.29s share 1.00 clock 5142MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     237	   2438891 ns/op	 429.95 MB/s	   62762 B/op	      42 allocs/op
+BenchmarkOutput/full-rows     	     334	   1775141 ns/op	 590.70 MB/s	   98187 B/op	      29 allocs/op
+BenchmarkOutput/sgr           	      92	   6377569 ns/op	 164.43 MB/s	   79526 B/op	     109 allocs/op
+BenchmarkOutput/go-source     	      80	   7198791 ns/op	 145.78 MB/s	  806263 B/op	     392 allocs/op
+BenchmarkOutput/claude        	     115	   5177450 ns/op	 202.80 MB/s	  233481 B/op	     139 allocs/op
+BenchmarkOutput/gosyntax      	      97	   6010873 ns/op	 181.36 MB/s	  251917 B/op	     225 allocs/op
+BenchmarkOutput/boxdraw       	     128	   4666860 ns/op	 229.47 MB/s	    1196 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     127	   4592671 ns/op	 228.33 MB/s	  280766 B/op	     141 allocs/op
+BenchmarkOutput/emoji         	      72	   8056642 ns/op	 130.15 MB/s	  383920 B/op	     535 allocs/op
+# round 1/10 session-reflow: wall 10.23s cpu 10.18s share 1.00 clock 5143MHz sibling-busy 0.03
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  11086471 ns/op	  11043905 cpu-ns/op	18222112 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      15	  15800257 ns/op	  15772333 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      14	  15690239 ns/op	  15652143 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  14041469 ns/op	  14004500 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      27	   8584327 ns/op	   8572630 cpu-ns/op	13290400 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      18	  11771579 ns/op	  11725000 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     148	   1587221 ns/op	   1582270 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     219	   1079934 ns/op	   1080397 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     192	   1198111 ns/op	   1197844 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      34	   6269642 ns/op	   6246971 cpu-ns/op	12506592 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      16	  14619942 ns/op	  14570938 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      26	   8624985 ns/op	   8586346 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      63	   3835625 ns/op	   3824286 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       5	  47298700 ns/op	  47060800 cpu-ns/op	33245136 B/op	   18923 allocs/op
+# round 1/10 gui-frame: wall 0.63s cpu 0.63s share 1.00 clock 5124MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    5973	    100059 ns/op	     678 B/op	       0 allocs/op
+# round 2/10 vt10x: wall 5.40s cpu 5.39s share 1.00 clock 5126MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     456	   1314554 ns/op	 797.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     208	   2872613 ns/op	 365.06 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     127	   4689238 ns/op	 223.63 MB/s	      12 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     420	   1431332 ns/op	 732.62 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     242	   2481389 ns/op	 423.15 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     214	   2788777 ns/op	 390.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     300	   2000679 ns/op	 535.27 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     190	   3130114 ns/op	 335.02 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5847558 ns/op	 179.32 MB/s	     241 B/op	       2 allocs/op
+# round 2/10 session-output: wall 5.33s cpu 5.30s share 1.00 clock 5142MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     241	   2374902 ns/op	 441.53 MB/s	   61720 B/op	      41 allocs/op
+BenchmarkOutput/full-rows     	     325	   1802822 ns/op	 581.63 MB/s	  100906 B/op	      30 allocs/op
+BenchmarkOutput/sgr           	      92	   6443412 ns/op	 162.75 MB/s	   79526 B/op	     109 allocs/op
+BenchmarkOutput/go-source     	      81	   7342710 ns/op	 142.92 MB/s	  796309 B/op	     387 allocs/op
+BenchmarkOutput/claude        	     112	   5247698 ns/op	 200.09 MB/s	  239159 B/op	     143 allocs/op
+BenchmarkOutput/gosyntax      	      98	   5993436 ns/op	 181.89 MB/s	  249347 B/op	     223 allocs/op
+BenchmarkOutput/boxdraw       	     128	   4659230 ns/op	 229.84 MB/s	    1196 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     128	   4581869 ns/op	 228.87 MB/s	  278573 B/op	     140 allocs/op
+BenchmarkOutput/emoji         	      74	   7858445 ns/op	 133.44 MB/s	  373544 B/op	     521 allocs/op
+# round 2/10 session-reflow: wall 9.99s cpu 9.94s share 0.99 clock 5143MHz sibling-busy 0.03
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  10988634 ns/op	  10958762 cpu-ns/op	18222112 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      14	  15715530 ns/op	  15651214 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      15	  15551719 ns/op	  15490200 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  13602531 ns/op	  13562438 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      27	   8982918 ns/op	   8947370 cpu-ns/op	13290400 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      19	  12254076 ns/op	  12207474 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     140	   1725634 ns/op	   1720650 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     194	   1222238 ns/op	   1221284 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     198	   1185086 ns/op	   1182737 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      34	   6213902 ns/op	   6197794 cpu-ns/op	12506592 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      16	  14595378 ns/op	  14539250 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      27	   8673910 ns/op	   8653556 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      61	   3842872 ns/op	   3828689 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       5	  47747880 ns/op	  47497600 cpu-ns/op	33245136 B/op	   18923 allocs/op
+# round 2/10 gui-frame: wall 0.62s cpu 0.61s share 1.00 clock 5115MHz sibling-busy 0.00
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    5859	     99804 ns/op	     691 B/op	       0 allocs/op
+# round 3/10 vt10x: wall 5.40s cpu 5.38s share 1.00 clock 5116MHz sibling-busy 0.00
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     453	   1324903 ns/op	 791.45 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     211	   2829345 ns/op	 370.64 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     127	   4675180 ns/op	 224.30 MB/s	      12 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     421	   1421563 ns/op	 737.65 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     242	   2465371 ns/op	 425.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     220	   2744292 ns/op	 397.24 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     307	   1946187 ns/op	 550.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     193	   3094806 ns/op	 338.84 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5766723 ns/op	 181.83 MB/s	     241 B/op	       2 allocs/op
+# round 3/10 session-output: wall 5.30s cpu 5.28s share 1.00 clock 5140MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     242	   2336449 ns/op	 448.80 MB/s	   61465 B/op	      41 allocs/op
+BenchmarkOutput/full-rows     	     333	   1763331 ns/op	 594.66 MB/s	   98482 B/op	      30 allocs/op
+BenchmarkOutput/sgr           	      92	   6370494 ns/op	 164.61 MB/s	   79526 B/op	     109 allocs/op
+BenchmarkOutput/go-source     	      80	   7167194 ns/op	 146.42 MB/s	  806263 B/op	     392 allocs/op
+BenchmarkOutput/claude        	     115	   5146584 ns/op	 204.02 MB/s	  233481 B/op	     139 allocs/op
+BenchmarkOutput/gosyntax      	      97	   6090030 ns/op	 179.00 MB/s	  251917 B/op	     225 allocs/op
+BenchmarkOutput/boxdraw       	     127	   4677664 ns/op	 228.94 MB/s	    1205 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     128	   4607840 ns/op	 227.58 MB/s	  278573 B/op	     140 allocs/op
+BenchmarkOutput/emoji         	      73	   7940225 ns/op	 132.06 MB/s	  378661 B/op	     528 allocs/op
+# round 3/10 session-reflow: wall 9.91s cpu 9.87s share 1.00 clock 5142MHz sibling-busy 0.03
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  11258505 ns/op	  11234619 cpu-ns/op	18222112 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      14	  15834999 ns/op	  15796143 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      14	  15950046 ns/op	  15907929 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  13621930 ns/op	  13593625 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      27	   8448653 ns/op	   8437444 cpu-ns/op	13290400 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      19	  11768518 ns/op	  11738947 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     148	   1619770 ns/op	   1619392 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     224	   1076486 ns/op	   1077192 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     208	   1148606 ns/op	   1147375 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      36	   6289019 ns/op	   6270944 cpu-ns/op	12506592 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      15	  14556434 ns/op	  14512600 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      27	   9666018 ns/op	   9628926 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      62	   3955573 ns/op	   3947806 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       5	  48089266 ns/op	  47858200 cpu-ns/op	33245145 B/op	   18923 allocs/op
+# round 3/10 gui-frame: wall 0.62s cpu 0.62s share 1.00 clock 5116MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    5893	    100209 ns/op	     687 B/op	       0 allocs/op
+# round 4/10 vt10x: wall 5.39s cpu 5.37s share 1.00 clock 5115MHz sibling-busy 0.00
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     450	   1326002 ns/op	 790.79 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     211	   2831083 ns/op	 370.41 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     127	   4674224 ns/op	 224.34 MB/s	      12 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     418	   1439180 ns/op	 728.62 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     241	   2481512 ns/op	 423.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     214	   2769180 ns/op	 393.67 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     308	   1943885 ns/op	 550.91 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     193	   3103382 ns/op	 337.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5781143 ns/op	 181.38 MB/s	     241 B/op	       2 allocs/op
+# round 4/10 session-output: wall 5.33s cpu 5.30s share 1.00 clock 5140MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     249	   2303067 ns/op	 455.30 MB/s	   59737 B/op	      40 allocs/op
+BenchmarkOutput/full-rows     	     337	   1748671 ns/op	 599.65 MB/s	   97313 B/op	      29 allocs/op
+BenchmarkOutput/sgr           	      92	   6385541 ns/op	 164.22 MB/s	   79526 B/op	     109 allocs/op
+BenchmarkOutput/go-source     	      82	   7136405 ns/op	 147.05 MB/s	  786598 B/op	     383 allocs/op
+BenchmarkOutput/claude        	     114	   5200406 ns/op	 201.91 MB/s	  235341 B/op	     141 allocs/op
+BenchmarkOutput/gosyntax      	      97	   6047634 ns/op	 180.26 MB/s	  251917 B/op	     225 allocs/op
+BenchmarkOutput/boxdraw       	     127	   4707020 ns/op	 227.51 MB/s	    1205 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     127	   4603933 ns/op	 227.77 MB/s	  280766 B/op	     141 allocs/op
+BenchmarkOutput/emoji         	      74	   7986881 ns/op	 131.29 MB/s	  373544 B/op	     521 allocs/op
+# round 4/10 session-reflow: wall 9.88s cpu 9.83s share 1.00 clock 5142MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  10995125 ns/op	  10970095 cpu-ns/op	18222112 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      14	  15879897 ns/op	  15844214 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      14	  15679195 ns/op	  15632786 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  13578795 ns/op	  13535062 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      27	   8478794 ns/op	   8461407 cpu-ns/op	13290400 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      19	  11697886 ns/op	  11672316 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     141	   1588211 ns/op	   1582284 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     225	   1062201 ns/op	   1060253 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     210	   1146572 ns/op	   1145271 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      36	   6176715 ns/op	   6157306 cpu-ns/op	12506592 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      16	  14674182 ns/op	  14624062 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      26	   8701011 ns/op	   8675231 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      62	   3844544 ns/op	   3834516 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       5	  48513133 ns/op	  48265000 cpu-ns/op	33245136 B/op	   18923 allocs/op
+# round 4/10 gui-frame: wall 0.62s cpu 0.62s share 1.00 clock 5115MHz sibling-busy 0.00
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    5880	     99922 ns/op	     688 B/op	       0 allocs/op
+# round 5/10 vt10x: wall 5.40s cpu 5.38s share 1.00 clock 5115MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     451	   1321356 ns/op	 793.57 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     211	   2840734 ns/op	 369.15 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     127	   4688804 ns/op	 223.65 MB/s	      12 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     422	   1415685 ns/op	 740.71 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     242	   2482320 ns/op	 422.99 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     212	   2808275 ns/op	 388.19 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     301	   1992509 ns/op	 537.46 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     193	   3098856 ns/op	 338.40 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5851952 ns/op	 179.19 MB/s	     241 B/op	       2 allocs/op
+# round 5/10 session-output: wall 5.30s cpu 5.27s share 1.00 clock 5140MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     244	   2374930 ns/op	 441.52 MB/s	   60961 B/op	      40 allocs/op
+BenchmarkOutput/full-rows     	     328	   1764507 ns/op	 594.26 MB/s	   99983 B/op	      30 allocs/op
+BenchmarkOutput/sgr           	      92	   6417058 ns/op	 163.41 MB/s	   79526 B/op	     109 allocs/op
+BenchmarkOutput/go-source     	      79	   7296396 ns/op	 143.83 MB/s	  816469 B/op	     397 allocs/op
+BenchmarkOutput/claude        	     112	   5247972 ns/op	 200.08 MB/s	  239159 B/op	     143 allocs/op
+BenchmarkOutput/gosyntax      	      96	   6062000 ns/op	 179.83 MB/s	  254541 B/op	     227 allocs/op
+BenchmarkOutput/boxdraw       	     128	   4657157 ns/op	 229.95 MB/s	    1196 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     128	   4572982 ns/op	 229.31 MB/s	  278573 B/op	     140 allocs/op
+BenchmarkOutput/emoji         	      74	   7860578 ns/op	 133.40 MB/s	  373544 B/op	     521 allocs/op
+# round 5/10 session-reflow: wall 9.76s cpu 9.71s share 1.00 clock 5143MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  11004154 ns/op	  10960905 cpu-ns/op	18222112 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      14	  15936004 ns/op	  15868714 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      14	  15944235 ns/op	  15899214 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  13567737 ns/op	  13519625 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      27	   8571157 ns/op	   8543000 cpu-ns/op	13290400 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      19	  11677858 ns/op	  11646579 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     150	   1604366 ns/op	   1599233 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     217	   1059256 ns/op	   1058406 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     201	   1187597 ns/op	   1186095 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      34	   6199849 ns/op	   6177971 cpu-ns/op	12506593 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      16	  14668792 ns/op	  14623312 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      27	   8688372 ns/op	   8656333 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      62	   3829280 ns/op	   3821742 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       5	  49359565 ns/op	  49122600 cpu-ns/op	33245136 B/op	   18923 allocs/op
+# round 5/10 gui-frame: wall 0.63s cpu 0.62s share 1.00 clock 5115MHz sibling-busy 0.00
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    5964	     99744 ns/op	     679 B/op	       0 allocs/op
+# round 6/10 vt10x: wall 5.41s cpu 5.39s share 1.00 clock 5120MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     434	   1371456 ns/op	 764.58 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     211	   2836728 ns/op	 369.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     127	   4681067 ns/op	 224.02 MB/s	      12 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     421	   1462570 ns/op	 716.97 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     238	   2500090 ns/op	 419.98 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     212	   2799853 ns/op	 389.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     309	   1949751 ns/op	 549.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     193	   3104641 ns/op	 337.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5778084 ns/op	 181.48 MB/s	     241 B/op	       2 allocs/op
+# round 6/10 session-output: wall 5.32s cpu 5.30s share 1.00 clock 5141MHz sibling-busy 0.03
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     242	   2349991 ns/op	 446.21 MB/s	   61465 B/op	      41 allocs/op
+BenchmarkOutput/full-rows     	     331	   1768774 ns/op	 592.83 MB/s	   99077 B/op	      30 allocs/op
+BenchmarkOutput/sgr           	      91	   6415727 ns/op	 163.45 MB/s	   80400 B/op	     110 allocs/op
+BenchmarkOutput/go-source     	      78	   7717268 ns/op	 135.98 MB/s	  826937 B/op	     402 allocs/op
+BenchmarkOutput/claude        	     114	   5193630 ns/op	 202.17 MB/s	  235341 B/op	     141 allocs/op
+BenchmarkOutput/gosyntax      	      96	   6118113 ns/op	 178.18 MB/s	  254541 B/op	     227 allocs/op
+BenchmarkOutput/boxdraw       	     127	   4678719 ns/op	 228.89 MB/s	    1205 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     129	   4530352 ns/op	 231.47 MB/s	  276413 B/op	     139 allocs/op
+BenchmarkOutput/emoji         	      74	   7836645 ns/op	 133.81 MB/s	  373544 B/op	     521 allocs/op
+# round 6/10 session-reflow: wall 9.68s cpu 9.64s share 1.00 clock 5143MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  11143766 ns/op	  11119095 cpu-ns/op	18222114 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      15	  15510501 ns/op	  15473133 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      14	  15621932 ns/op	  15584857 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  13431928 ns/op	  13403062 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      27	   8420082 ns/op	   8404741 cpu-ns/op	13290400 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      19	  11663152 ns/op	  11639316 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     148	   1608718 ns/op	   1606547 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     218	   1096254 ns/op	   1096248 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     205	   1175477 ns/op	   1173937 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      34	   6137817 ns/op	   6126147 cpu-ns/op	12506592 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      16	  14642881 ns/op	  14609188 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      27	   8566789 ns/op	   8551704 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      63	   3814849 ns/op	   3809302 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       5	  47877411 ns/op	  47740200 cpu-ns/op	33245136 B/op	   18923 allocs/op
+# round 6/10 gui-frame: wall 0.61s cpu 0.61s share 1.00 clock 5115MHz sibling-busy 0.00
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    5944	     98157 ns/op	     681 B/op	       0 allocs/op
+# round 7/10 vt10x: wall 5.39s cpu 5.37s share 1.00 clock 5115MHz sibling-busy 0.00
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     453	   1321037 ns/op	 793.76 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     208	   2879282 ns/op	 364.21 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     127	   4678447 ns/op	 224.14 MB/s	      12 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     420	   1424319 ns/op	 736.23 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     243	   2457897 ns/op	 427.19 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     216	   2754415 ns/op	 395.78 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     313	   1908183 ns/op	 561.21 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     190	   3129158 ns/op	 335.12 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5814425 ns/op	 180.34 MB/s	     241 B/op	       2 allocs/op
+# round 7/10 session-output: wall 5.29s cpu 5.26s share 1.00 clock 5136MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     218	   2475321 ns/op	 423.62 MB/s	   68232 B/op	      45 allocs/op
+BenchmarkOutput/full-rows     	     334	   1777827 ns/op	 589.81 MB/s	   98187 B/op	      29 allocs/op
+BenchmarkOutput/sgr           	      91	   6423275 ns/op	 163.26 MB/s	   80400 B/op	     110 allocs/op
+BenchmarkOutput/go-source     	      78	   7302105 ns/op	 143.72 MB/s	  826937 B/op	     402 allocs/op
+BenchmarkOutput/claude        	     114	   5253128 ns/op	 199.88 MB/s	  235341 B/op	     141 allocs/op
+BenchmarkOutput/gosyntax      	      96	   6157779 ns/op	 177.04 MB/s	  254541 B/op	     227 allocs/op
+BenchmarkOutput/boxdraw       	     126	   4743999 ns/op	 225.74 MB/s	    1215 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     127	   4657295 ns/op	 225.16 MB/s	  280766 B/op	     141 allocs/op
+BenchmarkOutput/emoji         	      74	   7872835 ns/op	 133.19 MB/s	  373544 B/op	     521 allocs/op
+# round 7/10 session-reflow: wall 9.86s cpu 9.82s share 1.00 clock 5143MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  11643320 ns/op	  11603048 cpu-ns/op	18222112 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      14	  15819262 ns/op	  15780857 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      15	  15537221 ns/op	  15487467 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  13583391 ns/op	  13536000 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      27	   8523050 ns/op	   8497333 cpu-ns/op	13290400 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      18	  11686741 ns/op	  11652000 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     153	   1561904 ns/op	   1559255 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     230	   1049374 ns/op	   1048426 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     208	   1141153 ns/op	   1139952 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      34	   6146862 ns/op	   6137647 cpu-ns/op	12506592 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      16	  14430248 ns/op	  14402062 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      27	   8601735 ns/op	   8592667 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      63	   3800740 ns/op	   3796270 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       5	  48042498 ns/op	  47861200 cpu-ns/op	33245136 B/op	   18923 allocs/op
+# round 7/10 gui-frame: wall 0.63s cpu 0.63s share 1.00 clock 5115MHz sibling-busy 0.00
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    6007	     99595 ns/op	     674 B/op	       0 allocs/op
+# round 8/10 vt10x: wall 5.34s cpu 5.33s share 1.00 clock 5119MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     387	   1387486 ns/op	 755.75 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     211	   2834033 ns/op	 370.03 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     127	   4691335 ns/op	 223.53 MB/s	      12 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     423	   1414645 ns/op	 741.26 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     241	   2473978 ns/op	 424.42 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     213	   2804723 ns/op	 388.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     301	   2011910 ns/op	 532.28 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     192	   3123556 ns/op	 335.72 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5830841 ns/op	 179.84 MB/s	     241 B/op	       2 allocs/op
+# round 8/10 session-output: wall 5.31s cpu 5.30s share 1.00 clock 5140MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     244	   2318874 ns/op	 452.20 MB/s	   60961 B/op	      40 allocs/op
+BenchmarkOutput/full-rows     	     336	   1755292 ns/op	 597.38 MB/s	   97603 B/op	      29 allocs/op
+BenchmarkOutput/sgr           	      92	   6374653 ns/op	 164.50 MB/s	   79526 B/op	     109 allocs/op
+BenchmarkOutput/go-source     	      80	   7231090 ns/op	 145.13 MB/s	  806263 B/op	     392 allocs/op
+BenchmarkOutput/claude        	     114	   5228808 ns/op	 200.81 MB/s	  235341 B/op	     141 allocs/op
+BenchmarkOutput/gosyntax      	      96	   6168642 ns/op	 176.72 MB/s	  254541 B/op	     227 allocs/op
+BenchmarkOutput/boxdraw       	     126	   4727859 ns/op	 226.51 MB/s	    1215 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     128	   4585942 ns/op	 228.66 MB/s	  278573 B/op	     140 allocs/op
+BenchmarkOutput/emoji         	      73	   7971354 ns/op	 131.55 MB/s	  378661 B/op	     528 allocs/op
+# round 8/10 session-reflow: wall 9.51s cpu 9.48s share 1.00 clock 5142MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  10916798 ns/op	  10895286 cpu-ns/op	18222112 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      14	  15797044 ns/op	  15750571 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      14	  15808506 ns/op	  15773000 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  13601644 ns/op	  13575125 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      27	   8533061 ns/op	   8520111 cpu-ns/op	13290400 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      19	  11696724 ns/op	  11674684 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     148	   1587857 ns/op	   1587264 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     220	   1085425 ns/op	   1084323 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     202	   1165041 ns/op	   1164743 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      34	   6179051 ns/op	   6165353 cpu-ns/op	12506592 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      16	  14621891 ns/op	  14595250 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      27	   8832881 ns/op	   8815407 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      61	   4084083 ns/op	   4079475 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       4	  53098834 ns/op	  52901250 cpu-ns/op	33245136 B/op	   18923 allocs/op
+# round 8/10 gui-frame: wall 0.66s cpu 0.65s share 1.00 clock 5095MHz sibling-busy 0.09
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    5784	    106425 ns/op	     700 B/op	       0 allocs/op
+# round 9/10 vt10x: wall 5.38s cpu 5.36s share 1.00 clock 5111MHz sibling-busy 0.03
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     415	   1409777 ns/op	 743.80 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     174	   3430756 ns/op	 305.67 MB/s	       1 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     121	   4874899 ns/op	 215.11 MB/s	      13 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     412	   1453260 ns/op	 721.56 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     241	   2482298 ns/op	 422.99 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     216	   2778839 ns/op	 392.30 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     315	   1900695 ns/op	 563.42 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     192	   3110774 ns/op	 337.10 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5819493 ns/op	 180.19 MB/s	     241 B/op	       2 allocs/op
+# round 9/10 session-output: wall 5.33s cpu 5.31s share 1.00 clock 5140MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     248	   2355847 ns/op	 445.10 MB/s	   59978 B/op	      40 allocs/op
+BenchmarkOutput/full-rows     	     336	   1749017 ns/op	 599.53 MB/s	   97603 B/op	      29 allocs/op
+BenchmarkOutput/sgr           	      92	   6434108 ns/op	 162.98 MB/s	   79526 B/op	     109 allocs/op
+BenchmarkOutput/go-source     	      82	   7166937 ns/op	 146.43 MB/s	  786598 B/op	     383 allocs/op
+BenchmarkOutput/claude        	     112	   5226407 ns/op	 200.90 MB/s	  239159 B/op	     143 allocs/op
+BenchmarkOutput/gosyntax      	      98	   6065217 ns/op	 179.74 MB/s	  249347 B/op	     223 allocs/op
+BenchmarkOutput/boxdraw       	     127	   4673747 ns/op	 229.13 MB/s	    1205 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     128	   4593487 ns/op	 228.29 MB/s	  278573 B/op	     140 allocs/op
+BenchmarkOutput/emoji         	      72	   8019170 ns/op	 130.76 MB/s	  383920 B/op	     535 allocs/op
+# round 9/10 session-reflow: wall 9.85s cpu 9.80s share 0.99 clock 5143MHz sibling-busy 0.03
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  11110097 ns/op	  11051524 cpu-ns/op	18222112 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      14	  16056791 ns/op	  15976214 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      14	  16181883 ns/op	  16130214 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  13577918 ns/op	  13552000 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      27	   8853130 ns/op	   8825333 cpu-ns/op	13290400 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      19	  11753033 ns/op	  11716158 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     150	   1570332 ns/op	   1564173 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     223	   1069568 ns/op	   1068049 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     207	   1145263 ns/op	   1144314 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      36	   6207648 ns/op	   6189917 cpu-ns/op	12506592 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      16	  14746864 ns/op	  14684188 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      27	   8589593 ns/op	   8561111 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      63	   3809972 ns/op	   3797429 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       5	  47555356 ns/op	  47354000 cpu-ns/op	33245136 B/op	   18923 allocs/op
+# round 9/10 gui-frame: wall 0.62s cpu 0.62s share 0.99 clock 5115MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    5948	     99497 ns/op	     681 B/op	       0 allocs/op
+# round 10/10 vt10x: wall 5.40s cpu 5.38s share 1.00 clock 5116MHz sibling-busy 0.00
+goos: linux
+goarch: amd64
+pkg: bunk/internal/vt10x
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkWrite/ascii         	     453	   1321050 ns/op	 793.75 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/sgr           	     211	   2835593 ns/op	 369.82 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/unicode       	     127	   4684159 ns/op	 223.87 MB/s	      12 B/op	       0 allocs/op
+BenchmarkWrite/tui           	     420	   1428129 ns/op	 734.26 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/claude        	     241	   2483332 ns/op	 422.82 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/gosyntax      	     213	   2797691 ns/op	 389.66 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/boxdraw       	     301	   1983889 ns/op	 539.80 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/cjk           	     193	   3103131 ns/op	 337.93 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWrite/emoji         	     100	   5805517 ns/op	 180.62 MB/s	     241 B/op	       2 allocs/op
+# round 10/10 session-output: wall 5.32s cpu 5.29s share 0.99 clock 5139MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkOutput/ascii         	     248	   2333056 ns/op	 449.45 MB/s	   59978 B/op	      40 allocs/op
+BenchmarkOutput/full-rows     	     333	   1759487 ns/op	 595.96 MB/s	   98482 B/op	      30 allocs/op
+BenchmarkOutput/sgr           	      92	   6424145 ns/op	 163.23 MB/s	   79526 B/op	     109 allocs/op
+BenchmarkOutput/go-source     	      82	   7246739 ns/op	 144.81 MB/s	  786598 B/op	     383 allocs/op
+BenchmarkOutput/claude        	     109	   5365117 ns/op	 195.71 MB/s	  245150 B/op	     147 allocs/op
+BenchmarkOutput/gosyntax      	      96	   6106418 ns/op	 178.52 MB/s	  254541 B/op	     227 allocs/op
+BenchmarkOutput/boxdraw       	     124	   4785839 ns/op	 223.76 MB/s	    1234 B/op	       0 allocs/op
+BenchmarkOutput/cjk           	     128	   4578704 ns/op	 229.03 MB/s	  278573 B/op	     140 allocs/op
+BenchmarkOutput/emoji         	      73	   7944910 ns/op	 131.98 MB/s	  378661 B/op	     528 allocs/op
+# round 10/10 session-reflow: wall 9.85s cpu 9.81s share 1.00 clock 5143MHz sibling-busy 0.01
+goos: linux
+goarch: amd64
+pkg: bunk/internal/session
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkReflow/ascii/200-120-200         	      21	  11059935 ns/op	  11010524 cpu-ns/op	18222112 B/op	    8071 allocs/op
+BenchmarkReflow/styled/200-120-200        	      15	  15655373 ns/op	  15597867 cpu-ns/op	18973152 B/op	   15808 allocs/op
+BenchmarkReflow/wide/200-120-200          	      15	  15521742 ns/op	  15448133 cpu-ns/op	18386304 B/op	   13209 allocs/op
+BenchmarkReflow/links/200-120-200         	      16	  13466600 ns/op	  13418688 cpu-ns/op	14924224 B/op	   15808 allocs/op
+BenchmarkReflow/images/200-120-200        	      28	   8506755 ns/op	   8483893 cpu-ns/op	13290401 B/op	    5850 allocs/op
+BenchmarkReflow/wrapped/200-120-200       	      19	  11629449 ns/op	  11581526 cpu-ns/op	19041184 B/op	    7366 allocs/op
+BenchmarkReflow/shell/200-120-200         	     154	   1548103 ns/op	   1542968 cpu-ns/op	 2391552 B/op	     630 allocs/op
+BenchmarkReflow/shell/200-80              	     224	   1045818 ns/op	   1045643 cpu-ns/op	 1060520 B/op	     315 allocs/op
+BenchmarkReflow/shell/80-200              	     210	   1139188 ns/op	   1138595 cpu-ns/op	 1252648 B/op	     315 allocs/op
+BenchmarkReflow/shell/drag                	      36	   6168462 ns/op	   6158722 cpu-ns/op	12506592 B/op	    3150 allocs/op
+BenchmarkReflow/mixed/200-120-200         	      16	  14747963 ns/op	  14696938 cpu-ns/op	25174912 B/op	   15606 allocs/op
+BenchmarkReflow/mixed/200-80              	      27	   8624230 ns/op	   8600222 cpu-ns/op	11475688 B/op	   14675 allocs/op
+BenchmarkReflow/mixed/80-200              	      58	   3743062 ns/op	   3733414 cpu-ns/op	11976024 B/op	    4837 allocs/op
+BenchmarkReflow/mixed/drag                	       5	  47733567 ns/op	  47583600 cpu-ns/op	33245136 B/op	   18923 allocs/op
+# round 10/10 gui-frame: wall 0.62s cpu 0.62s share 0.99 clock 5115MHz sibling-busy 0.02
+goos: linux
+goarch: amd64
+pkg: bunk/cmd/bunk-gui
+cpu: AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M       
+BenchmarkFullScreenFrame 	    5877	    100747 ns/op	     689 B/op	       0 allocs/op

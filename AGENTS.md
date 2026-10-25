@@ -94,7 +94,9 @@ packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
 docs/               agent-hooks.md: hook recipes and the notify protocol
 scripts/            Terminal feature scripts (tested by terminal_features_test.go);
-                    headless-gui.sh runs GUI tests; screenshots.sh renders assets/
+                    headless-gui.sh runs GUI tests; screenshots.sh renders assets/;
+                    benchcheck/ runs and compares benchmarks (make bench-check)
+testdata/           bench-baseline.txt: the timings bench-check compares with
 ```
 
 Key local extensions to vendored vt10x:
@@ -179,6 +181,8 @@ make check-all # check + gui-test
 make rpm      # Fedora RPM of bunk-gui in bin/rpmbuild, checked by packaging/fedora/check-rpm.sh
 make fuzz     # every Fuzz target in turn, FUZZTIME each (default 30s); not in check-all
 make soak     # leak and soak tests at full length (SOAK=1); not in check-all
+make bench-check    # key benchmarks pinned to one core; fails on a >10% slowdown
+make bench-baseline # records testdata/bench-baseline.txt for bench-check
 ```
 
 Leak and soak tests check that sessions, panes and the notify socket release
@@ -202,6 +206,46 @@ it. Session kinds cover shells that exit, busy output closed mid-stream
 (`yes`, `/dev/urandom`), children that ignore SIGHUP and children that leave
 a process holding the PTY. A helper child that is the test binary itself
 sets `GORACE=atexit_sleep_ms=0`, or a -race build sleeps 1 s at exit.
+
+**Run `make bench-check` before merging a performance-sensitive change.**
+It compares the key benchmarks with `testdata/bench-baseline.txt`. Neither
+bench target is part of `check` or `check-all`, because timings depend on load.
+- **What runs:** `scripts/benchcheck` builds each test binary once. It runs
+  every vt10x benchmark, session `BenchmarkOutput` and `BenchmarkReflow`, and
+  bunk-gui `BenchmarkFullScreenFrame`. Write and Output include the
+  `termcorpus` streams. About 4 minutes at the default count.
+- **Interleaved rounds:** each of `BENCH_COUNT` rounds (10) runs every suite
+  once. A burst of load then hits all benchmarks alike.
+- **Pinning:** every run uses `taskset -c $(BENCH_CPU)` (CPU 0, a fast Zen 5
+  core) and `GOMAXPROCS=1`. The benchmarked paths are single-threaded, so
+  garbage collection runs on the measured core.
+- **Disturbed runs:** a run is repeated up to twice, and the least disturbed
+  attempt kept, on any of three signs. CPU time under 90% of wall time means a
+  shared core. A clock under 80% of the top clock means a power limit or heavy
+  load. An SMT sibling (CPU 12) over 50% busy shares the core's caches.
+- **Verdict:** medians of `cpu-ns/op` where both files have it (reflow), else
+  `ns/op`. A benchmark fails on two conditions together. A Mann-Whitney U
+  test gives p < 0.05, and the median grew by over `BENCH_THRESHOLD` percent (10).
+- **Not failures:** new or missing benchmarks, faster results, and warnings.
+- **Warnings:** a load average above `BENCH_MAX_LOAD` (4; the benchmark adds 1).
+  Disturbed runs that were kept. A different Go version, CPU, kernel, power
+  profile or core clock. Changed suite settings. An allocation-free benchmark
+  that now allocates.
+- **Load on other cores:** it lowers the pinned core's clock from 5.1 GHz.
+  Load 10 gives about 4.6 GHz, load 50 about 3.7 GHz. Compute-bound times grow
+  by as much. Same-code runs under different load differ by up to about 10%.
+  Rerun a failure that comes with a clock or load warning.
+- **Partial runs:** `BENCH_SUITES=vt10x,session-output` runs a subset; the
+  rest show as missing. `BENCH_TIME` overrides every suite's benchtime, which
+  changes results: compare only runs with equal settings.
+- **GUI frame benchmark:** it runs with `-test.short`, without a display, into
+  a fake rasterizer. When bunk-gui does not build, it is skipped with a note.
+  Its TestMain sets `runtime.MemProfileRate = 1`, which slows allocating code.
+- **New baseline:** after an intended speed change, run `make bench-baseline`
+  on a quiet machine. Commit `testdata/bench-baseline.txt` with the change.
+  Its header records Go, CPU, kernel, power settings, commit, date and load.
+- **Exit codes:** `go run ./scripts/benchcheck compare BASE CUR` exits 1 on a
+  regression and 2 on an error. `bin/bench-current.txt` keeps the last run.
 
 Fuzz targets cover every parser of program output and user input:
 `internal/vt10x` (FuzzParse, FuzzResize), `internal/session` (FuzzPTYStream,
