@@ -74,7 +74,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             Demo assets (gif)
-scripts/            Manual regression helpers; headless-gui.sh runs GUI tests
+scripts/            Terminal feature scripts (tested by terminal_features_test.go);
+                    headless-gui.sh runs GUI tests
 ```
 
 Key local extensions to vendored vt10x:
@@ -87,6 +88,12 @@ Key local extensions to vendored vt10x:
   terminal modes, attributes, callbacks, and hyperlink identities during reflow
 - DEC 12 cursor blink; DEC 2027 grapheme widths (enabled by default).
   `Glyph.Combining` stores an immutable grapheme suffix, bounded to 1 KiB/cell.
+  With DECRST 2027 a zero-width code point (VS16, keycap) joins a cell
+  without widening it; `renderPane` then paints only the base character.
+- `Color`: 0-255 are palette indexes. Truecolour comes from `vt10x.RGB` and
+  carries bit 24, so `38;2;0;0;255` never equals palette 255. Decode with
+  `c < 256` (palette), then `c < DefaultFG` (RGB in the low 24 bits).
+  The `Default*` values start at `1<<25`.
 - DECRQSS reports SGR, scroll margins, and cursor style; unsupported settings
   return a negative response. Unknown DECRQM modes return status 0, not 4.
 - The grid stores 16-byte, pointer-free cells (`row.go`). Combining text,
@@ -155,13 +162,32 @@ Tests run with `-race` and are required to pass before any binary is built.
 The gate is serialized even with `make -j`; the project-specific test-before-
 build rule takes precedence over the generic gate ordering.
 
-Manual regression scripts (run for changes that touch the listed areas):
-- `bash terminal_features.sh text` — SGR/style changes in `render.go` or `internal/vt10x/state.go`
-- `bash terminal_features.sh colors` — ANSI/256/RGB/underline-colour changes
-- `TERMINAL_FEATURES_AUTO=1 bash terminal_features.sh cursor` — cursor-shape, width, emoji, reflow
-- `TERMINAL_FEATURES_AUTO=1 bash terminal_features.sh integration` — hyperlink, bracketed-paste, OSC 133
-- `bash terminal_features.sh queries` + `bash terminal_features.sh osc` — OSC, DECRQM, capability queries, kitty-keyboard
-- `TERMINAL_FEATURES_AUTO=1 bash terminal_features.sh graphics` — image decoding, clipping, resize, scrollback
+Terminal feature scripts (`terminal_features.sh`, `scripts/terminal_features/`):
+- **All seven groups are automated.** `terminal_features_test.go` has one
+  `TestTerminalFeatures*` test per group; `make test` runs them (under 1 s).
+- **Each test runs the real script** with bash on a PTY in a bunk pane
+  (`features_harness_test.go`). It uses bunk's hooks, key handling, paste
+  and render path, answers each pause, and checks the simulation screen,
+  cursor, printed replies and host output (`App.hostOut`).
+- **Change a script and its test together.** The tests read 06's assertion
+  names and 05's "Bunk typically reports" lines from the scripts.
+- **Run a group by hand only to judge the host terminal:** fonts, emoji
+  shaping, visible underline styles, clicking links, the real clipboard.
+  `TERMINAL_FEATURES_AUTO=1` skips the pauses; 04 writes the clipboard.
+
+| Group | Script | Test |
+|-------|--------|------|
+| text | `01_text_attributes.sh` | `TestTerminalFeaturesText` |
+| colors | `02_colors.sh` | `TestTerminalFeaturesColors` |
+| cursor | `03_cursor_unicode.sh` | `TestTerminalFeaturesCursor` (shapes, widths, 2027, reflow) |
+| integration | `04_host_integration.sh` | `TestTerminalFeaturesIntegration` (OSC 8, paste, OSC 7/52/133) |
+| queries | `05_queries.sh` | `TestTerminalFeaturesQueries` |
+| osc | `06_osc_smoke.sh` | `TestTerminalFeaturesOSC` |
+| graphics | `07_graphics.sh` | `TestTerminalFeaturesGraphics` (clipping, resize, scrollback) |
+
+Query helpers in `lib.sh` send DA1 after each query and read until its
+reply, so they need no fixed sleep. `TERMINAL_FEATURES_QUERY_TIMEOUT`
+(default 2 s) bounds the wait for a silent terminal.
 
 ---
 
@@ -285,10 +311,19 @@ scr.SetSize(w, h)
 **Minimal App for calling render():**
 ```go
 app := &App{
-    screen: scr,
-    root:   &Node{pane: p},
-    active: p,
-    oscBuf: newOSCBuffer(),
-    theme:  testTheme(),
+    screen:  scr,
+    root:    &Node{pane: p},
+    active:  p,
+    oscBuf:  newOSCBuffer(),
+    theme:   testTheme(),
+    hostOut: &buf, // what render sends to the host; nil means os.Stdout
 }
 ```
+
+**Clipboard:** `TestMain` (`main_test.go`) replaces `writeNativeClipboard`,
+so no test writes the desktop clipboard. `clipboardHas(text)` reports what
+bunk tried to copy.
+
+**A script in a real pane:** `runFeatureScript(t, "03_cursor_unicode.sh",
+cols, rows)` returns a `scriptPane`. Use `waitPrompt`, `pressEnter`,
+`paste`, `resizeHost`, `finish`, `render`, then `find`, `row` and `rows`.

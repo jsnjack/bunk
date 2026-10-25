@@ -204,7 +204,7 @@ func (t *State) setColorName(j int, p *string) error {
 		if err != nil {
 			return err
 		}
-		t.colorOverride[Color(j)] = Color(r<<16 | g<<8 | b)
+		t.colorOverride[Color(j)] = RGB(uint8(r), uint8(g), uint8(b))
 	}
 	// A dynamic-colour change alters how every DefaultBG/FG cell renders, so
 	// bump the generation counter that the renderer watches to force a full

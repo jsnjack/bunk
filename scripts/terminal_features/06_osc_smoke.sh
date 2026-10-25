@@ -45,28 +45,6 @@ assert_empty() {
     fi
 }
 
-# query_raw: like query_terminal but returns raw bytes (no cat -v escaping),
-# so assert_eq can compare against literal escape sequences.
-query_raw() {
-    local query="$1"
-    local timeout="${2:-0.35}"
-    local old_stty response ch
-
-    old_stty=$(stty -g 2>/dev/null) || return 1
-    stty -echo -icanon min 0 time 0 2>/dev/null || return 1
-    # drain any stale input
-    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do :; done
-    printf '%s' "$query" >&3
-    sleep "$timeout"
-    response=""
-    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do
-        response+="$ch"
-        [[ ${#response} -gt 400 ]] && break
-    done
-    stty "$old_stty" 2>/dev/null
-    printf '%s' "$response"
-}
-
 main() {
     require_query_tty
 

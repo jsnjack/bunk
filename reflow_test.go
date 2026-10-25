@@ -382,7 +382,7 @@ func TestCellReflowPreservesStyledBlankRows(t *testing.T) {
 	p := regressionPane(8, 4)
 	p.CaptureAndWrite([]byte("\x1b[4;1H\x1b[48;2;10;20;30m  \x1b[0m\x1b[H"))
 	p.resize(0, 0, 5, 4)
-	if got := p.Term.Cell(0, 3).BG; got != vt10x.Color(10<<16|20<<8|30) {
+	if got := p.Term.Cell(0, 3).BG; got != vt10x.RGB(10, 20, 30) {
 		t.Fatalf("blank background lost: %v", got)
 	}
 }
