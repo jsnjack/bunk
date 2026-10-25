@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -51,14 +52,20 @@ func TestCheckCatchesLeaks(t *testing.T) {
 				}
 			}
 		}},
-		{"stuck goroutine", "goroutines", func(t *testing.T) func() {
+		{"stuck goroutines", "goroutines", func(t *testing.T) func() {
+			// Several, so a goroutine of the previous subtest that exits
+			// during the check cannot cancel the leak out.
+			const n = 8
 			stop := make(chan struct{})
-			started := make(chan struct{})
-			go func() {
-				close(started)
-				<-stop
-			}()
-			<-started
+			var started sync.WaitGroup
+			started.Add(n)
+			for range n {
+				go func() {
+					started.Done()
+					<-stop
+				}()
+			}
+			started.Wait()
 			return func() { close(stop) }
 		}},
 		{"zombie child", "zombie children", func(t *testing.T) func() {
@@ -103,7 +110,7 @@ func TestCheckCatchesLeaks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			base := Take()
+			base := settled()
 			release := tt.inject(t)
 			var r recorder
 			Check(&r, tt.name, base, quick)
@@ -118,6 +125,23 @@ func TestCheckCatchesLeaks(t *testing.T) {
 			}
 		})
 	}
+}
+
+// settled takes a baseline once the goroutine count has held still for a
+// few samples, so goroutines still exiting from earlier work are not in it.
+func settled() Snapshot {
+	base := Take()
+	for stable, deadline := 0, time.Now().Add(2*time.Second); stable < 3 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+		now := Take()
+		if now.Goroutines == base.Goroutines {
+			stable++
+		} else {
+			stable = 0
+		}
+		base = now
+	}
+	return base
 }
 
 // held keeps the heap-growth allocation reachable.
