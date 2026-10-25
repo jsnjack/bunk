@@ -20,6 +20,8 @@ func TestWideCellOperations(t *testing.T) {
 		{"delete lead", "界X\r\x1b[P", 5, 0, 0, ' '},
 		{"delete continuation", "界X\x1b[2G\x1b[P", 5, 0, 0, ' '},
 		{"prepend cluster wider than two", "\u0600\u0600aB", 6, 2, 0, 'B'},
+		{"three-column dash", "\u2e3aB", 5, 2, 0, 'B'},
+		{"four-column dash", "\u2e3bB", 5, 2, 0, 'B'},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			term := New(WithSize(tc.cols, 3))
