@@ -33,25 +33,94 @@ import "bunk/internal/vt10x"
 type Ring struct {
 	MaxLines int         // ring capacity (from config scrollback setting)
 	lines    []vt10x.Row // allocated on first push, length = maxLines
-	head     int         // index of the oldest entry
-	Count    int         // number of valid entries (0 … maxLines)
-	viewBuf  []vt10x.Glyph
+	// fits caches, for each slot, the result of lineFit: Row.ReflowFit
+	// of an unwrapped row, fitNone or fitUnknown. Reflow moves rows that
+	// fit the new width without reading their cells again.
+	fits    []int32
+	head    int // index of the oldest entry
+	Count   int // number of valid entries (0 … maxLines)
+	viewBuf []vt10x.Glyph
 }
+
+// Values of Ring.fits besides a fit: not computed yet, or no fit.
+const (
+	fitUnknown = -2
+	fitNone    = -1
+)
 
 // nextSlot returns the slot for a new line, evicting the oldest line when
 // the ring is full.
 func (s *Ring) nextSlot() int {
 	if s.lines == nil {
 		s.lines = make([]vt10x.Row, s.MaxLines)
+		s.fits = make([]int32, s.MaxLines)
 	}
+	// head < MaxLines and Count <= MaxLines, so subtracting once replaces
+	// the slower modulo.
+	var slot int
 	if s.Count < s.MaxLines {
 		s.Count++
-		return (s.head + s.Count - 1) % s.MaxLines
+		slot = s.head + s.Count - 1
+	} else {
+		// Ring is full: overwrite oldest slot (head), advance head.
+		slot = s.head
+		s.head++
+		if s.head == s.MaxLines {
+			s.head = 0
+		}
 	}
-	// Ring is full: overwrite oldest slot (head), advance head.
-	slot := s.head
-	s.head = (s.head + 1) % s.MaxLines
+	if slot >= s.MaxLines {
+		slot -= s.MaxLines
+	}
+	s.fits[slot] = fitUnknown
 	return slot
+}
+
+// lineFit returns n when the row at logical index i is unwrapped and
+// reflow, reading it as a whole line, would copy exactly its first n cells
+// into a row of cols >= n columns. Otherwise it returns -1. A known answer
+// is cached, so later calls do not read the row's cells.
+func (s *Ring) lineFit(i, cols int) int {
+	slot := (s.head + i) % s.MaxLines
+	fit := s.fits[slot]
+	if fit == fitUnknown {
+		row := s.lines[slot]
+		switch n := row.Len(); {
+		case n > 0 && rowWrapped(row, n-1):
+			fit = fitNone
+		case row.ReflowEnd() > cols:
+			return -1 // a wider row may hold it; check again then
+		default:
+			fit = int32(row.ReflowFit())
+		}
+		s.fits[slot] = fit
+	}
+	if int(fit) > cols {
+		return -1
+	}
+	return int(fit)
+}
+
+// rowWrapped reports whether cell x of row carries the soft-wrap bit.
+func rowWrapped(row vt10x.Row, x int) bool {
+	_, _, _, mode, _, _ := row.CellAt(x)
+	return mode&vt10x.AttrWrap != 0
+}
+
+// adopt appends row without copying it: the ring takes over its storage.
+// fit is the row's lineFit, or fitUnknown.
+func (s *Ring) adopt(row vt10x.Row, fit int32) {
+	if s.MaxLines <= 0 {
+		return
+	}
+	slot := s.nextSlot()
+	s.lines[slot] = row
+	s.fits[slot] = fit
+}
+
+// slot returns the stored row at logical index i for reflow to take over.
+func (s *Ring) slot(i int) *vt10x.Row {
+	return &s.lines[(s.head+i)%s.MaxLines]
 }
 
 // PushRow appends a copy of row without its trailing blanks.  Readers treat
@@ -97,7 +166,11 @@ func (s *Ring) Get(i int) []vt10x.Glyph {
 	if i < 0 || i >= s.Count {
 		return nil
 	}
-	return s.Row(i).AppendGlyphs(nil)
+	row := s.Row(i)
+	if row.Len() == 0 {
+		return nil
+	}
+	return row.AppendGlyphs(make([]vt10x.Glyph, 0, row.Len()))
 }
 
 // View is get without allocating: the result is reused by the next call to

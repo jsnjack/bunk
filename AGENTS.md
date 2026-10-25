@@ -49,6 +49,7 @@ internal/vt10x/     Vendored VT100/ANSI emulator (fork of github.com/hinshun/vt1
   grapheme.go       Incremental grapheme assembly and bounded cell text
   status.go         DECRQSS setting serialization
   graphics.go       Image-to-cell painting, Kitty placement deletion
+  rewrap.go         Rewrap: packs stored cells of logical lines at a new width
 
 internal/graphics/ Bounded SIXEL, Kitty, and iTerm2 static image decoders
 
@@ -222,6 +223,12 @@ Key fields agents may need to know about:
   scroll anchors follow their cells. Styles, links, and image samples survive
   reflow, and output storage is bounded by scrollback capacity plus pane height.
   Width changes clear selections whose coordinates are no longer valid.
+  `vt10x.Rewrap` copies compact cells. A scrollback row that is a whole line
+  and fits the new width moves without a copy; `Ring` caches that fit per
+  row. Any reflow change must keep `FuzzReflowEquivalence` and the tests in
+  `internal/session/reflow_test.go` green: they compare against the
+  pre-rewrite implementation in `reflow_oracle_test.go`. Track speed with
+  `go test ./internal/session -run '^$' -bench BenchmarkReflow`.
 - **Cursor colour follows the active pane.** OSC 12 overrides and OSC 112 resets
   are emitted through tcell; shutdown restores the host cursor colour.
 - **Synchronized updates are per pane.** Other panes continue repainting;
