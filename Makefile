@@ -129,6 +129,30 @@ soak:
 	cd $(GUI_DIR) && SOAK=1 ../../scripts/headless-gui.sh \
 		go test $(SOAKFLAGS) -count=1 -timeout 30m -v -run '^TestGUITabLeaks$$' .
 
+# Performance gate. bench-check runs the key benchmarks (scripts/benchcheck)
+# pinned to BENCH_CPU, BENCH_COUNT interleaved rounds, and fails when a
+# median time grows by more than BENCH_THRESHOLD percent with p < 0.05
+# against BENCH_BASELINE. bench-baseline records that file. Neither is part
+# of check or check-all: timings depend on machine load.
+BENCH_THRESHOLD ?= 10
+BENCH_COUNT     ?= 10
+BENCH_CPU       ?= 0
+BENCH_MAX_LOAD  ?= 4
+BENCH_TIME      ?=
+BENCH_SUITES    ?=
+BENCH_BASELINE  ?= testdata/bench-baseline.txt
+BENCH_CURRENT   ?= bin/bench-current.txt
+BENCH_RUN        = go run ./scripts/benchcheck run -count $(BENCH_COUNT) -cpu '$(BENCH_CPU)' \
+	-max-load $(BENCH_MAX_LOAD) -benchtime '$(BENCH_TIME)' -suites '$(BENCH_SUITES)'
+
+bench-check:
+	$(BENCH_RUN) -o $(BENCH_CURRENT)
+	go run ./scripts/benchcheck compare -threshold $(BENCH_THRESHOLD) -max-load $(BENCH_MAX_LOAD) \
+		$(BENCH_BASELINE) $(BENCH_CURRENT)
+
+bench-baseline:
+	$(BENCH_RUN) -o $(BENCH_BASELINE)
+
 rpm: version
 	rm -rf $(RPM_TOP)
 	packaging/fedora/sources.sh $(VERSION) $(RPM_TOP)/SOURCES
@@ -143,4 +167,5 @@ rpm: version
 clean:
 	rm -rf bin/ $(BINARY)
 
-.PHONY: version build release test vet fmt lint check standards run clean gui gui-test screenshots check-all rpm fuzz soak
+.PHONY: version build release test vet fmt lint check standards run clean gui gui-test screenshots check-all rpm fuzz soak \
+	bench-check bench-baseline
