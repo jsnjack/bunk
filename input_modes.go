@@ -12,10 +12,13 @@ func (app *App) handleFocus(focused bool) {
 		enabled := !p.Dead && p.Term.Mode()&vt10x.ModeFocus != 0
 		p.Unlock()
 		if enabled {
+			report := "\x1b[O"
 			if focused {
-				p.WriteInput([]byte("\x1b[I"))
-			} else {
-				p.WriteInput([]byte("\x1b[O"))
+				report = "\x1b[I"
+			}
+			// Under app.mu: log a refusal instead of flashing it.
+			if err := p.WriteInput([]byte(report)); err != nil {
+				L.Debug("handleFocus: focus report refused", "pane", p.ID, "err", err)
 			}
 		}
 	}

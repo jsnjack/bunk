@@ -25,6 +25,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"bunk/internal/input"
 	"bunk/internal/session"
 	"bunk/internal/vt10x"
 )
@@ -201,13 +202,16 @@ func (app *App) pasteFromClipboard() bool {
 	bracketed := active.Term.Mode()&vt10x.ModeSetPaste != 0
 	active.Unlock()
 
+	// One input event: the markers and the text reach the PTY together.
+	data := make([]byte, 0, len(text)+len(input.PasteStart)+len(input.PasteEnd))
 	if bracketed {
-		active.WriteInput([]byte("\x1b[200~"))
+		data = append(data, input.PasteStart...)
 	}
-	active.WriteInput([]byte(text))
+	data = append(data, text...)
 	if bracketed {
-		active.WriteInput([]byte("\x1b[201~"))
+		data = append(data, input.PasteEnd...)
 	}
+	app.sendInput(active, data)
 	return true
 }
 

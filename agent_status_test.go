@@ -237,12 +237,16 @@ sleep 30
 		t.Fatalf("the shell pane has a badge: %q", got)
 	}
 
-	claude.WriteInput([]byte("go\r"))
+	if err := claude.WriteInput([]byte("go\r")); err != nil {
+		t.Fatal(err)
+	}
 	waitStatus(t, scr, claude, "working", func(st session.Status) bool { return st.State == session.AgentWorking })
 	app.render()
 	expectBadge(t, scr, 0, w, " ● claude working ", colorAgentWorking, colorAgentBadge)
 
-	claude.WriteInput([]byte("\r"))
+	if err := claude.WriteInput([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
 	waitStatus(t, scr, claude, "OSC 9", func(st session.Status) bool {
 		return st.State == session.AgentNeedsYou && st.Notice == "Approve edit to main.go?"
 	})
@@ -395,6 +399,7 @@ func TestAgentAcknowledge(t *testing.T) {
 		if st := p[0].Status(); st.State != session.AgentNone {
 			t.Fatalf("a after typing: %+v", st)
 		}
+		waitWritten(t, p[0].Session)
 		if got, err := os.ReadFile(ptys[0]); err != nil || string(got) != "x" {
 			t.Fatalf("pane input %q, %v; want x", got, err)
 		}
@@ -508,6 +513,7 @@ func TestNextNeedsYouNone(t *testing.T) {
 	if app.active != p[0] || p[1].Status().State != session.AgentNeedsYou {
 		t.Fatal("disabled key still jumped")
 	}
+	waitWritten(t, p[0].Session)
 	if got, err := os.ReadFile(ptys[0]); err != nil || string(got) != "\x1ba" {
 		t.Fatalf("pane input %q, %v; want ESC a", got, err)
 	}
@@ -570,7 +576,9 @@ func TestNotifySocketTUI(t *testing.T) {
 	app.root = newLeaf(agent, 0, 0, 80, 21)
 	app.root.split(other, splitHorizontal)
 	app.active = other
-	agent.WriteInput([]byte("go\r"))
+	if err := agent.WriteInput([]byte("go\r")); err != nil {
+		t.Fatal(err)
+	}
 
 	st := waitStatus(t, scr, agent, "bunk notify needs-you", func(st session.Status) bool {
 		return st.State == session.AgentNeedsYou

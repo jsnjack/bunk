@@ -33,6 +33,7 @@ func TestCapabilityStreamOrdering(t *testing.T) {
 				"\x1bP1+r6b75=1b4f41\x1b\\\x1bP1+r6b75=1b5b41\x1b\\" +
 				"\x1bP1+r6b656e74=1b4f4d\x1b\\\x1bP1+r6b656e74=0d\x1b\\" +
 				"\x1bP1+r6b6273=1b5b31323775\x1b\\\x1bP1+r6b6273=08\x1b\\"
+			waitWritten(t, p.Session)
 			got, err := os.ReadFile(f.Name())
 			if err != nil {
 				t.Fatal(err)

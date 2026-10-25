@@ -237,7 +237,9 @@ func TestOutputSoak(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	s.WriteInput([]byte("go\r"))
+	if err := s.WriteInput([]byte("go\r")); err != nil {
+		t.Fatal(err)
+	}
 
 	resizerDone := make(chan struct{})
 	resizes := 0

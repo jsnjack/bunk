@@ -183,7 +183,9 @@ func soakOutput(cycle, pane, lines int) string {
 // cycle splits the home pane into four, zooms, navigates and resizes,
 // then lets the three new panes print and exit. The first leaves a
 // process behind that keeps its PTY open: removing the pane must close the
-// PTY anyway. That process lives on until killHolders.
+// PTY anyway. That process lives on until killHolders. The second floods
+// queries in raw mode and never reads the replies, so it exits with its
+// PTY writer blocked.
 func (s *tuiSoak) cycle(i int) {
 	s.t.Helper()
 	app := s.app
@@ -205,11 +207,18 @@ func (s *tuiSoak) cycle(i int) {
 	app.handleResize()
 
 	holder := true
+	var flood *Pane
 	for j, p := range s.panes() {
 		if p == s.home {
 			continue
 		}
 		cmd := soakOutput(i, j, 600)
+		if flood == nil && !holder {
+			// Raw mode, and replies to queries nobody reads: the shell
+			// exits while its PTY writer waits for it.
+			cmd = `stty raw -echo; yes "$(printf '\033[5n')" | head -c 200000; ` + cmd
+			flood = p
+		}
 		if holder {
 			// Without job control the background sleep stays in the
 			// shell's process group, which killHolders kills.
@@ -217,9 +226,15 @@ func (s *tuiSoak) cycle(i int) {
 			s.holders = append(s.holders, p.Cmd.Process.Pid)
 			holder = false
 		}
-		p.WriteInput([]byte(cmd + "; exit\r"))
+		if err := p.WriteInput([]byte(cmd + "; exit\r")); err != nil {
+			s.t.Fatal(err)
+		}
 	}
 	s.waitPanes(1)
+	stopped := flood.WaitWritten(5 * time.Second)
+	if ws := flood.WriteStats(); ws.DroppedReplies == 0 || !stopped {
+		s.t.Errorf("cycle %d: the flooding pane's writer %+v; want replies dropped and the writer stopped", i, ws)
+	}
 	s.sim.SetSize(soakW, soakH)
 	app.handleResize()
 }
@@ -289,7 +304,9 @@ func TestTUISoak(t *testing.T) {
 	s.killHolders()
 
 	// The last pane exits: bunk shuts down and stops its goroutines.
-	s.home.WriteInput([]byte("exit\r"))
+	if err := s.home.WriteInput([]byte("exit\r")); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-s.app.done:
 	case <-time.After(10 * time.Second):

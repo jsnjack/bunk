@@ -113,7 +113,9 @@ func runNotifyBatch(t *testing.T, srv *Server, exe string, first, n int, done <-
 			Closed: func() { close(r.closed) },
 		}, done)
 		srv.Register(token, r.s)
-		r.s.WriteInput([]byte("go\r"))
+		if err := r.s.WriteInput([]byte("go\r")); err != nil {
+			t.Fatal(err)
+		}
 		runs[i] = r
 	}
 	var wg sync.WaitGroup

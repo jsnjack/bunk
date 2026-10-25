@@ -50,6 +50,7 @@ import (
 	"time"
 	"unicode"
 
+	"bunk/internal/input"
 	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
@@ -397,7 +398,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		stillWants := target.Term.Mode()&vt10x.ModeMouseMask != 0
 		target.Unlock()
 		if stillWants {
-			target.WriteInput(data)
+			app.sendInput(target, data)
 		}
 	}
 }
@@ -427,22 +428,29 @@ func screenToVirtual(p *Pane, screenX, screenY int) session.SelPos {
 	return session.SelPos{Row: (sbCount - sbOff) + row, Col: col}
 }
 
-// handlePaste forwards a tcell bracketed-paste event to the active pane.
+// pasteTimeout ends a host paste whose end marker never came: what was
+// collected is sent, and later keys go to the pane one by one again.
+const pasteTimeout = time.Second
+
+// handlePaste collects a paste from the host terminal into one input event
+// for the active pane.
 //
 // tcell v2 represents bracketed paste as a pair of EventPaste events:
 //   - EventPaste.Start() == true  marks the beginning of paste content
 //   - EventPaste.Start() == false marks the end
 //
 // The actual paste text arrives as regular *tcell.EventKey events between
-// the two EventPaste events; handleKey forwards them to the pane's PTY as
-// usual.  Our job here is to wrap that content in ESC[200~…ESC[201~ for
-// panes that have enabled DECSET 2004 (tracked via vt10x.ModeSetPaste).
-// Panes that haven't opted in receive the content as plain keystrokes.
+// the two EventPaste events; handleKey encodes them as usual and
+// collectPaste adds them to the paste instead of sending each. The end
+// sends the paste whole, so no reply to a query lands inside it. Panes that
+// enabled DECSET 2004 (vt10x.ModeSetPaste) get it wrapped in
+// ESC[200~…ESC[201~; others get the plain keystrokes.
 func (app *App) handlePaste(ev *tcell.EventPaste) {
 	app.mu.Lock()
-	active := app.active
+	active, gen := app.active, app.pasteGen
 	app.mu.Unlock()
-	if active == nil || active.IsDead() {
+	app.endPaste(gen) // a paste still open lost its end marker
+	if !ev.Start() || active == nil || active.IsDead() {
 		return
 	}
 
@@ -450,19 +458,47 @@ func (app *App) handlePaste(ev *tcell.EventPaste) {
 	bracketed := active.Term.Mode()&vt10x.ModeSetPaste != 0
 	active.Unlock()
 
-	L.Debug("handlePaste", "pane", active.ID, "start", ev.Start(), "bracketed", bracketed)
+	L.Debug("handlePaste", "pane", active.ID, "bracketed", bracketed)
 
-	if !bracketed {
-		// Pane hasn't requested bracketed paste; content arrives as key events
-		// and gets forwarded verbatim by handleKey.  Nothing to do here.
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.pasteGen++
+	gen = app.pasteGen
+	app.paste, app.pastePane, app.pasteEnd = make([]byte, 0, 256), active, ""
+	if bracketed {
+		app.paste = append(app.paste, input.PasteStart...)
+		app.pasteEnd = input.PasteEnd
+	}
+	app.pasteTimer = time.AfterFunc(pasteTimeout, func() { app.endPaste(gen) })
+}
+
+// collectPaste adds the bytes of a pasted key for p to the open paste and
+// reports whether one was open. A paste larger than an input queue stops
+// growing there; the pane refuses it whole at the end.
+func (app *App) collectPaste(p *Pane, data []byte) bool {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.paste == nil || app.pastePane != p {
+		return false
+	}
+	if len(app.paste) <= session.DefaultInputBytes {
+		app.paste = append(app.paste, data...)
+	}
+	return true
+}
+
+// endPaste sends paste gen, if it is still open, as one input event.
+func (app *App) endPaste(gen uint64) {
+	app.mu.Lock()
+	if gen != app.pasteGen || app.paste == nil {
+		app.mu.Unlock()
 		return
 	}
-
-	if ev.Start() {
-		active.WriteInput([]byte("\x1b[200~"))
-	} else {
-		active.WriteInput([]byte("\x1b[201~"))
-	}
+	p, data := app.pastePane, append(app.paste, app.pasteEnd...)
+	app.paste, app.pastePane, app.pasteEnd = nil, nil, ""
+	app.pasteTimer.Stop()
+	app.mu.Unlock()
+	app.sendInput(p, data)
 }
 
 // sendFocusIn sends ESC[I (focus gained) to p if it has DECSET 1004 enabled
@@ -476,7 +512,9 @@ func sendFocusIn(p *Pane) {
 	p.Unlock()
 	if wants {
 		L.Debug("sendFocusIn", "pane", p.ID)
-		p.WriteInput([]byte("\x1b[I"))
+		if err := p.WriteInput([]byte("\x1b[I")); err != nil {
+			L.Debug("sendFocusIn: focus report refused", "pane", p.ID, "err", err)
+		}
 	}
 }
 
@@ -490,7 +528,9 @@ func sendFocusOut(p *Pane) {
 	p.Unlock()
 	if wants {
 		L.Debug("sendFocusOut", "pane", p.ID)
-		p.WriteInput([]byte("\x1b[O"))
+		if err := p.WriteInput([]byte("\x1b[O")); err != nil {
+			L.Debug("sendFocusOut: focus report refused", "pane", p.ID, "err", err)
+		}
 	}
 }
 

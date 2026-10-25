@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,7 +12,9 @@ import (
 // compares the resource counters of two marks: descriptors, goroutines,
 // child processes and zombies, panes not yet freed and their GL textures
 // must be back where they were with only the first tab open. 20 tabs here,
-// 200 with SOAK=1 (make soak).
+// 200 with SOAK=1 (make soak). Every fifth tab runs a program that floods
+// queries and never reads its input, and gets typed into, so it closes
+// with the PTY writer blocked and replies and input queued.
 func TestGUITabLeaks(t *testing.T) {
 	t.Parallel()
 	tabs := 20
@@ -26,6 +29,13 @@ func TestGUITabLeaks(t *testing.T) {
 	}
 	step("mark start", 100*time.Millisecond)
 	for i := range tabs {
+		if i%5 == 0 {
+			step(`new-tab stty raw -echo; yes "$(printf '\\033[5n')" | head -c 300000; sleep 100`, 700*time.Millisecond)
+			step("type "+strings.Repeat("k", 1000), 80*time.Millisecond)
+			step(fmt.Sprintf("snap flooding-%d", i), 50*time.Millisecond)
+			step("close-tab", 80*time.Millisecond)
+			continue
+		}
 		step("new-tab", 80*time.Millisecond)
 		step("split", 80*time.Millisecond)
 		if i%2 == 1 {
@@ -45,6 +55,12 @@ func TestGUITabLeaks(t *testing.T) {
 		start.Panes, end.Panes, start.Textures, end.Textures)
 	if s := g.snap("end"); len(s.Tabs) != 1 {
 		t.Fatalf("%d tabs open at the end, want 1", len(s.Tabs))
+	}
+	for i := 0; i < tabs; i += 5 {
+		s := g.snap(fmt.Sprintf("flooding-%d", i))
+		if w := s.focused(t).Writer; w.DroppedReplies == 0 || w.PendingReplies == 0 || w.PendingInput != 1000 {
+			t.Errorf("tab %d closed without a blocked writer: %+v", i+2, w)
+		}
 	}
 	if end.FDs > start.FDs+2 {
 		t.Errorf("%d file descriptors open, %d before the tabs", end.FDs, start.FDs)

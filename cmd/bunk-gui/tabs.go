@@ -157,6 +157,7 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 		Backspace:  input.KeyBackspace,
 		Agents:     a.settings.Agents,
 		ImageBytes: a.cfg.imageBytes,
+		InputBytes: a.cfg.inputBytes,
 	}
 	// Agent hooks report through the notify socket with the session's token.
 	if a.notify != nil {

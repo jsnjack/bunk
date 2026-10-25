@@ -47,7 +47,7 @@ func TestEndToEnd(t *testing.T) {
 		}
 	}}, done)
 	srv.Register(token, s)
-	if _, err := s.PTY.Write([]byte("go\r")); err != nil {
+	if err := s.WriteInput([]byte("go\r")); err != nil {
 		t.Fatal(err)
 	}
 

@@ -13,10 +13,17 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"bunk/internal/ptychild"
 )
 
 // runHelper runs the helper BUNK_GUI_HELPER names and exits, or returns.
+// With ptychild.Env set it runs the child that floods queries and never
+// reads its input (bunk/internal/ptychild).
 func runHelper() {
+	if ptychild.Requested() {
+		os.Exit(ptychild.Main())
+	}
 	switch os.Getenv("BUNK_GUI_HELPER") {
 	case "":
 		return

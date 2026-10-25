@@ -32,6 +32,10 @@ type leakKind struct {
 	// killsGroup: the child ignores SIGHUP, so Close must kill its process
 	// group; the test checks that the group is gone.
 	killsGroup bool
+	// blocksWriter: the child floods queries and never reads; the test
+	// queues input too and closes the session while the PTY writer waits
+	// for the child.
+	blocksWriter bool
 }
 
 func shArgs(script string) []string { return []string{"/bin/sh", "-c", script} }
@@ -46,6 +50,9 @@ var leakKinds = []leakKind{
 	{name: "busy and ignores SIGHUP", args: shArgs(`trap '' HUP; echo ready; yes > /dev/null`),
 		closeAfter: 1, ready: "ready", killsGroup: true},
 	{name: "child holds the pty", args: shArgs(holdPTY), closeOnExit: true},
+	{name: "never reads, writer blocked", args: shArgs(`stty raw -echo; echo ready; ` +
+		`yes "$(printf '\033[5n')" | head -c 300000; while :; do sleep 1; done`),
+		closeAfter: 1, ready: "ready", blocksWriter: true},
 }
 
 // holdPTY exits at once and leaves a process that ignores SIGHUP and keeps
@@ -115,6 +122,9 @@ func (r *leakRun) finish(t *testing.T) {
 				return
 			}
 		}
+		if r.kind.blocksWriter {
+			r.blockWriter(t, deadline)
+		}
 		r.s.Close()
 	}
 	if r.kind.closeOnExit {
@@ -145,6 +155,26 @@ func (r *leakRun) finish(t *testing.T) {
 		if err := syscall.Kill(-r.s.Cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 			t.Errorf("%s: kill the process holding the PTY: %v", r.kind.name, err)
 		}
+	}
+}
+
+// blockWriter waits until the child's unread replies fill the reply queue,
+// then queues input behind them.
+func (r *leakRun) blockWriter(t *testing.T, deadline <-chan time.Time) {
+	for r.s.WriteStats().DroppedReplies == 0 {
+		select {
+		case <-r.output:
+		case <-time.After(10 * time.Millisecond):
+		case <-deadline:
+			t.Errorf("%s: no reply dropped: %+v", r.kind.name, r.s.WriteStats())
+			return
+		}
+	}
+	if err := r.s.WriteInput(bytes.Repeat([]byte("k"), 64<<10)); err != nil {
+		t.Errorf("%s: %v", r.kind.name, err)
+	}
+	if ws := r.s.WriteStats(); !ws.Writing || ws.PendingInput < 64<<10 || ws.PendingReplies == 0 {
+		t.Errorf("%s: want a blocked writer before Close: %+v", r.kind.name, ws)
 	}
 }
 

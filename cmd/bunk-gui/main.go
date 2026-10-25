@@ -44,6 +44,7 @@ import (
 
 	"bunk/internal/graphics"
 	"bunk/internal/notify"
+	"bunk/internal/session"
 )
 
 const appID = "io.github.jsnjack.BunkGui"
@@ -77,6 +78,7 @@ type config struct {
 	gsk        string
 
 	imageBytes    int // per pane: bitmaps of image placements (session.Options.ImageBytes)
+	inputBytes    int // per pane: input queued for a program not reading it (session.Options.InputBytes)
 	imageGPUBytes int // per pane: textures of placements not on screen
 }
 
@@ -206,6 +208,7 @@ func main() {
 	flag.StringVar(&cfg.gsk, "gsk", "gl", "GSK renderer to request when GSK_RENDERER is unset: gl, vulkan, or default")
 	flag.IntVar(&cfg.imageBytes, "image-bytes", graphics.DefaultStoreBytes, "per pane, keep image bitmaps up to `N` bytes; older ones draw as half blocks")
 	flag.IntVar(&cfg.imageGPUBytes, "image-gpu-bytes", DefaultImageGPUBytes, "per pane, keep image textures not on screen up to `N` bytes")
+	flag.IntVar(&cfg.inputBytes, "input-bytes", session.DefaultInputBytes, "per pane, queue up to `N` bytes of input for a program that is not reading it; more is refused")
 	flag.Parse()
 	if cfg.allocProbe || cfg.memProfile != "" {
 		runtime.MemProfileRate = 1

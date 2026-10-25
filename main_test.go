@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sync"
 	"testing"
+
+	"bunk/internal/ptychild"
 )
 
 // testClipboard records what bunk would copy to the desktop clipboard.
@@ -24,6 +26,10 @@ func clipboardHas(text string) bool {
 
 // TestMain keeps every test away from the user's desktop clipboard.
 func TestMain(m *testing.M) {
+	// A pane's child that never reads its input (writer_test.go).
+	if ptychild.Requested() {
+		os.Exit(ptychild.Main())
+	}
 	// Run as "bunk" (a symlink to this binary, see bunkOnPath), the test
 	// binary is the bunk command line, so panes can run "bunk notify".
 	if filepath.Base(os.Args[0]) == "bunk" {

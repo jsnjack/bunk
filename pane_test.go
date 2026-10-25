@@ -153,7 +153,7 @@ func TestCaptureAndWrite_OSC10NormalModeResponse(t *testing.T) {
 	p.CaptureAndWrite([]byte("\x1b]10;?\x1b\\"))
 	p.CaptureAndWrite([]byte("\x1b]11;?\x1b\\"))
 	p.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\\x1b]11;rgb:1c1c/1c1c/1f1f\x1b\\"
@@ -183,7 +183,7 @@ func TestCaptureAndWrite_OSC10SameChunkAltScreenResponse(t *testing.T) {
 	p.Lock()
 	p.CaptureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
 	p.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
@@ -213,7 +213,7 @@ func TestCaptureAndWrite_OSC10QueryUsesDynamicOverride(t *testing.T) {
 	p.Lock()
 	p.CaptureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]10;?\x1b\\"))
 	p.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:1111/2222/3333\x1b\\"
@@ -243,7 +243,7 @@ func TestCaptureAndWrite_OSC10ResetRestoresTheme(t *testing.T) {
 	p.Lock()
 	p.CaptureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]110\x07\x1b]10;?\x1b\\"))
 	p.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
@@ -272,7 +272,7 @@ func TestCaptureAndWrite_DECRQMSameChunkUsesUpdatedState(t *testing.T) {
 	p.Lock()
 	p.CaptureAndWrite([]byte("\x1b[?2004h\x1b[?2004$p\x1b[?2004l\x1b[?2004$p"))
 	p.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b[?2004;1$y\x1b[?2004;2$y"
@@ -301,7 +301,7 @@ func TestCaptureAndWrite_OSC10UnknownThemeNoResponse(t *testing.T) {
 	p.Lock()
 	p.CaptureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
 	p.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	if len(buf) != 0 {
@@ -990,7 +990,7 @@ func TestXTVersion_Response(t *testing.T) {
 	p := &Pane{Session: &session.Session{Term: term, PTY: pw, ScrollbackLines: 100, Scrollback: session.Ring{MaxLines: 100}}}
 
 	p.CaptureAndWrite([]byte("\x1b[>0q"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP>|VTE(8203)\x1b\\"
@@ -1011,7 +1011,7 @@ func TestXTVersion_ShortForm(t *testing.T) {
 	p := &Pane{Session: &session.Session{Term: term, PTY: pw, ScrollbackLines: 100, Scrollback: session.Ring{MaxLines: 100}}}
 
 	p.CaptureAndWrite([]byte("\x1b[>q"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP>|VTE(8203)\x1b\\"
@@ -1033,7 +1033,7 @@ func TestXTGETTCAP_Smulx(t *testing.T) {
 
 	// "Smulx" hex-encoded = 536d756c78
 	p.CaptureAndWrite([]byte("\x1bP+q536d756c78\x1b\\"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	// value = "\x1b[4:%p1%dm" hex-encoded
@@ -1057,7 +1057,7 @@ func TestXTGETTCAP_Unknown(t *testing.T) {
 
 	// "unknown" hex-encoded = 756e6b6e6f776e
 	p.CaptureAndWrite([]byte("\x1bP+q756e6b6e6f776e\x1b\\"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP0+r756e6b6e6f776e\x1b\\"
@@ -1180,7 +1180,7 @@ func TestHandleKittyKeyboard_PushQueryPop(t *testing.T) {
 	}
 	p.Unlock()
 
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 	buf, _ := io.ReadAll(pr)
 	// Only the query should have produced a response.
 	want := "\x1b[?3u"

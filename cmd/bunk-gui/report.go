@@ -156,6 +156,16 @@ type paneReport struct {
 	Cursor   string       `json:"cursor"` // pointer cursor over the view: text or pointer
 	Hover    string       `json:"hover"`  // link underlined under the pointer (Ctrl held)
 	Images   imageReport  `json:"images"`
+	Writer   writerReport `json:"writer"`
+}
+
+// writerReport is what the session's PTY writer holds for a child that
+// has not read it yet, and what it dropped or refused (session.WriteStats).
+type writerReport struct {
+	PendingReplies int    `json:"pending_replies"`
+	PendingInput   int    `json:"pending_input"`
+	DroppedReplies uint64 `json:"dropped_replies"`
+	RefusedInput   uint64 `json:"refused_input"`
 }
 
 // imageReport is a pane's image memory: the session's store and the
@@ -532,6 +542,9 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		r.Texture = [4]int{vg.x0 - ox, vg.y0 - oy, vg.dw, vg.dh}
 	}
 	if p.s != nil {
+		ws := p.s.WriteStats()
+		r.Writer = writerReport{PendingReplies: ws.PendingReplies, PendingInput: ws.PendingInput,
+			DroppedReplies: ws.DroppedReplies, RefusedInput: ws.RefusedInput}
 		p.s.Lock()
 		cols, rows := p.s.Term.Size()
 		r.Scroll = p.s.ScrollOffset

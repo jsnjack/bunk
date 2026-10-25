@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"sync/atomic"
 	"time"
@@ -60,6 +61,7 @@ type Pane struct {
 	outPending atomic.Int64 // oldest PTY output not yet rendered, 0 if none
 	outLast    atomic.Int64 // newest PTY output
 	keyPending atomic.Int64 // oldest key write not yet rendered, 0 if none
+	refusing   atomic.Bool  // an "input not sent" toast is up for this pane
 	events     atomic.Int64 // PTY output chunks plus key writes, for the alloc probe
 
 	titleSeen string // last Term.Title(), read by the PTY reader (Applied)
@@ -487,13 +489,41 @@ func (p *Pane) snapToLive() {
 }
 
 // write sends input to the child, stamping it for the latency statistics.
+// It never waits for the child: input it has no room for is refused.
 func (p *Pane) write(data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	p.keyPending.CompareAndSwap(0, monoNs())
+	now := monoNs()
+	stamped := p.keyPending.CompareAndSwap(0, now)
+	if err := p.s.WriteInput(data); err != nil {
+		if stamped {
+			p.keyPending.CompareAndSwap(now, 0)
+		}
+		p.inputRefused(err)
+		return
+	}
 	p.events.Add(1)
-	p.s.WriteInput(data)
+}
+
+// refusedToastFor is how long an "input not sent" toast stays up; while
+// it does, more refused input in the same pane shows no new toast.
+const refusedToastFor = 3 * time.Second
+
+// inputRefused tells the user that input was not sent: the child stopped
+// reading and its input queue is full. It runs on any goroutine.
+func (p *Pane) inputRefused(err error) {
+	slog.Debug("input refused", "pane", p.id, "err", err)
+	if !p.refusing.CompareAndSwap(false, true) {
+		return
+	}
+	coreglib.IdleAdd(func() {
+		p.app.toast("Input not sent: " + err.Error())
+		coreglib.TimeoutAdd(uint(refusedToastFor.Milliseconds()), func() bool {
+			p.refusing.Store(false)
+			return false
+		})
+	})
 }
 
 func (p *Pane) String() string { return fmt.Sprintf("pane %d", p.id) }

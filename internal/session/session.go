@@ -46,7 +46,8 @@ type SelPos struct {
 type Session struct {
 	ID int
 
-	PTY      *os.File      // PTY master - write keystrokes here, read shell output here
+	PTY      *os.File      // PTY master: ReadLoop reads output; writes go through out
+	out      ptyWriter     // queues replies and input for the PTY (writer.go)
 	ptmxOnce sync.Once     // ensures PTY master fd is closed exactly once
 	killOnce sync.Once     // Close arms the SIGKILL fallback once
 	Cmd      *exec.Cmd     // the shell process
@@ -187,6 +188,9 @@ type Options struct {
 	// bytes, so the front end can draw them at full resolution (Images).
 	// Zero keeps only the cells' colour samples, as bunk's TUI draws them.
 	ImageBytes int
+	// InputBytes caps the input queued for a child that does not read it
+	// (WriteInput); zero means DefaultInputBytes.
+	InputBytes int
 }
 
 // Hooks connect a Session to its front end. Every hook is optional.
@@ -291,9 +295,10 @@ func Start(o Options) (*Session, error) {
 		agents:          o.Agents,
 		exited:          make(chan struct{}),
 	}
+	s.out.inputCap = o.InputBytes
 	s.oscScan.status = s.onStatusOSC
 	s.Term = vt10x.New(vt10x.WithSize(o.Cols, o.Rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithBellCallback(s.onBell),
-		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.WriteInput), vt10x.WithCellPixels(cellWidth, cellHeight),
+		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.reply), vt10x.WithCellPixels(cellWidth, cellHeight),
 		s.imageStore(o.ImageBytes))
 
 	// One-time container detection: read the shell process's own environ.
@@ -705,26 +710,26 @@ func (s *Session) replyTerminalQuery(q terminalQuery) {
 		cw, ch := s.Term.CellPixels()
 		switch q.mode {
 		case 14:
-			s.WriteInput(fmt.Appendf(nil, "\x1b[4;%d;%dt", rows*ch, cols*cw))
+			s.reply(fmt.Appendf(nil, "\x1b[4;%d;%dt", rows*ch, cols*cw))
 		case 16:
-			s.WriteInput(fmt.Appendf(nil, "\x1b[6;%d;%dt", ch, cw))
+			s.reply(fmt.Appendf(nil, "\x1b[6;%d;%dt", ch, cw))
 		case 18:
-			s.WriteInput(fmt.Appendf(nil, "\x1b[8;%d;%dt", rows, cols))
+			s.reply(fmt.Appendf(nil, "\x1b[8;%d;%dt", rows, cols))
 		}
 	case terminalQueryDA3:
-		s.WriteInput([]byte("\x1bP!|00000000\x1b\\"))
+		s.reply([]byte("\x1bP!|00000000\x1b\\"))
 	case terminalQueryDSR:
-		s.WriteInput([]byte("\x1b[0n"))
+		s.reply([]byte("\x1b[0n"))
 	case terminalQueryDECRQSS:
-		s.WriteInput([]byte(s.Term.StatusString(q.payload)))
+		s.reply([]byte(s.Term.StatusString(q.payload)))
 	case terminalQueryDA:
-		s.PTY.Write([]byte("\x1b[?62;1;2;4;6;9;15;22c")) //nolint:errcheck
+		s.reply([]byte("\x1b[?62;1;2;4;6;9;15;22c"))
 		L().Log(context.Background(), LevelTrace, "captureAndWrite: DA response", "pane", s.ID)
 	case terminalQueryDA2:
-		s.PTY.Write([]byte("\x1b[>0;279;0c")) //nolint:errcheck
+		s.reply([]byte("\x1b[>0;279;0c"))
 		L().Log(context.Background(), LevelTrace, "captureAndWrite: DA2 response", "pane", s.ID)
 	case terminalQueryXTVERSION:
-		s.PTY.Write([]byte("\x1bP>|VTE(8203)\x1b\\")) //nolint:errcheck
+		s.reply([]byte("\x1bP>|VTE(8203)\x1b\\"))
 		L().Log(context.Background(), LevelTrace, "captureAndWrite: XTVERSION response", "pane", s.ID)
 	case terminalQueryXTGETTCAP:
 		flags := 0
@@ -733,7 +738,7 @@ func (s *Session) replyTerminalQuery(q terminalQuery) {
 		}
 		for _, hexCap := range strings.Split(q.payload, ";") {
 			if resp := xtgettcapResponseKey(hexCap, flags, s.Term.Mode(), s.backspace); resp != "" {
-				s.PTY.Write([]byte(resp)) //nolint:errcheck
+				s.reply([]byte(resp))
 			}
 		}
 		L().Log(context.Background(), LevelTrace, "captureAndWrite: XTGETTCAP response", "pane", s.ID, "payload", q.payload)
@@ -744,12 +749,12 @@ func (s *Session) replyTerminalQuery(q terminalQuery) {
 			prefix = "?"
 		}
 		resp := fmt.Sprintf("\x1b[%s%d;%dR", prefix, y+1, x+1)
-		s.PTY.Write([]byte(resp)) //nolint:errcheck
+		s.reply([]byte(resp))
 		L().Log(context.Background(), LevelTrace, "captureAndWrite: CPR response", "pane", s.ID, "row", y+1, "col", x+1)
 	case terminalQueryDECRQM:
 		status := s.Term.QueryPrivateMode(q.mode)
 		resp := fmt.Sprintf("\x1b[?%d;%c$y", q.mode, status)
-		s.PTY.Write([]byte(resp)) //nolint:errcheck
+		s.reply([]byte(resp))
 		L().Log(context.Background(), LevelTrace, "captureAndWrite: DECRQM response", "pane", s.ID, "mode", q.mode, "status", string(status))
 	case terminalQueryOSC10:
 		s.replyOSCColorQuery(10, vt10x.DefaultFG, s.ThemeFG)
@@ -766,7 +771,7 @@ func (s *Session) replyOSCColorQuery(num int, def vt10x.Color, fallback string) 
 		return
 	}
 	resp := fmt.Sprintf("\x1b]%d;%s\x1b\\", num, color)
-	s.PTY.Write([]byte(resp)) //nolint:errcheck
+	s.reply([]byte(resp))
 	L().Log(context.Background(), LevelTrace, "captureAndWrite: OSC color response", "pane", s.ID, "osc_num", num, "color", color)
 }
 
@@ -970,12 +975,6 @@ func (s *Session) waitForExit(h Hooks) {
 	if h.Exited != nil {
 		h.Exited()
 	}
-}
-
-// WriteInput sends raw bytes (encoded keystrokes or mouse sequences) to the
-// shell via the PTY master.
-func (s *Session) WriteInput(data []byte) {
-	s.PTY.Write(data) //nolint:errcheck
 }
 
 // ScrollUp scrolls the view n lines toward the past (increases sbOff).
@@ -1337,8 +1336,11 @@ func (s *Session) Cwd() string {
 }
 
 // closePTX closes the PTY master exactly once.  Closing the master causes the
-// kernel to send HUP to the shell's controlling terminal.
+// kernel to send HUP to the shell's controlling terminal. The writer drops
+// its queue first; a write blocked on a child that does not read returns
+// once the master is closed.
 func (s *Session) closePTX() {
+	s.out.close()
 	s.ptmxOnce.Do(func() { s.PTY.Close() }) //nolint:errcheck // PTY master close on shutdown
 }
 
@@ -1462,7 +1464,7 @@ func (s *Session) SelText() string {
 //	\x1b [ < <N> u     - pop:  pop N stack levels (N omitted → 1)
 //
 // Must be called with the session locked (CaptureAndWrite contract).
-// Writing to s.PTY does not require the lock.
+// The query reply is queued (reply), not written under the lock.
 func (s *Session) handleKittyKeyboard(chunk []byte) []byte {
 	// We walk through chunk looking for ESC [ followed by a kitty intro byte
 	// (?, =, <). copied tracks how far we've flushed into out; out is nil
@@ -1511,7 +1513,7 @@ func (s *Session) handleKittyKeyboard(chunk []byte) []byte {
 				if len(s.KittyStack) > 0 {
 					flags = s.KittyStack[len(s.KittyStack)-1]
 				}
-				fmt.Fprintf(s.PTY, "\x1b[?%du", flags) //nolint:errcheck // reply write to PTY; nothing actionable
+				s.reply(fmt.Appendf(nil, "\x1b[?%du", flags))
 				newI = j + 2
 				stripped = true
 			}

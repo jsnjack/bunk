@@ -76,6 +76,7 @@ func TestPassthroughKeys(t *testing.T) {
 			if app.handleKey(keyEv(tcell.KeyCtrlQ, tcell.ModCtrl)) {
 				t.Fatal("normal bindings not restored")
 			}
+			waitWritten(t, p.Session)
 			got, err := os.ReadFile(f.Name())
 			if err != nil {
 				t.Fatal(err)

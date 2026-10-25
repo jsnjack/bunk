@@ -36,7 +36,7 @@ func TestCellPixelsReplies(t *testing.T) {
 	s.Lock()
 	s.CaptureAndWrite(query)
 	s.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, s, pw)
 	got, _ := io.ReadAll(pr)
 	want := "\x1b[4;270;480t\x1b[6;27;12t\x1b[8;10;40t" + "\x1b[4;300;520t\x1b[6;30;13t\x1b[8;10;40t"
 	if string(got) != want {
@@ -88,7 +88,9 @@ func TestCellPixelsWinsize(t *testing.T) {
 	s := start(Options{CellPixels: [2]int{12, 27}})
 	waitScreenText(t, s, "winsize 40x5 pixels 480x135")
 	s.SetCellPixels(13, 30)
-	s.WriteInput([]byte("\n"))
+	if err := s.WriteInput([]byte("\n")); err != nil {
+		t.Fatal(err)
+	}
 	waitScreenText(t, s, "winsize 40x5 pixels 520x150")
 
 	v := start(Options{CellAspect: []float64{2.0}})

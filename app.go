@@ -82,6 +82,16 @@ type App struct {
 	lastClickPane  *Pane
 	dblClickActive bool // release should not overwrite word selection
 
+	// A paste from the host terminal being collected into one input event
+	// (handlePaste): its bytes so far (nil when none is open), its pane, the
+	// end marker to add, the timer that ends it without an end marker, and
+	// its number. Protected by mu.
+	paste      []byte
+	pastePane  *Pane
+	pasteEnd   string
+	pasteTimer *time.Timer
+	pasteGen   uint64
+
 	// dragPane is the pane where the current Button1 drag started.
 	// All drag-select and release events are clamped to this pane so that
 	// moving the cursor outside the originating pane doesn't extend the
@@ -472,11 +482,31 @@ func (app *App) forwardKey(ev *tcell.EventKey) {
 		}
 		mode := active.Term.Mode()
 		active.Unlock()
-		if data := keyToBytesMode(ev, kittyFlags, mode); len(data) > 0 {
+		if data := keyToBytesMode(ev, kittyFlags, mode); len(data) > 0 && !app.collectPaste(active, data) {
 			L.Debug("handleKey: forwarding to PTY", "pane", active.ID, "bytes", len(data))
-			active.WriteInput(data)
+			app.sendInput(active, data)
 		}
 	}
+}
+
+// inputRefused is the flash message of a pane whose program stopped
+// reading its input while the input queue filled up.
+const inputRefused = "input not sent"
+
+// sendInput queues one input event (a key, a paste, a mouse report) for
+// p's program. When the program has stopped reading and its input queue
+// is full, the event is dropped and the pane flashes inputRefused. It must
+// not be called with p's session locked.
+func (app *App) sendInput(p *Pane, data []byte) {
+	err := p.WriteInput(data)
+	if err == nil {
+		return
+	}
+	L.Debug("input refused", "pane", p.ID, "bytes", len(data), "err", err)
+	const flash = 2 * time.Second
+	p.SetStatus(inputRefused, flash)
+	app.triggerRedraw()
+	time.AfterFunc(flash, app.triggerRedraw)
 }
 
 // ---------------------------------------------------------------------------

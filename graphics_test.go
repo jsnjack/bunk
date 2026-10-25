@@ -123,11 +123,15 @@ func TestGraphicsPaneQueries(t *testing.T) {
 	})
 	p := regressionPane(20, 5)
 	p.PTY = pw
-	p.Term = vt10x.New(vt10x.WithSize(20, 5), vt10x.WithGraphicsReply(p.WriteInput))
-	p.CaptureAndWrite([]byte("\x1b[14t\x1b[16t\x1b[18t\x1b_Ga=q,i=7,f=24,s=1,v=1;/wAA\x1b\\"))
-	if err := pw.Close(); err != nil {
-		t.Fatal(err)
+	// The graphics reply joins the same queue as the CSI replies.
+	reply := func(b []byte) {
+		if err := p.WriteInput(b); err != nil {
+			t.Error(err)
+		}
 	}
+	p.Term = vt10x.New(vt10x.WithSize(20, 5), vt10x.WithGraphicsReply(reply))
+	p.CaptureAndWrite([]byte("\x1b[14t\x1b[16t\x1b[18t\x1b_Ga=q,i=7,f=24,s=1,v=1;/wAA\x1b\\"))
+	closeWriter(t, p.Session, pw)
 	got, err := io.ReadAll(pr)
 	if err != nil {
 		t.Fatal(err)

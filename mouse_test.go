@@ -198,7 +198,9 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 				stillWants := p.Term.Mode()&vt10x.ModeMouseMask != 0
 				p.Unlock()
 				if stillWants {
-					p.WriteInput(data)
+					if err := p.WriteInput(data); err != nil {
+						t.Error(err)
+					}
 				}
 				runtime.Gosched()
 			}
@@ -290,7 +292,7 @@ func TestSendFocusIn_Enabled(t *testing.T) {
 	}
 
 	sendFocusIn(p)
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf := make([]byte, 64)
 	n, _ := pr.Read(buf)
@@ -316,7 +318,7 @@ func TestSendFocusOut_Enabled(t *testing.T) {
 	}
 
 	sendFocusOut(p)
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf := make([]byte, 64)
 	n, _ := pr.Read(buf)
@@ -342,7 +344,7 @@ func TestSendFocusIn_Disabled(t *testing.T) {
 	}
 
 	sendFocusIn(p)
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf := make([]byte, 64)
 	n, _ := pr.Read(buf)
@@ -380,7 +382,7 @@ func TestSendFocusOut_Disabled(t *testing.T) {
 	}
 
 	sendFocusOut(p)
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 
 	buf := make([]byte, 64)
 	n, _ := pr.Read(buf)

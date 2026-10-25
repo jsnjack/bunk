@@ -135,7 +135,7 @@ func TestCaptureAndWrite_SplitXTVersionResponse(t *testing.T) {
 	}
 
 	feedSplitPTYChunks(t, p, []byte("\x1b[>"), []byte("0q"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP>|VTE(8203)\x1b\\"
@@ -159,7 +159,7 @@ func TestCaptureAndWrite_SplitXTGETTCAPResponse(t *testing.T) {
 	}
 
 	feedSplitPTYChunks(t, p, []byte("\x1bP+q536d"), []byte("756c78\x1b\\"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p, pw)
 
 	buf, _ := io.ReadAll(pr)
 	wantHexVal := "1b5b343a25703125646d"
@@ -193,7 +193,7 @@ func TestCaptureAndWrite_SplitOSC10Response(t *testing.T) {
 	// of the OSC are in the first chunk so splitPTYChunk carries the partial
 	// OSC into the second chunk — this exercises the carry/split path.
 	feedSplitPTYChunks(t, p, []byte("\x1b[?1049h\x1b]10"), []byte(";?\x1b\\"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"

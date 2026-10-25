@@ -37,9 +37,7 @@ func TestAuditQueryReplies(t *testing.T) {
 			for _, b := range []byte(tc.input) {
 				p.Feed([]byte{b})
 			}
-			if err := pw.Close(); err != nil {
-				t.Fatal(err)
-			}
+			closeWriter(t, p.Session, pw)
 			got, err := io.ReadAll(pr)
 			if err != nil {
 				t.Fatal(err)
@@ -199,9 +197,7 @@ func TestAuditHostFocusForwarding(t *testing.T) {
 	p.CaptureAndWrite([]byte("\x1b[?1004h"))
 	app.handleFocus(false)
 	app.handleFocus(true)
-	if err := pw.Close(); err != nil {
-		t.Fatal(err)
-	}
+	closeWriter(t, p.Session, pw)
 	got, err := io.ReadAll(pr)
 	if err != nil {
 		t.Fatal(err)

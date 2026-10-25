@@ -78,12 +78,17 @@ internal/session/   One terminal session, shared by front ends
   winsize.go        PTY window size in cells and virtual pixels
   ptyfd.go          Setsize: window-size ioctl that holds the PTY descriptor
   ptyfd_linux.go    Pollable PTY master, so Close ends ReadLoop
+  writer.go         PTY writer: one queue for query replies and input,
+                    written by one goroutine; caps, drops and refusals
 
 internal/notify/    Agent hook reports: Unix socket server (token → Session),
                     client, `notify` CLI (RunCLI), hook snippets per agent
 
 internal/leakcheck/ Test helper: fds, goroutines, child processes and live heap
                     of the process, compared with a baseline after a settle wait
+
+internal/ptychild/  Test helper: a raw-mode child that floods numbered DECRQM
+                    queries and reads its input only when the test says so
 
 third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
                     (local go.mod replacement; see BUNK_PATCHES.md)
@@ -153,7 +158,8 @@ Key local extensions to vendored vt10x:
    `ReadLoop` (PTY → vt10x), `waitForExit`, `trackFgProcess`. bunk attaches
    through `session.Hooks`: `Applied` runs under the session lock after each
    chunk, `Output` after it (repaint pacing). One shared `renderLoop` drains
-   `app.redraw` (buffered 1).
+   `app.redraw` (buffered 1). Replies and input reach the PTY through the
+   session's writer (`writer.go`); its goroutine runs while bytes are queued.
 3. **Resize / reflow** — `App.handleResize()` coalesces host resizes and
    updates the BSP tree. Emulator reflow finishes before the PTY receives its
    new size and SIGWINCH; both are deferred together during resize bursts.
@@ -204,7 +210,9 @@ GL textures in `-report`.
 `make soak` runs without the race detector; `SOAKFLAGS=-race make soak` adds
 it. Session kinds cover shells that exit, busy output closed mid-stream
 (`yes`, `/dev/urandom`), children that ignore SIGHUP and children that leave
-a process holding the PTY. A helper child that is the test binary itself
+a process holding the PTY. A raw-mode child that never reads is closed with
+its PTY writer blocked; TestTUISoak and TestGUITabLeaks run such panes too.
+A helper child that is the test binary itself
 sets `GORACE=atexit_sleep_ms=0`, or a -race build sleeps 1 s at exit.
 
 **Run `make bench-check` before merging a performance-sensitive change.**
@@ -250,7 +258,7 @@ bench target is part of `check` or `check-all`, because timings depend on load.
 Fuzz targets cover every parser of program output and user input:
 `internal/vt10x` (FuzzParse, FuzzResize), `internal/session` (FuzzPTYStream,
 FuzzOSCScanner, FuzzStatusOSC, FuzzQueryReplies, FuzzXTGETTCAP,
-FuzzFindAndSelect), `internal/input` (FuzzEncodeKey, FuzzEncodeMouse) and
+FuzzFindAndSelect, FuzzPTYWriterOrder), `internal/input` (FuzzEncodeKey, FuzzEncodeMouse) and
 `internal/graphics` (FuzzGraphicsDecoder, FuzzStore). Their seed corpora in
 `testdata/fuzz` run with every `go test`, so keep seeds small. When a target
 fails, keep the input it wrote to `testdata/fuzz`, fix the code, and add a
@@ -358,6 +366,29 @@ its default.
   delegated to the outer terminal. Unknown host colour defaults remain unknown.
   XTGETTCAP key replies use the normal input encoder with the current pane modes
   and Kitty flags; its terminal-name reply matches the TERM exported to panes.
+- **No PTY write blocks a front end or holds the session lock.** Every write
+  to a session's PTY goes through its writer (`internal/session/writer.go`).
+  That covers query replies, graphics replies, keys, pastes, mouse and focus.
+  - **Queue:** one FIFO per session. A goroutine starts when bytes are queued
+    and exits when the queue is empty. `go` on a bound func allocates nothing.
+  - **Order:** bytes leave in the order they were queued. Each reply and each
+    input event is queued whole, so no reply lands inside a key or a paste.
+  - **No lock:** `CaptureAndWrite` queues replies under the session lock. The
+    writer goroutine writes them without it. `WriteInput` returns at once.
+  - **Reply cap:** `ReplyBytes` (64 KiB) of unwritten replies. A reply that
+    would pass it is dropped whole and counted in `WriteStats`.
+  - **Input cap:** `Options.InputBytes`, default `DefaultInputBytes` (16 MiB).
+    An event that would pass it is refused whole with `ErrInputFull`.
+  - **Refusals:** bunk flashes "input not sent" on the pane. bunk-gui shows a
+    toast, at most one per pane every 3 s; `-input-bytes` sets its cap.
+  - **Memory:** a drained queue keeps at most 4 KiB. A paste's buffer is freed.
+  - **Close and exit:** closing the PTY drops the queue and ends a blocked
+    write. Close does it, and ReadLoop does it when the child exits.
+  - **Host pastes in the TUI:** tcell delivers them as key events. bunk
+    collects them between the paste markers and queues one event. A paste
+    without an end marker is sent after `pasteTimeout` (1 s).
+  - **Tests:** `WriteStats` reports queued, dropped and refused bytes.
+    `WaitWritten` waits for an empty queue before a test reads the PTY.
 - **Graphics are ordinary cells.** Static SIXEL, Kitty, and iTerm2 images become
   half-block glyphs with immutable `Glyph.Image` samples. They clip, erase, scroll,
   and reflow with the grid; source bitmaps are not retained by scrollback. No image

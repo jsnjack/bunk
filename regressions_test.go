@@ -178,6 +178,7 @@ func TestRegressionMouseReleaseForwarding(t *testing.T) {
 			app := &App{root: newLeaf(p, 0, 0, 11, 3), active: p}
 			app.handleMouse(tcell.NewEventMouse(1, 1, tcell.Button1, tcell.ModNone))
 			app.handleMouse(tcell.NewEventMouse(1, 1, tcell.ButtonNone, tcell.ModNone))
+			waitWritten(t, p.Session)
 			if _, err := f.Seek(0, 0); err != nil {
 				t.Fatal(err)
 			}

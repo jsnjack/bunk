@@ -85,6 +85,7 @@ Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. b
 ![A load-test chart from kitten icat, drawn 1:1 in a shell pane next to the agent tabs](assets/gui-image.png)
 
 - **Image memory.** Each pane keeps up to 64 MiB of bitmaps (`-image-bytes`). Images drawn least recently fall back to half-block cells.
+- **A program that stops reading.** The window and other panes keep working. Its pane queues up to 16 MiB of input (`-input-bytes`); more is refused with a toast.
 - **Links while a program reads the mouse.** Ctrl+Shift+click opens the link instead.
 
 ## bunk

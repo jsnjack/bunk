@@ -123,6 +123,9 @@ type paneSpec struct {
 	// notify, when set, receives the agent hook reports of the pane's
 	// session: the child gets the socket and a fresh token.
 	notify *notify.Server
+	// inputBytes caps the input queued for a child that does not read it
+	// (session.Options.InputBytes); zero is the session's default.
+	inputBytes int
 }
 
 // startPane starts the pane sp describes.
@@ -138,6 +141,7 @@ func startPane(sp paneSpec) (*Pane, error) {
 		Env:     []string{"BUNK=1"},
 		ThemeFG: sp.colors.fg, ThemeBG: sp.colors.bg, ThemeCursor: sp.colors.cursor,
 		CellAspect: sp.cellAspect,
+		InputBytes: sp.inputBytes,
 	}
 	token := ""
 	if sp.notify != nil {

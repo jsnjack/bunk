@@ -374,7 +374,9 @@ func (p *Pane) mouseMode() vt10x.ModeFlag {
 
 // report sends a mouse event to the application in the encoding it asked for.
 func (p *Pane) report(btn, prev input.Button, mods input.Mod, col, row int, mode vt10x.ModeFlag) {
-	p.s.WriteInput(input.EncodeMouse(btn, prev, mods, col+1, row+1, mode&vt10x.ModeMouseSgr != 0))
+	if err := p.s.WriteInput(input.EncodeMouse(btn, prev, mods, col+1, row+1, mode&vt10x.ModeMouseSgr != 0)); err != nil {
+		p.inputRefused(err)
+	}
 }
 
 // mousePress: with an application mouse mode (and no Shift) the press is

@@ -1,10 +1,26 @@
 package session
 
 import (
+	"os"
 	"os/exec"
+	"testing"
+	"time"
 
 	"bunk/internal/vt10x"
 )
+
+// closeWriter waits until s has written everything it queued for its PTY,
+// then closes w, the write end of the pipe that stands in for the PTY, so
+// the test can read the pipe to its end.
+func closeWriter(t *testing.T, s *Session, w *os.File) {
+	t.Helper()
+	if !s.WaitWritten(5 * time.Second) {
+		t.Fatal("the session did not write its queued replies")
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // newTestSession returns a session without a child process: output is fed
 // with Feed or CaptureAndWrite, and scrolled rows reach the scrollback.

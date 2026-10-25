@@ -310,7 +310,8 @@ func (f *fuzzSession) feed(chunk []byte, emit func([]byte)) {
 // closeReplies closes the reply pipe and waits until every reply is read.
 func (f *fuzzSession) closeReplies() {
 	if f.PTY != nil {
-		f.PTY.Close() //nolint:errcheck // test pipe cleanup
+		f.WaitWritten(5 * time.Second) // a stuck write shows as missing replies
+		f.PTY.Close()                  //nolint:errcheck // test pipe cleanup
 		f.PTY = nil
 		<-f.done
 	}
