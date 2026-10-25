@@ -51,7 +51,8 @@ internal/vt10x/     Vendored VT100/ANSI emulator (fork of github.com/hinshun/vt1
   graphics.go       Image-to-cell painting, Kitty placement deletion
   rewrap.go         Rewrap: packs stored cells of logical lines at a new width
 
-internal/graphics/ Bounded SIXEL, Kitty, and iTerm2 static image decoders
+internal/graphics/ Bounded SIXEL, Kitty, and iTerm2 static image decoders;
+                    store.go keeps placement bitmaps for full-resolution drawing
 
 internal/input/     Toolkit-neutral key, mouse, focus and paste encoding
                     (legacy, application cursor/keypad, Kitty CSI u)
@@ -162,7 +163,7 @@ Fuzz targets cover every parser of program output and user input:
 `internal/vt10x` (FuzzParse, FuzzResize), `internal/session` (FuzzPTYStream,
 FuzzOSCScanner, FuzzStatusOSC, FuzzQueryReplies, FuzzXTGETTCAP,
 FuzzFindAndSelect), `internal/input` (FuzzEncodeKey, FuzzEncodeMouse) and
-`internal/graphics` (FuzzGraphicsDecoder). Their seed corpora in
+`internal/graphics` (FuzzGraphicsDecoder, FuzzStore). Their seed corpora in
 `testdata/fuzz` run with every `go test`, so keep seeds small. When a target
 fails, keep the input it wrote to `testdata/fuzz`, fix the code, and add a
 named regression test to the package's `fuzz_regression_test.go`. Run one
@@ -275,6 +276,25 @@ action and its default.
   Transfers are capped at 8 MiB, decoded images at 4 million pixels / 4096 per
   axis, and Kitty caches at 32 MiB / 32 images. Reflow retains cell samples
   without replaying image transfers.
+- **Image bitmaps live in a per-session store; cells name them by ID.**
+  `Options.ImageBytes` (bunk-gui: 64 MiB per pane, `-image-bytes`) creates a
+  `graphics.Store`; bunk's TUI keeps none. A cell's `ImageCell` holds
+  `Placement.Bitmap` (store ID) and its own `Col`/`Row` in the placement, in
+  the side table, so references survive scrolling, scrollback and reflow.
+  The store counts each bitmap once, sweeps placements no cell refers to
+  (`MarkImages` over both screens and the scrollback) after Kitty deletion,
+  ED 3, RIS, reflow, every 64 additions and before evicting, then evicts the
+  least recently drawn. Cells without a bitmap draw their samples.
+  `reflow_test.go` checks every image cell's reference after each reflow.
+- **bunk-gui draws image cells as textured quads** (`cmd/bunk-gui/images.go`):
+  a texture per placement, uploaded on first draw; texelFetch when the cell
+  size matches the placement's, linear filtering otherwise. Textures of
+  dropped placements are freed; textures not on screen are freed oldest
+  first past `-image-gpu-bytes` (256 MiB per pane). Links (`links.go`):
+  Ctrl+hover underlines OSC 8 links and plain URLs, Ctrl+click opens through
+  `gtk.UriLauncher` behind `openURL`, Ctrl+Shift+click while the application
+  reports the mouse. `launchRefused` keeps the launcher off the test
+  compositor; window tests read the links from `-report` (`opened`).
 - **Primary-screen reflow uses stored cells.** Soft-wrap markers join physical
   rows into logical lines; explicit line breaks remain separate. Cursor and
   scroll anchors follow their cells. Styles, links, and image samples survive

@@ -191,7 +191,7 @@ func TestFrameAllocs(t *testing.T) {
 // and the test's own writes do not count.
 func frameMallocs(t *testing.T, step func(int), n int) int64 {
 	t.Helper()
-	frame := []string{"(*termView).pull", "(*termView).convert"}
+	frame := []string{"(*termView).pull", "(*termView).convert", "(*imageLayer).sync"}
 	before := mallocsUnder(frame...)
 	if before == 0 {
 		// The first frames allocate their rows: zero means the names match

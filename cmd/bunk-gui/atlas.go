@@ -20,6 +20,7 @@ const (
 	flagOverline   = 1 << 19
 	flagCursorBar  = 1 << 20
 	flagCursorLine = 1 << 21
+	flagHalf       = 1 << 22 // an image cell without its bitmap: FG fills the top half
 )
 
 // maxAtlasSide caps the atlas texture (GL_MAX_TEXTURE_SIZE is 16384 here).

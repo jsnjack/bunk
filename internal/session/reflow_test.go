@@ -2,13 +2,16 @@ package session
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
+	"image"
 	"image/color"
 	"math/rand/v2"
 	"reflect"
 	"strings"
 	"testing"
 
+	"bunk/internal/graphics"
 	"bunk/internal/vt10x"
 )
 
@@ -91,13 +94,15 @@ func diffReflowState(got, want reflowState) string {
 }
 
 // reflowTwins holds two sessions fed the same output: got resizes with
-// ResizeAndReflow, want with the copy of the old implementation.
+// ResizeAndReflow, want with the copy of the old implementation. Both keep
+// image bitmaps, so image cells carry the same store IDs on both sides.
 type reflowTwins struct{ got, want *Session }
 
 func newReflowTwins(cols, rows, scrollback int) *reflowTwins {
 	tw := &reflowTwins{newTestSession(cols, rows), newTestSession(cols, rows)}
 	for _, s := range []*Session{tw.got, tw.want} {
 		s.ScrollbackLines, s.Scrollback = scrollback, Ring{MaxLines: scrollback}
+		s.EnableImages(64 << 20)
 	}
 	return tw
 }
@@ -115,14 +120,68 @@ func (tw *reflowTwins) view(offset int, selection bool) {
 	}
 }
 
-// resize resizes both sessions and reports the first difference.
+// resize resizes both sessions and reports the first difference, or the
+// first image cell whose reference no longer names its pixels.
 func (tw *reflowTwins) resize(cols, rows int) string {
 	got := tw.got.ResizeAndReflow(cols, rows)
 	want := tw.want.oracleResizeAndReflow(cols, rows)
 	if got != want {
 		return fmt.Sprintf("ResizeAndReflow(%d, %d) = %v, want %v", cols, rows, got, want)
 	}
-	return tw.diff()
+	if d := tw.diff(); d != "" {
+		return d
+	}
+	return imageRefsDiff(tw.got)
+}
+
+// imageRefsDiff checks every image cell of the screen and the scrollback:
+// its placement's bitmap is still stored (nothing on screen or in the
+// scrollback is swept, and the limit is never reached here), and the
+// sub-rectangle at its column and row gives its two samples. Cells that
+// blend two images only draw their samples.
+func imageRefsDiff(s *Session) string {
+	check := func(where string, y int, row []vt10x.Glyph) string {
+		for x, g := range row {
+			img := g.Image
+			if img == nil || img.Placement == nil || img.Placement.Bitmap == 0 || img.Composite {
+				continue
+			}
+			st, ok := s.Images().Get(img.Placement.Bitmap)
+			if !ok {
+				return fmt.Sprintf("%s row %d cell %d: bitmap %d is gone", where, y, x, img.Placement.Bitmap)
+			}
+			if int(img.Col) >= st.Cols || int(img.Row) >= st.Rows {
+				return fmt.Sprintf("%s row %d cell %d: offset %d,%d outside %dx%d cells", where, y, x, img.Col, img.Row, st.Cols, st.Rows)
+			}
+			if top, bottom := storedSamples(st, int(img.Col), int(img.Row)); top != img.Top || bottom != img.Bottom {
+				return fmt.Sprintf("%s row %d cell %d: samples %v %v, bitmap at %d,%d gives %v %v", where, y, x, img.Top, img.Bottom, img.Col, img.Row, top, bottom)
+			}
+		}
+		return ""
+	}
+	for i := 0; i < s.Scrollback.Count; i++ {
+		if d := check("scrollback", i, s.Scrollback.Get(i)); d != "" {
+			return d
+		}
+	}
+	cols, rows := s.Term.Size()
+	for y := 0; y < rows; y++ {
+		if d := check("screen", y, CaptureRow(s.Term, y, cols)); d != "" {
+			return d
+		}
+	}
+	return ""
+}
+
+// storedSamples recomputes a cell's two samples from its stored bitmap, as
+// the emulator computed them when it placed the image.
+func storedSamples(st graphics.Stored, col, row int) (top, bottom color.NRGBA) {
+	p := &graphics.Placement{Image: st.Image, Source: st.Source, PixelWidth: st.PixelWidth, PixelHeight: st.PixelHeight,
+		OffsetX: st.OffsetX, OffsetY: st.OffsetY}
+	px, py := col*st.CellWidth, row*st.CellHeight
+	top = p.Sample(image.Rect(px, py, px+st.CellWidth, py+st.CellHeight/2))
+	bottom = p.Sample(image.Rect(px, py+st.CellHeight/2, px+st.CellWidth, py+st.CellHeight))
+	return top, bottom
 }
 
 func (tw *reflowTwins) diff() string {
@@ -312,7 +371,11 @@ func reflowOps(tw *reflowTwins, data []byte, fail func(string)) {
 		case 7:
 			out = fmt.Sprintf("\x1b[%d;%dH", next()%14+1, next()%44+1)
 		case 8:
-			out = fmt.Sprintf("\x1b_Ga=T,f=24,s=2,v=1,c=%d,r=%d;/wAAAP8A\x1b\\", next()%6+1, next()%3+1)
+			if b := next(); b%2 == 0 {
+				out = fmt.Sprintf("\x1b_Ga=T,f=24,s=2,v=1,c=%d,r=%d;/wAAAP8A\x1b\\", next()%6+1, next()%3+1)
+			} else {
+				out = gradientImage(int(b/2%5)+1, int(next()%3)+1)
+			}
 		case 9:
 			out = fmt.Sprintf("\x1b[%d;%dr", next()%6+1, next()%14+1)
 		case 10:
@@ -560,5 +623,69 @@ func TestReflowMovesUnchangedRows(t *testing.T) {
 	small, large := allocs(500), allocs(5000)
 	if large > small {
 		t.Fatalf("reflow made %.0f allocations with 5000 rows, %.0f with 500", large, small)
+	}
+}
+
+// gradientImage returns a Kitty image of cols x rows cells at the test
+// sessions' 8x16 virtual cell size, every pixel different, with a
+// translucent stripe, so each cell's samples name its own sub-rectangle.
+func gradientImage(cols, rows int) string {
+	w, h := cols*8, rows*16
+	data := make([]byte, 0, w*h*4)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			a := byte(255)
+			if x%8 == 3 {
+				a = 128
+			}
+			data = append(data, byte(x*6), byte(y*5), byte(x*y), a)
+		}
+	}
+	return fmt.Sprintf("\x1b_Ga=T,f=32,s=%d,v=%d;%s\x1b\\", w, h, base64.StdEncoding.EncodeToString(data))
+}
+
+// TestReflowKeepsImageReferences reflows images in the scrollback and on
+// screen through narrow and wide widths: every cell still draws its own
+// part of its placement's bitmap, and the bitmaps stay stored.
+func TestReflowKeepsImageReferences(t *testing.T) {
+	tw := newReflowTwins(30, 8, 2000) // room for every row at width 1
+	var buf bytes.Buffer
+	for i := 0; i < 6; i++ {
+		fmt.Fprintf(&buf, "line %d before\r\n", i)
+		buf.WriteString(gradientImage(i%5+1, i%3+1))
+		buf.WriteString("text after the image " + strings.Repeat("x", i*7) + "\r\n")
+	}
+	tw.feed(buf.Bytes())
+	stored := tw.got.Images().Len()
+	if stored != 6 {
+		t.Fatalf("%d bitmaps stored for 6 images", stored)
+	}
+	tw.check(t, widths(8, 3, 1, 7, 50, 2, 30, 13))
+	if n := tw.got.Images().Len(); n != stored {
+		t.Fatalf("after reflow %d bitmaps stored, want %d", n, stored)
+	}
+	// Clearing the screen and the scrollback leaves nothing to draw.
+	tw.got.Feed([]byte("\x1b[H\x1b[2J\x1b[3J"))
+	if n := tw.got.Images().Len(); n != 0 {
+		t.Fatalf("after clear %d bitmaps stored", n)
+	}
+}
+
+// TestReflowSweepsDroppedImages: rows that no longer fit in the scrollback
+// after a reflow take their bitmaps with them.
+func TestReflowSweepsDroppedImages(t *testing.T) {
+	s := newTestSession(20, 4)
+	s.ScrollbackLines, s.Scrollback = 6, Ring{MaxLines: 6}
+	s.EnableImages(64 << 20)
+	s.Feed([]byte(gradientImage(2, 2) + "\r\n" + gradientImage(2, 2) + "\r\n" + strings.Repeat("filler line\r\n", 4)))
+	if n := s.Images().Len(); n != 2 {
+		t.Fatalf("%d bitmaps stored", n)
+	}
+	s.ResizeAndReflow(1, 4) // each row of text now takes many rows
+	if d := imageRefsDiff(s); d != "" {
+		t.Fatal(d)
+	}
+	if n := s.Images().Len(); n != 0 {
+		t.Fatalf("after the images left the scrollback, %d bitmaps stored", n)
 	}
 }

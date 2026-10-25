@@ -198,6 +198,7 @@ func (t *State) handleCSI() {
 			if t.sbClearCb != nil {
 				t.sbClearCb()
 			}
+			t.sweepImages()
 		default:
 			goto unknown
 		}

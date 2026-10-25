@@ -28,10 +28,16 @@ type View interface {
 
 	// Size returns the size of the virtual terminal.
 	Size() (cols, rows int)
-	// CellPixels reports the virtual raster resolution of each character cell.
+	// CellPixels reports the raster resolution of each character cell.
 	CellPixels() (width, height int)
+	// SetCellPixels changes it (see WithCellPixels).
+	SetCellPixels(width, height int)
 	// GraphicsState clones reusable images for replay without duplicating pixels.
 	GraphicsState() *graphics.Decoder
+
+	// MarkImages reports the image store ID of every placement a cell of
+	// either screen refers to. Callers must serialize access, as for Cell.
+	MarkImages(mark func(id uint64))
 
 	// Resize changes the size of the virtual terminal.
 	Resize(cols, rows int)
@@ -126,6 +132,7 @@ type TerminalInfo struct {
 	graphicsReply         func([]byte)
 	cellWidth, cellHeight int
 	graphicsRows          int
+	images                *graphics.Store
 }
 
 // WithGraphicsReply routes graphics acknowledgements independently of ordinary
@@ -144,6 +151,15 @@ func WithCellPixels(width, height int) TerminalOption {
 	return func(info *TerminalInfo) {
 		info.cellWidth, info.cellHeight = max(1, min(width, 256)), max(2, min(height, 256))
 	}
+}
+
+// WithImageStore keeps the bitmap of each image placement in store, so front
+// ends can draw image cells at full resolution (ImageCell). Without it only
+// the cells' colour samples remain. The terminal sweeps the store after
+// image deletion, ED 3 and RIS; store.Referenced must mark this terminal's
+// cells (MarkImages) and any scrollback the caller keeps.
+func WithImageStore(store *graphics.Store) TerminalOption {
+	return func(info *TerminalInfo) { info.images = store }
 }
 
 // WithGraphicsViewportRows keeps percentage-sized images relative to the pane,

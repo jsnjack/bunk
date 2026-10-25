@@ -70,7 +70,9 @@ type Pane struct {
 	mouseCell  [2]int       // last cell reported for motion
 	lastX      float64      // last pointer position, widget coordinates
 	lastY      float64
-	selecting  bool // left button held for a selection
+	selecting  bool   // left button held for a selection
+	pointerIn  bool   // the pointer is over the view
+	cursorName string // pointer cursor shown over the view: "text" or "pointer" (a link)
 	exited     bool
 	closed     bool
 	removeOnce bool
@@ -202,6 +204,7 @@ func (p *Pane) realized() {
 		return
 	}
 	p.r = r
+	p.r.img.budget = a.cfg.imageGPUBytes
 	p.tv.invalidate()
 	if a.clock == 0 {
 		major, minor := viewGLVersionC(p.view)
@@ -231,6 +234,7 @@ func (p *Pane) unmapped() {
 	p.freeSlots(false)
 	if p.r != nil {
 		p.r.fbW, p.r.fbH = 0, 0 // force a full frame when shown again
+		p.r.img.release()       // uploaded again when drawn
 	}
 	p.tv.invalidate()
 }
@@ -303,6 +307,10 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 		// First frame, a scale change or a text size change: rasterize
 		// glyphs at device scale.
 		if atlas, err := a.atlasFor(scale); err == nil {
+			if atlas.CellW != p.atlas.CellW || atlas.CellH != p.atlas.CellH {
+				// Before any resize below, so the PTY gets both together.
+				p.s.SetCellPixels(atlas.CellW, atlas.CellH)
+			}
 			p.atlas = atlas
 			p.r.SetAtlas(atlas)
 			p.tv.invalidate()
@@ -323,7 +331,12 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 		p.s.Lock()
 	}
 	changed := p.tv.pull(p.s)
+	if p.r.img.sync(p.s.Images(), p.tv) {
+		p.tv.invalidate() // a placement on screen lost its bitmap
+		changed = true
+	}
 	p.s.Unlock()
+	p.r.img.collect()
 	t1 := monoNs()
 
 	if p.r.cols != p.tv.cols || p.r.rows != p.tv.rows {
@@ -385,6 +398,9 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 	bytes := p.r.Upload()
 	t3 := monoNs()
 	p.r.Draw()
+	if p.r.img.redo {
+		p.wake() // an image could not be uploaded: draw its half blocks
+	}
 	p.r.DrawScrollbar(p.tv.sbOff, p.tv.sbCount)
 	p.r.DrawRing()
 	if timing {

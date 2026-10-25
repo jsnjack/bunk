@@ -64,6 +64,7 @@ bool band(float y, float top, float h) { return y >= top && y < top + h; }
 void main() {
 	vec4 c = v_bg;
 	float x = v_local.x, y = v_local.y, t = u_lines.y;
+	if ((v_flags & 4194304u) != 0u && y < floor(u_cell.y * 0.5)) c = v_fg;      // image half block
 	if ((v_flags & 131072u) != 0u && band(y, u_lines.x, t)) c = v_fg;          // underline
 	if ((v_flags & 262144u) != 0u && band(y, u_lines.z, t)) c = v_fg;          // strikethrough
 	if ((v_flags & 524288u) != 0u && y < t) c = v_fg;                          // overline
@@ -170,6 +171,8 @@ type Renderer struct {
 	dim, ringPx float32
 	dimLoc      [2]int32 // bg, text programs
 
+	img imageLayer // image cells at full resolution (images.go)
+
 	queries     [8]uint32
 	qHead       int // next query to issue
 	qTail       int // oldest query not yet read
@@ -226,6 +229,9 @@ func NewRenderer(cols, rows int, atlas *Atlas) (*Renderer, error) {
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
 	r.syncAtlas()
+	if err := r.img.init(); err != nil {
+		return nil, err
+	}
 
 	for i := range r.queries {
 		r.queries[i] = gl.GenQuery()
@@ -239,6 +245,7 @@ func (r *Renderer) Resize(cols, rows int) {
 	r.cols, r.rows = cols, rows
 	r.inst = make([]Instance, cols*rows)
 	r.rowDirty = make([]bool, rows)
+	r.img.resize(cols, rows)
 	gl.BindBuffer(gl.ARRAY_BUFFER, r.vbo)
 	gl.BufferData(gl.ARRAY_BUFFER, len(r.inst)*instanceSize, nil, gl.DYNAMIC_DRAW)
 }
@@ -316,6 +323,8 @@ func (r *Renderer) Draw() {
 	gl.Uniform4f(r.linesLoc, float32(a.ULPos), float32(a.Thick), float32(a.StrikePos), float32(max(1, a.Thick)))
 	gl.DrawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n)
 
+	r.img.draw(r)
+
 	gl.UseProgram(r.textProg)
 	gl.Uniform2i(r.textLoc.grid, int32(r.cols), int32(r.rows))
 	gl.Uniform2f(r.textLoc.cell, cw, ch)
@@ -378,6 +387,7 @@ func (r *Renderer) DrawScrollbar(off, count int) {
 
 // Delete frees the renderer's GL objects (the view's context is current).
 func (r *Renderer) Delete() {
+	r.img.delete()
 	gl.DeleteTexture(r.tex)
 	gl.DeleteBuffer(r.vbo)
 	gl.DeleteVertexArray(r.vao)

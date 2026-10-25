@@ -41,6 +41,7 @@ import (
 // Real input through the compositor (window maximized for ptr*):
 //
 //	kbd SPEC...                      key combinations, e.g. kbd ctrl+shift+t F1 alt+Left
+//	kbd-down KEY... | kbd-up KEY...  hold or release keys, e.g. kbd-down ctrl shift
 //	kbd-type TEXT                    text typed key by key
 //	ptr-move X Y                     pointer to window coordinates
 //	ptr-at TARGET [DX DY]            tab N | tabclose N | newtab | options | closewin |
@@ -239,7 +240,7 @@ func (a *App) doAction(action string) {
 		}
 		a.startTyping(d)
 
-	case "kbd", "kbd-type", "ptr-move", "ptr-at", "ptr-press", "ptr-release", "ptr-click", "ptr-drag", "ptr-scroll":
+	case "kbd", "kbd-down", "kbd-up", "kbd-type", "ptr-move", "ptr-at", "ptr-press", "ptr-release", "ptr-click", "ptr-drag", "ptr-scroll":
 		if err := injectOpen(); err != nil {
 			a.reportError("%s: %v", action, err)
 			return
@@ -434,6 +435,12 @@ func (a *App) injectAction(verb, arg string, args []string, num func(int, int) i
 	case "kbd":
 		for _, spec := range args {
 			if err := a.injectKeys(spec); err != nil {
+				return err
+			}
+		}
+	case "kbd-down", "kbd-up":
+		for _, spec := range args {
+			if err := a.injectKeyState(spec, verb == "kbd-down"); err != nil {
 				return err
 			}
 		}

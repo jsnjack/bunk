@@ -45,6 +45,7 @@ type runReport struct {
 	Settings    map[string]any       `json:"settings"`
 	ConfigError string               `json:"config_error"`
 	Reloads     int                  `json:"reloads"` // config.toml reloads after a change
+	Opened      []string             `json:"opened"`  // links opened (openURL)
 }
 
 type verifyReport struct {
@@ -142,7 +143,26 @@ type paneReport struct {
 	Status   statusReport `json:"status"`
 	Title    string       `json:"title"`
 	Scroll   int          `json:"scroll"`
-	Text     []string     `json:"text"` // live grid rows, trailing blanks trimmed
+	Text     []string     `json:"text"`   // live grid rows, trailing blanks trimmed
+	Cell     [2]int       `json:"cell"`   // cell size in device px
+	Cursor   string       `json:"cursor"` // pointer cursor over the view: text or pointer
+	Hover    string       `json:"hover"`  // link underlined under the pointer (Ctrl held)
+	Images   imageReport  `json:"images"`
+}
+
+// imageReport is a pane's image memory: the session's store and the
+// view's textures.
+type imageReport struct {
+	Stored       int `json:"stored"` // placements whose bitmap the store keeps
+	StoredBytes  int `json:"stored_bytes"`
+	Evicted      int `json:"evicted"` // dropped for room
+	Swept        int `json:"swept"`   // dropped once no cell referred to them
+	Textures     int `json:"textures"`
+	TextureBytes int `json:"texture_bytes"`
+	Uploads      int `json:"uploads"`
+	Freed        int `json:"freed"`       // textures freed
+	Cells        int `json:"cells"`       // image cells drawn from bitmaps in the last frame
+	HalfBlocks   int `json:"half_blocks"` // image cells drawn as half blocks
 }
 
 type treeReport struct {
@@ -416,6 +436,22 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 	if p.passthrough {
 		r.Badge = a.widgetRect(g, p.passBadge)
 	}
+	if p.atlas != nil {
+		r.Cell = [2]int{p.atlas.CellW, p.atlas.CellH}
+	}
+	r.Cursor, r.Hover = p.cursorName, p.tv.links.url
+	if r.Cursor == "" {
+		r.Cursor = "text"
+	}
+	if q := p.r; q != nil {
+		l := &q.img
+		r.Images = imageReport{Textures: l.textures, TextureBytes: l.texBytes, Uploads: l.uploads, Freed: l.freed, Cells: len(l.flat)}
+		for _, in := range q.inst {
+			if in.Glyph&flagHalf != 0 {
+				r.Images.HalfBlocks++
+			}
+		}
+	}
 	if r.Visible {
 		r.Rect = a.widgetRect(g, p.widget)
 		vg := viewGeomC(p.view)
@@ -425,6 +461,9 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		p.s.Lock()
 		cols, rows := p.s.Term.Size()
 		r.Scroll = p.s.ScrollOffset
+		if st := p.s.Images(); st != nil {
+			r.Images.Stored, r.Images.StoredBytes, r.Images.Evicted, r.Images.Swept = st.Len(), st.Bytes(), st.Evicted, st.Swept
+		}
 		for y := 0; y < rows; y++ {
 			var b strings.Builder
 			for _, gl := range session.CaptureRow(p.s.Term, y, cols) {

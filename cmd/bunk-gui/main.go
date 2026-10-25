@@ -42,6 +42,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
+	"bunk/internal/graphics"
 	"bunk/internal/notify"
 )
 
@@ -74,6 +75,9 @@ type config struct {
 	maximize   time.Duration
 	script     string
 	gsk        string
+
+	imageBytes    int // per pane: bitmaps of image placements (session.Options.ImageBytes)
+	imageGPUBytes int // per pane: textures of placements not on screen
 }
 
 type pendingFrame struct {
@@ -197,6 +201,8 @@ func main() {
 	flag.DurationVar(&cfg.maximize, "maximize-after", 0, "maximize the window after this long (resize checks)")
 	flag.StringVar(&cfg.script, "do", "", "run test `ACTIONS` on the main thread, e.g. '1s scroll 10; 2s dump x.png' (see script.go)")
 	flag.StringVar(&cfg.gsk, "gsk", "gl", "GSK renderer to request when GSK_RENDERER is unset: gl, vulkan, or default")
+	flag.IntVar(&cfg.imageBytes, "image-bytes", graphics.DefaultStoreBytes, "per pane, keep image bitmaps up to `N` bytes; older ones draw as half blocks")
+	flag.IntVar(&cfg.imageGPUBytes, "image-gpu-bytes", DefaultImageGPUBytes, "per pane, keep image textures not on screen up to `N` bytes")
 	flag.Parse()
 	if cfg.allocProbe || cfg.memProfile != "" {
 		runtime.MemProfileRate = 1

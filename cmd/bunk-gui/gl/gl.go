@@ -256,6 +256,9 @@ const (
 	INFO_LOG_LENGTH          = 0x8B84
 	TEXTURE_2D               = 0x0DE1
 	TEXTURE0                 = 0x84C0
+	TEXTURE1                 = 0x84C1
+	LINEAR                   = 0x2601
+	MAX_TEXTURE_SIZE         = 0x0D33
 	R8                       = 0x8229
 	RED                      = 0x1903
 	RGBA                     = 0x1908

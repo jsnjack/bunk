@@ -152,8 +152,11 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 		ID: p.id, Cols: max(2, cols), Rows: max(1, rows), Scrollback: session.DefaultScrollbackLines, Dir: dir, Args: args,
 		ThemeFG: hex(theme.fg), ThemeBG: hex(theme.bg), ThemeCursor: hex(theme.fg),
 		CellAspect: []float64{float64(atlas.CellH) / float64(atlas.CellW)},
+		// Real device pixels, so applications size images 1:1.
+		CellPixels: [2]int{atlas.CellW, atlas.CellH},
 		Backspace:  input.KeyBackspace,
 		Agents:     a.settings.Agents,
+		ImageBytes: a.cfg.imageBytes,
 	}
 	// Agent hooks report through the notify socket with the session's token.
 	if a.notify != nil {

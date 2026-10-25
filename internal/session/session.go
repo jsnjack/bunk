@@ -5,6 +5,7 @@
 package session
 
 import (
+	"bunk/internal/graphics"
 	"bunk/internal/input"
 	"bunk/internal/vt10x"
 	"bytes"
@@ -61,6 +62,10 @@ type Session struct {
 	Scrollback      Ring // ring buffer of captured rows
 	ScrollOffset    int  // 0 = live view; N = N lines above live view
 	ScrollbackLines int  // max scrollback rows (from config)
+
+	// images keeps placement bitmaps (Options.ImageBytes); nil without.
+	// Protected by mu.
+	images *graphics.Store
 
 	// Text selection state.  Protected by mu.
 	// SelAnchor is where Button1 was pressed; SelCursor tracks the drag endpoint.
@@ -161,8 +166,12 @@ type Options struct {
 	// ThemeFG, ThemeBG and ThemeCursor answer OSC 10/11/12 queries in
 	// XParseColor form; "" leaves the colour unknown.
 	ThemeFG, ThemeBG, ThemeCursor string
-	CellAspect                    []float64   // cell height/width for virtual pixels
-	Agents                        []AgentSpec // extra agent CLIs to recognise, checked before DefaultAgents
+	CellAspect                    []float64 // cell height/width for virtual pixels
+	// CellPixels is the real size of a cell in pixels (width, height), for
+	// the PTY's pixel size and CSI 14/16 t replies. Zero: virtual pixels,
+	// 8 wide and as high as CellAspect gives (bunk's TUI).
+	CellPixels [2]int
+	Agents     []AgentSpec // extra agent CLIs to recognise, checked before DefaultAgents
 	// Backspace is the key the front end sends for the Backspace key, so
 	// XTGETTCAP "kbs" matches it: input.KeyBS (BS, the default, as bunk's
 	// tcell front end sends) or input.KeyBackspace (DEL).
@@ -172,6 +181,10 @@ type Options struct {
 	// state (internal/notify). Inherited values are always removed; ""
 	// exports nothing.
 	NotifySocket, NotifySession string
+	// ImageBytes keeps the bitmaps of image placements, up to this many
+	// bytes, so the front end can draw them at full resolution (Images).
+	// Zero keeps only the cells' colour samples, as bunk's TUI draws them.
+	ImageBytes int
 }
 
 // Hooks connect a Session to its front end. Every hook is optional.
@@ -245,6 +258,9 @@ func Start(o Options) (*Session, error) {
 	}
 
 	cellWidth, cellHeight := VirtualCellPixels(o.CellAspect)
+	if o.CellPixels[0] > 0 && o.CellPixels[1] > 0 {
+		cellWidth, cellHeight = o.CellPixels[0], o.CellPixels[1]
+	}
 	ptmx, err := pty.StartWithSize(cmd, Winsize(o.Cols, o.Rows, cellWidth, cellHeight))
 	if err != nil {
 		return nil, fmt.Errorf("pty.StartWithSize: %w", err)
@@ -267,7 +283,8 @@ func Start(o Options) (*Session, error) {
 	}
 	s.oscScan.status = s.onStatusOSC
 	s.Term = vt10x.New(vt10x.WithSize(o.Cols, o.Rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithBellCallback(s.onBell),
-		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.WriteInput), vt10x.WithCellPixels(cellWidth, cellHeight))
+		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.WriteInput), vt10x.WithCellPixels(cellWidth, cellHeight),
+		s.imageStore(o.ImageBytes))
 
 	// One-time container detection: read the shell process's own environ.
 	if cmd.Process != nil {
@@ -305,6 +322,21 @@ func (s *Session) Resize(cols, rows int) (reflowed bool) {
 		pty.Setsize(s.PTY, Winsize(cols, rows, cw, ch)) //nolint:errcheck
 	}
 	return reflowed
+}
+
+// SetCellPixels changes the size of a cell in pixels (a front end's font
+// or scale changed). The emulator places images with it, CSI 14/16 t
+// report it, and the PTY's pixel size follows, which signals the child
+// with SIGWINCH when it changed.
+func (s *Session) SetCellPixels(width, height int) {
+	s.Lock()
+	defer s.Unlock()
+	s.Term.SetCellPixels(width, height)
+	if s.PTY != nil {
+		cols, rows := s.Term.Size()
+		cw, ch := s.Term.CellPixels()
+		pty.Setsize(s.PTY, Winsize(cols, rows, cw, ch)) //nolint:errcheck
+	}
 }
 
 // ContentRows returns the number of live rows up to the last one with
@@ -979,6 +1011,7 @@ func (s *Session) ResizeAndReflow(newCols, newRows int) (reflowed bool) {
 		return false
 	}
 	s.reflowCells(newCols, newRows)
+	s.SweepImages() // rows beyond the scrollback were dropped
 	return true
 }
 

@@ -67,6 +67,8 @@ type termView struct {
 	defBG    uint32
 	defCur   uint32
 	curSet   bool // OSC 12 set a cursor colour
+
+	links linkState // the link under the pointer while Ctrl is held (links.go)
 }
 
 func newTermView() *termView { return &termView{drawnY: -1} }
@@ -122,6 +124,7 @@ func (v *termView) pull(s *session.Session) bool {
 	}
 	v.sbOff, v.sbCount, v.vBase = off, count, count-off
 	if any || all {
+		v.clearHover() // the cells under the pointer changed
 		for y := 0; y < rows; y++ {
 			if !all && !v.vtDirty[y] {
 				continue
@@ -250,6 +253,9 @@ func (v *termView) selCols(y, cols int) (c0, c1 int) {
 func (v *termView) convert(r *Renderer) (rows int) {
 	cols := min(v.cols, r.cols)
 	curRebuilt := false
+	if r.img.cols != r.cols || r.img.nrows != r.rows {
+		r.img.resize(r.cols, r.rows)
+	}
 	for y := 0; y < min(v.rows, r.rows); y++ {
 		if !v.dirty[y] {
 			continue
@@ -261,9 +267,28 @@ func (v *termView) convert(r *Renderer) (rows int) {
 		line := &v.lines[y]
 		inst := r.inst[y*r.cols : y*r.cols+cols]
 		n := min(cols, line.Len())
+		images := r.img.rowCells(y)
+		hadImages := r.img.rows != nil && len(r.img.rows[y]) > 0
 		for x := 0; x < n; x++ {
 			ch, fgc, bgc, mode, width, extra := line.CellAt(x)
 			fg, bg := v.color(fgc), v.color(bgc)
+			if extra {
+				if img := line.Image(x); img != nil {
+					// Its bitmap's sub-rectangle is drawn over the
+					// background; without it, its samples as a half block.
+					if r.img.entry(img) != nil {
+						if images == nil {
+							images = r.img.firstCells(y)
+						}
+						inst[x] = Instance{FG: fg, BG: bg}
+						images = append(images, imgCell{id: img.Placement.Bitmap,
+							inst: imgInst{Cell: uint32(x) | uint32(y)<<16, Src: uint32(img.Col) | uint32(img.Row)<<16}})
+					} else {
+						inst[x] = Instance{Glyph: flagHalf, FG: halfColor(img.Top, bg), BG: halfColor(img.Bottom, bg)}
+					}
+					continue
+				}
+			}
 			if mode&vt10x.AttrDim != 0 {
 				fg = halfway(fg, bg)
 			}
@@ -301,6 +326,13 @@ func (v *termView) convert(r *Renderer) (rows int) {
 			for x := max(0, c0); x <= min(c1, cols-1); x++ {
 				inst[x].FG, inst[x].BG = inst[x].BG, inst[x].FG
 			}
+		}
+		v.underlineHover(y, inst)
+		if r.img.rows != nil {
+			r.img.rows[y] = images
+		}
+		if hadImages || len(images) > 0 {
+			r.img.dirty = true
 		}
 	}
 	v.pending = 0

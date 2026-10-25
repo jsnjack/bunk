@@ -182,6 +182,7 @@ func (t *State) parseEsc(c rune) {
 		if t.sbClearCb != nil {
 			t.sbClearCb()
 		}
+		t.sweepImages()
 	case '=': // DECPAM - application keypad
 		t.mode |= ModeAppKeypad
 	case '>': // DECPNM - normal keypad
