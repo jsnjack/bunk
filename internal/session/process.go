@@ -669,7 +669,11 @@ func (s *Session) trackFgProcess(h Hooks, done <-chan struct{}) {
 		// the foreground process is idle at the shell prompt, so this skips
 		// virtually all costly reads.
 		ct, cn, sshHost := lastCT, lastCN, lastSSHHost
-		if pgid != lastPGID {
+		pgidChanged := pgid != lastPGID
+		if s.refreshStatus(shellPid, pgid, name, pgidChanged) && h.StatusChanged != nil {
+			h.StatusChanged()
+		}
+		if pgidChanged {
 			lastPGID = pgid
 			ct, cn = "", ""
 			sshHost = ""
@@ -705,6 +709,9 @@ func (s *Session) trackFgProcess(h Hooks, done <-chan struct{}) {
 
 		if h.Redraw != nil {
 			h.Redraw()
+		}
+		if h.StatusChanged != nil {
+			h.StatusChanged()
 		}
 	}
 }

@@ -110,6 +110,13 @@ type Session struct {
 	// feed frames output passed to Feed. ReadLoop keeps its own framer.
 	feed ptyStream
 
+	// Agent status (status.go). Protected by mu.
+	agent             string    // known agent in the foreground, or ""
+	needsYou, failed  bool      // attention requested / last command failed
+	notice            string    // text of the latest attention request
+	lastOutput        time.Time // when the last chunk of output arrived
+	cwd, repo, branch string    // foreground cwd and its git work tree
+
 	// syncDeadline releases an abandoned synchronized update (DEC 2026).
 	// Protected by mu.
 	syncDeadline time.Time
@@ -174,6 +181,10 @@ type Hooks struct {
 	// the child's output has been applied. It can come before or after
 	// Exited, and never comes while another process still holds the PTY.
 	Closed func()
+	// StatusChanged runs, without the lock, when Status may have changed:
+	// a new agent, directory or branch, output starting or stopping, or an
+	// attention request.
+	StatusChanged func()
 }
 
 // Start spawns the child process on a new PTY and creates its emulator.
@@ -296,10 +307,13 @@ func (s *Session) Run(h Hooks, done <-chan struct{}) {
 func (s *Session) ReadLoop(h Hooks) {
 	buf := make([]byte, 32768)
 	var stream ptyStream
-	var syncTimer *time.Timer
+	var syncTimer, idleTimer *time.Timer
 	defer func() {
 		if syncTimer != nil {
 			syncTimer.Stop()
+		}
+		if idleTimer != nil {
+			idleTimer.Stop()
 		}
 	}()
 
@@ -329,6 +343,9 @@ func (s *Session) ReadLoop(h Hooks) {
 			now := time.Now()
 			s.Lock()
 			s.CaptureAndWrite(chunk)
+			wasQuiet := now.Sub(s.lastOutput) >= IdleAfter
+			s.lastOutput = now
+			watched := s.agent != ""
 			scrolled := s.ScrollOffset > 0
 			syncing := s.Term.Mode()&vt10x.ModeSync != 0
 			if syncing && s.syncDeadline.IsZero() {
@@ -352,6 +369,18 @@ func (s *Session) ReadLoop(h Hooks) {
 			s.Unlock()
 			if h.Output != nil {
 				h.Output(chunk, scrolled, syncing)
+			}
+			// An agent's state follows its output: report when output starts,
+			// and again once it has stopped for IdleAfter.
+			if watched && h.StatusChanged != nil {
+				if wasQuiet {
+					h.StatusChanged()
+				}
+				if idleTimer == nil {
+					idleTimer = time.AfterFunc(IdleAfter, h.StatusChanged)
+				} else {
+					idleTimer.Reset(IdleAfter)
+				}
 			}
 		}
 		if err != nil {
