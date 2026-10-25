@@ -111,11 +111,12 @@ type Session struct {
 	feed ptyStream
 
 	// Agent status (status.go). Protected by mu.
-	agent             string    // known agent in the foreground, or ""
-	needsYou, failed  bool      // attention requested / last command failed
-	notice            string    // text of the latest attention request
-	lastOutput        time.Time // when the last chunk of output arrived
-	cwd, repo, branch string    // foreground cwd and its git work tree
+	agents            []AgentSpec // Options.Agents, checked before DefaultAgents
+	agent             string      // known agent in the foreground, or ""
+	needsYou, failed  bool        // attention requested / last command failed
+	notice            string      // text of the latest attention request
+	lastOutput        time.Time   // when the last chunk of output arrived
+	cwd, repo, branch string      // foreground cwd and its git work tree
 
 	// syncDeadline releases an abandoned synchronized update (DEC 2026).
 	// Protected by mu.
@@ -154,7 +155,8 @@ type Options struct {
 	// ThemeFG, ThemeBG and ThemeCursor answer OSC 10/11/12 queries in
 	// XParseColor form; "" leaves the colour unknown.
 	ThemeFG, ThemeBG, ThemeCursor string
-	CellAspect                    []float64 // cell height/width for virtual pixels
+	CellAspect                    []float64   // cell height/width for virtual pixels
+	Agents                        []AgentSpec // extra agent CLIs to recognise, checked before DefaultAgents
 	// Backspace is the key the front end sends for the Backspace key, so
 	// XTGETTCAP "kbs" matches it: input.KeyBS (BS, the default, as bunk's
 	// tcell front end sends) or input.KeyBackspace (DEL).
@@ -241,6 +243,7 @@ func Start(o Options) (*Session, error) {
 		ThemeBG:         o.ThemeBG,
 		ThemeCursor:     o.ThemeCursor,
 		backspace:       o.Backspace,
+		agents:          o.Agents,
 	}
 	s.Term = vt10x.New(vt10x.WithSize(o.Cols, o.Rows), vt10x.WithScrollCallback(s.OnScrollRow),
 		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.WriteInput), vt10x.WithCellPixels(cellWidth, cellHeight))

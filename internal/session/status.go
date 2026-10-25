@@ -80,40 +80,91 @@ func (s *Session) agentState(now time.Time) AgentState {
 	return AgentIdle
 }
 
-// knownAgents maps a process name, or a path segment of one of its
-// arguments, to the agent name shown in tab labels.
-var knownAgents = map[string]string{
-	"claude":       "claude",
-	"codex":        "codex",
-	"copilot":      "copilot",
-	"gemini":       "gemini",
-	"opencode":     "opencode",
-	"aider":        "aider",
-	"cursor-agent": "cursor",
+// AgentSpec says how to recognise one agent CLI in the foreground.
+type AgentSpec struct {
+	Name      string   // label shown in tabs
+	Processes []string // executable or process names
+	Scripts   []string // path fragments of the script when an interpreter runs it
+}
+
+// DefaultAgents are recognised out of the box. To support another CLI, add
+// an entry here or pass one in Options.Agents (front ends read them from
+// their config). Processes match the process name or the base name of an
+// executable; Scripts match the script path of Node, Python, Bun, Deno or
+// Ruby agents, where the process itself is the interpreter.
+var DefaultAgents = []AgentSpec{
+	{Name: "claude", Processes: []string{"claude"}, Scripts: []string{"@anthropic-ai/claude-code"}},
+	{Name: "copilot", Processes: []string{"copilot"}, Scripts: []string{"@github/copilot"}},
+	{Name: "codex", Processes: []string{"codex"}, Scripts: []string{"@openai/codex"}},
+	{Name: "gemini", Processes: []string{"gemini"}, Scripts: []string{"@google/gemini-cli"}},
+	{Name: "opencode", Processes: []string{"opencode"}, Scripts: []string{"opencode-ai"}},
+	{Name: "aider", Processes: []string{"aider"}},
+	{Name: "cursor", Processes: []string{"cursor-agent"}},
+	{Name: "amp", Processes: []string{"amp"}, Scripts: []string{"@sourcegraph/amp"}},
+	{Name: "goose", Processes: []string{"goose"}},
+	{Name: "qwen", Processes: []string{"qwen"}, Scripts: []string{"@qwen-code/qwen-code"}},
+	{Name: "crush", Processes: []string{"crush"}},
+	{Name: "droid", Processes: []string{"droid"}},
+	{Name: "auggie", Processes: []string{"auggie"}, Scripts: []string{"@augmentcode/auggie"}},
+	{Name: "cline", Processes: []string{"cline"}},
+	{Name: "kimi", Processes: []string{"kimi"}},
 }
 
 // interpreters run agents written in their languages; for them the script
 // path names the agent.
 var interpreters = map[string]bool{"node": true, "nodejs": true, "bun": true, "deno": true, "ruby": true}
 
-// agentFromProcess names the agent running as process name with argv, or
-// returns "". Agents written in Node or Python run as the interpreter, so
-// their script path is checked too (".../@github/copilot/index.js").
-func agentFromProcess(name string, argv []string) string {
-	if a, ok := knownAgents[name]; ok {
-		return a
+func isInterpreter(name string) bool {
+	return interpreters[name] || strings.HasPrefix(name, "python")
+}
+
+// matchAgent returns the name of the first spec that recognises a process
+// called name with argv, or "".
+func matchAgent(specs []AgentSpec, name string, argv []string) string {
+	exe := ""
+	if len(argv) > 0 {
+		exe = filepath.Base(argv[0])
 	}
-	if !interpreters[name] && !strings.HasPrefix(name, "python") {
-		return ""
-	}
-	for _, arg := range argv[min(1, len(argv)):] {
-		for _, seg := range strings.Split(arg, "/") {
-			if a, ok := knownAgents[strings.TrimSuffix(seg, ".js")]; ok {
-				return a
+	for _, sp := range specs {
+		for _, p := range sp.Processes {
+			if p == name || p == exe {
+				return sp.Name
 			}
 		}
 	}
+	if !isInterpreter(name) && !isInterpreter(exe) {
+		return ""
+	}
+	// The interpreter's first non-flag argument is the script.
+	for _, arg := range argv[min(1, len(argv)):] {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		base := strings.TrimSuffix(filepath.Base(arg), filepath.Ext(arg))
+		for _, sp := range specs {
+			for _, p := range sp.Processes {
+				if p == base {
+					return sp.Name
+				}
+			}
+			for _, frag := range sp.Scripts {
+				if strings.Contains(arg, frag) {
+					return sp.Name
+				}
+			}
+		}
+		return ""
+	}
 	return ""
+}
+
+// agentFromProcess names the agent running as process name with argv, from
+// the session's specs (DefaultAgents plus Options.Agents), or returns "".
+func (s *Session) agentFromProcess(name string, argv []string) string {
+	if a := matchAgent(s.agents, name, argv); a != "" {
+		return a
+	}
+	return matchAgent(DefaultAgents, name, argv)
 }
 
 // gitHead finds the git work tree holding dir and returns its repository
@@ -166,7 +217,7 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 	if pgidChanged {
 		agent = ""
 		if pgid > 0 {
-			agent = agentFromProcess(name, FgProcessCmdline(shellPid))
+			agent = s.agentFromProcess(name, FgProcessCmdline(shellPid))
 		}
 	}
 	cwd := s.Cwd()

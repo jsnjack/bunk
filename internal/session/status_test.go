@@ -8,6 +8,7 @@ import (
 )
 
 func TestAgentFromProcess(t *testing.T) {
+	s := &Session{agents: []AgentSpec{{Name: "mine", Processes: []string{"my-agent"}, Scripts: []string{"@me/agent"}}}}
 	for _, tc := range []struct {
 		name string
 		argv []string
@@ -17,13 +18,19 @@ func TestAgentFromProcess(t *testing.T) {
 		{"codex", []string{"codex"}, "codex"},
 		{"node", []string{"node", "/usr/local/bin/copilot"}, "copilot"},
 		{"node", []string{"node", "/usr/lib/node_modules/@github/copilot/index.js"}, "copilot"},
+		{"node", []string{"node", "--no-warnings", "/opt/lib/@google/gemini-cli/dist/index.js"}, "gemini"},
+		{"MainThread", []string{"/usr/bin/node", "/home/u/.npm/bin/copilot"}, "copilot"},
 		{"python3", []string{"python3", "/home/u/.local/bin/aider", "--model", "x"}, "aider"},
+		{"cursor-agent", []string{"cursor-agent"}, "cursor"},
+		{"my-agent", []string{"my-agent"}, "mine"},
+		{"node", []string{"node", "/srv/@me/agent/cli.js"}, "mine"},
 		{"node", []string{"node", "server.js"}, ""},
+		{"node", []string{"node", "server.js", "--dir", "/tmp/claude"}, ""},
 		{"less", []string{"less", "/tmp/codex"}, ""},
 		{"vim", []string{"vim", "CLAUDE.md"}, ""},
 		{"bash", nil, ""},
 	} {
-		if got := agentFromProcess(tc.name, tc.argv); got != tc.want {
+		if got := s.agentFromProcess(tc.name, tc.argv); got != tc.want {
 			t.Errorf("agentFromProcess(%q, %q) = %q, want %q", tc.name, tc.argv, got, tc.want)
 		}
 	}
