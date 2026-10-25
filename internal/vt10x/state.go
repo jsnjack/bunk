@@ -203,7 +203,8 @@ type State struct {
 	graphics              *graphics.Decoder
 	graphicsReply         func([]byte)
 	cellWidth, cellHeight int
-	graphicsRows          int // replay viewport height; zero uses the live grid
+	graphicsRows          int             // replay viewport height; zero uses the live grid
+	images                *graphics.Store // bitmaps of placements; nil keeps only cell samples
 }
 
 func newState(w io.Writer) *State {

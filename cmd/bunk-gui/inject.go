@@ -192,6 +192,28 @@ func (a *App) injectKeys(spec string) error {
 	return err
 }
 
+// injectKeyState presses or releases one key without the other half:
+// a modifier name ("ctrl") or a key name as for injectKeys.
+func (a *App) injectKeyState(name string, pressed bool) error {
+	p := C.int(0)
+	if pressed {
+		p = 1
+	}
+	if code, ok := modKeycodes[strings.ToLower(name)]; ok {
+		return injectOK(C.inj_keycode(C.uint(code), p))
+	}
+	key := gdk.KeyvalFromName(name)
+	if key == 0 || key == 0xffffff {
+		return errors.New("unknown key " + name)
+	}
+	var level C.int
+	code := C.inj_map_keyval(C.uint(key), &level)
+	if code < 0 {
+		return errors.New("no key in the layout for " + name)
+	}
+	return injectOK(C.inj_keycode(C.uint(code), p))
+}
+
 // addDevices taps Shift and nudges the pointer: mutter adds a virtual
 // keyboard and pointer to the seat on their first events, and the window
 // misses those first events.

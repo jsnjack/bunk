@@ -22,6 +22,7 @@ func newTerminal(info TerminalInfo) *terminal {
 	t.graphics, t.graphicsReply = info.graphics, info.graphicsReply
 	t.cellWidth, t.cellHeight = info.cellWidth, info.cellHeight
 	t.graphicsRows = info.graphicsRows
+	t.images = info.images
 	return t
 }
 

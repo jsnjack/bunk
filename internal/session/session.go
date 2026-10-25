@@ -5,6 +5,7 @@
 package session
 
 import (
+	"bunk/internal/graphics"
 	"bunk/internal/input"
 	"bunk/internal/vt10x"
 	"bytes"
@@ -61,6 +62,10 @@ type Session struct {
 	Scrollback      Ring // ring buffer of captured rows
 	ScrollOffset    int  // 0 = live view; N = N lines above live view
 	ScrollbackLines int  // max scrollback rows (from config)
+
+	// images keeps placement bitmaps (Options.ImageBytes); nil without.
+	// Protected by mu.
+	images *graphics.Store
 
 	// Text selection state.  Protected by mu.
 	// SelAnchor is where Button1 was pressed; SelCursor tracks the drag endpoint.
@@ -176,6 +181,10 @@ type Options struct {
 	// state (internal/notify). Inherited values are always removed; ""
 	// exports nothing.
 	NotifySocket, NotifySession string
+	// ImageBytes keeps the bitmaps of image placements, up to this many
+	// bytes, so the front end can draw them at full resolution (Images).
+	// Zero keeps only the cells' colour samples, as bunk's TUI draws them.
+	ImageBytes int
 }
 
 // Hooks connect a Session to its front end. Every hook is optional.
@@ -274,7 +283,8 @@ func Start(o Options) (*Session, error) {
 	}
 	s.oscScan.status = s.onStatusOSC
 	s.Term = vt10x.New(vt10x.WithSize(o.Cols, o.Rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithBellCallback(s.onBell),
-		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.WriteInput), vt10x.WithCellPixels(cellWidth, cellHeight))
+		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.WriteInput), vt10x.WithCellPixels(cellWidth, cellHeight),
+		s.imageStore(o.ImageBytes))
 
 	// One-time container detection: read the shell process's own environ.
 	if cmd.Process != nil {
@@ -1001,6 +1011,7 @@ func (s *Session) ResizeAndReflow(newCols, newRows int) (reflowed bool) {
 		return false
 	}
 	s.reflowCells(newCols, newRows)
+	s.SweepImages() // rows beyond the scrollback were dropped
 	return true
 }
 

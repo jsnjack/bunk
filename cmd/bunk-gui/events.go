@@ -34,7 +34,15 @@ func (p *Pane) attachInput() {
 	keys := gtk.NewEventControllerKey()
 	keys.SetIMContext(p.im)
 	keys.ConnectKeyPressed(func(keyval, _ uint, state gdk.ModifierType) bool {
+		if keyval == gdk.KEY_Control_L || keyval == gdk.KEY_Control_R {
+			p.ctrlKey(true)
+		}
 		return p.app.onKey(p, keyval, state)
+	})
+	keys.ConnectKeyReleased(func(keyval, _ uint, state gdk.ModifierType) {
+		if keyval == gdk.KEY_Control_L || keyval == gdk.KEY_Control_R {
+			p.ctrlKey(false)
+		}
 	})
 	w.AddController(keys)
 
@@ -58,6 +66,15 @@ func (p *Pane) attachInput() {
 
 	motion := gtk.NewEventControllerMotion()
 	motion.ConnectMotion(func(x, y float64) { p.mouseMotion(x, y, motion.CurrentEventState()) })
+	motion.ConnectEnter(func(x, y float64) {
+		p.pointerIn = true
+		p.lastX, p.lastY = x, y
+		p.updateHover(x, y, motion.CurrentEventState())
+	})
+	motion.ConnectLeave(func() {
+		p.pointerIn = false
+		p.setHover(linkHit{})
+	})
 	w.AddController(motion)
 
 	scroll := gtk.NewEventControllerScroll(gtk.EventControllerScrollVertical | gtk.EventControllerScrollDiscrete)
@@ -368,6 +385,9 @@ func (p *Pane) mousePress(button uint, n int, x, y float64, state gdk.ModifierTy
 	col, row := p.cellAt(x, y)
 	p.lastX, p.lastY = x, y
 	mode := p.mouseMode()
+	if p.clickLink(button, x, y, state, mode&vt10x.ModeMouseMask != 0) {
+		return
+	}
 	if mode&vt10x.ModeMouseMask != 0 && state&gdk.ShiftMask == 0 {
 		p.setSelection(false, session.SelPos{}, session.SelPos{})
 		btn := gdkButton(button)
@@ -397,6 +417,8 @@ func (p *Pane) mousePress(button uint, n int, x, y float64, state gdk.ModifierTy
 // application asked for them (1002: drags, 1003: all motion).
 func (p *Pane) mouseMotion(x, y float64, state gdk.ModifierType) {
 	p.lastX, p.lastY = x, y
+	p.pointerIn = true
+	p.updateHover(x, y, state)
 	col, row := p.cellAt(x, y)
 	if p.selecting {
 		p.s.Lock()

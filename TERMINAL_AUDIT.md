@@ -47,7 +47,7 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 0/1/2 | Window title | OK | vt10x handles; bunk supplements with process/cwd |
 | 4 | Set palette color | **FIXED** | vt10x handles indices 0-255 and rejects others without changing state; an index equal to a truecolour value used to recolour those cells. A query (`4;N;?`) answers with N and the override; a colour without an override is unknown and gets no reply |
 | 7 | CWD notification | OK | Forwarded to host |
-| 8 | Hyperlinks | OK | Stored on glyphs and emitted inline with text; hyperlink identities survive reflow |
+| 8 | Hyperlinks | OK | Stored on glyphs and emitted inline with text; hyperlink identities survive reflow. bunk-gui: Ctrl+hover underlines, Ctrl+click opens (http, https, file, mailto, ftp); plain-text http/https/file URLs too |
 | 10/11/12 | Query/set fg/bg/cursor color | OK (host-dependent) | In-stream replies in both screen modes, including SSH/mosh. FG/BG changes repaint existing cells; cursor colour follows the active pane via tcell. Terminal-theme defaults are probed at startup; a genuinely unknown default is not fabricated |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles indices 0-255 |
@@ -128,13 +128,18 @@ be queried accurately for that value. Explicit pane colour overrides remain quer
 | Kitty graphics | OK (cell-rendered subset) | Direct RGB/RGBA/PNG, zlib, chunking, query replies, cached placement, cropping/scaling, cursor policy, ID/coordinate deletion |
 | iTerm2 inline images | OK (cell-rendered subset) | Inline PNG/JPEG/GIF first frame; multipart uploads; cell/pixel/percentage sizing and aspect preservation |
 
-Images are downsampled into RGB half-block cells, not native pixels. They clip to
-the pane, scroll into history, survive resize, and are overwritten/erased like
-text. Transparent samples blend against the cell background; fully transparent
+bunk's TUI downsamples images into RGB half-block cells, not native pixels.
+bunk-gui draws them at full resolution: the session keeps each placement's
+bitmap in a bounded store (64 MiB per pane, least recently used first out), and
+each cell draws its own sub-rectangle as a textured quad, 1:1 when the cell size
+matches the placement's, scaled otherwise. A cell whose bitmap was evicted, or
+that blends a translucent image over another, draws its half-block samples.
+Either way, images clip to the pane, scroll into history, survive resize, and
+are overwritten/erased like text. Transparent samples blend against the cell background; fully transparent
 cells leave existing text intact. Deletion removes visible image cells without
 restoring covered text or editing archived scrollback. Layering, animation,
-Unicode placeholders, relative placements, non-square SIXEL pixel aspects, and
-native-pixel fidelity are outside this rendering mode. Unsupported Kitty actions
+Unicode placeholders, relative placements and non-square SIXEL pixel aspects are
+outside this rendering mode; the TUI also lacks native-pixel fidelity. Unsupported Kitty actions
 receive an error (subject to `q`); file/shared-memory transfers are rejected.
 iTerm2 downloads are never written to disk. Explicit protocol selection may be
 needed in clients that rely on host-brand environment variables.
@@ -187,9 +192,10 @@ an exhaustive claim of terminal-protocol conformance.
   are not exposed. DECRQSS reports only implemented settings; other requests are
   rejected.
   Additional replies must describe behaviour bunk actually supports.
-- **Graphics extensions:** native-pixel output, animation, layering, Unicode
-  placeholders, relative placements, and non-square SIXEL pixel aspects remain
-  unsupported. Native-pixel output requires a different rendering approach.
+- **Graphics extensions:** animation, layering, Unicode placeholders, relative
+  placements, and non-square SIXEL pixel aspects remain unsupported. bunk's TUI
+  has no native-pixel output (bunk-gui has); it needs a different rendering
+  approach.
 - **Host dependencies:** unknown default colours, physical keypad identity when
   the host sends ordinary keys, and font/emoji shaping cannot be recovered from
   information the host does not provide.

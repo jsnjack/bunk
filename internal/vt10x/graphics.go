@@ -10,13 +10,25 @@ import (
 
 // ImagePlacement identifies one paint operation, even when Kitty placement IDs
 // are omitted. Immutable pointers let deletion select whole visible placements.
-type ImagePlacement struct{ ID, PlacementID uint32 }
+// Bitmap is the placement's ID in the terminal's image store (WithImageStore),
+// or 0 when its pixels were not kept.
+type ImagePlacement struct {
+	ID, PlacementID uint32
+	Bitmap          uint64
+}
 
-// ImageCell stores two samples rather than a reference to the source bitmap.
-// Scrollback therefore retains at most a fixed amount of image data per cell.
+// ImageCell stores two samples rather than the source bitmap, so scrollback
+// retains a fixed amount of image data per cell; the samples draw the cell as
+// an upper half block. Col and Row locate the cell within its placement:
+// with the placement's bitmap (graphics.Store.Get(Placement.Bitmap)) a front
+// end draws the cell's own sub-rectangle at full resolution. Composite marks
+// a partly transparent cell painted over another image: its samples blend
+// both images, and only the samples draw it.
 type ImageCell struct {
 	Top, Bottom color.NRGBA
 	Placement   *ImagePlacement
+	Col, Row    uint16
+	Composite   bool
 }
 
 // CellPixels reports the raster resolution of a cell used for placement.
@@ -30,6 +42,24 @@ func (t *State) SetCellPixels(width, height int) {
 
 // GraphicsState returns an isolated snapshot of reusable image data.
 func (t *State) GraphicsState() *graphics.Decoder { return t.graphics.Clone() }
+
+// MarkImages calls mark with the image store ID of every placement a cell
+// of either screen refers to (see graphics.Store.Referenced). It does not
+// lock: the caller serializes access, as for Cell.
+func (t *State) MarkImages(mark func(id uint64)) {
+	for _, screen := range [2][]*Row{t.lines, t.altLines} {
+		for _, row := range screen {
+			row.MarkImages(mark)
+		}
+	}
+}
+
+// sweepImages drops stored bitmaps no cell refers to any more.
+func (t *State) sweepImages() {
+	if t.images != nil {
+		t.images.Sweep()
+	}
+}
 
 func (t *State) handleGraphics(typ rune, body []byte) {
 	if t.graphics == nil {
@@ -65,6 +95,9 @@ func (t *State) paintGraphics(p *graphics.Placement) {
 	t.clusterOpen = false
 	origin := t.cur
 	identity := &ImagePlacement{ID: p.ID, PlacementID: p.PlacementID}
+	if t.images != nil {
+		identity.Bitmap = t.images.Add(p, t.cellWidth, t.cellHeight)
+	}
 	for row := 0; row < p.Rows; row++ {
 		y := origin.Y + row
 		if p.Move {
@@ -82,12 +115,15 @@ func (t *State) paintGraphics(p *graphics.Placement) {
 			}
 			old := t.lines[y].Glyph(x)
 			t.eraseWideAt(x, y)
+			cell := &ImageCell{Placement: identity, Col: uint16(col), Row: uint16(row)}
 			// Composite over previous image samples without retaining a chain
 			// of old images. Remaining alpha is blended against the theme later.
-			if old.Image != nil {
+			if old.Image != nil && (top.A < 255 || bottom.A < 255) {
 				top, bottom = over(top, old.Image.Top), over(bottom, old.Image.Bottom)
+				cell.Composite = true
 			}
-			t.lines[y].set(x, Glyph{Char: '▀', Width: 1, FG: DefaultFG, BG: old.BG, UL: DefaultUL, Image: &ImageCell{Top: top, Bottom: bottom, Placement: identity}})
+			cell.Top, cell.Bottom = top, bottom
+			t.lines[y].set(x, Glyph{Char: '▀', Width: 1, FG: DefaultFG, BG: old.BG, UL: DefaultUL, Image: cell})
 			t.markDirty(y)
 		}
 		if p.Move && row+1 < p.Rows {
@@ -166,4 +202,11 @@ func (t *State) deleteGraphics(d *graphics.Deletion) {
 			}
 		}
 	}
+	if len(selected) > 0 {
+		t.sweepImages()
+	}
 }
+
+// SetImageStore installs an image store on a terminal that has no output
+// yet (see WithImageStore).
+func (t *State) SetImageStore(store *graphics.Store) { t.images = store }

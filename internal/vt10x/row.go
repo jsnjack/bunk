@@ -84,6 +84,49 @@ func (r Row) Combining(x int) string {
 	return ""
 }
 
+// Image returns the image data of the cell at x, or nil.
+func (r Row) Image(x int) *ImageCell {
+	if i := r.cells[x].extra(); i != 0 {
+		return r.extras[i-1].Image
+	}
+	return nil
+}
+
+// Link returns the hyperlink ID of the cell at x (see State.Link), or 0.
+func (r Row) Link(x int) uint16 {
+	if i := r.cells[x].extra(); i != 0 {
+		return r.extras[i-1].Link
+	}
+	return 0
+}
+
+// HasImages reports whether the row's side table holds image data. It may
+// report entries of cells since overwritten, never miss a current one.
+func (r Row) HasImages() bool {
+	for i := range r.extras {
+		if r.extras[i].Image != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkImages calls mark with the image store ID of each placement a cell of
+// the row refers to. Rows without image data in their side table cost the
+// table's length; others are read up to the last written cell.
+func (r Row) MarkImages(mark func(id uint64)) {
+	if !r.HasImages() {
+		return
+	}
+	for x := range r.cells[:min(r.used, len(r.cells))] {
+		if i := r.cells[x].extra(); i != 0 {
+			if img := r.extras[i-1].Image; img != nil && img.Placement != nil && img.Placement.Bitmap != 0 {
+				mark(img.Placement.Bitmap)
+			}
+		}
+	}
+}
+
 // AppendGlyphs appends every cell of the row to dst as Glyphs.
 func (r Row) AppendGlyphs(dst []Glyph) []Glyph {
 	for x := range r.cells {
