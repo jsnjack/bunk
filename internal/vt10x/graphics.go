@@ -115,7 +115,7 @@ func over(front, back color.NRGBA) color.NRGBA {
 func (t *State) deleteGraphics(d *graphics.Deletion) {
 	selected := make(map[*ImagePlacement]bool)
 	for y := range t.lines {
-		row := &t.lines[y]
+		row := t.lines[y]
 		for x := range row.cells {
 			if row.cells[x].extra() == 0 {
 				continue
@@ -148,7 +148,7 @@ func (t *State) deleteGraphics(d *graphics.Deletion) {
 		}
 	}
 	for y := range t.lines {
-		row := &t.lines[y]
+		row := t.lines[y]
 		for x := range row.cells {
 			if row.cells[x].extra() == 0 {
 				continue

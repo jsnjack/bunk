@@ -64,7 +64,7 @@ func randomStream(rng *rand.Rand, cols, rows int) []byte {
 
 // decodeRows returns rows as Glyphs. Unused side-table entries can differ
 // between two write sequences that leave the same cells.
-func decodeRows(rows []Row) [][]Glyph {
+func decodeRows(rows []*Row) [][]Glyph {
 	out := make([][]Glyph, len(rows))
 	for y, r := range rows {
 		out[y] = r.AppendGlyphs(nil)

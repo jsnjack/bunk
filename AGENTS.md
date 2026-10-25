@@ -86,6 +86,10 @@ Key local extensions to vendored vt10x:
   return a negative response. Unknown DECRQM modes return status 0, not 4.
 - The grid stores 16-byte, pointer-free cells (`row.go`). Combining text,
   underline colour, hyperlink and image samples live in a per-row side table.
+  Each Row tracks `used`: every cell from that index on equals `tail`, so
+  clearing and scrollback trimming cost the text length, not the row width.
+  Write cells through `set`, `fill`, `writeASCII` or `setWrap`; a direct
+  `cells[x]` write must call `touch(x)` (or `touchAll` after shifting).
   `Cell`/`RawCell` still return `Glyph`; the scroll callback receives a `Row`,
   which bunk's scrollback ring copies without trailing blanks.
 - `putASCII` writes printable ASCII runs without grapheme segmentation. Any

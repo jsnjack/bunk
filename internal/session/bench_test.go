@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"testing"
 )
 
@@ -10,10 +11,17 @@ import (
 // framing, OSC scanning, query replies, vt10x parsing and scrollback capture.
 // Front-end hooks are left out.
 func BenchmarkOutput(b *testing.B) {
-	for _, kind := range []string{"ascii", "full-rows", "sgr"} {
+	source, err := os.ReadFile("session.go")
+	if err != nil {
+		b.Fatal(err)
+	}
+	source = bytes.ReplaceAll(source, []byte("\n"), []byte("\r\n"))
+	for _, kind := range []string{"ascii", "full-rows", "sgr", "go-source"} {
 		var buf bytes.Buffer
 		for i := 0; buf.Len() < 1<<20; i++ {
 			switch kind {
+			case "go-source": // short lines, about 30 bytes on average
+				buf.Write(source)
 			case "ascii":
 				fmt.Fprintf(&buf, "%06d the quick brown fox jumps over the lazy dog 0123456789 abcdefghijklmnopqrstuvwxyz\r\n", i)
 			case "full-rows":
