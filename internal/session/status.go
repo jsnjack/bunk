@@ -504,12 +504,13 @@ func ParseEvent(name string) (Event, bool) {
 }
 
 // EnvNotifySocket and EnvNotifySession name the environment variables that
-// Options.NotifySocket and Options.NotifySession export to the child. The
-// names avoid words such as TOKEN or KEY, which agent CLIs strip from the
-// environment of their hooks.
+// Options.NotifySocket and Options.NotifySession export to the child. Every
+// front end (bunk's TUI, bunk-gui) uses the same names. The names avoid
+// words such as TOKEN or KEY, which agent CLIs strip from the environment
+// of their hooks.
 const (
-	EnvNotifySocket  = "BUNK_GUI_SOCKET"
-	EnvNotifySession = "BUNK_GUI_SESSION"
+	EnvNotifySocket  = "BUNK_NOTIFY_SOCKET"
+	EnvNotifySession = "BUNK_NOTIFY_SESSION"
 )
 
 // agentReport is the agent's latest explicit report. Protected by mu.

@@ -68,16 +68,16 @@ func TestCLI(t *testing.T) {
 		want       *report
 		otherToken bool
 	}{
-		{name: "no arguments", code: 1, stderr: "usage:"},
-		{name: "help", args: []string{"help"}, stdout: "usage:"},
-		{name: "unknown event", args: []string{"waiting"}, env: inside, code: 1, stderr: `unknown event "waiting"`},
-		{name: "unknown event outside bunk-gui", args: []string{"waiting"}, code: 1, stderr: "unknown event"},
-		{name: "outside bunk-gui", args: []string{"needs-you", "-"}, env: []string{"HOME=/home/u"}, stdin: claudeNotification},
+		{name: "no arguments", code: 1, stderr: "usage: bunk notify <event>"},
+		{name: "help", args: []string{"help"}, stdout: "usage: bunk notify <event>"},
+		{name: "unknown event", args: []string{"waiting"}, env: inside, code: 1, stderr: `bunk notify: unknown event "waiting"`},
+		{name: "unknown event outside bunk", args: []string{"waiting"}, code: 1, stderr: "unknown event"},
+		{name: "outside bunk", args: []string{"needs-you", "-"}, env: []string{"HOME=/home/u"}, stdin: claudeNotification},
 		{name: "socket without session", args: []string{"working"}, env: []string{EnvSocket + "=" + srv.Path()}},
 		{name: "session without socket", args: []string{"working"}, env: []string{EnvSession + "=" + token}},
 		{name: "empty values", args: []string{"working"}, env: []string{EnvSocket + "=", EnvSession + "="}},
-		{name: "bunk-gui exited", args: []string{"done"}, env: []string{EnvSocket + "=" + gone, EnvSession + "=" + token}},
-		{name: "bunk-gui crashed", args: []string{"done"}, env: []string{EnvSocket + "=" + refused, EnvSession + "=" + token}},
+		{name: "front end exited", args: []string{"done"}, env: []string{EnvSocket + "=" + gone, EnvSession + "=" + token}},
+		{name: "front end crashed", args: []string{"done"}, env: []string{EnvSocket + "=" + refused, EnvSession + "=" + token}},
 		{name: "socket not writable", args: []string{"done"}, env: []string{EnvSocket + "=" + denied, EnvSession + "=" + token}, code: 1, stderr: "permission denied"},
 		{name: "oversized token", args: []string{"done"}, env: []string{EnvSocket + "=" + srv.Path(), EnvSession + "=" + strings.Repeat("a", maxToken+1)}, code: 1, stderr: "token"},
 		{name: "working", args: []string{"working"}, env: inside, want: &report{session.EventWorking, ""}},
@@ -102,7 +102,7 @@ func TestCLI(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			code := runCLI(tc.args, tc.env, strings.NewReader(tc.stdin), &stdout, &stderr)
+			code := runCLI("bunk", tc.args, tc.env, strings.NewReader(tc.stdin), &stdout, &stderr)
 			if code != tc.code {
 				t.Fatalf("exit %d, want %d (stderr %q)", code, tc.code, stderr.String())
 			}
@@ -143,7 +143,7 @@ func TestCLIStdinStaysOpen(t *testing.T) {
 		}
 	}()
 	start := time.Now()
-	code := runCLI([]string{"needs-you", "-"}, []string{EnvSocket + "=" + srv.Path(), EnvSession + "=" + token}, r, io.Discard, io.Discard)
+	code := runCLI("bunk", []string{"needs-you", "-"}, []string{EnvSocket + "=" + srv.Path(), EnvSession + "=" + token}, r, io.Discard, io.Discard)
 	if code != 0 || time.Since(start) > 2*time.Second {
 		t.Fatalf("exit %d after %v", code, time.Since(start))
 	}
@@ -229,27 +229,54 @@ func handlerCommands(t *testing.T, agent, snippet string) map[string]string {
 				}
 			}
 		}
-		// The commented notify line is valid TOML once uncommented.
-		var notify struct{ Notify []string }
-		uncommented := strings.TrimPrefix(strings.Split(snippet, "\n")[3], "# ")
-		if _, err := toml.Decode(uncommented, &notify); err != nil || strings.Join(notify.Notify, " ") != "bunk-gui notify done" {
-			t.Errorf("codex notify line %q: %v, %q", uncommented, err, notify.Notify)
-		}
 	}
 	return cmds
 }
 
+// codexNotifyArgv returns the notify program in the Codex snippet's
+// commented line, which is valid TOML once uncommented.
+func codexNotifyArgv(t *testing.T, snippet string) []string {
+	t.Helper()
+	var cfg struct{ Notify []string }
+	uncommented := strings.TrimPrefix(strings.Split(snippet, "\n")[3], "# ")
+	if _, err := toml.Decode(uncommented, &cfg); err != nil || len(cfg.Notify) == 0 {
+		t.Fatalf("codex notify line %q: %v, %q", uncommented, err, cfg.Notify)
+	}
+	return cfg.Notify
+}
+
 // TestHookSnippets parses each agent's snippet and runs every hook command
-// with sh: outside bunk-gui it succeeds without running bunk-gui, inside it
-// runs "bunk-gui notify" with the recipe's arguments.
+// with sh. Outside bunk it succeeds without running anything. Inside it runs
+// "bunk notify" with the recipe's arguments, or "bunk-gui notify" when bunk
+// is not on PATH. The Codex notify program passes Codex's JSON payload on.
 func TestHookSnippets(t *testing.T) {
-	bin := t.TempDir()
+	both, guiOnly := t.TempDir(), t.TempDir()
 	out := filepath.Join(t.TempDir(), "calls")
-	fake := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$OUT\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "bunk-gui"), []byte(fake), 0o755); err != nil {
-		t.Fatal(err)
+	fake := "#!/bin/sh\nprintf '%s %s\\n' \"${0##*/}\" \"$*\" >> \"$OUT\"\n"
+	for _, f := range []string{filepath.Join(both, "bunk"), filepath.Join(both, "bunk-gui"), filepath.Join(guiOnly, "bunk-gui")} {
+		if err := os.WriteFile(f, []byte(fake), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	empty := t.TempDir()
+	// run runs argv with env and returns what the fake binaries recorded.
+	run := func(t *testing.T, argv, env []string) string {
+		t.Helper()
+		if err := os.WriteFile(out, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c := exec.Command(argv[0], argv[1:]...)
+		c.Env = append(env, "OUT="+out)
+		c.Stdin = strings.NewReader(claudeStop)
+		if b, err := c.CombinedOutput(); err != nil || len(b) > 0 {
+			t.Fatalf("%q: %v, output %q", argv, err, b)
+		}
+		got, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(got)
+	}
 	for _, r := range recipes {
 		t.Run(r.name, func(t *testing.T) {
 			snippet, ok := HookSnippet(r.name)
@@ -265,30 +292,36 @@ func TestHookSnippets(t *testing.T) {
 				if !ok {
 					t.Fatalf("no %s hook", h.event)
 				}
-				for _, run := range []struct {
+				for _, tc := range []struct {
 					name string
 					env  []string
 					want string
 				}{
-					{"outside bunk-gui", []string{"PATH=" + empty, "OUT=" + out}, ""},
-					{"inside bunk-gui", []string{"PATH=" + bin, "OUT=" + out, EnvSession + "=tok"}, "notify " + h.args + "\n"},
+					{"outside bunk", []string{"PATH=" + empty}, ""},
+					{"outside bunk with bunk installed", []string{"PATH=" + both}, ""},
+					{"inside bunk", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk notify " + h.args + "\n"},
+					{"inside bunk-gui without bunk", []string{"PATH=" + guiOnly, EnvSession + "=tok"}, "bunk-gui notify " + h.args + "\n"},
 				} {
-					if err := os.WriteFile(out, nil, 0o600); err != nil {
-						t.Fatal(err)
+					if got := run(t, []string{"/bin/sh", "-c", cmd}, tc.env); got != tc.want {
+						t.Fatalf("%s %s: %q ran %q, want %q", h.event, tc.name, cmd, got, tc.want)
 					}
-					c := exec.Command("/bin/sh", "-c", cmd)
-					c.Env = run.env
-					c.Stdin = strings.NewReader(claudeStop)
-					if b, err := c.CombinedOutput(); err != nil || len(b) > 0 {
-						t.Fatalf("%s %s: %q: %v, output %q", h.event, run.name, cmd, err, b)
-					}
-					got, err := os.ReadFile(out)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if string(got) != run.want {
-						t.Fatalf("%s %s: bunk-gui called with %q, want %q", h.event, run.name, got, run.want)
-					}
+				}
+			}
+			if r.name != "codex" {
+				return
+			}
+			argv := append(codexNotifyArgv(t, snippet), codexNotify)
+			for _, tc := range []struct {
+				name string
+				env  []string
+				want string
+			}{
+				{"outside bunk", []string{"PATH=" + empty}, ""},
+				{"inside bunk", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk notify done " + codexNotify + "\n"},
+				{"inside bunk-gui without bunk", []string{"PATH=" + guiOnly, EnvSession + "=tok"}, "bunk-gui notify done " + codexNotify + "\n"},
+			} {
+				if got := run(t, argv, tc.env); got != tc.want {
+					t.Fatalf("notify program %s: %q ran %q, want %q", tc.name, argv, got, tc.want)
 				}
 			}
 		})
@@ -307,7 +340,7 @@ func TestHookDocs(t *testing.T) {
 	for _, r := range recipes {
 		snippet, ok := HookSnippet(r.name)
 		if !ok || !strings.Contains(string(doc), snippet) {
-			t.Errorf("docs/agent-hooks.md lacks the current %s snippet; paste the output of `bunk-gui notify hooks %s`", r.name, r.name)
+			t.Errorf("docs/agent-hooks.md lacks the current %s snippet; paste the output of `bunk notify hooks %s`", r.name, r.name)
 		}
 	}
 }

@@ -237,8 +237,8 @@ func TestNotifyEnvReachesChild(t *testing.T) {
 		socket, token string
 		want          []string
 	}{
-		{"front end exports", "/run/user/1000/bunk-gui/notify-7.sock", "0123456789abcdef0123456789abcdef",
-			[]string{EnvNotifySession + "=0123456789abcdef0123456789abcdef", EnvNotifySocket + "=/run/user/1000/bunk-gui/notify-7.sock"}},
+		{"front end exports", "/run/user/1000/bunk/notify-7.sock", "0123456789abcdef0123456789abcdef",
+			[]string{EnvNotifySession + "=0123456789abcdef0123456789abcdef", EnvNotifySocket + "=/run/user/1000/bunk/notify-7.sock"}},
 		{"tui leaves empty", "", "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,11 +250,11 @@ func TestNotifyEnvReachesChild(t *testing.T) {
 	}
 }
 
-// runEnv starts `env` in a session and returns its BUNK_GUI_ lines, sorted.
+// runEnv starts `env` in a session and returns its BUNK_NOTIFY_ lines, sorted.
 func runEnv(t *testing.T, o Options) []string {
 	t.Helper()
 	o.Cols, o.Rows, o.Scrollback = 120, 6, 100
-	o.Args = []string{"/bin/sh", "-c", "env | grep '^BUNK_GUI_'; echo END-OF-ENV"}
+	o.Args = []string{"/bin/sh", "-c", "env | grep '^BUNK_NOTIFY_'; echo END-OF-ENV"}
 	s, err := Start(o)
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +289,7 @@ func runEnv(t *testing.T, o Options) []string {
 	}
 	end := false
 	for _, l := range all {
-		if strings.HasPrefix(l, "BUNK_GUI_") {
+		if strings.HasPrefix(l, "BUNK_NOTIFY_") {
 			lines = append(lines, l)
 		}
 		end = end || l == "END-OF-ENV"

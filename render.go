@@ -2,7 +2,8 @@
 //
 // The render loop waits for redraw signals, then:
 //  1. Iterates every leaf's vt10x virtual grid and copies cells to tcell.
-//  2. Draws separator borders (gray for inactive, green for active).
+//  2. Draws separator borders (gray for inactive, green for active, amber
+//     or green around a pane whose agent needs you or is done).
 //  3. Positions the terminal cursor inside the active pane.
 //
 // VT100 parsing bridge (read side):
@@ -210,6 +211,9 @@ func (app *App) render() {
 			Background(rt.bg)
 		paintActiveBorders(app.screen, root, active, activeStyle)
 	}
+
+	// Step 3.1 - borders around panes whose agent needs you or is done.
+	paintAgentBorders(app.screen, root, rt)
 
 	// Step 3.5 - scrollbars.
 	drawScrollbars(app.screen, root, rt)
@@ -476,8 +480,12 @@ func drawPaneContents(scr tcell.Screen, n *Node, rt resolvedTheme) {
 //
 // With sbOff = N we display virtual lines [p.sb.count-N, p.sb.count-N+h).
 func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
+	// Status takes the session lock itself. The badge and the borders show
+	// what it returns, so the overlay key below sees agent changes.
+	st := p.Status()
 	p.Lock()
 	defer p.Unlock()
+	p.agent = paneAgent{name: st.Agent, state: st.State, notice: st.Notice}
 
 	// Second guard: close the TOCTOU window between render()'s top-level
 	// check and this vt10x read. readPTY may have started a new sync frame

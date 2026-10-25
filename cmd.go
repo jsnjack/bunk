@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bunk/internal/notify"
 	"fmt"
 	"os"
 	"os/exec"
@@ -145,6 +146,19 @@ func run(configPath, themeName string, debug, trace bool) error {
 		oscBuf:        newOSCBuffer(),
 	}
 
+	// Agent hooks in the panes report through this socket ("bunk notify").
+	// Without it bunk still infers each agent's state.
+	if srv, err := notify.Listen(); err != nil {
+		L.Warn("notify: running without agent hook reports", "err", err)
+	} else {
+		app.notify = srv
+		defer func() {
+			if err := srv.Close(); err != nil {
+				L.Warn("notify: close", "err", err)
+			}
+		}()
+	}
+
 	screen.EnableMouse(tcell.MouseMotionEvents)
 	screen.EnablePaste()
 	screen.EnableFocus()
@@ -155,17 +169,13 @@ func run(configPath, themeName string, debug, trace bool) error {
 	w, h := screen.Size()
 	L.Debug("startup: screen size", "w", w, "h", h)
 
-	p, err := NewPane(
-		app.nextID, 0, 0, w, h, app.scrollback, "", nil,
-		app.paneOSCColors(),
-		app.redraw, app.paneDead, app.done, app.oscBuf,
-		app.cellAspect,
-	)
+	app.mu.Lock()
+	p, err := app.newPane(0, 0, w, h, "", nil)
+	app.mu.Unlock()
 	if err != nil {
 		screen.Fini()
 		return err
 	}
-	app.nextID++
 	app.root = newLeaf(p, 0, 0, w, h)
 	app.active = p
 

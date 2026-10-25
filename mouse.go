@@ -116,7 +116,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	// ── Focus events ──────────────────────────────────────────────────────
 	if prevActive != nil {
 		sendFocusOut(prevActive)
-		sendFocusIn(target)
+		app.focusIn(target)
 	}
 
 	if target == nil || target.IsDead() {

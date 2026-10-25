@@ -77,15 +77,16 @@ var keybindingNames = map[string]tcell.Key{
 //   - Alt+letter is delivered as KeyRune with the letter rune and ModAlt;
 //     in that case `r` carries the letter so Matches can compare it.
 type Keybinding struct {
-	key tcell.Key
-	mod tcell.ModMask
-	r   rune   // only meaningful when key == tcell.KeyRune (e.g. alt+letter)
-	raw string // original string, for display
+	key  tcell.Key
+	mod  tcell.ModMask
+	r    rune   // only meaningful when key == tcell.KeyRune (e.g. alt+letter)
+	raw  string // original string, for display
+	none bool   // "none": the action has no key, so its key reaches the pane
 }
 
 // Matches returns true if ev matches this keybinding.
 func (kb Keybinding) Matches(ev *tcell.EventKey) bool {
-	if ev.Key() != kb.key {
+	if kb.none || ev.Key() != kb.key {
 		return false
 	}
 	// For rune-keys (alt+letter), the actual letter must match.  We normalise
@@ -125,9 +126,13 @@ func (kb Keybinding) String() string { return kb.raw }
 //
 // Ctrl+letter combinations (e.g. ctrl+c) are represented as tcell.KeyCtrlC
 // with no extra modifier bits, matching what tcell actually produces.
+// "none" disables the action: it matches no key.
 func parseKey(s string) (Keybinding, error) {
 	orig := s
 	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "none" {
+		return Keybinding{raw: orig, none: true}, nil
+	}
 
 	parts := strings.Split(s, "+")
 	if len(parts) == 0 || (len(parts) == 1 && parts[0] == "") {
@@ -200,6 +205,7 @@ type Keybindings struct {
 	SearchPrev   Keybinding
 	SearchExit   Keybinding
 	ReinitHost   Keybinding
+	NextNeedsYou Keybinding
 }
 
 // keybindingDefaults is the single source of truth for action names, their
@@ -221,6 +227,7 @@ var keybindingDefaults = []kbEntry{
 	{"nav_down", func(k *Keybindings) *Keybinding { return &k.NavDown }, "alt+down", "Move focus to the pane below"},
 	{"nav_left", func(k *Keybindings) *Keybinding { return &k.NavLeft }, "alt+left", "Move focus to the pane on the left"},
 	{"nav_right", func(k *Keybindings) *Keybinding { return &k.NavRight }, "alt+right", "Move focus to the pane on the right"},
+	{"next_needs_you", func(k *Keybindings) *Keybinding { return &k.NextNeedsYou }, "alt+a", "Focus the next pane whose agent needs you, else one that is done"},
 	{"scroll_up", func(k *Keybindings) *Keybinding { return &k.ScrollUp }, "shift+pgup", "Scroll back through pane history"},
 	{"scroll_down", func(k *Keybindings) *Keybinding { return &k.ScrollDown }, "shift+pgdn", "Scroll forward / return to live output"},
 	{"search", func(k *Keybindings) *Keybinding { return &k.Search }, "ctrl+f", "Incremental search in the active pane"},
@@ -555,6 +562,7 @@ scrollbar_track = ""  # scrollbar background
 # Format: "f1", "ctrl+c", "alt+up", "shift+pgup", "escape", etc.
 # Modifiers: ctrl, alt, shift.  Key names are case-insensitive.
 # Leave a value empty (or remove the line) to keep the built-in default.
+# Set a value to "none" to disable the action; its key then reaches the pane.
 [keys]
 split         = "f1"          # auto-split the active pane (host shell)
 split_context = "alt+f1"     # auto-split inheriting container/ssh/sudo context
@@ -568,6 +576,7 @@ nav_up       = "alt+up"      # move focus to the pane above
 nav_down     = "alt+down"    # move focus to the pane below
 nav_left     = "alt+left"    # move focus to the pane on the left
 nav_right    = "alt+right"   # move focus to the pane on the right
+next_needs_you = "alt+a"     # focus the next pane whose agent needs you, then one that is done
 scroll_up    = "shift+pgup"  # scroll up in scrollback buffer
 scroll_down  = "shift+pgdn"  # scroll down / return toward live output
 reinit_host  = "alt+r"       # re-initialise host terminal after binary corruption

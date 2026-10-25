@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	// dirName is the directory under $XDG_RUNTIME_DIR that holds sockets.
-	dirName = "bunk-gui"
+	// dirName is the directory under $XDG_RUNTIME_DIR that holds the
+	// sockets of every bunk front end.
+	dirName = "bunk"
 	// maxSocketPath is the longest path a Linux sockaddr_un holds.
 	maxSocketPath = 107
 	// readTimeout bounds how long one client may hold the server.
@@ -48,7 +49,7 @@ type Server struct {
 	cur     *net.UnixConn // connection being read; Close closes it
 }
 
-// Listen creates the socket $XDG_RUNTIME_DIR/bunk-gui/notify-<pid>.sock
+// Listen creates the socket $XDG_RUNTIME_DIR/bunk/notify-<pid>.sock
 // (directory 0700, socket 0600) and starts serving it.
 func Listen() (*Server, error) {
 	return listen(os.Getuid())

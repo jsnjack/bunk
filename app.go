@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bunk/internal/notify"
 	"bunk/internal/session"
 	"fmt"
 	"io"
@@ -120,6 +121,10 @@ type App struct {
 	// are coalesced together so redraws use the notified dimensions.
 	resizeTimer *time.Timer
 	resizeGen   uint64
+
+	// notify receives agent hook reports ("bunk notify") and routes them to
+	// the panes' sessions. nil when the socket could not be created.
+	notify *notify.Server
 }
 
 // shutdown is safe to call multiple times.  It closes every pane (sending
@@ -404,6 +409,10 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		app.zoomOut()
 		app.navigate(dirRight)
 		return true
+	case kb.NextNeedsYou.Matches(ev):
+		L.Debug("handleKey: next pane needing you", "key", kb.NextNeedsYou)
+		app.jumpNeedingYou()
+		return true
 	}
 
 	// Scrollback keys.
@@ -440,7 +449,8 @@ func (app *App) forwardKey(ev *tcell.EventKey) {
 	active := app.active
 	app.mu.Unlock()
 	if active != nil && !active.IsDead() {
-		needRedraw := false
+		// Typing into the pane answers its agent's request.
+		needRedraw := acknowledge(active)
 		if active.InScrollback() {
 			L.Debug("handleKey: leaving scrollback on keypress", "pane", active.ID)
 			active.ScrollReset()
@@ -616,22 +626,32 @@ func (app *App) splitActive(inheritContext bool) {
 		}
 	}
 
-	newPane, err := NewPane(
-		app.nextID, nx, ny, nw, nh, app.scrollback, dir, spawnArgs,
-		app.paneOSCColors(),
-		app.redraw, app.paneDead, app.done, app.oscBuf,
-		app.cellAspect,
-	)
+	newPane, err := app.newPane(nx, ny, nw, nh, dir, spawnArgs)
 	if err != nil {
 		L.Error("splitActive: NewPane", "err", err, "dir", dir, "spawnArgs", spawnArgs, "container", ct, "containerID", cid)
 		return
 	}
 	L.Debug("splitActive: new pane created", "new_pane", newPane.ID, "x", nx, "y", ny, "w", nw, "h", nh)
-	app.nextID++
 
 	node.split(newPane, d)
 	app.active = newPane
 	app.triggerRedraw()
+}
+
+// newPane starts pane app.nextID at the given place, with the app's
+// scrollback, colours and notify socket, and advances nextID. app.mu must
+// be held.
+func (app *App) newPane(x, y, w, h int, dir string, args []string) (*Pane, error) {
+	p, err := startPane(paneSpec{
+		id: app.nextID, x: x, y: y, w: w, h: h, scrollback: app.scrollback, dir: dir, args: args,
+		colors: app.paneOSCColors(), redraw: app.redraw, paneDead: app.paneDead, done: app.done,
+		oscBuf: app.oscBuf, cellAspect: []float64{app.cellAspect}, notify: app.notify,
+	})
+	if err != nil {
+		return nil, err
+	}
+	app.nextID++
+	return p, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -762,8 +782,110 @@ func (app *App) navigate(d dir) {
 
 	if best != nil {
 		sendFocusOut(prev)
-		sendFocusIn(best)
+		app.focusIn(best)
 	}
+}
+
+// focusIn tells p it gained focus (DECSET 1004) and acknowledges its
+// agent's request, as focusing a tab does in bunk-gui. Call it after
+// making p the active pane, without app.mu.
+func (app *App) focusIn(p *Pane) {
+	sendFocusIn(p)
+	if acknowledge(p) {
+		app.triggerRedraw()
+	}
+}
+
+// acknowledge records that the user has seen p when its agent needs the
+// user or is done, and reports whether it did. Other states stay, so an
+// agent's working or failed report survives a focus change. It takes the
+// session lock; callers must not hold it.
+func acknowledge(p *Pane) bool {
+	if p == nil {
+		return false
+	}
+	switch p.Status().State {
+	case session.AgentNeedsYou, session.AgentDone:
+		p.Acknowledge()
+		L.Debug("acknowledge: agent request seen", "pane", p.ID)
+		return true
+	}
+	return false
+}
+
+// noAgentNeedsYou is the flash message of next_needs_you without a target.
+const noAgentNeedsYou = "no agent needs you"
+
+// jumpNeedingYou focuses the next pane after the active one, in layout
+// order, whose agent needs the user, else the next one whose agent is done
+// (next_needs_you), as bunk-gui does with tabs. The active pane comes last,
+// so a request that arrived while it had focus is found too. Focusing the
+// pane acknowledges it. Without such a pane it flashes a message.
+func (app *App) jumpNeedingYou() {
+	app.mu.Lock()
+	var panes []*Pane
+	if app.root != nil {
+		for _, leaf := range app.root.leaves() {
+			panes = append(panes, leaf.pane)
+		}
+	}
+	active := app.active
+	app.mu.Unlock()
+
+	start := len(panes) - 1 // no active pane: begin with the first
+	for i, p := range panes {
+		if p == active {
+			start = i
+		}
+	}
+	var target *Pane
+	for _, want := range []session.AgentState{session.AgentNeedsYou, session.AgentDone} {
+		for k := 1; k <= len(panes) && target == nil; k++ {
+			p := panes[(start+k)%len(panes)]
+			if !p.IsDead() && p.Status().State == want {
+				target = p
+			}
+		}
+		if target != nil {
+			break
+		}
+	}
+	if target == nil {
+		L.Debug("jumpNeedingYou: no agent needs you")
+		if active != nil {
+			const flash = 2 * time.Second
+			active.SetStatus(noAgentNeedsYou, flash)
+			app.triggerRedraw()
+			time.AfterFunc(flash, app.triggerRedraw)
+		}
+		return
+	}
+	L.Debug("jumpNeedingYou: focus", "pane", target.ID)
+	app.focusPane(target)
+}
+
+// focusPane makes p the active pane, leaving zoom when another pane fills
+// the screen, and acknowledges p.
+func (app *App) focusPane(p *Pane) {
+	app.mu.Lock()
+	zoomedOther := app.zoomedPane != nil && app.zoomedPane != p
+	app.mu.Unlock()
+	if zoomedOther {
+		app.zoomOut()
+	}
+	app.mu.Lock()
+	if app.root == nil || app.root.findPane(p) == nil {
+		app.mu.Unlock()
+		return // removed meanwhile
+	}
+	prev := app.active
+	app.active = p
+	app.mu.Unlock()
+	if prev != p {
+		sendFocusOut(prev)
+	}
+	app.focusIn(p)
+	app.triggerRedraw()
 }
 
 // deathWatcher waits for dead-pane notifications and cleans them up.
@@ -807,6 +929,9 @@ func (app *App) removePane(p *Pane) {
 	}
 
 	app.root = removeFromTree(app.root, p)
+	if app.notify != nil && p.token != "" {
+		app.notify.Unregister(p.token)
+	}
 	shutdown := app.root == nil
 	if wasZoomed && !shutdown {
 		// Same staleness as zoomOut: the dead pane's fullscreen frame is
@@ -824,7 +949,7 @@ func (app *App) removePane(p *Pane) {
 	}
 
 	if newActive != nil {
-		sendFocusIn(newActive)
+		app.focusIn(newActive)
 	}
 
 	app.triggerRedraw()
