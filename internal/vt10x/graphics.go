@@ -19,8 +19,14 @@ type ImageCell struct {
 	Placement   *ImagePlacement
 }
 
-// CellPixels reports the virtual raster resolution used for placement.
+// CellPixels reports the raster resolution of a cell used for placement.
 func (t *State) CellPixels() (int, int) { return t.cellWidth, t.cellHeight }
+
+// SetCellPixels changes the raster resolution of a cell, clamped as
+// WithCellPixels does. Images already placed keep their cells.
+func (t *State) SetCellPixels(width, height int) {
+	t.cellWidth, t.cellHeight = max(1, min(width, 256)), max(2, min(height, 256))
+}
 
 // GraphicsState returns an isolated snapshot of reusable image data.
 func (t *State) GraphicsState() *graphics.Decoder { return t.graphics.Clone() }

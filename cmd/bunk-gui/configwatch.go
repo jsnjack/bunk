@@ -46,9 +46,9 @@ func (a *App) reloadSettings() {
 	a.rep.Reloads++
 	a.settings.Keys, a.settings.keymap, a.settings.was = st.Keys, st.keymap, st.was
 	a.settings.Agents = st.Agents
-	if (st.Font != old.Font || st.FontSize != old.FontSize) && a.cfg.font == "" {
-		a.settings.Font, a.settings.FontSize = st.Font, st.FontSize
-		a.fontSize = st.FontSize
+	if (st.Font != old.Font || st.FontSize != old.FontSize || st.TextZoom != old.TextZoom) && a.cfg.font == "" {
+		a.settings.Font, a.settings.FontSize, a.settings.TextZoom = st.Font, st.FontSize, st.TextZoom
+		a.fontSize = st.startSize()
 		a.fontDesc = a.font()
 		for _, p := range a.panes {
 			if p != nil && !p.removeOnce {

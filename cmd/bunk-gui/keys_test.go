@@ -207,7 +207,7 @@ tabs = "bar"   # tabs on top
 
 [keys]
 # window keys
-new_tab = "ctrl+shift+t"  # muscle memory
+new_tab = "ctrl+shift+t"   # muscle memory
 switcher = "none"  # was ["ctrl+shift+space", "f9"]
 quit = "ctrl+shift+q"
 zoom = "f11"

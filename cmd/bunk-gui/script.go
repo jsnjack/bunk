@@ -45,7 +45,8 @@ import (
 //	ptr-move X Y                     pointer to window coordinates
 //	ptr-at TARGET [DX DY]            tab N | tabclose N | newtab | options | closewin |
 //	                                 pane ID | cell ID COL ROW | divider r[a|b…] | menu LABEL |
-//	                                 shortcut-keys ACTION | shortcut-switch ACTION | button LABEL
+//	                                 shortcut-keys ACTION | shortcut-switch ACTION | button LABEL |
+//	                                 pref NAME (tabs-rail, font-size, agent-0-name, agent-add, …)
 //	ptr-press [BTN] | ptr-release [BTN] | ptr-click [BTN] [N] | ptr-drag DX DY [STEPS] | ptr-scroll N
 //
 // Window and tabs:
@@ -62,7 +63,7 @@ import (
 //	run CMD                          a shell command, e.g. to edit config.toml
 //	shortcut-scroll ACTION           scroll the shortcuts window to a row
 //	quit-dialog cancel               close the quit dialog
-//	dialog-close                     close the open dialog (quit, shortcuts, About)
+//	dialog-close                     close the open dialog (quit, shortcuts, preferences, About)
 //	maximize | unmaximize | quit
 //
 // Records:
@@ -368,6 +369,8 @@ func (a *App) doAction(action string) {
 			a.quitDialog.Close()
 		case a.shortcutsWin != nil:
 			a.shortcutsWin.dlg.Close()
+		case a.prefsWin != nil:
+			a.prefsWin.dlg.Close()
 		case a.about != nil:
 			a.about.Close()
 		default:
@@ -603,11 +606,36 @@ func (a *App) shot(args []string) error {
 	default:
 		return fmt.Errorf("unknown widget %q", what)
 	}
-	pix, wd, ht := shotC(nativePtr(w))
-	if pix == nil {
-		return fmt.Errorf("%s: nothing drawn", what)
+	take := func() bool {
+		pix, wd, ht := shotC(nativePtr(w))
+		if pix == nil {
+			return false
+		}
+		a.savePNG(args[0], pix, wd, wd, ht)
+		fmt.Printf("shot: %s %dx%d -> %s\n", what, wd, ht, args[0])
+		return true
 	}
-	a.savePNG(args[0], pix, wd, wd, ht)
-	fmt.Printf("shot: %s %dx%d -> %s\n", what, wd, ht, args[0])
+	if take() {
+		return nil
+	}
+	// A widget that changed has no render node until the next frame draws
+	// it: try again each frame for up to a second.
+	tries := 0
+	a.shotsPending++
+	coreglib.TimeoutAdd(16, func() bool {
+		if a.finished {
+			return false
+		}
+		tries++
+		switch {
+		case take():
+		case tries < 60:
+			return true
+		default:
+			a.reportError("shot %s: %s: nothing drawn", args[0], what)
+		}
+		a.shotsPending--
+		return false
+	})
 	return nil
 }

@@ -161,8 +161,12 @@ type Options struct {
 	// ThemeFG, ThemeBG and ThemeCursor answer OSC 10/11/12 queries in
 	// XParseColor form; "" leaves the colour unknown.
 	ThemeFG, ThemeBG, ThemeCursor string
-	CellAspect                    []float64   // cell height/width for virtual pixels
-	Agents                        []AgentSpec // extra agent CLIs to recognise, checked before DefaultAgents
+	CellAspect                    []float64 // cell height/width for virtual pixels
+	// CellPixels is the real size of a cell in pixels (width, height), for
+	// the PTY's pixel size and CSI 14/16 t replies. Zero: virtual pixels,
+	// 8 wide and as high as CellAspect gives (bunk's TUI).
+	CellPixels [2]int
+	Agents     []AgentSpec // extra agent CLIs to recognise, checked before DefaultAgents
 	// Backspace is the key the front end sends for the Backspace key, so
 	// XTGETTCAP "kbs" matches it: input.KeyBS (BS, the default, as bunk's
 	// tcell front end sends) or input.KeyBackspace (DEL).
@@ -245,6 +249,9 @@ func Start(o Options) (*Session, error) {
 	}
 
 	cellWidth, cellHeight := VirtualCellPixels(o.CellAspect)
+	if o.CellPixels[0] > 0 && o.CellPixels[1] > 0 {
+		cellWidth, cellHeight = o.CellPixels[0], o.CellPixels[1]
+	}
 	ptmx, err := pty.StartWithSize(cmd, Winsize(o.Cols, o.Rows, cellWidth, cellHeight))
 	if err != nil {
 		return nil, fmt.Errorf("pty.StartWithSize: %w", err)
@@ -305,6 +312,21 @@ func (s *Session) Resize(cols, rows int) (reflowed bool) {
 		pty.Setsize(s.PTY, Winsize(cols, rows, cw, ch)) //nolint:errcheck
 	}
 	return reflowed
+}
+
+// SetCellPixels changes the size of a cell in pixels (a front end's font
+// or scale changed). The emulator places images with it, CSI 14/16 t
+// report it, and the PTY's pixel size follows, which signals the child
+// with SIGWINCH when it changed.
+func (s *Session) SetCellPixels(width, height int) {
+	s.Lock()
+	defer s.Unlock()
+	s.Term.SetCellPixels(width, height)
+	if s.PTY != nil {
+		cols, rows := s.Term.Size()
+		cw, ch := s.Term.CellPixels()
+		pty.Setsize(s.PTY, Winsize(cols, rows, cw, ch)) //nolint:errcheck
+	}
 }
 
 // ContentRows returns the number of live rows up to the last one with

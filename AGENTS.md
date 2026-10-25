@@ -231,12 +231,13 @@ Key fields agents may need to know about:
 `config.go` is the authoritative reference for every field and its default.
 
 bunk-gui reads `~/.config/bunk-gui/config.toml` (`-config`): `tabs`,
-`rail_open`, `font`, `font_size`, `[[agents]]` and `[keys]`. `[keys]` uses
+`rail_open`, `font`, `font_size`, `text_zoom`, `[[agents]]` and `[keys]`. `[keys]` uses
 bunk's action names and key syntax where they overlap; "none" sends the key
 to the terminal. The file is watched and reloads live, and a bad value shows
-a toast and keeps the default. The shortcuts window (Ctrl+Shift+?) rewrites
-only the `[keys]` lines it changes. `cmd/bunk-gui/bindings.go` lists every
-action and its default.
+a toast and keeps the default. The shortcuts window (Ctrl+Shift+?) and the
+preferences window (Ctrl+,) rewrite only the lines they change
+(`cmd/bunk-gui/keysfile.go`). `cmd/bunk-gui/bindings.go` lists every action and
+its default.
 
 ---
 
@@ -271,7 +272,9 @@ action and its default.
   half-block glyphs with immutable `Glyph.Image` samples. They clip, erase, scroll,
   and reflow with the grid; source bitmaps are not retained by scrollback. No image
   escape is forwarded to the host. Kitty file/shared-memory access is rejected.
-  PTYs and CSI 14/16/18 replies use virtual pixels (8 wide, height from cell aspect).
+  PTYs and CSI 14/16/18 replies use the session's cell pixels: virtual in bunk's
+  TUI (8 wide, height from cell aspect); real device pixels in bunk-gui, which
+  sets `Options.CellPixels` and calls `Session.SetCellPixels` on zoom or scale.
   Transfers are capped at 8 MiB, decoded images at 4 million pixels / 4096 per
   axis, and Kitty caches at 32 MiB / 32 images. Reflow retains cell samples
   without replaying image transfers.

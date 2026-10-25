@@ -135,7 +135,7 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 	p.frame.SetChild(p.widget)
 	p.passBadge = label("PASS", "passbadge")
 	p.passBadge.SetHAlign(gtk.AlignEnd)
-	p.passBadge.SetVAlign(gtk.AlignStart)
+	p.passBadge.SetVAlign(gtk.AlignEnd) // the find bar takes the top
 	p.passBadge.SetCanTarget(false)
 	p.passBadge.SetVisible(false)
 	p.frame.AddOverlay(p.passBadge)
@@ -152,6 +152,8 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 		ID: p.id, Cols: max(2, cols), Rows: max(1, rows), Scrollback: session.DefaultScrollbackLines, Dir: dir, Args: args,
 		ThemeFG: hex(theme.fg), ThemeBG: hex(theme.bg), ThemeCursor: hex(theme.fg),
 		CellAspect: []float64{float64(atlas.CellH) / float64(atlas.CellW)},
+		// Real device pixels, so applications size images 1:1.
+		CellPixels: [2]int{atlas.CellW, atlas.CellH},
 		Backspace:  input.KeyBackspace,
 		Agents:     a.settings.Agents,
 	}
@@ -215,6 +217,9 @@ func (a *App) selectTab(t *Tab) {
 	if t == nil {
 		return
 	}
+	if a.find != nil && a.find.p.tab != t {
+		a.closeFind()
+	}
 	a.active = t
 	a.stack.SetVisibleChild(t.holder)
 	if t.focus != nil {
@@ -261,6 +266,9 @@ func (a *App) removePane(p *Pane) {
 		return
 	}
 	p.removeOnce = true
+	if a.find != nil && a.find.p == p {
+		a.closeFind()
+	}
 	if p.token != "" {
 		a.notify.Unregister(p.token)
 	}

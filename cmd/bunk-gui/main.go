@@ -115,6 +115,8 @@ type App struct {
 	syncingMenu bool             // passCheck is being set from the pane
 
 	shortcutsWin *shortcutsWindow
+	prefsWin     *prefsWindow
+	find         *finder // the find bar, nil when closed
 	quitDialog   *adw.AlertDialog
 	quitBody     []string // the quit dialog's list of busy tabs
 
@@ -151,6 +153,7 @@ type App struct {
 	injectAt                           int64   // monoNs of the last injected key, 0 if consumed
 	typingStop                         chan struct{}
 	pngJobs                            sync.WaitGroup
+	shotsPending                       int // shots waiting for a frame
 	pngMu                              sync.Mutex
 	pngErrs                            []string
 
@@ -233,7 +236,7 @@ func main() {
 	if cfg.layout == "rail" || cfg.layout == "bar" {
 		a.settings.Tabs = cfg.layout
 	}
-	a.layout, a.railOpen, a.fontSize = a.settings.Tabs, a.settings.RailOpen, a.settings.FontSize
+	a.layout, a.railOpen, a.fontSize = a.settings.Tabs, a.settings.RailOpen, a.settings.startSize()
 	a.fontDesc = a.font()
 	if cfg.stats || cfg.report != "" || cfg.allocProbe {
 		a.st = newRunStats()
@@ -527,6 +530,9 @@ func (a *App) finish(reason string) {
 	}
 	if a.cfg.stats {
 		a.printStats(p, reason)
+	}
+	if a.shotsPending > 0 {
+		a.reportError("%d shots still waiting for a frame at quit", a.shotsPending)
 	}
 	a.waitPNG()
 	if a.reportOn() {

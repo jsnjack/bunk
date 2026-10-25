@@ -35,6 +35,7 @@ import (
 const wrapper = "../../scripts/headless-gui.sh"
 
 func TestMain(m *testing.M) {
+	runHelper()    // a pane's helper program (helper_test.go), not a test run
 	recordAllocs() // frame allocation tests count with mallocsUnder
 	flag.Parse()
 	if !testing.Short() && os.Getenv("BUNK_HEADLESS") == "" {

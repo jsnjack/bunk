@@ -299,7 +299,7 @@ tabs = "rail"   # side
 
 [keys]
 # my bindings
-new_tab = "ctrl+alt+t"  # muscle memory
+new_tab = "ctrl+alt+t"   # muscle memory
 switcher = "ctrl+shift+space"
 zoom = "none"  # was "f12"
 

@@ -8,9 +8,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
@@ -254,14 +251,7 @@ func (a *App) setActionKeys(action string, combos []keyCombo) error {
 		}
 		a.settings.was[action] = was
 	}
-	data, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, []byte(patchKeys(string(data), []keysEdit{edit})), 0o644); err != nil {
+	if err := a.editConfig(func(content string) string { return patchKeys(content, []keysEdit{edit}) }); err != nil {
 		return err
 	}
 	a.settings.keymap = a.keys().withBinding(action, combos)

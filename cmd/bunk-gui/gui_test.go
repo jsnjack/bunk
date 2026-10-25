@@ -234,8 +234,12 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 			"9800ms menu-item New window",
 			"9900ms menu open",
 			"10200ms menu-item Find",
+			"10250ms snap find-open",
+			"10280ms kbd Escape",
 			"10300ms menu open",
 			"10600ms menu-item Preferences",
+			"10650ms snap prefs-open",
+			"10680ms dialog-close",
 			"10700ms menu open",
 			"11000ms menu-item Keyboard shortcuts",
 			"11050ms snap shortcuts-open",
@@ -364,8 +368,13 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 	if s := g.snap("shortcuts-open"); s.Shortcuts == nil || len(s.Shortcuts.Rows) != len(keyActions) {
 		t.Errorf("Keyboard shortcuts: window %+v", s.Shortcuts)
 	}
-	for _, want := range []string{"No agent needs you", "New window is not built yet", "Find is not built yet",
-		"Preferences are not built yet"} {
+	if s := g.snap("find-open"); s.Find == nil {
+		t.Error("Find: no find bar")
+	}
+	if s := g.snap("prefs-open"); s.Prefs == nil {
+		t.Error("Preferences: no window")
+	}
+	for _, want := range []string{"No agent needs you", "New window is not built yet"} {
 		if !slices.ContainsFunc(g.Toasts, func(s string) bool { return strings.HasPrefix(s, want) }) {
 			t.Errorf("no toast %q in %q", want, g.Toasts)
 		}

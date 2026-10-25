@@ -47,8 +47,11 @@ button.tabclose:hover { background: alpha(#ffffff, 0.08); }
 .idle { color: #9aa0a8; }
 .failed { color: #ff8a8a; }
 .done { color: #7ee2a8; }
+.findbar { background: #1b1c20; border: 1px solid #2f3238; border-radius: 8px; padding: 4px 4px 4px 8px; margin: 6px 14px 0 0; }
+entry.findentry { min-height: 30px; background: #131416; color: #e6e8eb; }
+.findcount { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; min-width: 48px; }
 .passbadge { background: #e6e8eb; color: #131416; font-weight: 700; font-size: 11px; padding: 1px 6px; border-radius: 4px;
-	margin: 6px 14px 0 0; }
+	margin: 0 14px 6px 0; }
 .passtag { background: #e6e8eb; color: #131416; font-weight: 700; font-size: 9px; padding: 0 4px; border-radius: 3px; }
 .agent { font-weight: 600; font-size: 13px; }
 .repo { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
@@ -552,7 +555,7 @@ func (a *App) setLayout(layout string, railOpen bool) {
 		a.optionsBtn.Popdown()
 	}
 	a.buildChrome()
-	if p := a.activePane(); p != nil {
+	if p := a.activePane(); p != nil && !a.modalOpen() && a.find == nil {
 		p.widget.GrabFocus()
 	}
 }
@@ -623,7 +626,7 @@ func (a *App) menuGroups() [][]menuItem {
 			{label: "Split in same container", action: "split_context", run: func() { a.splitActive(true) }},
 			{label: "Zoom pane", action: "zoom", run: func() { a.active.toggleZoom(a.activePane()) }},
 			{label: "Send all keys to terminal", action: "passthrough", check: true},
-			{label: "Find", run: later("Find")},
+			{label: "Find", action: "search", run: a.openFind},
 		},
 		layout,
 		{
@@ -722,7 +725,7 @@ func (a *App) zoom(dir int) {
 	base := a.settings.FontSize
 	switch {
 	case dir == 0:
-		a.fontSize = base
+		a.fontSize = a.settings.startSize()
 	case dir > 0:
 		a.fontSize = min(base*2, a.fontSize+base/10)
 	default:

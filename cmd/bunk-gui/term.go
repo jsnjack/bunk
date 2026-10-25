@@ -54,6 +54,8 @@ type termView struct {
 	// first, then live rows). sbOff is 0 in the live view.
 	sbOff, sbCount, vBase int
 	sel                   selState
+	find                  []session.Match // search matches by virtual row (find.go)
+	findCur               int             // the current match; -1 if none
 
 	// IME preedit text, drawn at the cursor. Set by the main thread.
 	preedit       []preeditCell
@@ -152,6 +154,35 @@ func (v *termView) pull(s *session.Session) bool {
 		v.markDirty(v.cur.Y)
 	}
 	return v.pending > 0
+}
+
+// setFind shows search matches (sorted by virtual row) and the current one.
+func (v *termView) setFind(m []session.Match, cur int) {
+	v.find, v.findCur = m, cur
+	v.invalidate()
+}
+
+// markFound colours the search matches on visible row y.
+func (v *termView) markFound(inst []Instance, y int) {
+	vRow := v.vBase + y
+	lo, hi := 0, len(v.find)
+	for lo < hi { // the first match on vRow
+		if m := (lo + hi) / 2; v.find[m].VRow < vRow {
+			lo = m + 1
+		} else {
+			hi = m
+		}
+	}
+	for i := lo; i < len(v.find) && v.find[i].VRow == vRow; i++ {
+		fg, bg := findFG, findBG
+		if i == v.findCur {
+			fg, bg = findCurFG, findCurBG
+		}
+		m := v.find[i]
+		for x := max(0, m.Col); x < min(m.Col+m.Length, len(inst)); x++ {
+			inst[x].FG, inst[x].BG = fg, bg
+		}
+	}
 }
 
 // invalidate marks every row for rebuilding (new grid or atlas).
@@ -302,6 +333,7 @@ func (v *termView) convert(r *Renderer) (rows int) {
 				inst[x].FG, inst[x].BG = inst[x].BG, inst[x].FG
 			}
 		}
+		v.markFound(inst, y)
 	}
 	v.pending = 0
 	v.drawnY, v.drawnX, v.drawnShape = -1, v.cur.X, v.cur.Shape

@@ -28,8 +28,10 @@ type View interface {
 
 	// Size returns the size of the virtual terminal.
 	Size() (cols, rows int)
-	// CellPixels reports the virtual raster resolution of each character cell.
+	// CellPixels reports the raster resolution of each character cell.
 	CellPixels() (width, height int)
+	// SetCellPixels changes it (see WithCellPixels).
+	SetCellPixels(width, height int)
 	// GraphicsState clones reusable images for replay without duplicating pixels.
 	GraphicsState() *graphics.Decoder
 

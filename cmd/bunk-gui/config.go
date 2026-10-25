@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,6 +22,7 @@ import (
 //	rail_open = false        # start with the rail expanded
 //	font = "Noto Sans Mono"  # terminal font family
 //	font_size = 11           # points
+//	text_zoom = 100          # text size at start and after Ctrl+0, % of font_size
 //
 //	[keys]                   # key bindings (see bindings.go for the actions)
 //	switcher = "ctrl+shift+space"
@@ -38,6 +40,7 @@ type Settings struct {
 	RailOpen bool                `toml:"rail_open"`
 	Font     string              `toml:"font"`
 	FontSize float64             `toml:"font_size"`
+	TextZoom float64             `toml:"text_zoom"`
 	Agents   []session.AgentSpec `toml:"agents"`
 	Keys     map[string]any      `toml:"keys"`
 
@@ -45,9 +48,15 @@ type Settings struct {
 	was    map[string][]string // bindings of disabled actions, from "# was" comments
 }
 
+// startSize is the text size at start and after Ctrl+0: font_size at
+// text_zoom percent.
+func (st Settings) startSize() float64 {
+	return math.Round(st.FontSize*st.TextZoom/10) / 10
+}
+
 func defaultSettings() Settings {
 	km, _ := resolveKeys(nil)
-	return Settings{Tabs: "rail", Font: "Noto Sans Mono", FontSize: 11, keymap: km, was: map[string][]string{}}
+	return Settings{Tabs: "rail", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, keymap: km, was: map[string][]string{}}
 }
 
 // configPath is $XDG_CONFIG_HOME/bunk-gui/config.toml.
@@ -105,6 +114,13 @@ func loadSettings(path string) (Settings, error) {
 			st.FontSize = f.FontSize
 		} else {
 			problems = append(problems, fmt.Sprintf("font_size = %v (want 4-96)", f.FontSize))
+		}
+	}
+	if md.IsDefined("text_zoom") {
+		if f.TextZoom >= 50 && f.TextZoom <= 200 {
+			st.TextZoom = f.TextZoom
+		} else {
+			problems = append(problems, fmt.Sprintf("text_zoom = %v (want 50-200)", f.TextZoom))
 		}
 	}
 	km, keyProblems := resolveKeys(f.Keys)

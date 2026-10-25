@@ -143,7 +143,7 @@ func (a *App) keys() keymap { return a.settings.keymap }
 
 // modalOpen reports a dialog that takes the keyboard.
 func (a *App) modalOpen() bool {
-	return a.about != nil || a.shortcutsWin != nil || a.quitDialog != nil
+	return a.about != nil || a.shortcutsWin != nil || a.prefsWin != nil || a.quitDialog != nil
 }
 
 // runAction runs a bound action and reports whether it applied.
@@ -167,6 +167,10 @@ func (a *App) runAction(name string) bool {
 		return global(func() { a.selectTab(a.tabs[i]) })
 	}
 	switch name {
+	case "search_next", "search_prev", "search_exit":
+		// Only while the find bar has the keyboard: Enter and Esc go to the
+		// terminal otherwise.
+		return a.findFocused() && a.findAction(name)
 	case "switcher":
 		a.openSwitcher() // toggles
 		return true
@@ -227,6 +231,8 @@ func (a *App) runAction(name string) bool {
 		p.scrollBy(max(1, p.tv.rows-1))
 	case "scroll_down":
 		p.scrollBy(-max(1, p.tv.rows-1))
+	case "search":
+		a.openFind()
 	case "copy":
 		a.copySelection(p)
 	case "paste":
@@ -235,10 +241,6 @@ func (a *App) runAction(name string) bool {
 		return false
 	}
 	return true
-}
-
-func (a *App) showPreferences() {
-	a.toast("Preferences are not built yet: edit " + a.cfg.configFile)
 }
 
 // splitActive splits the focused pane (F1). With sameContainer (Alt+F1) the

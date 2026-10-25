@@ -130,6 +130,7 @@ type paneReport struct {
 	Texture  [4]int       `json:"texture"`        // device rect of the texture in a window shot
 	Cols     int          `json:"cols"`
 	Rows     int          `json:"rows"`
+	Cell     [2]int       `json:"cell"`      // device pixels of a cell, as the session reports them
 	Focused  bool         `json:"focused"`   // the tab's focused pane
 	HasFocus bool         `json:"has_focus"` // GTK keyboard focus
 	Dimmed   bool         `json:"dimmed"`
@@ -186,6 +187,40 @@ type uiSnapshot struct {
 	Shortcuts     *shortcutsReport    `json:"shortcuts,omitempty"`
 	Quit          *quitReport         `json:"quit_dialog,omitempty"`
 	MenuPassCheck bool                `json:"menu_pass_check"`
+	Find          *findReport         `json:"find,omitempty"`
+	TextZoom      float64             `json:"text_zoom"` // the default, from the config
+	Agents        []session.AgentSpec `json:"agents"`    // extra agents in force
+	Prefs         *prefsReport        `json:"prefs,omitempty"`
+}
+
+type prefsReport struct {
+	Message  string                 `json:"message"`
+	Tabs     string                 `json:"tabs"`
+	RailOpen bool                   `json:"rail_open"`
+	Font     string                 `json:"font"`
+	FontSize float64                `json:"font_size"`
+	TextZoom float64                `json:"text_zoom"`
+	Agents   [][3]string            `json:"agents"` // name, processes, scripts as the rows show them
+	Controls map[string]*rectReport `json:"controls"`
+}
+
+type findReport struct {
+	Pane    int         `json:"pane"`
+	Query   string      `json:"query"`
+	Count   string      `json:"count"` // as the bar shows it, e.g. "3/17"
+	Index   int         `json:"index"` // current match, -1 if none
+	Total   int         `json:"total"`
+	Focused bool        `json:"focused"` // the bar has the keyboard
+	Busy    bool        `json:"busy"`    // a scan is running
+	Bar     *rectReport `json:"bar,omitempty"`
+	// Visible matches: virtual row, column and length, and the row on
+	// screen.
+	Current *matchReport  `json:"current,omitempty"`
+	Visible []matchReport `json:"visible"`
+}
+
+type matchReport struct {
+	VRow, Col, Length, Row int
 }
 
 type shortcutsReport struct {
@@ -378,6 +413,38 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	if a.quitDialog != nil {
 		s.Quit = &quitReport{Body: a.quitBody}
 	}
+	s.TextZoom, s.Agents = a.settings.TextZoom, a.settings.Agents
+	if w := a.prefsWin; w != nil {
+		pr := &prefsReport{Message: w.message.Text(), Tabs: map[bool]string{true: "bar", false: "rail"}[w.tabsBar.Active()],
+			RailOpen: w.railOpen.Active(), Font: w.font.Text(), FontSize: w.fontSize.Value(), TextZoom: w.zoom.Value(),
+			Agents: [][3]string{}, Controls: map[string]*rectReport{}}
+		for _, r := range w.rows {
+			pr.Agents = append(pr.Agents, [3]string{r.name.Text(), r.processes.Text(), r.scripts.Text()})
+		}
+		for k, c := range w.controls {
+			pr.Controls[k] = a.widgetRect(g, c)
+		}
+		s.Prefs = pr
+	}
+	if f := a.find; f != nil {
+		fr := &findReport{Pane: f.p.id, Query: f.query, Count: f.count.Text(), Index: f.idx, Total: len(f.matches),
+			Focused: a.findFocused(), Busy: f.busy, Bar: a.widgetRect(g, f.bar), Visible: []matchReport{}}
+		f.p.s.Lock()
+		_, rows := f.p.s.Term.Size()
+		top := f.p.s.Scrollback.Count - f.p.s.ScrollOffset
+		f.p.s.Unlock()
+		for i, m := range f.matches {
+			mr := matchReport{m.VRow, m.Col, m.Length, -1}
+			if m.VRow >= top && m.VRow < top+rows {
+				mr.Row = m.VRow - top
+				fr.Visible = append(fr.Visible, mr)
+			}
+			if i == f.idx {
+				fr.Current = &mr
+			}
+		}
+		s.Find = fr
+	}
 	return s
 }
 
@@ -411,7 +478,7 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		Focused: t.focus == p, HasFocus: p.widget.HasFocus(), Dimmed: t.dimmed(p), Zoomed: t.zoom == p,
 		Ring: p.status().State == session.AgentNeedsYou, Visible: p.widget.IsDrawable(),
 		Override: p.statusOverride != nil, Status: statusOf(p.status()), Title: p.title,
-		Pass: p.passthrough,
+		Pass: p.passthrough, Cell: [2]int{p.atlas.CellW, p.atlas.CellH},
 	}
 	if p.passthrough {
 		r.Badge = a.widgetRect(g, p.passBadge)

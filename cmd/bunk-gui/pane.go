@@ -303,6 +303,10 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 		// First frame, a scale change or a text size change: rasterize
 		// glyphs at device scale.
 		if atlas, err := a.atlasFor(scale); err == nil {
+			if atlas.CellW != p.atlas.CellW || atlas.CellH != p.atlas.CellH {
+				// Before any resize below, so the PTY gets both together.
+				p.s.SetCellPixels(atlas.CellW, atlas.CellH)
+			}
 			p.atlas = atlas
 			p.r.SetAtlas(atlas)
 			p.tv.invalidate()

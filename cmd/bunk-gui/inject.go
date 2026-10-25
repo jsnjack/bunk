@@ -388,6 +388,15 @@ func (a *App) target(args []string) (float64, float64, error) {
 			return centre(r.keys)
 		}
 		return centre(r.sw)
+	case "pref":
+		if a.prefsWin == nil || len(args) < 2 {
+			return 0, 0, errors.New("the preferences window is not open")
+		}
+		w, ok := a.prefsWin.controls[args[1]]
+		if !ok {
+			return 0, 0, errors.New("no preference control " + args[1])
+		}
+		return centre(w)
 	case "button":
 		want := strings.Join(args[1:], " ")
 		var found gtk.Widgetter
