@@ -35,9 +35,6 @@ Both front ends run on one Go core. `internal/session` owns the PTY, the emulato
 
 ## In progress
 
-These features are on other branches. This README and its screenshots do not show them yet.
-
-- **Benchmark check.** `make bench-check` compares benchmarks with a stored baseline.
 - **New window.** Deferred: Ctrl+Shift+N shows "not built yet".
 
 ## bunk-gui
@@ -307,6 +304,8 @@ make gui-test      # bunk-gui: vet, race tests on a headless compositor, packagi
 make check-all     # both; run it before calling work done
 make fuzz          # every Fuzz target for FUZZTIME each (default 30s); not in check-all
 make soak          # long leak and soak runs (2000 sessions, 500 MiB of output); not in check-all
+make bench-check   # pinned benchmarks vs testdata/bench-baseline.txt; fails on a >10% slowdown
+make bench-baseline # record a new baseline after an intended speed change
 make screenshots   # render the README screenshots into assets/
 make run           # build bunk and open it with --trace in a new terminal
 ```
