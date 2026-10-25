@@ -20,6 +20,7 @@ const (
 	AgentIdle                       // no output for IdleAfter
 	AgentNeedsYou                   // the agent asked for attention; not yet acknowledged
 	AgentFailed                     // the agent's command failed
+	AgentDone                       // the agent reported a finished turn; not yet acknowledged
 )
 
 // IdleAfter is how long an agent counts as working after its last output.
@@ -32,6 +33,7 @@ type Status struct {
 	Process   string // foreground process name
 	Title     string // title set by the application (OSC 0/2)
 	Notice    string // text of the latest attention request, if any
+	Reported  bool   // State and Notice come from the agent's own report (Notify)
 	Cwd       string
 	Repo      string // git work tree holding Cwd; a linked worktree reports its main repository
 	Branch    string // checked-out branch, or a short commit hash when detached
@@ -43,16 +45,18 @@ type Status struct {
 func (s *Session) Status() Status {
 	s.Lock()
 	defer s.Unlock()
+	v := s.view(time.Now())
 	st := Status{
-		Agent:   s.agent,
-		State:   s.agentState(time.Now()),
-		Process: s.FgProcess,
-		Title:   s.Term.Title(),
-		Notice:  s.notice,
-		Cwd:     s.cwd,
-		Repo:    s.repo,
-		Branch:  s.branch,
-		SSHHost: s.SSHHost,
+		Agent:    v.agent,
+		State:    v.state,
+		Process:  s.FgProcess,
+		Title:    s.Term.Title(),
+		Notice:   v.notice,
+		Reported: v.reported,
+		Cwd:      s.cwd,
+		Repo:     s.repo,
+		Branch:   s.branch,
+		SSHHost:  s.SSHHost,
 	}
 	if s.ContainerType != "" {
 		st.Container = strings.TrimSpace(s.ContainerType + " " + s.ContainerID)
@@ -60,12 +64,63 @@ func (s *Session) Status() Status {
 	return st
 }
 
-// Acknowledge records that the user has seen the session, clearing a
-// pending attention request.
+// Acknowledge records that the user has seen the session. It clears a
+// pending attention request and the agent's explicit report, so inference
+// shows the session until the agent reports again. It runs no hook itself:
+// the next output or process tick (at most a second later) announces the
+// change through Hooks.StatusChanged, so callers may hold their own locks.
 func (s *Session) Acknowledge() {
 	s.Lock()
 	s.needsYou, s.notice = false, ""
+	s.report = agentReport{}
 	s.Unlock()
+}
+
+// agentView is the part of Status that agent reports and inference decide.
+type agentView struct {
+	agent    string
+	state    AgentState
+	notice   string
+	reported bool
+}
+
+// reportingAgent labels a session whose agent reported its state but was
+// not recognised from the foreground process (an unknown CLI, or one
+// started through a wrapper).
+const reportingAgent = "agent"
+
+// takeAgentChange reports whether the agent view differs from the one
+// StatusChanged last announced, and records it as announced. Every path
+// that runs StatusChanged for the agent's state goes through it, so each
+// change is announced once. It requires the session lock.
+func (s *Session) takeAgentChange(now time.Time) bool {
+	v := s.view(now)
+	if v == s.shown {
+		return false
+	}
+	s.shown = v
+	return true
+}
+
+// agentChangedNow is takeAgentChange for callers without the lock, such as
+// ReadLoop's idle timer.
+func (s *Session) agentChangedNow() bool {
+	s.Lock()
+	defer s.Unlock()
+	return s.takeAgentChange(time.Now())
+}
+
+// view requires the session lock. An explicit report takes priority over
+// inference.
+func (s *Session) view(now time.Time) agentView {
+	if s.report.state != AgentNone {
+		agent := s.agent
+		if agent == "" {
+			agent = reportingAgent
+		}
+		return agentView{agent: agent, state: s.report.state, notice: s.report.notice, reported: true}
+	}
+	return agentView{agent: s.agent, state: s.agentState(now), notice: s.notice}
 }
 
 // agentState requires the session lock.
@@ -286,9 +341,17 @@ func parseStatusOSC(num int, p []byte) (statusOSC, bool) {
 	return statusOSC{}, false
 }
 
-// noticeOSC makes a notice from untrusted text: control characters become
-// spaces and the result is trimmed and capped.
+// defaultNotice is the notice of an attention request without text.
+const defaultNotice = "Needs your attention"
+
+// noticeOSC makes a notice from an attention request's text.
 func noticeOSC(text string) (statusOSC, bool) {
+	return statusOSC{notice: cleanNotice(text, defaultNotice)}, true
+}
+
+// cleanNotice makes a notice from untrusted text: control characters become
+// spaces and the result is trimmed and capped. Empty text gives fallback.
+func cleanNotice(text, fallback string) string {
 	text = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return ' '
@@ -297,12 +360,12 @@ func noticeOSC(text string) (statusOSC, bool) {
 	}, text)
 	text = strings.TrimSpace(text)
 	if text == "" {
-		text = "Needs your attention"
+		return fallback
 	}
 	if r := []rune(text); len(r) > noticeLimit {
-		text = string(r[:noticeLimit]) + "…"
+		text = string(r[:noticeLimit-1]) + "…"
 	}
-	return statusOSC{notice: text}, true
+	return text
 }
 
 // recentlyLeft is how long after an agent leaves the foreground a command
@@ -311,7 +374,8 @@ func noticeOSC(text string) (statusOSC, bool) {
 const recentlyLeft = 2 * time.Second
 
 // onStatusOSC is the OSC scanner's status callback. It runs on the reader
-// goroutine, without the session lock.
+// goroutine, without the session lock. ReadLoop announces the change after
+// the chunk.
 func (s *Session) onStatusOSC(num int, payload []byte) {
 	st, ok := parseStatusOSC(num, payload)
 	if !ok {
@@ -334,27 +398,22 @@ func (s *Session) onStatusOSC(num int, payload []byte) {
 		case s.agent == "" && s.lastAgent != "" && time.Since(s.agentLeft) < recentlyLeft:
 			// The agent already left; show its failure until the next command.
 			s.agent, s.failed, s.agentGone = s.lastAgent, true, true
-		default:
-			return
 		}
-	default:
-		return
 	}
-	s.statusDirty = true
 }
 
 // onBell is vt10x's bell callback; it runs inside Write, with the session
 // lock held. A bell from an agent counts as an attention request.
 func (s *Session) onBell() {
-	if s.agent != "" && !s.agentGone && !s.needsYou {
+	if s.agent != "" && !s.agentGone {
 		s.needsYou = true
-		s.statusDirty = true
 	}
 }
 
 // refreshStatus updates the agent, cwd and git fields from the foreground
-// process. It reports whether anything changed. Called by trackFgProcess,
-// without the session lock.
+// process. It reports whether anything changed, including an agent state
+// that changed with time alone, such as working turning idle without output.
+// Called by trackFgProcess on every tick, without the session lock.
 func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged bool) bool {
 	s.Lock()
 	agent := s.agent
@@ -384,6 +443,11 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 		agent = s.agent
 	}
 	changed := agent != s.agent || cwd != s.cwd || repo != s.repo || branch != s.branch
+	if pgidChanged && s.report.state != AgentNone && (pgid <= 0 || pgid != s.report.pgid) {
+		// The process group that reported has left the foreground.
+		s.report = agentReport{}
+		changed = true
+	}
 	if agent != s.agent {
 		if s.agent != "" {
 			s.lastAgent, s.agentLeft = s.agent, time.Now()
@@ -392,5 +456,114 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 		s.needsYou, s.failed, s.notice = false, false, ""
 	}
 	s.agent, s.cwd, s.repo, s.branch = agent, cwd, repo, branch
+	if s.takeAgentChange(time.Now()) {
+		changed = true
+	}
 	return changed
+}
+
+// Event is a state an agent reports about itself from its hooks, through
+// internal/notify, instead of bunk inferring it.
+type Event uint8
+
+const (
+	EventWorking  Event = iota + 1 // the agent started a turn
+	EventIdle                      // the agent waits for a prompt
+	EventNeedsYou                  // the agent needs an answer or an approval
+	EventDone                      // the agent finished its turn
+	EventFailed                    // the agent's turn failed
+	EventClear                     // forget the agent's reports
+)
+
+// eventNames are the events' names on the wire and on the command line.
+var eventNames = [...]string{
+	EventWorking:  "working",
+	EventIdle:     "idle",
+	EventNeedsYou: "needs-you",
+	EventDone:     "done",
+	EventFailed:   "failed",
+	EventClear:    "clear",
+}
+
+// String returns the event's wire name, such as "needs-you".
+func (e Event) String() string {
+	if int(e) < len(eventNames) && eventNames[e] != "" {
+		return eventNames[e]
+	}
+	return "event(" + strconv.Itoa(int(e)) + ")"
+}
+
+// ParseEvent returns the event with the given wire name.
+func ParseEvent(name string) (Event, bool) {
+	for e, n := range eventNames {
+		if n != "" && n == name {
+			return Event(e), true
+		}
+	}
+	return 0, false
+}
+
+// EnvNotifySocket and EnvNotifySession name the environment variables that
+// Options.NotifySocket and Options.NotifySession export to the child. The
+// names avoid words such as TOKEN or KEY, which agent CLIs strip from the
+// environment of their hooks.
+const (
+	EnvNotifySocket  = "BUNK_GUI_SOCKET"
+	EnvNotifySession = "BUNK_GUI_SESSION"
+)
+
+// agentReport is the agent's latest explicit report. Protected by mu.
+type agentReport struct {
+	state  AgentState // AgentNone: no report, inference decides
+	notice string
+	pgid   int // foreground process group when the report arrived; 0 if unknown
+}
+
+// Notify records a state the agent in the session reported about itself.
+// The report takes priority over the states inferred from output, bells and
+// OSC notifications. It holds until Acknowledge, an EventClear report, or a
+// change of the foreground process group. message is kept as the notice of
+// EventNeedsYou, EventDone and EventFailed.
+//
+// Notify takes the session lock. When Status changed, it then runs
+// Hooks.StatusChanged (as passed to Run) once, without the lock, so callers
+// must not hold a lock that the hook takes.
+func (s *Session) Notify(ev Event, message string) {
+	var r agentReport
+	switch ev {
+	case EventClear:
+	case EventWorking:
+		r.state = AgentWorking
+	case EventIdle:
+		r.state = AgentIdle
+	case EventNeedsYou:
+		r.state, r.notice = AgentNeedsYou, cleanNotice(message, defaultNotice)
+	case EventDone:
+		r.state, r.notice = AgentDone, cleanNotice(message, "")
+	case EventFailed:
+		r.state, r.notice = AgentFailed, cleanNotice(message, "")
+	default:
+		return
+	}
+	if r.state != AgentNone {
+		r.pgid = s.fgPGID()
+	}
+	s.Lock()
+	s.report = r
+	changed := s.takeAgentChange(time.Now())
+	hook := s.statusHook
+	s.Unlock()
+	L().Debug("session: agent report", "id", s.ID, "event", ev.String(), "changed", changed)
+	if changed && hook != nil {
+		hook()
+	}
+}
+
+// fgPGID returns the terminal's foreground process group, or 0. It reads
+// /proc, so call it without the session lock.
+func (s *Session) fgPGID() int {
+	if s.Cmd == nil || s.Cmd.Process == nil {
+		return 0
+	}
+	return TermFgPGID(s.Cmd.Process.Pid)
 }

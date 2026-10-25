@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('\x18')
+byte('\x04')
+[]byte("\x01")
+[]byte("\x1b#\x1b0\x1b(1\x1b#800\x1b#0")

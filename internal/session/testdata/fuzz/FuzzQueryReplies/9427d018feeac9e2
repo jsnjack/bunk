@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('f')
+byte('O')
+[]byte("0")
+[]byte("0\U000e18630")

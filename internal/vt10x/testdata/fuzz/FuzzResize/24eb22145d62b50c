@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x01')
+byte('"')
+byte('/')
+byte('\x1f')
+uint16(218)
+[]byte("0쑦0쑍0")

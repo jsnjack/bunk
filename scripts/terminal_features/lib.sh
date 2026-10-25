@@ -55,16 +55,20 @@ escaped() {
     printf '%s' "$1" | cat -v
 }
 
+# pause_for_input PROMPT [AUTO_DELAY]: wait for Enter. The line typed (or
+# pasted) before Enter is kept in PAUSE_INPUT.
+PAUSE_INPUT=""
 pause_for_input() {
     local prompt="$1"
     local auto_delay="${2:-0.2}"
+    PAUSE_INPUT=""
     printf "%s" "$prompt"
     if [[ "${TERMINAL_FEATURES_AUTO:-0}" == "1" || ! -t 0 ]]; then
         sleep "${auto_delay}"
         printf "\n"
         return
     fi
-    read -r
+    IFS= read -r PAUSE_INPUT
 }
 
 timed_pause() {
@@ -84,42 +88,51 @@ require_query_tty() {
     fi
 }
 
-query_terminal() {
+# query_raw QUERY: write QUERY, then a DA1 request as a fence, and print the
+# raw reply bytes that arrive before the DA1 reply. Terminals answer in
+# order, so no fixed sleep is needed. Waiting for a byte gives up after
+# TERMINAL_FEATURES_QUERY_TIMEOUT seconds (default 2).
+query_raw() {
     local query="$1"
-    local timeout="${2:-0.5}"
-    local old_stty response ch
+    local timeout="${TERMINAL_FEATURES_QUERY_TIMEOUT:-2}"
+    local fence_re=$'\e''\[\?[0-9;]*c$'
+    local old_stty response="" ch fences=1 rest="$1"
 
+    # Each DA1 request inside QUERY adds one DA1 reply before the fence's.
+    while [[ $rest == *"${CSI}c"* ]]; do
+        fences=$((fences + 1))
+        rest=${rest#*"${CSI}c"}
+    done
     old_stty=$(stty -g 2>/dev/null) || return 1
-    stty -echo -icanon min 0 time 0 2>/dev/null || return 1
-    printf '%s' "$query" >&3
-    sleep "$timeout"
-    response=""
-    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do
+    stty -echo -icanon min 1 time 0 2>/dev/null || return 1
+    # Drop stale input, such as keys pressed before the query.
+    while read -r -t 0; do IFS= read -r -n 1 -d '' ch; done
+    printf '%s%s' "$query" "${CSI}c" >&3
+    while IFS= read -r -t "$timeout" -n 1 -d '' ch; do
         response+="$ch"
-        [[ ${#response} -gt 200 ]] && break
+        if [[ $ch == c && $response =~ $fence_re ]]; then
+            fences=$((fences - 1))
+            if ((fences == 0)); then
+                response=${response%"${BASH_REMATCH[0]}"}
+                break
+            fi
+        fi
+        [[ ${#response} -gt 4096 ]] && break
     done
     stty "$old_stty" 2>/dev/null
-    printf '%s' "$response" | cat -v
+    printf '%s' "$response"
 }
 
-query_terminal_alt() {
-    local query="$1"
-    local timeout="${2:-0.5}"
-    local old_stty response ch
+# query_terminal QUERY: print the reply to QUERY in cat -v form.
+query_terminal() {
+    query_raw "$1" | cat -v
+}
 
-    old_stty=$(stty -g 2>/dev/null) || return 1
-    stty -echo -icanon min 0 time 0 2>/dev/null || return 1
-    printf '%s' "${CSI}?1049h" >&3
-    sleep 0.05
-    printf '%s' "$query" >&3
-    sleep "$timeout"
-    response=""
-    while IFS= read -r -s -t 0.05 -n 1 ch 2>/dev/null; do
-        response+="$ch"
-        [[ ${#response} -gt 200 ]] && break
-    done
+# query_terminal_alt QUERY: like query_terminal, on the alternate screen.
+query_terminal_alt() {
+    local response
+    response=$(query_raw "${CSI}?1049h$1")
     printf '%s' "${CSI}?1049l" >&3
-    stty "$old_stty" 2>/dev/null
     printf '%s' "$response" | cat -v
 }
 

@@ -740,6 +740,9 @@ func (t *State) eraseWideAt(x, y int) {
 	}
 }
 
+// repairWideRow erases halves of wide characters that shifting or resizing
+// row y split, and turns wrap padding that is no longer the last cell of a
+// wrapped row into a blank.
 func (t *State) repairWideRow(y int) {
 	for x := 0; x < t.cols; x++ {
 		switch t.lines[y].cells[x].width() {
@@ -751,6 +754,11 @@ func (t *State) repairWideRow(y int) {
 			}
 		case -1:
 			t.eraseCell(x, y)
+		case -2:
+			if x != t.cols-1 || t.lines[y].cells[x].Mode&attrWrap == 0 {
+				t.lines[y].cells[x].setWidth(1)
+				t.lines[y].touch(x)
+			}
 		}
 	}
 }
@@ -1231,7 +1239,7 @@ func (t *State) setAttr(attr []int) {
 					if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
 						t.logf("bad fg rgb color (%d,%d,%d)\n", r, g, b)
 					} else {
-						t.cur.Attr.FG = Color(r<<16 | g<<8 | b)
+						t.cur.Attr.FG = RGB(uint8(r), uint8(g), uint8(b))
 					}
 				}
 			default:
@@ -1265,7 +1273,7 @@ func (t *State) setAttr(attr []int) {
 					if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
 						t.logf("bad bg rgb color (%d,%d,%d)\n", r, g, b)
 					} else {
-						t.cur.Attr.BG = Color(r<<16 | g<<8 | b)
+						t.cur.Attr.BG = RGB(uint8(r), uint8(g), uint8(b))
 					}
 				}
 			default:
@@ -1301,7 +1309,7 @@ func (t *State) setAttr(attr []int) {
 					if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
 						t.logf("bad ul rgb color (%d,%d,%d)\n", r, g, b)
 					} else {
-						t.cur.Attr.UL = Color(r<<16 | g<<8 | b)
+						t.cur.Attr.UL = RGB(uint8(r), uint8(g), uint8(b))
 						t.cur.Attr.Mode |= attrHasULColor
 					}
 				}

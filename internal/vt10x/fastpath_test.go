@@ -3,32 +3,28 @@ package vt10x
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"math/rand/v2"
 	"reflect"
 	"testing"
-	"unicode"
+	"unicode/utf8"
 )
 
-// writeOneRuneAtATime is the parser loop as it was before the ASCII fast
-// path: every rune goes through put.
+// writeOneRuneAtATime is the parser loop without the ASCII fast path: every
+// rune goes through put. Like Write, it stops before an incomplete UTF-8
+// sequence at the end of p and skips invalid bytes.
 func writeOneRuneAtATime(t *terminal, p []byte) int {
-	var written int
-	r := bytes.NewReader(p)
-	for {
-		c, sz, err := r.ReadRune()
-		if err == io.EOF {
-			return written
+	for i := 0; i < len(p); {
+		if !utf8.FullRune(p[i:]) {
+			return i
 		}
-		written += sz
-		if c == unicode.ReplacementChar && sz == 1 {
-			if r.Len() == 0 {
-				return written - 1
-			}
+		c, sz := utf8.DecodeRune(p[i:])
+		i += sz
+		if c == utf8.RuneError && sz == 1 {
 			continue
 		}
 		t.put(c)
 	}
+	return len(p)
 }
 
 var fastPathPieces = []string{

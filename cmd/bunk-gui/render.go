@@ -54,6 +54,7 @@ void main() {
 const bgFragment = `#version 330 core
 uniform vec2 u_cell;
 uniform vec4 u_lines; // underline top, line thickness, strikethrough top, bar width
+uniform vec4 u_dim;   // rgb: colour to fade towards, a: amount (inactive panes)
 flat in vec4 v_bg;
 flat in vec4 v_fg;
 flat in uint v_flags;
@@ -68,7 +69,7 @@ void main() {
 	if ((v_flags & 524288u) != 0u && y < t) c = v_fg;                          // overline
 	if ((v_flags & 1048576u) != 0u && x < u_lines.w) c = v_fg;                 // bar cursor
 	if ((v_flags & 2097152u) != 0u && y >= u_cell.y - 2.0 * t) c = v_fg;       // underline cursor
-	o_color = c;
+	o_color = vec4(mix(c.rgb, u_dim.rgb, u_dim.a), c.a);
 }
 `
 
@@ -95,12 +96,13 @@ void main() {
 
 const textFragment = `#version 330 core
 uniform sampler2D u_atlas;
+uniform vec4 u_dim;
 in vec2 v_uv;
 flat in vec4 v_fg;
 out vec4 o_color;
 void main() {
 	float a = texelFetch(u_atlas, ivec2(v_uv), 0).r * v_fg.a;
-	o_color = vec4(v_fg.rgb * a, a); // premultiplied
+	o_color = vec4(mix(v_fg.rgb, u_dim.rgb, u_dim.a) * a, a); // premultiplied
 }
 `
 
@@ -163,6 +165,10 @@ type Renderer struct {
 	// atlas texH pixels tall.
 	atlasNext, texH int
 	clearRGB        [3]float32
+	// Inactive panes fade towards the background by dim (0: off); a pane
+	// that needs the user gets an orange inner ring of ringPx pixels.
+	dim, ringPx float32
+	dimLoc      [2]int32 // bg, text programs
 
 	queries     [8]uint32
 	qHead       int // next query to issue
@@ -196,6 +202,7 @@ func NewRenderer(cols, rows int, atlas *Atlas) (*Renderer, error) {
 	r.rectLoc.yflip = gl.UniformLocation(r.rectProg, "u_yflip")
 	r.rectLoc.color = gl.UniformLocation(r.rectProg, "u_color")
 	r.linesLoc = gl.UniformLocation(r.bgProg, "u_lines")
+	r.dimLoc = [2]int32{gl.UniformLocation(r.bgProg, "u_dim"), gl.UniformLocation(r.textProg, "u_dim")}
 	r.slotsLoc = gl.UniformLocation(r.textProg, "u_slotsPerRow")
 	r.atlasLoc = gl.UniformLocation(r.textProg, "u_atlas")
 
@@ -294,11 +301,12 @@ func (r *Renderer) Upload() int {
 func (r *Renderer) Draw() {
 	a := r.atlas
 	gl.Viewport(0, 0, int32(r.fbW), int32(r.fbH))
-	gl.ClearColor(r.clearRGB[0], r.clearRGB[1], r.clearRGB[2], 1)
+	gl.ClearColor(r.clearRGB[0], r.clearRGB[1], r.clearRGB[2], 1) // the background fades into itself
 	gl.Clear(gl.COLOR_BUFFER_BIT)
 	gl.BindVertexArray(r.vao)
 	n := int32(r.cols * r.rows)
 	cw, ch := float32(a.CellW), float32(a.CellH)
+	r.setDim()
 
 	gl.UseProgram(r.bgProg)
 	gl.Uniform2i(r.bgLoc.grid, int32(r.cols), int32(r.rows))
@@ -325,6 +333,29 @@ func (r *Renderer) Draw() {
 
 // DrawScrollbar draws the scrollback position as a thin thumb at the right
 // edge: one extra draw, only while the view is scrolled back.
+func (r *Renderer) setDim() {
+	gl.UseProgram(r.bgProg)
+	gl.Uniform4f(r.dimLoc[0], r.clearRGB[0], r.clearRGB[1], r.clearRGB[2], r.dim)
+	gl.UseProgram(r.textProg)
+	gl.Uniform4f(r.dimLoc[1], r.clearRGB[0], r.clearRGB[1], r.clearRGB[2], r.dim)
+}
+
+// DrawRing draws the needs-you ring (#ffb454) inside the framebuffer edges.
+func (r *Renderer) DrawRing() {
+	if r.ringPx <= 0 {
+		return
+	}
+	w, h, t := float32(r.fbW), float32(r.fbH), r.ringPx
+	gl.UseProgram(r.rectProg)
+	gl.Uniform2f(r.rectLoc.viewport, w, h)
+	gl.Uniform1f(r.rectLoc.yflip, r.yflip)
+	gl.Uniform4f(r.rectLoc.color, 1, 0xb4/255.0, 0x54/255.0, 1)
+	for _, rc := range [4][4]float32{{0, 0, w, t}, {0, h - t, w, t}, {0, 0, t, h}, {w - t, 0, t, h}} {
+		gl.Uniform4f(r.rectLoc.rect, rc[0], rc[1], rc[2], rc[3])
+		gl.DrawArrays(gl.TRIANGLE_STRIP, 0, 4)
+	}
+}
+
 func (r *Renderer) DrawScrollbar(off, count int) {
 	if off <= 0 || count <= 0 {
 		return

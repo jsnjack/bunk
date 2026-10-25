@@ -57,8 +57,12 @@ func SpanContains(spans []Span, col int) bool {
 
 // FindAll returns every case-insensitive occurrence of query in the
 // scrollback and live grid, in virtual-row order. The session is locked
-// while the grid is copied, not while it is matched.
+// while the grid is copied, not while it is matched. An empty query matches
+// nothing.
 func (s *Session) FindAll(query string) []Match {
+	if query == "" {
+		return nil
+	}
 	lq := strings.ToLower(query)
 	lqRunes := []rune(lq)
 	lqLen := len(lqRunes)

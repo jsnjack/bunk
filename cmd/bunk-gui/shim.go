@@ -79,7 +79,7 @@ import (
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 )
 
-func nativePtr(obj coreglib.Objector) uintptr { return coreglib.InternObject(obj).Native() }
+func nativePtr(obj coreglib.Objector) uintptr { return coreglib.BaseObject(obj).Native() }
 
 func connectClockC(clock coreglib.Objector) { C.bg_connect_clock(C.uintptr_t(nativePtr(clock))) }
 

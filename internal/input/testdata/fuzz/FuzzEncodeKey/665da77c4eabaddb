@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x03')
+int32(-67)
+byte('\x03')
+int(11)
+bool(true)
+bool(false)

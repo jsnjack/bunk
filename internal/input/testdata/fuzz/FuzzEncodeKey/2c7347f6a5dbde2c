@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x05')
+rune('\x00')
+byte('\x04')
+int(83)
+bool(false)
+bool(false)

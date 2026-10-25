@@ -5,7 +5,6 @@ import (
 	"os"
 	"unsafe"
 
-	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
@@ -15,41 +14,116 @@ import (
 
 const defaultTitle = "bunk-gui"
 
-// setupTabs builds the window content: an AdwTabBar that only appears with
-// two or more tabs, above an AdwTabView whose pages are TermViews. Only the
-// selected page is mapped, so hidden tabs keep parsing output but never
+// Tab is one tab: a BSP tree of panes shown as nested GtkPaned widgets
+// inside holder, a child of the window's GtkStack. Only the visible stack
+// child is mapped, so panes of hidden tabs keep parsing output but never
 // render.
-func (a *App) setupTabs() gtk.Widgetter {
-	a.tabs = adw.NewTabView()
-	// The view's own shortcuts would take Alt+1..9 and more from
-	// applications; onKey handles the tab keys bunk-gui uses.
-	a.tabs.SetShortcuts(adw.TabViewShortcutNone)
-	a.tabs.ConnectClosePage(func(page *adw.TabPage) bool {
-		if p := a.paneOf(page); p != nil {
-			a.removePane(p)
-		}
-		a.tabs.ClosePageFinish(page, true)
-		if a.tabs.NPages() == 0 {
-			a.finish("last tab closed")
-		}
-		return true
-	})
-	a.tabs.NotifyProperty("selected-page", a.onSelect)
+type Tab struct {
+	app    *App
+	holder *gtk.Box
+	root   *node
+	focus  *Pane // the pane that has (or last had) keyboard focus
+	zoom   *Pane // the zoomed pane, nil when none
+}
 
-	bar := adw.NewTabBar()
-	bar.SetView(a.tabs)
-	bar.SetAutohide(true)
+// node is a BSP tree node: a pane (leaf) or a split of two subtrees.
+type node struct {
+	pane     *Pane
+	paned    *gtk.Paned
+	a, b     *node
+	parent   *node
+	vertical bool // children stacked top/bottom
+}
 
-	box := gtk.NewBox(gtk.OrientationVertical, 0)
-	box.Append(bar)
-	box.Append(a.tabs)
-	return box
+func (n *node) widget() gtk.Widgetter {
+	if n.pane != nil {
+		return n.pane.widget
+	}
+	return n.paned
+}
+
+// panes lists the tab's panes in tree order (left/top first).
+func (t *Tab) panes() []*Pane {
+	var out []*Pane
+	var walk func(n *node)
+	walk = func(n *node) {
+		if n == nil {
+			return
+		}
+		if n.pane != nil {
+			out = append(out, n.pane)
+			return
+		}
+		walk(n.a)
+		walk(n.b)
+	}
+	walk(t.root)
+	return out
+}
+
+func (t *Tab) find(p *Pane) *node {
+	var hit *node
+	var walk func(n *node)
+	walk = func(n *node) {
+		if n == nil || hit != nil {
+			return
+		}
+		if n.pane == p {
+			hit = n
+			return
+		}
+		walk(n.a)
+		walk(n.b)
+	}
+	walk(t.root)
+	return hit
+}
+
+// agentPane is the pane the tab's label describes: the first pane running a
+// known agent, otherwise the focused pane.
+func (t *Tab) agentPane() *Pane {
+	for _, p := range t.panes() {
+		if p.status().Agent != "" {
+			return p
+		}
+	}
+	return t.focus
 }
 
 // newTab starts a session running cmd (sh -c), or $SHELL when cmd is "",
 // in dir, and shows it in a new selected tab.
-func (a *App) newTab(cmd, dir string) *Pane {
-	p := &Pane{id: len(a.panes), app: a, tv: newTermView()}
+func (a *App) newTab(cmd, dir string) *Tab {
+	t := &Tab{app: a, holder: gtk.NewBox(gtk.OrientationVertical, 0)}
+	t.holder.SetHExpand(true)
+	t.holder.SetVExpand(true)
+	cols, rows := a.initCols, a.initRows
+	if cur := a.activePane(); cur != nil && cur.cols > 1 {
+		cols, rows = cur.cols, cur.rows // a new tab starts at the window's size
+	}
+	p := a.newPane(t, argsFor(cmd), dir, cols, rows)
+	if p == nil {
+		return nil
+	}
+	t.root = &node{pane: p}
+	t.focus = p
+	t.holder.Append(p.widget)
+	a.tabs = append(a.tabs, t)
+	a.stack.AddChild(t.holder)
+	a.selectTab(t)
+	a.refreshChrome()
+	return t
+}
+
+func argsFor(cmd string) []string {
+	if cmd == "" {
+		return nil
+	}
+	return []string{"/bin/sh", "-c", cmd}
+}
+
+// newPane starts a session for tab t and its TermView.
+func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
+	p := &Pane{id: len(a.panes), app: a, tab: t, tv: newTermView()}
 	a.panes = append(a.panes, p)
 	ptr, cv := viewNewC(p.id)
 	p.view = cv
@@ -62,39 +136,28 @@ func (a *App) newTab(cmd, dir string) *Pane {
 	p.atlas = atlas
 	p.attachInput()
 
-	cols, rows := a.initCols, a.initRows
-	if cur := a.activePane(); cur != nil && cur.cols > 1 {
-		cols, rows = cur.cols, cur.rows // a new tab starts at the window's size
-	}
-	var args []string
-	if cmd != "" {
-		args = []string{"/bin/sh", "-c", cmd}
-	}
 	hex := func(rgb uint32) string { return session.XParseColor(fmt.Sprintf("%06x", rgb)) }
 	s, err := session.Start(session.Options{
-		ID: p.id, Cols: cols, Rows: rows, Scrollback: session.DefaultScrollbackLines, Dir: dir, Args: args,
+		ID: p.id, Cols: max(2, cols), Rows: max(1, rows), Scrollback: session.DefaultScrollbackLines, Dir: dir, Args: args,
 		ThemeFG: hex(theme.fg), ThemeBG: hex(theme.bg), ThemeCursor: hex(theme.fg),
 		CellAspect: []float64{float64(atlas.CellH) / float64(atlas.CellW)},
 		Backspace:  input.KeyBackspace,
+		Agents:     a.settings.Agents,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bunk-gui: start session: %v\n", err)
+		a.toast("Could not start a session: " + err.Error())
 		a.panes[p.id] = nil
-		if a.tabs.NPages() == 0 {
-			a.fatal("no session")
-		}
 		return nil
 	}
-	p.s, p.cols, p.rows = s, cols, rows
+	p.s, p.cols, p.rows = s, max(2, cols), max(1, rows)
+	p.title = defaultTitle
+	p.st = s.Status()
 	s.Run(session.Hooks{
 		Applied: p.onApplied, Output: p.onOutput, OSC: p.onOSC,
 		Redraw: p.wake, Exited: p.onExited, Closed: p.onClosed,
+		StatusChanged: p.onStatusChanged,
 	}, a.done)
-
-	p.title = defaultTitle
-	p.page = a.tabs.Append(p.widget)
-	p.page.SetTitle(p.title)
-	a.tabs.SetSelectedPage(p.page)
 	return p
 }
 
@@ -107,47 +170,69 @@ func wrapWidget(ptr unsafe.Pointer) *gtk.Widget {
 	return gtk.BaseWidget(w.(gtk.Widgetter))
 }
 
-// activePane is the pane of the selected tab.
+// activePane is the focused pane of the selected tab.
 func (a *App) activePane() *Pane {
-	if a.tabs == nil {
+	if a.active == nil {
 		return nil
 	}
-	page := a.tabs.SelectedPage()
-	if page == nil {
-		return nil
-	}
-	return a.paneOf(page)
+	return a.active.focus
 }
 
-func (a *App) paneOf(page *adw.TabPage) *Pane {
-	want := coreglib.InternObject(page).Native()
-	for _, p := range a.panes {
-		if p != nil && !p.removeOnce && p.page != nil && coreglib.InternObject(p.page).Native() == want {
-			return p
+func (a *App) tabIndex(t *Tab) int {
+	for i, x := range a.tabs {
+		if x == t {
+			return i
 		}
 	}
-	return nil
+	return -1
 }
 
-func (a *App) onSelect() {
-	p := a.activePane()
-	if p == nil {
+// selectTab shows t and focuses its focused pane.
+func (a *App) selectTab(t *Tab) {
+	if t == nil {
 		return
 	}
-	p.widget.GrabFocus()
-	a.win.SetTitle(p.title)
-	p.queueRender()
+	a.active = t
+	a.stack.SetVisibleChild(t.holder)
+	if t.focus != nil {
+		t.focus.widget.GrabFocus()
+		a.win.SetTitle(t.focus.title)
+		t.focus.queueRender()
+	}
+	a.refreshChrome()
 }
 
-// closeTab closes p's tab (Ctrl+Shift+W); close-page ends the session.
-func (a *App) closeTab(p *Pane) {
-	if p.page != nil {
-		a.tabs.ClosePage(p.page)
+// selectOffset selects the tab d positions away, wrapping around.
+func (a *App) selectOffset(d int) {
+	if n := len(a.tabs); n > 0 {
+		a.selectTab(a.tabs[((a.tabIndex(a.active)+d)%n+n)%n])
 	}
 }
 
-// removePane ends p's session (SIGHUP). The TabView destroys the widget,
-// whose unrealize frees the GL objects and drops the pane from App.panes.
+// closeTab ends every session of t (SIGHUP) and removes the tab. Closing
+// the last tab quits.
+func (a *App) closeTab(t *Tab) {
+	i := a.tabIndex(t)
+	if i < 0 {
+		return
+	}
+	for _, p := range t.panes() {
+		a.removePane(p)
+	}
+	a.tabs = append(a.tabs[:i], a.tabs[i+1:]...)
+	if len(a.tabs) == 0 {
+		a.finish("last tab closed")
+		return
+	}
+	if a.active == t {
+		a.selectTab(a.tabs[min(i, len(a.tabs)-1)])
+	}
+	a.stack.Remove(t.holder) // unrealizes the views: their GL objects are freed
+	a.refreshChrome()
+}
+
+// removePane ends p's session (SIGHUP). Unrealizing the widget frees the GL
+// objects and drops the pane from App.panes.
 func (a *App) removePane(p *Pane) {
 	if p.removeOnce {
 		return
@@ -157,14 +242,20 @@ func (a *App) removePane(p *Pane) {
 }
 
 // paneDone runs when p's child is finished (Hooks.Closed, or Exited without
-// Closed). A tab closes at once; the last tab draws one more frame, so the
-// final output is on screen (and in -dump), then the app quits.
+// Closed). The pane closes; a tab closes with its last pane; the last pane
+// of the last tab draws one more frame, so the final output is on screen
+// (and in -dump), then the app quits.
 func (a *App) paneDone(p *Pane) {
 	if p.removeOnce || a.exitArmed {
 		return
 	}
-	if a.tabs.NPages() > 1 {
-		a.closeTab(p)
+	t := p.tab
+	if len(t.panes()) > 1 {
+		a.closePane(p)
+		return
+	}
+	if len(a.tabs) > 1 {
+		a.closeTab(t)
 		return
 	}
 	a.exitArmed = true
@@ -172,8 +263,245 @@ func (a *App) paneDone(p *Pane) {
 	coreglib.TimeoutAdd(1000, func() bool { a.finish("child exited (no frame)"); return false })
 }
 
-// setTitle shows an OSC 0/2 title on p's tab (and the window when p is
-// selected).
+// split puts a new pane next to p. auto picks the direction from p's pixel
+// aspect (side by side when wider than tall). The new pane starts in p's
+// directory; with args it runs them (e.g. a shell inside p's container).
+func (a *App) split(p *Pane, args []string) *Pane {
+	t := p.tab
+	n := t.find(p)
+	if n == nil {
+		return nil
+	}
+	if t.zoom != nil {
+		t.unzoom()
+	}
+	w, h := p.widget.Width(), p.widget.Height()
+	vertical := h > w // stack top/bottom when taller than wide
+	cols, rows := max(2, p.cols/2), p.rows
+	if vertical {
+		cols, rows = p.cols, max(1, p.rows/2)
+	}
+	np := a.newPane(t, args, p.s.Cwd(), cols, rows)
+	if np == nil {
+		return nil
+	}
+	orient := gtk.OrientationHorizontal
+	if vertical {
+		orient = gtk.OrientationVertical
+	}
+	a.win.SetFocus(nil) // see closePane
+	paned := gtk.NewPaned(orient)
+	paned.SetWideHandle(false)
+	paned.SetShrinkStartChild(false)
+	paned.SetShrinkEndChild(false)
+	t.replace(n, paned)
+	paned.SetStartChild(p.widget)
+	paned.SetEndChild(np.widget)
+	if vertical {
+		paned.SetPosition(h / 2)
+	} else {
+		paned.SetPosition(w / 2)
+	}
+	old := &node{pane: p, parent: n}
+	n.pane, n.paned, n.vertical = nil, paned, vertical
+	n.a, n.b = old, &node{pane: np, parent: n}
+	np.widget.GrabFocus()
+	t.focus = np
+	t.restyle()
+	a.refreshChrome()
+	return np
+}
+
+// replace puts w where n's widget is in the tree's GTK hierarchy and
+// detaches n's widget.
+func (t *Tab) replace(n *node, w gtk.Widgetter) {
+	old := n.widget()
+	switch par := n.parent; {
+	case par == nil:
+		t.holder.Remove(old)
+		t.holder.Append(w)
+	case par.a == n:
+		par.paned.SetStartChild(nil)
+		par.paned.SetStartChild(w)
+	default:
+		par.paned.SetEndChild(nil)
+		par.paned.SetEndChild(w)
+	}
+}
+
+// closePane removes p from its tab; its sibling takes the parent split's
+// place.
+func (a *App) closePane(p *Pane) {
+	t := p.tab
+	n := t.find(p)
+	if n == nil {
+		return
+	}
+	if t.zoom != nil {
+		t.unzoom()
+	}
+	a.removePane(p)
+	par := n.parent
+	if par == nil {
+		a.closeTab(t)
+		return
+	}
+	sib := par.a
+	if sib == n {
+		sib = par.b
+	}
+	if t.focus == p {
+		t.focus = t.firstPane(sib)
+	}
+	// Drop the keyboard focus while widgets move between GtkPaneds, which
+	// otherwise keep dangling focus children.
+	a.win.SetFocus(nil)
+	par.paned.SetStartChild(nil)
+	par.paned.SetEndChild(nil)
+	t.replace(par, sib.widget())
+	sib.parent = par.parent
+	switch {
+	case par.parent == nil:
+		t.root = sib
+	case par.parent.a == par:
+		par.parent.a = sib
+	default:
+		par.parent.b = sib
+	}
+	if a.active == t {
+		t.focus.widget.GrabFocus() // re-parenting dropped the focus
+	}
+	t.restyle()
+	a.refreshChrome()
+}
+
+func (t *Tab) firstPane(n *node) *Pane {
+	for n.pane == nil {
+		n = n.a
+	}
+	return n.pane
+}
+
+// toggleZoom shows p alone in its tab (F12), or restores the splits.
+func (t *Tab) toggleZoom(p *Pane) {
+	if t == nil || p == nil {
+		return
+	}
+	if t.zoom != nil {
+		t.unzoom()
+		return
+	}
+	n := t.find(p)
+	if n == nil || n.parent == nil {
+		return
+	}
+	t.zoom = p
+	for c := n; c.parent != nil; c = c.parent {
+		sib := c.parent.a
+		if sib == c {
+			sib = c.parent.b
+		}
+		sib.widget().(interface{ SetVisible(bool) }).SetVisible(false)
+	}
+	t.restyle()
+}
+
+func (t *Tab) unzoom() {
+	t.zoom = nil
+	var walk func(n *node)
+	walk = func(n *node) {
+		if n == nil {
+			return
+		}
+		n.widget().(interface{ SetVisible(bool) }).SetVisible(true)
+		walk(n.a)
+		walk(n.b)
+	}
+	walk(t.root)
+	t.restyle()
+}
+
+// restyle redraws panes whose dimming changed: with more than one visible
+// pane, every pane but the focused one is dimmed.
+func (t *Tab) restyle() {
+	for _, p := range t.panes() {
+		p.queueRender()
+	}
+}
+
+// dimmed reports whether p is drawn faded (an inactive pane of a split).
+func (t *Tab) dimmed(p *Pane) bool {
+	return t.zoom == nil && t.root != nil && t.root.pane == nil && t.focus != p
+}
+
+// moveFocus focuses the nearest pane in a direction (Alt+arrows): the pane
+// whose rectangle lies beyond the focused one on that side and overlaps it
+// most on the other axis.
+func (t *Tab) moveFocus(dx, dy int) {
+	cur := t.focus
+	if cur == nil || t.zoom != nil {
+		return
+	}
+	cb, ok := cur.widget.ComputeBounds(t.holder)
+	if !ok {
+		return
+	}
+	cx, cy, cw, ch := float64(cb.X()), float64(cb.Y()), float64(cb.Width()), float64(cb.Height())
+	var best *Pane
+	bestScore := 1e18
+	for _, p := range t.panes() {
+		if p == cur {
+			continue
+		}
+		b, ok := p.widget.ComputeBounds(t.holder)
+		if !ok {
+			continue
+		}
+		x, y, w, h := float64(b.X()), float64(b.Y()), float64(b.Width()), float64(b.Height())
+		var gap, overlap float64
+		switch {
+		case dx < 0 && x+w <= cx+2:
+			gap, overlap = cx-(x+w), min(y+h, cy+ch)-max(y, cy)
+		case dx > 0 && x >= cx+cw-2:
+			gap, overlap = x-(cx+cw), min(y+h, cy+ch)-max(y, cy)
+		case dy < 0 && y+h <= cy+2:
+			gap, overlap = cy-(y+h), min(x+w, cx+cw)-max(x, cx)
+		case dy > 0 && y >= cy+ch-2:
+			gap, overlap = y-(cy+ch), min(x+w, cx+cw)-max(x, cx)
+		default:
+			continue
+		}
+		if overlap <= 0 {
+			continue
+		}
+		if score := gap*1000 - overlap; score < bestScore {
+			best, bestScore = p, score
+		}
+	}
+	if best != nil {
+		best.widget.GrabFocus()
+	}
+}
+
+// onPaneFocus runs when a pane's view gets keyboard focus.
+func (a *App) onPaneFocus(p *Pane) {
+	if p.removeOnce {
+		return
+	}
+	t := p.tab
+	if t.focus != p {
+		t.focus = p
+		t.restyle()
+	}
+	p.acknowledge()
+	if a.active == t {
+		a.win.SetTitle(p.title)
+	}
+	a.refreshChrome()
+}
+
+// setTitle records an OSC 0/2 title for p (shown as the window title while
+// p is focused).
 func (a *App) setTitle(p *Pane, title string) {
 	if p.removeOnce {
 		return
@@ -182,8 +510,26 @@ func (a *App) setTitle(p *Pane, title string) {
 		title = defaultTitle
 	}
 	p.title = title
-	p.page.SetTitle(title)
 	if a.activePane() == p {
 		a.win.SetTitle(title)
 	}
+}
+
+// jumpNeedingYou selects the next tab (after the selected one) whose agent
+// needs the user (Ctrl+J).
+func (a *App) jumpNeedingYou() {
+	i := a.tabIndex(a.active)
+	for k := 1; k <= len(a.tabs); k++ {
+		t := a.tabs[(i+k)%len(a.tabs)]
+		for _, p := range t.panes() {
+			if p.status().State == session.AgentNeedsYou {
+				a.selectTab(t)
+				if t.focus != p {
+					p.widget.GrabFocus()
+				}
+				return
+			}
+		}
+	}
+	a.toast("No agent needs you")
 }

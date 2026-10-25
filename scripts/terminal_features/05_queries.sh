@@ -33,14 +33,18 @@ section "DA3, DSR, and DECRQSS"
 printf '  DA3: %s\n' "$(query_terminal "${CSI}=c")"
 printf '  DSR: %s\n' "$(query_terminal "${CSI}5n")"
 printf '  SGR setting: %s\n' "$(query_terminal "${DCS}\$qm${ST}")"
+printf '  Cursor style setting: %s\n' "$(query_terminal "${CSI}4 q${DCS}\$q q${ST}${CSI}0 q")"
+printf '  Scroll margins setting: %s\n' "$(query_terminal "${DCS}\$qr${ST}")"
+printf '  Unsupported setting: %s\n' "$(query_terminal "${DCS}\$qx${ST}")"
 expect "DA3 returns DCS !|00000000 ST; DSR returns CSI 0n; the SGR setting returns DCS 1\$r ... m ST."
+expect "Cursor style 4 returns DCS 1\$r4 q ST, margins return DCS 1\$r1;<rows>r ST, and an unsupported setting returns DCS 0\$r ST."
 
 section "XTVERSION"
 printf "  Query:    ^[[>0q\n"
 printf "  Response: "
 r=$(query_terminal "${CSI}>0q")
 printf '%s\n' "$r"
-expect "Bunk typically reports DCS >|VTE(8203) ST"
+expect "Bunk typically reports ^[P>|VTE(8203)^[\\"
 diagnose "If missing, inspect XTVERSION detection in pane query scanning."
 
 section "CPR - Cursor Position Report"
@@ -50,6 +54,13 @@ r=$(query_terminal "${CSI}6n")
 printf '%s\n' "$r"
 expect "A row/col reply such as ^[[12;1R"
 diagnose "If empty in either screen mode, inspect CPR query handling."
+
+section "Window Size Reports"
+printf '  Text area pixels (CSI 14 t): %s\n' "$(query_terminal "${CSI}14t")"
+printf '  Cell pixels (CSI 16 t):      %s\n' "$(query_terminal "${CSI}16t")"
+printf '  Text area cells (CSI 18 t):  %s\n' "$(query_terminal "${CSI}18t")"
+expect "CSI 4;height;width t in pixels, CSI 6;height;width t per cell, and CSI 8;rows;cols t; the pixel sizes agree with the cell size."
+diagnose "If image tools pick the wrong size, compare these replies with the PTY pixel size (stty size only shows cells)."
 
 section "XTGETTCAP"
 printf "  Query Smulx:  DCS +q 536d756c78 ST\n"
@@ -113,7 +124,9 @@ printf "  Query:    ^[[?u\n"
 printf "  Response: "
 r=$(query_terminal "${CSI}?u")
 printf '%s\n' "$r"
-expect "^[[NNu where NN is the current kitty keyboard flag bitmask"
+expect "^[[?NNu where NN is the current kitty keyboard flag bitmask"
+printf '  Push 5, query, pop, query: %s\n' "$(query_terminal "${CSI}>5u${CSI}?u${CSI}<u${CSI}?u")"
+expect "^[[?5u^[[?0u: the pushed flags while active, then the previous flags after the pop."
 diagnose "If the reply is missing or typing later behaves oddly, inspect kitty stack tracking and stripping."
 
 script_done

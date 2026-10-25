@@ -45,8 +45,8 @@ func (t *terminal) Write(p []byte) (int, error) {
 		}
 		c, sz := utf8.DecodeRune(p[i:])
 		if c == utf8.RuneError && sz == 1 {
-			if i+1 == len(p) {
-				// not enough bytes for a full rune
+			if !utf8.FullRune(p[i:]) {
+				// The rest of the character comes with the next write.
 				return i, nil
 			}
 			t.logln("invalid utf8 sequence")

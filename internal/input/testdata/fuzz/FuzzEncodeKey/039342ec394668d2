@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x13')
+rune('&')
+byte('\x10')
+int(28)
+bool(false)
+bool(true)

@@ -3,11 +3,9 @@ package main
 import (
 	"fmt"
 	"math"
-	"runtime"
 	"sync/atomic"
 	"time"
 
-	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
@@ -24,17 +22,24 @@ type viewSlot struct {
 	sync     uintptr
 }
 
-// Pane is one terminal: a session and the TermView that shows it. In
-// milestone 2 every tab holds one pane.
+// Pane is one terminal: a session and the TermView that shows it. A tab
+// holds one or more panes.
 type Pane struct {
 	id     int // index in App.panes; the C view reports it
 	app    *App
+	tab    *Tab
 	s      *session.Session
 	widget *gtk.Widget
 	view   cview
-	page   *adw.TabPage
 	im     *gtk.IMMulticontext
 	imPtr  uintptr
+
+	// Agent status, refreshed on the main thread when the session reports
+	// a change (Hooks.StatusChanged). statusOverride replaces it in tests
+	// (the "status" script action).
+	st             session.Status
+	statusOverride *session.Status
+	statusQueued   atomic.Bool
 
 	r     *Renderer // nil until the view is realized
 	atlas *Atlas
@@ -96,6 +101,62 @@ func (p *Pane) onApplied(_ []byte, _, _ bool) {
 	}
 }
 
+// onStatusChanged is Hooks.StatusChanged; it runs on session goroutines
+// without the lock. Reports that arrive before the main thread has read the
+// last one are merged.
+func (p *Pane) onStatusChanged() {
+	if p.statusQueued.CompareAndSwap(false, true) {
+		coreglib.IdleAdd(p.refreshStatus)
+	}
+}
+
+// refreshStatus reads the session's status on the main thread and updates
+// the tab chrome and the needs-you ring when something shown changed.
+func (p *Pane) refreshStatus() {
+	p.statusQueued.Store(false)
+	if p.removeOnce || p.s == nil {
+		return
+	}
+	p.setStatus(p.s.Status())
+}
+
+func (p *Pane) setStatus(st session.Status) {
+	if st == p.st {
+		return
+	}
+	ring := p.st.State == session.AgentNeedsYou
+	p.st = st
+	if p.statusOverride == nil {
+		if ring != (st.State == session.AgentNeedsYou) {
+			p.queueRender()
+		}
+		p.app.refreshChrome()
+	}
+}
+
+// status is the pane's agent status as shown.
+func (p *Pane) status() session.Status {
+	if p.statusOverride != nil {
+		return *p.statusOverride
+	}
+	return p.st
+}
+
+// acknowledge clears a needs-you request: the user focused or typed into
+// the pane.
+func (p *Pane) acknowledge() {
+	if p.statusOverride != nil && p.statusOverride.State == session.AgentNeedsYou {
+		p.statusOverride.State, p.statusOverride.Notice = session.AgentIdle, ""
+		p.queueRender()
+		p.app.refreshChrome()
+	}
+	if p.st.State != session.AgentNeedsYou || p.s == nil {
+		return
+	}
+	p.s.Acknowledge()
+	p.setStatus(p.s.Status())
+}
+
 // onClosed is Hooks.Closed: the PTY is closed and all output is applied.
 func (p *Pane) onClosed() {
 	coreglib.IdleAdd(func() {
@@ -140,8 +201,10 @@ func (p *Pane) realized() {
 	if a.clock == 0 {
 		major, minor := viewGLVersionC(p.view)
 		native := p.widget.Native()
-		a.note("- GL %d.%d: %s; GSK renderer %s", major, minor, gl.GetString(gl.RENDERER),
-			coreglib.InternObject(native.Renderer()).TypeFromInstance().Name())
+		a.glVersion = fmt.Sprintf("%d.%d", major, minor)
+		a.glRenderer = gl.GetString(gl.RENDERER)
+		a.gskRenderer = coreglib.BaseObject(native.Renderer()).TypeFromInstance().Name()
+		a.note("- GL %s: %s; GSK renderer %s", a.glVersion, a.glRenderer, a.gskRenderer)
 		clock := p.widget.FrameClock()
 		connectClockC(clock)
 		a.clock = nativePtr(clock)
@@ -227,21 +290,13 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 		return false
 	}
 	st := a.st
-	probe := a.cfg.allocProbe
-	var probeEvents int64
-	var probeAtlas *Atlas
-	var probeGlyphs, probeCells, probeFB int
-	if probe {
-		probeEvents, probeAtlas, probeGlyphs = p.events.Load(), p.atlas, p.atlas.Rasterized
-		probeCells, probeFB = p.r.cols*p.r.rows, p.r.fbW*p.r.fbH
-		runtime.ReadMemStats(&a.probeMS[0])
-	}
 	t0 := monoNs()
 	p.renderQueued.Store(false)
 	outOldest, outNewest := p.outPending.Swap(0), p.outLast.Load()
 
-	if math.Abs(p.atlas.Scale-scale) > 1e-6 {
-		// First frame or a scale change: rasterize glyphs at device scale.
+	if math.Abs(p.atlas.Scale-scale) > 1e-6 || p.atlas.Font != a.fontDesc {
+		// First frame, a scale change or a text size change: rasterize
+		// glyphs at device scale.
 		if atlas, err := a.atlasFor(scale); err == nil {
 			p.atlas = atlas
 			p.r.SetAtlas(atlas)
@@ -273,6 +328,17 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 	}
 	if p.r.fbW != dw || p.r.fbH != dh {
 		p.r.fbW, p.r.fbH = dw, dh
+		changed = true
+	}
+	var dim, ring float32
+	if p.tab != nil && p.tab.dimmed(p) {
+		dim = 0.28
+	}
+	if p.status().State == session.AgentNeedsYou {
+		ring = float32(math.Round(2 * scale))
+	}
+	if dim != p.r.dim || ring != p.r.ringPx {
+		p.r.dim, p.r.ringPx = dim, ring
 		changed = true
 	}
 	if !changed {
@@ -315,6 +381,7 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 	t3 := monoNs()
 	p.r.Draw()
 	p.r.DrawScrollbar(p.tv.sbOff, p.tv.sbCount)
+	p.r.DrawRing()
 	if timing {
 		p.r.EndTimer()
 	}
@@ -348,18 +415,6 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 		if a.pendHead-a.pendTail < len(a.pending) {
 			a.pending[a.pendHead%len(a.pending)] = pendingFrame{counter: clockCounter(a.clock), keyNs: k}
 			a.pendHead++
-		}
-	}
-	if probe {
-		runtime.ReadMemStats(&a.probeMS[1])
-		// Count only frames that no other goroutine could have overlapped
-		// with output or keys, and that rasterized no new glyph.
-		if p.events.Load() == probeEvents && p.atlas == probeAtlas && p.atlas.Rasterized == probeGlyphs &&
-			p.r.cols*p.r.rows == probeCells && p.r.fbW*p.r.fbH == probeFB {
-			st.probeMallocs += a.probeMS[1].Mallocs - a.probeMS[0].Mallocs
-			st.probeFrames++
-		} else {
-			st.probeSkipped++
 		}
 	}
 	return true

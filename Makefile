@@ -100,6 +100,19 @@ gui-test:
 # Everything: bunk's gate, then bunk-gui and its packaging.
 check-all: check gui-test
 
+# Runs every Fuzz target in turn for FUZZTIME each. Not part of check or
+# check-all: make test already runs the seed corpora in testdata/fuzz.
+FUZZTIME ?= 30s
+
+fuzz:
+	@list=$$(go test -list '^Fuzz' $(PKG)) || { echo "$$list"; exit 1; }; \
+	echo "$$list" | awk '/^Fuzz/ { names[++n] = $$1; next } \
+		/^ok/ { for (i = 1; i <= n; i++) print $$2, names[i]; n = 0 }' | \
+	while read -r pkg name; do \
+		echo "==> $$pkg $$name ($(FUZZTIME))"; \
+		go test "$$pkg" -run '^$$' -fuzz "^$$name\$$" -fuzztime $(FUZZTIME) < /dev/null || exit 1; \
+	done
+
 rpm: version
 	rm -rf $(RPM_TOP)
 	packaging/fedora/sources.sh $(VERSION) $(RPM_TOP)/SOURCES
@@ -114,4 +127,4 @@ rpm: version
 clean:
 	rm -rf bin/ $(BINARY)
 
-.PHONY: version build release test vet fmt lint check standards run clean gui gui-test check-all rpm
+.PHONY: version build release test vet fmt lint check standards run clean gui gui-test check-all rpm fuzz

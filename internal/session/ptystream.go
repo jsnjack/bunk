@@ -110,7 +110,12 @@ func (s *ptyStream) scan(chunk []byte) []byte {
 				s.state = ptyString
 			}
 		case ptyCharset:
-			finished = true
+			if b == 0x1b { // vt10x starts a new control here too
+				s.pending = append(s.pending[:0], b)
+				s.state = ptyEscape
+			} else {
+				finished = true
+			}
 		}
 		if finished {
 			if !s.discard {

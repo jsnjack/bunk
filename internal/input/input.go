@@ -3,7 +3,10 @@
 // model, so the tcell front end and a GUI front end share one encoder.
 package input
 
-import "fmt"
+import (
+	"fmt"
+	"unicode/utf8"
+)
 
 // Mod is a set of modifier keys.
 type Mod uint8
@@ -67,8 +70,12 @@ const (
 	PasteEnd   = "\x1b[201~"
 )
 
-// EncodeKey returns the bytes for ev, or nil when the key sends nothing.
+// EncodeKey returns the bytes for ev, or nil when the key sends nothing. A
+// KeyRune whose rune is not a Unicode character sends nothing.
 func EncodeKey(ev Event, m Modes) []byte {
+	if ev.Key == KeyRune && !utf8.ValidRune(ev.Rune) {
+		return nil
+	}
 	if ev.Mod&ModKeypad != 0 {
 		if code, ss3, ok := keypadCode(ev); ok {
 			if m.KittyFlags&1 != 0 {
@@ -289,7 +296,11 @@ const (
 // EncodeMouse returns the report for a mouse event at 1-based pane
 // coordinates x, y, or nil when nothing is reported. A release is btn ==
 // ButtonNone after a real button; sgr selects SGR (1006) over X10 encoding.
+// Coordinates below 1 are outside the pane and report nothing.
 func EncodeMouse(btn, prevBtn Button, mod Mod, x, y int, sgr bool) []byte {
+	if x < 1 || y < 1 {
+		return nil
+	}
 	release := btn == ButtonNone && prevBtn != ButtonNone
 
 	// Which button is relevant for this event?

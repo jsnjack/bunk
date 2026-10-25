@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x06')
+rune('Q')
+byte('[')
+int(-140)
+bool(false)
+bool(true)
