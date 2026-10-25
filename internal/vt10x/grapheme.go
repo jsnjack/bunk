@@ -61,7 +61,7 @@ func (t *State) extendGrapheme(c rune) bool {
 		}
 		t.eraseCell(x, y)
 		t.lines[y].cells[x].setWidth(-2)
-		t.lines[y].cells[x].Mode |= attrWrap
+		t.lines[y].setWrap(x)
 		t.markDirty(y)
 		t.newline(true)
 		x, y = t.cur.X, t.cur.Y

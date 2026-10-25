@@ -294,3 +294,16 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
   SGR 14.8 → 146, Unicode 14.6 → 36, TUI redraws 13.3 → 266 MB/s.
   On the Zen 5c CPUs (4–11, 16–23) the same code runs about 35% slower, so
   pin benchmarks before comparing.
+
+### Scroll path (2026-10-25)
+
+- Rows record how far their text reaches, so clearing a recycled row and
+  trimming a scrolled-off row cost the text length instead of the width.
+  Screen rows are pointers, and a full-screen scroll marks rows dirty with
+  one flag. A differential run against the previous emulator (4000 random
+  streams with erases, insert/delete, scroll regions, coloured blanks, wide
+  cells, links, images and resizes) matched every cell, dirty row and
+  scrolled row.
+- `BenchmarkOutput` pinned to a Zen 5 core, 200x50, before → after: ASCII
+  144–157 → 338–344 MB/s, Go source (about 33-byte lines) 54 → 117–127,
+  SGR-heavy 56 → 77–78, full-width lines 360–364 → 406–408.

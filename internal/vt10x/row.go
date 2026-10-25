@@ -44,9 +44,14 @@ type cellExtra struct {
 type Row struct {
 	cells  []cell
 	extras []cellExtra
+	// Every cell at an index >= used equals tail. Writes raise used;
+	// filling to the end of the row lowers it. Clearing and trimming then
+	// cost the length of the text, not the width of the row.
+	used int
+	tail cell
 }
 
-func newRow(n int) Row { return Row{cells: make([]cell, n)} }
+func newRow(n int) *Row { return &Row{cells: make([]cell, n)} }
 
 // Len returns the number of cells in the row.
 func (r Row) Len() int { return len(r.cells) }
@@ -92,20 +97,42 @@ func (r Row) AppendGlyphs(dst []Glyph) []Glyph {
 // background and no attributes or side-table data.
 func (r Row) TrimmedLen() int {
 	n := len(r.cells)
-	for n > 0 {
-		c := r.cells[n-1]
-		if (c.Char != ' ' && c.Char != 0) || c.Mode != 0 || c.BG != DefaultBG ||
-			c.extra() != 0 || c.width() < 0 || c.width() > 1 {
-			break
-		}
+	if r.used < n && r.tail.plainBlank() {
+		n = r.used
+	}
+	for n > 0 && r.cells[n-1].plainBlank() {
 		n--
 	}
 	return n
 }
 
+// plainBlank reports whether c draws, copies, searches and reflows like a
+// missing cell.
+func (c cell) plainBlank() bool {
+	return (c.Char == ' ' || c.Char == 0) && c.Mode == 0 && c.BG == DefaultBG &&
+		c.meta>>widthBits == 0 && c.width() >= 0 && c.width() <= 1
+}
+
+// touch records a write to cell x.
+func (r *Row) touch(x int) {
+	if x >= r.used {
+		r.used = x + 1
+	}
+}
+
+// setWrap marks cell x as the end of a soft-wrapped row.
+func (r *Row) setWrap(x int) {
+	r.cells[x].Mode |= attrWrap
+	r.touch(x)
+}
+
+// touchAll records writes that may have changed any cell.
+func (r *Row) touchAll() { r.used = len(r.cells) }
+
 // CopyFrom makes r a copy of the first n cells of src, reusing r's storage.
 func (r *Row) CopyFrom(src Row, n int) {
 	r.cells = append(r.cells[:0], src.cells[:n]...)
+	r.used = n
 	old := len(r.extras)
 	r.extras = append(r.extras[:0], src.extras...)
 	clearExtraTail(r.extras, old)
@@ -114,13 +141,17 @@ func (r *Row) CopyFrom(src Row, n int) {
 // copyCells copies src's leading cells into r without changing r's length.
 func (r *Row) copyCells(src Row) {
 	copy(r.cells, src.cells)
+	r.touchAll()
 	old := len(r.extras)
 	r.extras = append(r.extras[:0], src.extras...)
 	clearExtraTail(r.extras, old)
 }
 
 // Truncate shortens the row to its first n cells.
-func (r *Row) Truncate(n int) { r.cells = r.cells[:n] }
+func (r *Row) Truncate(n int) {
+	r.cells = r.cells[:n]
+	r.used = min(r.used, n)
+}
 
 // SetGlyphs makes r hold glyphs, reusing r's storage.
 func (r *Row) SetGlyphs(glyphs []Glyph) {
@@ -129,6 +160,7 @@ func (r *Row) SetGlyphs(glyphs []Glyph) {
 	}
 	r.cells = r.cells[:len(glyphs)]
 	r.clearExtras()
+	r.used = 0
 	for x, g := range glyphs {
 		r.set(x, g)
 	}
@@ -200,32 +232,73 @@ func (r *Row) clearExtras() {
 }
 
 // set stores g at x.
-func (r *Row) set(x int, g Glyph) { r.cells[x] = r.encode(g) }
+func (r *Row) set(x int, g Glyph) {
+	r.cells[x] = r.encode(g)
+	r.touch(x)
+}
 
-// fill stores g in cells [x0, x1).
-func (r *Row) fill(x0, x1 int, g Glyph) {
+// fill stores c in cells [x0, x1), dropping side-table entries when it
+// overwrites the whole row.
+func (r *Row) fill(x0, x1 int, c cell) {
 	if x0 >= x1 {
 		return
 	}
-	if x0 == 0 && x1 == len(r.cells) {
+	if x0 == 0 && x1 == len(r.cells) && c.meta>>widthBits == 0 {
 		r.clearExtras() // every cell is overwritten
 	}
-	r.fillCell(x0, x1, r.encode(g))
+	r.fillCell(x0, x1, c)
 }
 
 // fillCell stores c in cells [x0, x1). c must not refer to the side table
 // unless the entry belongs to this row.
 func (r *Row) fillCell(x0, x1 int, c cell) {
-	cells := r.cells[x0:x1]
-	if len(cells) == 0 {
+	if x0 >= x1 {
 		return
 	}
-	// Doubling copies move memory in blocks; for row-length fills this
-	// beats storing one cell at a time.
+	if x1 == len(r.cells) && c.meta>>widthBits == 0 {
+		// The cells from x0 on all become c, the new tail. When c already
+		// is the tail, only the cells below used can differ from it.
+		if c == r.tail {
+			fillCells(r.cells[x0:max(x0, r.used)], c)
+			r.used = min(r.used, x0)
+		} else {
+			fillCells(r.cells[x0:x1], c)
+			r.tail, r.used = c, x0
+		}
+		return
+	}
+	fillCells(r.cells[x0:x1], c)
+	if x1 > r.used {
+		r.used = x1
+	}
+}
+
+// fillCells sets every cell in cells to c. Short runs are stored directly;
+// longer ones use doubling copies, which move memory in blocks.
+func fillCells(cells []cell, c cell) {
+	if len(cells) < 64 {
+		for i := range cells {
+			cells[i] = c
+		}
+		return
+	}
 	cells[0] = c
 	for n := 1; n < len(cells); n *= 2 {
 		copy(cells[n:], cells[:n])
 	}
+}
+
+// writeASCII stores text as cells from x, each a copy of c with its
+// character replaced.
+func (r *Row) writeASCII(x int, text []byte, c cell) {
+	// A block fill plus 4-byte character stores beats storing whole
+	// 16-byte cells one at a time.
+	cells := r.cells[x : x+len(text)]
+	fillCells(cells, c)
+	for i, b := range text {
+		cells[i].Char = rune(b)
+	}
+	r.touch(x + len(text) - 1)
 }
 
 // hasCombining reports whether the cell at x carries combining text.

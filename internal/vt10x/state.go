@@ -151,10 +151,11 @@ type State struct {
 	mu                 sync.Mutex
 	changed            ChangeFlag
 	cols, rows         int
-	lines              []Row
-	altLines           []Row
+	lines              []*Row // pointers, so scrolling moves 8 bytes per row
+	altLines           []*Row
 	dirty              []bool // line dirtiness
 	anydirty           bool
+	allDirty           bool // every row is dirty; dirty is not updated
 	cur, curSaved      Cursor
 	top, bottom        int // scroll limits
 	mode               ModeFlag
@@ -485,12 +486,21 @@ func (t *State) ConsumeDirty() ([]bool, bool) {
 		return nil, false
 	}
 	out := make([]bool, len(t.dirty))
-	copy(out, t.dirty)
-	for i := range t.dirty {
-		t.dirty[i] = false
-	}
-	t.anydirty = false
+	t.takeDirty(out)
 	return out, true
+}
+
+// takeDirty moves the dirty flags into dst, which has one entry per row.
+func (t *State) takeDirty(dst []bool) {
+	if t.allDirty {
+		for i := range dst {
+			dst[i] = true
+		}
+	} else {
+		copy(dst, t.dirty)
+	}
+	clear(t.dirty)
+	t.anydirty, t.allDirty = false, false
 }
 
 // ConsumeDirtyInto copies the dirty flags into dst, clears them, and returns
@@ -504,16 +514,14 @@ func (t *State) ConsumeDirtyInto(dst []bool) ([]bool, bool) {
 		clear(dst)
 		return dst, false
 	}
-	copy(dst, t.dirty)
-	clear(t.dirty)
-	t.anydirty = false
+	t.takeDirty(dst)
 	return dst, true
 }
 
 // CopyRow copies live row y into dst, reusing dst's storage.
 func (t *State) CopyRow(y int, dst *Row) {
 	src := t.lines[y]
-	dst.CopyFrom(src, src.Len())
+	dst.CopyFrom(*src, src.Len())
 }
 
 // markDirty marks row y as dirty and sets the anydirty flag.
@@ -522,12 +530,23 @@ func (t *State) markDirty(y int) {
 	t.anydirty = true
 }
 
+// markDirtyRange marks rows y0 through y1. A full-screen range sets one flag,
+// so scrolling the whole screen costs the same for any height.
+func (t *State) markDirtyRange(y0, y1 int) {
+	t.anydirty = true
+	if y0 == 0 && y1 == len(t.dirty)-1 {
+		t.allDirty = true
+		return
+	}
+	for y := y0; y <= y1; y++ {
+		t.dirty[y] = true
+	}
+}
+
 // resetChanges resets the change mask and dirtiness.
 func (t *State) resetChanges() {
-	for i := range t.dirty {
-		t.dirty[i] = false
-	}
-	t.anydirty = false
+	clear(t.dirty)
+	t.anydirty, t.allDirty = false, false
 	t.changed = 0
 }
 
@@ -635,10 +654,12 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 		cl := cell{Char: c, FG: fg, BG: bg, Mode: attr.Mode}
 		cl.setWidth(int8(width))
 		t.lines[y].cells[x] = cl
+		t.lines[y].touch(x)
 		if width == 2 {
 			cl.Char = 0
 			cl.setWidth(-1)
 			t.lines[y].cells[x+1] = cl
+			t.lines[y].touch(x + 1)
 		}
 		return
 	}
@@ -691,6 +712,14 @@ func (t *State) blankCell() Glyph {
 	g.Mode, g.Combining, g.UL = 0, "", DefaultUL
 	g.Image = nil
 	return g
+}
+
+// blankStored is blankCell as a stored cell. A blank has no side-table
+// data, so it needs no encoding.
+func (t *State) blankStored() cell {
+	c := cell{Char: ' ', FG: t.cur.Attr.FG, BG: t.cur.Attr.BG}
+	c.setWidth(1)
+	return c
 }
 
 func (t *State) eraseCell(x, y int) {
@@ -767,8 +796,8 @@ func (t *State) resize(cols, rows int) bool {
 	}
 
 	lines, altLines, tabs := t.lines, t.altLines, t.tabs
-	t.lines = make([]Row, rows)
-	t.altLines = make([]Row, rows)
+	t.lines = make([]*Row, rows)
+	t.altLines = make([]*Row, rows)
 	t.dirty = make([]bool, rows)
 	t.tabs = make([]bool, cols)
 
@@ -781,8 +810,8 @@ func (t *State) resize(cols, rows int) bool {
 		t.altLines[i] = newRow(cols)
 	}
 	for i := 0; i < minrows; i++ {
-		t.lines[i].copyCells(lines[i])
-		t.altLines[i].copyCells(altLines[i])
+		t.lines[i].copyCells(*lines[i])
+		t.altLines[i].copyCells(*altLines[i])
 	}
 	copy(t.tabs, tabs)
 	if cols > t.cols {
@@ -826,7 +855,7 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 	y0 = clamp(y0, 0, t.rows-1)
 	y1 = clamp(y1, 0, t.rows-1)
 	t.changed |= ChangedScreen
-	blank := t.blankCell()
+	blank := t.blankStored()
 	for y := y0; y <= y1; y++ {
 		t.markDirty(y)
 		start, end := x0, x1
@@ -872,10 +901,7 @@ func (t *State) swapScreen() {
 
 func (t *State) dirtyAll() {
 	t.changed |= ChangedScreen
-	t.anydirty = true
-	for y := 0; y < t.rows; y++ {
-		t.dirty[y] = true
-	}
+	t.markDirtyRange(0, t.rows-1)
 }
 
 func (t *State) setScroll(top, bottom int) {
@@ -938,7 +964,7 @@ func (t *State) scrollUp(orig, n int) {
 	// Only fire when orig == 0 — rows leaving the top of the visible screen.
 	if t.scrollRowCb != nil && orig == 0 {
 		for i := 0; i < n; i++ {
-			t.scrollRowCb(t.lines[i])
+			t.scrollRowCb(*t.lines[i])
 		}
 	}
 	t.clear(0, orig, t.cols-1, orig+n-1)
@@ -948,9 +974,7 @@ func (t *State) scrollUp(orig, n int) {
 		first := t.lines[orig]
 		copy(t.lines[orig:t.bottom], t.lines[orig+1:t.bottom+1])
 		t.lines[t.bottom] = first
-		for i := orig; i <= t.bottom; i++ {
-			t.markDirty(i)
-		}
+		t.markDirtyRange(orig, t.bottom)
 		return
 	}
 	for i := orig; i <= t.bottom-n; i++ {
@@ -1314,6 +1338,7 @@ func (t *State) insertBlanks(n int) {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
 		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
+		t.lines[t.cur.Y].touchAll()
 		for x := src; x < dst; x++ {
 			t.eraseCell(x, t.cur.Y)
 		}
@@ -1347,6 +1372,7 @@ func (t *State) deleteChars(n int) {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
 		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
+		t.lines[t.cur.Y].touchAll()
 		for x := t.cols - n; x < t.cols; x++ {
 			t.eraseCell(x, t.cur.Y)
 		}

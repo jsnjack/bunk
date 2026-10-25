@@ -29,7 +29,7 @@ func (t *State) parse(c rune) {
 			}
 			t.markDirty(t.cur.Y)
 		}
-		t.lines[t.cur.Y].cells[t.cols-1].Mode |= attrWrap
+		t.lines[t.cur.Y].setWrap(t.cols - 1)
 		t.newline(true)
 	}
 	if t.cur.X+width > t.cols {
@@ -67,7 +67,7 @@ func (t *State) putASCII(p []byte) int {
 		return 0
 	}
 	if t.clusterOpen && t.clusterX < t.cols && t.clusterY < t.rows {
-		row := &t.lines[t.clusterY]
+		row := t.lines[t.clusterY]
 		if c := row.cells[t.clusterX]; c.width() < 0 || c.Char >= 0x80 || row.hasCombining(t.clusterX) {
 			return 0
 		}
@@ -100,14 +100,14 @@ func (t *State) putASCII(p []byte) int {
 	t.changed |= ChangedScreen
 	for i := 0; i < n; {
 		if t.cur.State&cursorWrapNext != 0 && t.mode&ModeWrap != 0 {
-			t.lines[t.cur.Y].cells[t.cols-1].Mode |= attrWrap
+			t.lines[t.cur.Y].setWrap(t.cols - 1)
 			t.newline(true)
 		}
 		// Write the part of the run that fits on this row. A wide character
 		// inside the segment is overwritten whole, so only the segment's
 		// edges can split one.
 		x, y := t.cur.X, t.cur.Y
-		row := &t.lines[y]
+		row := t.lines[y]
 		k := min(n-i, t.cols-x)
 		if row.cells[x].width() == -1 {
 			t.eraseWideAt(x, y)
@@ -115,15 +115,11 @@ func (t *State) putASCII(p []byte) int {
 		if row.cells[x+k-1].width() == 2 {
 			t.eraseWideAt(x+k-1, y)
 		}
-		if isPlain {
-			row.fillCell(x, x+k, plain)
-		} else {
-			row.fill(x, x+k, tmpl)
+		c := plain
+		if !isPlain {
+			c = row.encode(tmpl)
 		}
-		seg := row.cells[x : x+k]
-		for j, b := range p[i : i+k] {
-			seg[j].Char = rune(b)
-		}
+		row.writeASCII(x, p[i:i+k], c)
 		t.markDirty(y)
 		i += k
 		last := x + k - 1
