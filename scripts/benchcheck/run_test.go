@@ -322,6 +322,11 @@ func TestRunEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs benchmarks")
 	}
+	// Timing on a pinned core is only meaningful on a quiet machine, not
+	// while check-all runs other packages' race tests in parallel.
+	if os.Getenv("BENCHCHECK_E2E") == "" {
+		t.Skip("timing test; make bench-check runs it with BENCHCHECK_E2E=1")
+	}
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go command")
 	}

@@ -146,6 +146,7 @@ BENCH_RUN        = go run ./scripts/benchcheck run -count $(BENCH_COUNT) -cpu '$
 	-max-load $(BENCH_MAX_LOAD) -benchtime '$(BENCH_TIME)' -suites '$(BENCH_SUITES)'
 
 bench-check:
+	BENCHCHECK_E2E=1 go test -count=1 -run '^TestRunEndToEnd$$' ./scripts/benchcheck
 	$(BENCH_RUN) -o $(BENCH_CURRENT)
 	go run ./scripts/benchcheck compare -threshold $(BENCH_THRESHOLD) -max-load $(BENCH_MAX_LOAD) \
 		$(BENCH_BASELINE) $(BENCH_CURRENT)
