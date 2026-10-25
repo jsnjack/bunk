@@ -32,7 +32,7 @@ func newFixture(cols, rows int) *frameFixture {
 	a := newAtlas(12, 27, fr)
 	r := &Renderer{atlas: a, cols: cols, rows: rows, inst: make([]Instance, cols*rows), rowDirty: make([]bool, rows)}
 	s := &session.Session{ScrollbackLines: 1000, Scrollback: session.Ring{MaxLines: 1000}}
-	s.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(s.OnScrollRow))
+	s.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithLinkReferences(s.MarkLinks))
 	return &frameFixture{s: s, term: s.Term, tv: newTermView(), r: r, fr: fr}
 }
 

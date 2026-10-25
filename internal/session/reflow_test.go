@@ -120,9 +120,16 @@ func (tw *reflowTwins) view(offset int, selection bool) {
 	}
 }
 
-// resize resizes both sessions and reports the first difference, or the
-// first image cell whose reference no longer names its pixels.
+// resize sweeps both sessions' link tables, then resizes both and reports
+// the first difference, the first cell whose URL the sweep changed, or the
+// first image cell whose reference no longer names its pixels. The twins
+// sweep at the same points, so their link IDs stay equal.
 func (tw *reflowTwins) resize(cols, rows int) string {
+	for _, s := range []*Session{tw.got, tw.want} {
+		if d := sweepLinksChecked(s); d != "" {
+			return d
+		}
+	}
 	got := tw.got.ResizeAndReflow(cols, rows)
 	want := tw.want.oracleResizeAndReflow(cols, rows)
 	if got != want {
@@ -132,6 +139,44 @@ func (tw *reflowTwins) resize(cols, rows int) string {
 		return d
 	}
 	return imageRefsDiff(tw.got)
+}
+
+// sweepLinksChecked sweeps the session's link table and reports the first
+// linked cell of the scrollback or the screen whose URL changed.
+func sweepLinksChecked(s *Session) string {
+	before := cellURLs(s)
+	s.Term.SweepLinks()
+	after := cellURLs(s)
+	for i := range min(len(before), len(after)) {
+		if before[i] != after[i] {
+			return fmt.Sprintf("link sweep changed %s to %s", before[i], after[i])
+		}
+	}
+	if len(before) != len(after) {
+		return fmt.Sprintf("link sweep changed %d linked cells to %d", len(before), len(after))
+	}
+	return ""
+}
+
+// cellURLs returns the place and URL of every linked cell of the
+// scrollback and the screen.
+func cellURLs(s *Session) []string {
+	var urls []string
+	add := func(where string, row []vt10x.Glyph) {
+		for x, g := range row {
+			if g.Link != 0 {
+				urls = append(urls, fmt.Sprintf("%s cell %d (ID %d) %q", where, x, g.Link, s.Term.Link(g.Link)))
+			}
+		}
+	}
+	for i := 0; i < s.Scrollback.Count; i++ {
+		add(fmt.Sprintf("scrollback row %d", i), s.Scrollback.View(i))
+	}
+	cols, rows := s.Term.Size()
+	for y := 0; y < rows; y++ {
+		add(fmt.Sprintf("screen row %d", y), CaptureRow(s.Term, y, cols))
+	}
+	return urls
 }
 
 // imageRefsDiff checks every image cell of the screen and the scrollback:
@@ -364,7 +409,7 @@ func reflowOps(tw *reflowTwins, data []byte, fail func(string)) {
 			out = controls[int(next())%len(controls)]
 		case 6:
 			if b := next(); b%2 == 0 {
-				out = fmt.Sprintf("\x1b]8;;https://example.org/%d\x1b\\", b%5)
+				out = fmt.Sprintf("\x1b]8;;https://example.org/%d\x1b\\", b/2%16)
 			} else {
 				out = "\x1b]8;;\x1b\\"
 			}

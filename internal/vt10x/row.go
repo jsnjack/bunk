@@ -127,6 +127,36 @@ func (r Row) MarkImages(mark func(id uint64)) {
 	}
 }
 
+// MarkLinks calls mark with the hyperlink ID of each cell of the row that
+// has one (see State.SweepLinks). Neighbouring cells of one link are
+// reported once. Rows without links in their side table cost the table's
+// length; others are read up to the last written cell.
+func (r Row) MarkLinks(mark func(id uint16)) {
+	if !r.hasLinks() {
+		return
+	}
+	var last uint16
+	for x := range r.cells[:min(r.used, len(r.cells))] {
+		if i := r.cells[x].extra(); i != 0 {
+			if id := r.extras[i-1].Link; id != 0 && id != last {
+				mark(id)
+				last = id
+			}
+		}
+	}
+}
+
+// hasLinks reports whether the row's side table holds a hyperlink. It may
+// report entries of cells since overwritten, never miss a current one.
+func (r Row) hasLinks() bool {
+	for i := range r.extras {
+		if r.extras[i].Link != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // AppendGlyphs appends every cell of the row to dst as Glyphs.
 func (r Row) AppendGlyphs(dst []Glyph) []Glyph {
 	for x := range r.cells {

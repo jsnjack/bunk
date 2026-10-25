@@ -70,7 +70,8 @@ type termView struct {
 	defCur   uint32
 	curSet   bool // OSC 12 set a cursor colour
 
-	links linkState // the link under the pointer while Ctrl is held (links.go)
+	links   linkState // the link under the pointer while Ctrl is held (links.go)
+	linkGen uint64    // the session's LinkGen when lines last matched the screen
 }
 
 func newTermView() *termView { return &termView{drawnY: -1} }
@@ -84,6 +85,8 @@ func newTermView() *termView { return &termView{drawnY: -1} }
 //     every visible row is copied from the ring or the screen.
 //   - While the application holds a synchronized update open (DEC 2026) the
 //     live view copies nothing: the previous frame stays on screen.
+//   - Afterwards every copied row equals its source, so the link IDs in
+//     lines resolve through the session's link table as of now (linkGen).
 //
 // It does not allocate unless the terminal size changed.
 func (v *termView) pull(s *session.Session) bool {
@@ -140,6 +143,7 @@ func (v *termView) pull(s *session.Session) bool {
 			v.markDirty(y)
 		}
 	}
+	v.linkGen = t.LinkGen()
 	v.cur = t.Cursor()
 	v.curVisible = t.CursorVisible() && off == 0
 	// The cursor is drawn into its row's instances, so a moved, hidden or

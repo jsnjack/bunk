@@ -16,6 +16,7 @@ type terminal struct {
 func newTerminal(info TerminalInfo) *terminal {
 	t := &terminal{newState(info.w)}
 	t.scrollRowCb = info.scrollCb
+	t.links.referenced = info.linkRefs
 	t.sbClearCb = info.sbClearCb
 	t.bellCb = info.bellCb
 	t.init(info.cols, info.rows)

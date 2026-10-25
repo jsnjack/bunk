@@ -144,22 +144,12 @@ func appendSoakLine(b []byte, i int64, st *soakStats) []byte {
 	return b
 }
 
-// linkTable returns how many OSC 8 URLs the emulator has interned and their
-// bytes. IDs are 1..n with no gaps. Requires the session lock.
+// linkTable returns how many link IDs the emulator's table spans, free
+// ones included, and the bytes of the URLs it holds. Requires the session
+// lock.
 func linkTable(term vt10x.Terminal) (n, size int) {
-	lo, hi := 0, 0xFFFF
-	for lo < hi {
-		mid := (lo + hi + 1) / 2
-		if term.Link(uint16(mid)) != "" {
-			lo = mid
-		} else {
-			hi = mid - 1
-		}
-	}
-	for id := 1; id <= lo; id++ {
-		size += len(term.Link(uint16(id)))
-	}
-	return lo, size
+	st := term.LinkStats()
+	return st.IDs, st.Bytes
 }
 
 // soakSample is the session's footprint at one moment.

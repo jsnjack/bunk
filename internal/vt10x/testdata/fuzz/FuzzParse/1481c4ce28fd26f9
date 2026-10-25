@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('/')
+byte('2')
+[]byte("0")
+[]byte("\x1b]8;;0\x1b\\\x1b80000\x1b[70000A00")

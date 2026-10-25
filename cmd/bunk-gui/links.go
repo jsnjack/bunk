@@ -11,7 +11,9 @@ package main
 //     tests replace. The launcher never runs on the test compositor.
 //
 // Hit tests read the rows the pane last drew (termView.lines); only an
-// OSC 8 URL needs the session lock. New output clears the underline.
+// OSC 8 URL needs the session lock. New output clears the underline. A
+// link sweep since those rows were copied may have given their link IDs
+// to other URLs; such a link does not resolve until the next frame.
 
 import (
 	"context"
@@ -27,6 +29,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 )
 
@@ -306,13 +309,20 @@ func trimURL(u []rune) int {
 	return n
 }
 
+// linkURL returns the URL of OSC 8 link id of the copied rows, or "" when
+// a link sweep ran since they were copied.
+func (v *termView) linkURL(s *session.Session, id uint16) string {
+	s.Lock()
+	defer s.Unlock()
+	if s.Term.LinkGen() != v.linkGen {
+		return ""
+	}
+	return s.Term.Link(id)
+}
+
 // linkAt is termView.linkAt with the session's hyperlink table.
 func (p *Pane) linkAt(col, row int) (linkHit, bool) {
-	return p.tv.linkAt(col, row, func(id uint16) string {
-		p.s.Lock()
-		defer p.s.Unlock()
-		return p.s.Term.Link(id)
-	})
+	return p.tv.linkAt(col, row, func(id uint16) string { return p.tv.linkURL(p.s, id) })
 }
 
 // updateHover underlines the link under the pointer while Ctrl is held and

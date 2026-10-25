@@ -299,7 +299,7 @@ func Start(o Options) (*Session, error) {
 	s.oscScan.status = s.onStatusOSC
 	s.Term = vt10x.New(vt10x.WithSize(o.Cols, o.Rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithBellCallback(s.onBell),
 		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.reply), vt10x.WithCellPixels(cellWidth, cellHeight),
-		s.imageStore(o.ImageBytes))
+		vt10x.WithLinkReferences(s.MarkLinks), s.imageStore(o.ImageBytes))
 
 	// One-time container detection: read the shell process's own environ.
 	if cmd.Process != nil {

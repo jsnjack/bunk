@@ -91,7 +91,7 @@ func TestWrapPaddingOnlyBeforeWrap(t *testing.T) {
 			}
 			cols, _ := term.Size()
 			for y, row := range append(term.lines, term.altLines...) {
-				if err := checkRow(row, cols, len(term.links), sideTableBound(cols)); err != nil {
+				if err := checkRow(row, cols, term.Link, sideTableBound(cols)); err != nil {
 					t.Fatalf("row %d: %v", y, err)
 				}
 			}

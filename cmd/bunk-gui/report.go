@@ -157,6 +157,7 @@ type paneReport struct {
 	Hover    string       `json:"hover"`  // link underlined under the pointer (Ctrl held)
 	Images   imageReport  `json:"images"`
 	Writer   writerReport `json:"writer"`
+	Links    linkReport   `json:"links"`
 }
 
 // writerReport is what the session's PTY writer holds for a child that
@@ -166,6 +167,14 @@ type writerReport struct {
 	PendingInput   int    `json:"pending_input"`
 	DroppedReplies uint64 `json:"dropped_replies"`
 	RefusedInput   uint64 `json:"refused_input"`
+}
+
+// linkReport is the session's hyperlink table (vt10x.LinkStats).
+type linkReport struct {
+	URLs   int `json:"urls"`   // URLs held
+	IDs    int `json:"ids"`    // highest ID in use
+	Sweeps int `json:"sweeps"` // link sweeps so far
+	Freed  int `json:"freed"`  // IDs the sweeps freed
 }
 
 // imageReport is a pane's image memory: the session's store and the
@@ -551,6 +560,8 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		if st := p.s.Images(); st != nil {
 			r.Images.Stored, r.Images.StoredBytes, r.Images.Evicted, r.Images.Swept = st.Len(), st.Bytes(), st.Evicted, st.Swept
 		}
+		ls := p.s.Term.LinkStats()
+		r.Links = linkReport{URLs: ls.URLs, IDs: ls.IDs, Sweeps: ls.Sweeps, Freed: ls.Freed}
 		for y := 0; y < rows; y++ {
 			var b strings.Builder
 			for _, gl := range session.CaptureRow(p.s.Term, y, cols) {
