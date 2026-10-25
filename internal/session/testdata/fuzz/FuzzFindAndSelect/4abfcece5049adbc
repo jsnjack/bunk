@@ -1,0 +1,9 @@
+go test fuzz v1
+byte('\x03')
+byte('\x00')
+[]byte("\x1b[1h")
+string("0")
+int16(-1)
+int16(-19)
+int16(29)
+int16(11)

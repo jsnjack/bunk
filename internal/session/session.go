@@ -1280,7 +1280,7 @@ func (s *Session) SelText() string {
 		}
 		fromCol, toCol := 0, cols-1
 		if vRow == start.Row {
-			fromCol = start.Col
+			fromCol = max(start.Col, 0)
 		}
 		if vRow == end.Row {
 			toCol = end.Col

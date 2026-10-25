@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x12')
+byte('\x02')
+byte('\u009b')
+byte('$')
+uint16(17)
+[]byte("\x1bPA000\x1b00\x1b\\\x1b^\x1b\\")

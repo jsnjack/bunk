@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("0")
+[]byte("\x1b]52;;A\xff\a\x1b]133;00\a")

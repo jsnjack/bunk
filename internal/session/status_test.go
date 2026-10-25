@@ -117,7 +117,7 @@ func TestParseStatusOSC(t *testing.T) {
 		{9, "4;1;50", statusOSC{}, false},
 		{9, "", statusOSC{notice: "Needs your attention"}, true},
 		{9, "line1\nline2\x07", statusOSC{notice: "line1 line2"}, true},
-		{9, long, statusOSC{notice: strings.Repeat("x", noticeLimit) + "…"}, true},
+		{9, long, statusOSC{notice: strings.Repeat("x", noticeLimit-1) + "…"}, true},
 		{777, "notify;Codex;Approval requested", statusOSC{notice: "Approval requested"}, true},
 		{777, "notify;Agent waiting", statusOSC{notice: "Agent waiting"}, true},
 		{777, "notify;Command completed;make test", statusOSC{}, false},

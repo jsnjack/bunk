@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('\x06')
+byte('J')
+[]byte("0")
+[]byte("\x1b[0h\x1b[0l")

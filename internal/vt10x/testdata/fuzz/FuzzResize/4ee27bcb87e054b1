@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x14')
+byte('\x02')
+byte('\x0e')
+byte('\x06')
+uint16(16)
+[]byte("界\x1b[2G\x1b[X\x1b[1K")

@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x12')
+byte('\x04')
+byte('?')
+byte('T')
+uint16(26)
+[]byte("\x1b[4:7m\x1b[?m\x1b[4h\x1b[4m\x1b[0::m\x1b[0m\x1b[0m\x1b[0;0;m\x1b[?m\x1b[4h\x1b[0A")

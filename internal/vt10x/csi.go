@@ -156,7 +156,9 @@ func (t *State) handleCSI() {
 	case 'H', 'f': // CUP, HVP - move to <row> <col>
 		t.moveAbsTo(c.arg(1, 1)-1, c.arg(0, 1)-1)
 	case 'I': // CHT - cursor forward tabulation <n> tab stops
-		n := c.arg(0, 1)
+		// After cols stops the cursor no longer moves; a huge count must
+		// not keep the terminal locked.
+		n := min(c.arg(0, 1), t.cols)
 		for i := 0; i < n; i++ {
 			t.putTab(true)
 		}
@@ -206,7 +208,7 @@ func (t *State) handleCSI() {
 	case 'P': // DCH - delete <n> chars
 		t.deleteChars(c.arg(0, 1))
 	case 'Z': // CBT - cursor backward tabulation <n> tab stops
-		n := c.arg(0, 1)
+		n := min(c.arg(0, 1), t.cols)
 		for i := 0; i < n; i++ {
 			t.putTab(false)
 		}

@@ -300,7 +300,7 @@ func noticeOSC(text string) (statusOSC, bool) {
 		text = "Needs your attention"
 	}
 	if r := []rune(text); len(r) > noticeLimit {
-		text = string(r[:noticeLimit]) + "…"
+		text = string(r[:noticeLimit-1]) + "…"
 	}
 	return statusOSC{notice: text}, true
 }

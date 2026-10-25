@@ -99,7 +99,7 @@ Key local extensions to vendored vt10x:
   which bunk's scrollback ring copies without trailing blanks.
 - `putASCII` writes printable ASCII runs without grapheme segmentation. Any
   change to `parse`/`setChar` must keep `TestASCIIFastPathMatchesRuneParser`
-  green; track speed with `go test ./internal/vt10x -bench BenchmarkWrite`.
+  and the `FuzzParse` seeds green; track speed with `go test ./internal/vt10x -bench BenchmarkWrite`.
 
 ---
 
@@ -138,7 +138,19 @@ make run      # builds local binary and opens a debug session with --trace
 make gui-test # bunk-gui: vet, race tests, packaging validation
 make check-all # check + gui-test
 make rpm      # Fedora RPM of bunk-gui in bin/rpmbuild, checked by packaging/fedora/check-rpm.sh
+make fuzz     # every Fuzz target in turn, FUZZTIME each (default 30s); not in check-all
 ```
+
+Fuzz targets cover every parser of program output and user input:
+`internal/vt10x` (FuzzParse, FuzzResize), `internal/session` (FuzzPTYStream,
+FuzzOSCScanner, FuzzStatusOSC, FuzzQueryReplies, FuzzXTGETTCAP,
+FuzzFindAndSelect), `internal/input` (FuzzEncodeKey, FuzzEncodeMouse) and
+`internal/graphics` (FuzzGraphicsDecoder). Their seed corpora in
+`testdata/fuzz` run with every `go test`, so keep seeds small. When a target
+fails, keep the input it wrote to `testdata/fuzz`, fix the code, and add a
+named regression test to the package's `fuzz_regression_test.go`. Run one
+target longer with `go test ./internal/vt10x -run '^$' -fuzz '^FuzzParse$'
+-fuzztime 10m`.
 
 bunk-gui window tests run on a private headless mutter through
 `scripts/headless-gui.sh`, never on the desktop. It gives one 2560x1600@120
@@ -200,7 +212,9 @@ Key fields agents may need to know about:
   `TestReadPTYSingleLock_ClaudeCursorRace`.
 - **vt10x coordinates are display cells.** Wide characters occupy a lead cell
   (`Glyph.Width == 2`) and a continuation (`-1`); `-2` marks padding before a
-  wide-character wrap. Rendering, search, and selection skip continuations.
+  wide-character wrap. Padding is only ever the last cell of a wrapped row;
+  `repairWideRow` turns padding that a shift or resize moves into a blank.
+  Rendering, search, and selection skip continuations.
   Combining marks, variation selectors, and multi-codepoint emoji stay together
   in the lead cell through render, copy, search, and reflow. Mode 2027 can switch
   back to per-codepoint widths for legacy applications.

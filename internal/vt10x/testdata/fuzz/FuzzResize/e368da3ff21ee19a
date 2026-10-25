@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('ò')
+byte('@')
+byte('\x10')
+byte('\t')
+uint16(50)
+[]byte("\x1b[Y\x1b[Y")

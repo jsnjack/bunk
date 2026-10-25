@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('\b')
+byte('\f')
+[]byte("0")
+[]byte("\x1b[A\x1bu\x1b0")

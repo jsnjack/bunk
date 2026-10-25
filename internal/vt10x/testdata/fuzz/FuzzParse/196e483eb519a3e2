@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('I')
+byte('\x18')
+[]byte("0")
+[]byte("\x1b]\a\x1b]\a\x1b\x1b]4;;\a")

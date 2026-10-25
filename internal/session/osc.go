@@ -102,10 +102,14 @@ func (s *oscScanner) Scan(chunk []byte, emit func([]byte)) {
 			if len(s.buf) < oscMaxBuf {
 				s.buf = append(s.buf, b)
 			}
-			if b == '\\' { // ST = ESC \ terminator
+			// End where ptyStream framing ends the string: ST (ESC \) or
+			// ESC BEL.
+			switch b {
+			case '\\', 0x07:
 				s.dispatch(emit)
 				s.state = oscIdle
-			} else {
+			case 0x1b: // this ESC may start the ST
+			default:
 				s.state = oscInContent // spurious ESC inside OSC, keep going
 			}
 		}
@@ -118,28 +122,21 @@ func (s *oscScanner) dispatch(emit func([]byte)) {
 	if s.overrun || len(s.buf) < 3 {
 		return
 	}
-	// buf = \x1b ] <numBytes> ; <rest> <terminator>
-	body := s.buf[2:]
-	semi := bytes.IndexByte(body, ';')
-	var numBytes, payload []byte
-	if semi >= 0 {
-		numBytes = body[:semi]
-		payload = body[semi+1:]
-	} else {
-		// Bare OSC with no semicolon (unusual but valid) - strip terminator.
-		numBytes = bytes.TrimRight(body, "\x07\x1b\\")
-	}
+	// buf = \x1b ] <numBytes> [; <payload>] <terminator>. A bare OSC has no
+	// semicolon and an empty payload; its number must be all digits, or
+	// stray ESC bytes before the terminator would reach the host.
+	numBytes, payload, _ := bytes.Cut(StripOSCTerminator(s.buf[2:]), []byte(";"))
 	n, err := strconv.Atoi(string(numBytes))
 	if err != nil {
 		return
 	}
 	if s.status != nil && statusOSCNums[n] {
-		s.status(n, StripOSCTerminator(payload))
+		s.status(n, payload)
 	}
 	if !oscForwardNums[n] {
 		return
 	}
-	if !sanitizeOSC(n, StripOSCTerminator(payload)) {
+	if !sanitizeOSC(n, payload) {
 		L().Debug("osc: dropping malformed/binary sequence", "osc_num", n, "len", len(s.buf))
 		return
 	}

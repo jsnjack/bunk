@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('u')
+byte('\a')
+[]byte("0")
+[]byte("\x1b[?47l\x1b[90m\x1b[?47l\x1b[K")

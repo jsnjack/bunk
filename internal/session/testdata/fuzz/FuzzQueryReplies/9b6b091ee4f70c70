@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('u')
+byte('\x00')
+[]byte("0")
+[]byte("\xb0")

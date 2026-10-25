@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('\x03')
+byte('\x01')
+[]byte("0")
+[]byte("界界\x1b[X")
