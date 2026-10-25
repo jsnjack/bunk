@@ -623,7 +623,7 @@ func firstPositionalCLIArg(args []string) string {
 // trackFgProcess polls the foreground process group of this pane's PTY once
 // per second.  When the process name or container context changes it updates
 // the Session fields and signals the render loop to repaint.
-// Stops when done is closed or the pane dies.
+// Stops when done is closed or the child exits.
 func (s *Session) trackFgProcess(h Hooks, done <-chan struct{}) {
 	if s.Cmd.Process == nil {
 		return
@@ -637,6 +637,8 @@ func (s *Session) trackFgProcess(h Hooks, done <-chan struct{}) {
 	for {
 		select {
 		case <-done:
+			return
+		case <-s.exited:
 			return
 		case <-ticker.C:
 		}

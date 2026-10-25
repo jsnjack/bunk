@@ -71,9 +71,14 @@ internal/session/   One terminal session, shared by front ends
                     (OSC 9/99/777, BEL), failures (OSC 133;D), git branch,
                     explicit agent reports (Notify)
   winsize.go        PTY window size in cells and virtual pixels
+  ptyfd.go          Setsize: window-size ioctl that holds the PTY descriptor
+  ptyfd_linux.go    Pollable PTY master, so Close ends ReadLoop
 
 internal/notify/    Agent hook reports: Unix socket server (token → Session),
                     client, `notify` CLI (RunCLI), hook snippets per agent
+
+internal/leakcheck/ Test helper: fds, goroutines, child processes and live heap
+                    of the process, compared with a baseline after a settle wait
 
 third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
                     (local go.mod replacement; see BUNK_PATCHES.md)
@@ -159,7 +164,30 @@ make gui-test # bunk-gui: vet, race tests, packaging validation
 make check-all # check + gui-test
 make rpm      # Fedora RPM of bunk-gui in bin/rpmbuild, checked by packaging/fedora/check-rpm.sh
 make fuzz     # every Fuzz target in turn, FUZZTIME each (default 30s); not in check-all
+make soak     # leak and soak tests at full length (SOAK=1); not in check-all
 ```
+
+Leak and soak tests check that sessions, panes and the notify socket release
+everything they take. Each takes a `leakcheck.Snapshot`, runs a workload and
+calls `leakcheck.Check`, which waits for the counts to settle and lists new
+descriptors and child processes and the goroutine stacks on failure.
+`TestCheckCatchesLeaks` injects each kind of leak to prove the detectors.
+bunk-gui's `mark` action records the same counts plus live panes and their
+GL textures in `-report`.
+
+| Test | Short run (`make test`) | `make soak` |
+|------|-------------------------|-------------|
+| `TestSessionLeaks` (session) | 300 sessions in 2 batches | 2000 in 10 |
+| `TestOutputSoak` (session) | 3 MiB with -race, 20 MiB without | 500 MiB |
+| `TestTUISoak` (root) | 5 split/zoom/resize/exit cycles | 200 |
+| `TestNotifySessionLeaks` (notify) | 60 reporting sessions | 400 |
+| `TestGUITabLeaks` (bunk-gui, `make gui-test`) | 20 tabs with splits | 200 |
+
+`make soak` runs without the race detector; `SOAKFLAGS=-race make soak` adds
+it. Session kinds cover shells that exit, busy output closed mid-stream
+(`yes`, `/dev/urandom`), children that ignore SIGHUP and children that leave
+a process holding the PTY. A helper child that is the test binary itself
+sets `GORACE=atexit_sleep_ms=0`, or a -race build sleeps 1 s at exit.
 
 Fuzz targets cover every parser of program output and user input:
 `internal/vt10x` (FuzzParse, FuzzResize), `internal/session` (FuzzPTYStream,
@@ -341,6 +369,16 @@ its default.
   socket like bunk-gui, and `bunk notify` runs the same CLI.
 - **Nested sessions are refused.** `BUNK=1` is exported into every pane's
   environment; the binary exits at startup if it sees it set.
+- **Closing a session ends it, whatever its child does.** `Session.Close`
+  closes the PTY master and sends SIGHUP; a child still running after
+  `HangupGrace` (1 s) is killed with its process group. On Linux the master
+  is re-wrapped as a pollable file (`ptyfd_linux.go`), so Close ends
+  ReadLoop even while a process the child left behind (`server &`) holds
+  the PTY. Both front ends close a pane's session when its child exits
+  (TUI: `removePane`). Resize the PTY with `session.Setsize`, not
+  `pty.Setsize`: the latter reads the descriptor with `Fd`, which races
+  with ReadLoop's Close and can hit a reused descriptor number
+  (`TestResizeWhileOutputCloses`).
 
 ---
 

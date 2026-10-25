@@ -22,6 +22,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
+	"bunk/internal/leakcheck"
 	"bunk/internal/session"
 )
 
@@ -67,6 +68,13 @@ type markReport struct {
 	RenderMallocs int64  `json:"render_mallocs"` // objects allocated under (*Pane).render; -1 without -alloc-probe
 	Mallocs       uint64 `json:"mallocs"`        // whole process
 	KeyRenders    int    `json:"key_renders"`    // key writes drawn so far
+	// Resources held, for leak tests (leak_test.go).
+	FDs        int `json:"fds"` // open file descriptors
+	Goroutines int `json:"goroutines"`
+	Children   int `json:"children"` // child processes, zombies included
+	Zombies    int `json:"zombies"`  // exited children nobody waited for
+	Panes      int `json:"panes"`    // panes not yet freed
+	Textures   int `json:"textures"` // GL textures the panes hold
 }
 
 type latReport struct {
@@ -658,6 +666,27 @@ func (a *App) addMark(name string) markReport {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	m.Mallocs = ms.Mallocs
+	m.FDs, m.Goroutines = len(leakcheck.FDs()), runtime.NumGoroutine()
+	for _, c := range leakcheck.Children() {
+		m.Children++
+		if c.State == 'Z' {
+			m.Zombies++
+		}
+	}
+	for _, p := range a.panes {
+		if p == nil {
+			continue
+		}
+		m.Panes++
+		if p.r != nil {
+			m.Textures++ // the glyph atlas
+		}
+		for i := range p.slots {
+			if p.slots[i].tex != 0 {
+				m.Textures++
+			}
+		}
+	}
 	a.rep.Marks = append(a.rep.Marks, m)
 	return m
 }

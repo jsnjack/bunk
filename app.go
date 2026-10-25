@@ -942,6 +942,11 @@ func (app *App) removePane(p *Pane) {
 	}
 	app.mu.Unlock()
 
+	// The shell has exited, but a process it left behind (`server &`) may
+	// still hold the PTY. Close the master so the pane's reader goroutine,
+	// descriptor and emulator do not outlive the pane.
+	p.Close()
+
 	if shutdown {
 		L.Info("removePane: last pane removed, shutting down")
 		go app.shutdown()

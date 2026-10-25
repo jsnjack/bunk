@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"bunk/internal/session"
@@ -41,7 +42,7 @@ func (app *App) copyToClipboard(text string) {
 	app.oscBuf.append([]byte(osc))
 
 	// Native clipboard as best-effort fallback.
-	go writeNativeClipboard(text)
+	queueNativeClipboard(text)
 }
 
 // mirrorOSC52ToNativeClipboard mirrors a child application's OSC 52 clipboard
@@ -52,13 +53,53 @@ func mirrorOSC52ToNativeClipboard(seq []byte) {
 	if !ok {
 		return
 	}
-	go func() {
-		if writeNativeClipboard(text) {
-			L.Debug("osc52: mirrored to native clipboard", "bytes", len(text))
-		} else {
-			L.Debug("osc52: native clipboard mirror failed", "bytes", len(text))
+	queueNativeClipboard(text)
+}
+
+// nativeClipboard queues writes to the desktop clipboard: the newest text
+// not yet written, and whether a goroutine is writing.
+var nativeClipboard struct {
+	sync.Mutex
+	pending string
+	queued  bool
+	running bool
+}
+
+// queueNativeClipboard copies text to the desktop clipboard in the
+// background. One goroutine at a time runs the native tool and only the
+// newest pending text is kept, so a pane that floods OSC 52 starts one
+// clipboard process after another, not a goroutine and a process for
+// every sequence.
+func queueNativeClipboard(text string) {
+	nativeClipboard.Lock()
+	nativeClipboard.pending, nativeClipboard.queued = text, true
+	start := !nativeClipboard.running
+	nativeClipboard.running = true
+	nativeClipboard.Unlock()
+	if start {
+		go writeQueuedClipboard()
+	}
+}
+
+// writeQueuedClipboard writes queued texts until none is left.
+func writeQueuedClipboard() {
+	for {
+		nativeClipboard.Lock()
+		if !nativeClipboard.queued {
+			nativeClipboard.running = false
+			nativeClipboard.Unlock()
+			return
 		}
-	}()
+		text := nativeClipboard.pending
+		nativeClipboard.pending, nativeClipboard.queued = "", false
+		write := writeNativeClipboard
+		nativeClipboard.Unlock()
+		if write(text) {
+			L.Debug("clipboard: copied to native clipboard", "bytes", len(text))
+		} else {
+			L.Debug("clipboard: native clipboard copy failed", "bytes", len(text))
+		}
+	}
 }
 
 // osc52ClipboardText decodes an OSC 52 clipboard text write. It ignores
@@ -112,7 +153,8 @@ func osc52TargetsClipboard(selection []byte) bool {
 }
 
 // writeNativeClipboard copies text to the desktop clipboard. Tests replace
-// it so they never change the user's clipboard.
+// it, holding nativeClipboard's lock, so they never change the user's
+// clipboard.
 var writeNativeClipboard = copyTextToNativeClipboard
 
 func copyTextToNativeClipboard(text string) bool {

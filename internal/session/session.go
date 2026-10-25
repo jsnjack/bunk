@@ -46,9 +46,11 @@ type SelPos struct {
 type Session struct {
 	ID int
 
-	PTY      *os.File  // PTY master - write keystrokes here, read shell output here
-	ptmxOnce sync.Once // ensures PTY master fd is closed exactly once
-	Cmd      *exec.Cmd // the shell process
+	PTY      *os.File      // PTY master - write keystrokes here, read shell output here
+	ptmxOnce sync.Once     // ensures PTY master fd is closed exactly once
+	killOnce sync.Once     // Close arms the SIGKILL fallback once
+	Cmd      *exec.Cmd     // the shell process
+	exited   chan struct{} // closed by waitForExit; stops trackFgProcess at once
 
 	// The mutex serialises all access to Term (writes from the reader goroutine
 	// and reads from front ends) and every field marked "protected by mu".
@@ -205,7 +207,8 @@ type Hooks struct {
 	Exited func()
 	// Closed runs once when ReadLoop returns: the PTY is closed and all of
 	// the child's output has been applied. It can come before or after
-	// Exited, and never comes while another process still holds the PTY.
+	// Exited, and never comes while another process still holds the PTY,
+	// unless Close closed the session.
 	Closed func()
 	// StatusChanged runs, without the lock, when Status may have changed:
 	// a new agent, directory or branch, output starting or stopping, an
@@ -265,6 +268,12 @@ func Start(o Options) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pty.StartWithSize: %w", err)
 	}
+	// A pollable master lets Close end ReadLoop (ptyfd_linux.go).
+	if p, err := pollable(ptmx); err != nil {
+		L().Warn("session: PTY master stays blocking", "id", o.ID, "err", err)
+	} else {
+		ptmx = p
+	}
 
 	// Ordinary device queries are answered by CaptureAndWrite using session
 	// state and theme colours. Graphics acknowledgements are emitted by the
@@ -280,6 +289,7 @@ func Start(o Options) (*Session, error) {
 		ThemeCursor:     o.ThemeCursor,
 		backspace:       o.Backspace,
 		agents:          o.Agents,
+		exited:          make(chan struct{}),
 	}
 	s.oscScan.status = s.onStatusOSC
 	s.Term = vt10x.New(vt10x.WithSize(o.Cols, o.Rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithBellCallback(s.onBell),
@@ -319,7 +329,9 @@ func (s *Session) Resize(cols, rows int) (reflowed bool) {
 	cw, ch := s.Term.CellPixels()
 	s.Unlock()
 	if s.PTY != nil {
-		pty.Setsize(s.PTY, Winsize(cols, rows, cw, ch)) //nolint:errcheck
+		if err := Setsize(s.PTY, Winsize(cols, rows, cw, ch)); err != nil {
+			L().Debug("session: resize PTY", "id", s.ID, "err", err)
+		}
 	}
 	return reflowed
 }
@@ -335,7 +347,9 @@ func (s *Session) SetCellPixels(width, height int) {
 	if s.PTY != nil {
 		cols, rows := s.Term.Size()
 		cw, ch := s.Term.CellPixels()
-		pty.Setsize(s.PTY, Winsize(cols, rows, cw, ch)) //nolint:errcheck
+		if err := Setsize(s.PTY, Winsize(cols, rows, cw, ch)); err != nil {
+			L().Debug("session: resize PTY", "id", s.ID, "err", err)
+		}
 	}
 }
 
@@ -919,6 +933,9 @@ func (s *Session) waitForExit(h Hooks) {
 	s.Lock()
 	s.Dead = true
 	s.Unlock()
+	if s.exited != nil {
+		close(s.exited)
+	}
 	if h.Exited != nil {
 		h.Exited()
 	}
@@ -1220,13 +1237,45 @@ func (s *Session) adjustAfterScrollbackPush(pushed, oldCount, oldSbOff int) {
 	}
 }
 
+// HangupGrace is how long Close lets the child handle SIGHUP before it
+// kills the child's process group.
+const HangupGrace = time.Second
+
 // Close shuts down the PTY and sends SIGHUP to the shell so it exits cleanly.
-// Safe to call multiple times.
+// A child that ignores SIGHUP and still runs after HangupGrace is killed
+// with its process group, so a closed session never keeps its process,
+// its waitForExit and trackFgProcess goroutines. Safe to call multiple times.
 func (s *Session) Close() {
 	L().Debug("pane close", "pane", s.ID)
 	s.closePTX()
 	if s.Cmd.Process != nil {
 		s.Cmd.Process.Signal(syscall.SIGHUP) //nolint:errcheck
+		s.killOnce.Do(func() {
+			// The timer holds only what it needs, not the session with its
+			// emulator and scrollback.
+			id, proc, exited := s.ID, s.Cmd.Process, s.exited
+			time.AfterFunc(HangupGrace, func() { killIfRunning(id, proc, exited) })
+		})
+	}
+}
+
+// killIfRunning kills the child proc and its process group unless exited
+// (closed by waitForExit) says it has exited. Start makes the child a
+// session and process group leader, so the group also holds what it started
+// without job control; jobs that an interactive shell put in groups of
+// their own (nohup, &) are left alone.
+func killIfRunning(id int, proc *os.Process, exited <-chan struct{}) {
+	select {
+	case <-exited:
+		return
+	default:
+	}
+	L().Debug("session: child outlived SIGHUP, killing its process group", "pane", id, "pid", proc.Pid)
+	if err := syscall.Kill(-proc.Pid, syscall.SIGKILL); err != nil {
+		L().Debug("session: kill process group", "pane", id, "pid", proc.Pid, "err", err)
+	}
+	if err := proc.Kill(); err != nil {
+		L().Debug("session: kill child", "pane", id, "pid", proc.Pid, "err", err)
 	}
 }
 
