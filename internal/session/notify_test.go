@@ -63,7 +63,7 @@ func TestNotifyStates(t *testing.T) {
 		{"needs-you", "claude", EventNeedsYou, "Allow npm install?", AgentNeedsYou, "Allow npm install?", "claude"},
 		{"needs-you without text", "codex", EventNeedsYou, "  ", AgentNeedsYou, defaultNotice, "codex"},
 		{"needs-you control chars", "claude", EventNeedsYou, "a\x1b[31mb\nc", AgentNeedsYou, "a [31mb c", "claude"},
-		{"needs-you long", "claude", EventNeedsYou, long, AgentNeedsYou, strings.Repeat("y", noticeLimit) + "…", "claude"},
+		{"needs-you long", "claude", EventNeedsYou, long, AgentNeedsYou, strings.Repeat("y", noticeLimit-1) + "…", "claude"},
 		{"done", "claude", EventDone, "Fixed the race in ReadLoop.", AgentDone, "Fixed the race in ReadLoop.", "claude"},
 		{"done without text", "gemini", EventDone, "", AgentDone, "", "gemini"},
 		{"failed", "claude", EventFailed, "API Error: Rate limit reached", AgentFailed, "API Error: Rate limit reached", "claude"},
