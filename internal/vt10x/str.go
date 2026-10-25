@@ -160,7 +160,7 @@ func (t *State) handleSTR() {
 		case 104: // color reset
 			j := -1
 			if len(s.args) > 1 {
-				j = s.arg(1, 0)
+				j = paletteIndex(s.args[1])
 			}
 			if p != nil && *p == "?" { // report
 				t.osc4ColorResponse(j)
@@ -190,8 +190,21 @@ func (t *State) handleSTR() {
 	}
 }
 
+// paletteIndex parses the colour index of OSC 4 or 104: 0-255, else -1.
+func paletteIndex(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 || n > 255 {
+		return -1
+	}
+	return n
+}
+
+// setColorName sets or, when p is nil, resets the override for palette
+// index j (0-255) or for DefaultFG, DefaultBG or DefaultCursor. Overrides
+// apply to every cell colour, so any other key would recolour truecolour
+// cells.
 func (t *State) setColorName(j int, p *string) error {
-	if !between(j, 0, 1<<24) && j != int(DefaultFG) && j != int(DefaultBG) && j != int(DefaultCursor) {
+	if !between(j, 0, 255) && j != int(DefaultFG) && j != int(DefaultBG) && j != int(DefaultCursor) {
 		return fmt.Errorf("invalid color value %d", j)
 	}
 
@@ -214,38 +227,33 @@ func (t *State) setColorName(j int, p *string) error {
 	return nil
 }
 
+// oscColorResponse answers OSC 10, 11 or 12 (num) for colour j. A colour
+// without an override is unknown here, so it gets no reply.
 func (t *State) oscColorResponse(j, num int) {
-	if j < 0 {
-		t.logf("failed to fetch osc color %d\n", j)
+	c, ok := t.colorOverride[Color(j)]
+	if !ok {
+		t.logf("no known colour for osc %d\n", num)
 		return
 	}
-
-	k, ok := t.colorOverride[Color(j)]
-	if ok {
-		j = int(k)
-	}
-
-	r, g, b := rgb(j)
+	r, g, b := rgb(c)
 	fmt.Fprintf(t.w, "\033]%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", num, r, r, g, g, b, b) //nolint:errcheck // reply write to host PTY
 }
 
+// osc4ColorResponse answers OSC 4 for palette index j. Only an override
+// is known here; other palette colours belong to the front end's theme.
 func (t *State) osc4ColorResponse(j int) {
-	if j < 0 {
-		t.logf("failed to fetch osc4 color %d\n", j)
+	c, ok := t.colorOverride[Color(j)]
+	if j < 0 || !ok {
+		t.logf("no known colour for osc4 index %d\n", j)
 		return
 	}
-
-	k, ok := t.colorOverride[Color(j)]
-	if ok {
-		j = int(k)
-	}
-
-	r, g, b := rgb(j)
+	r, g, b := rgb(c)
 	fmt.Fprintf(t.w, "\033]4;%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", j, r, r, g, g, b, b) //nolint:errcheck // reply write to host PTY
 }
 
-func rgb(j int) (r, g, b int) {
-	return (j >> 16) & 0xff, (j >> 8) & 0xff, j & 0xff
+// rgb splits the low 24 bits of a truecolour value.
+func rgb(c Color) (r, g, b int) {
+	return int(c>>16) & 0xff, int(c>>8) & 0xff, int(c) & 0xff
 }
 
 var (
