@@ -70,8 +70,11 @@ internal/session/   One terminal session, shared by front ends
 third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
                     (local go.mod replacement; see BUNK_PATCHES.md)
 
+cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make check)
+packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
+
 assets/             Demo assets (gif)
-scripts/            Manual regression helper scripts
+scripts/            Manual regression helpers; headless-gui.sh runs GUI tests
 ```
 
 Key local extensions to vendored vt10x:
@@ -132,7 +135,20 @@ make check    # full validation gate (fmt → vet → race tests → build → l
 make test     # tests only (race-enabled)
 make build    # cross-compiles bin/bunk_{linux,darwin}_{amd64,arm64}
 make run      # builds local binary and opens a debug session with --trace
+make gui-test # bunk-gui: vet, race tests, packaging validation
+make check-all # check + gui-test
+make rpm      # Fedora RPM of bunk-gui in bin/rpmbuild, checked by packaging/fedora/check-rpm.sh
 ```
+
+bunk-gui window tests run on a private headless mutter through
+`scripts/headless-gui.sh`, never on the desktop. It gives one 2560x1600@120
+virtual monitor at 133% on the GPU, with its own D-Bus and clipboard. Every
+GUI check, including pixel, idle-frame, allocation and latency checks, lives
+in the test suite; turn a manual check into a test before relying on it.
+`go test -short` skips the window tests (the RPM's %check uses it).
+
+**Run `make check-all` before reporting any work as done.** Work is not done
+until the full suite is green; report its result, including failures.
 
 Tests run with `-race` and are required to pass before any binary is built.
 `make test` includes the locally patched tcell module and its terminfo tests.

@@ -1,3 +1,9 @@
 bin/
 bunk
 .monova*
+
+# Claude Code: share settings.json and hooks; keep local settings and agent
+# worktrees out.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/

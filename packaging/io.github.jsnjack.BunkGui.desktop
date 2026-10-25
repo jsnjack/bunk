@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=bunk-gui
+GenericName=Terminal
+Comment=Run coding agents side by side in tabs and splits
+Exec=bunk-gui
+Icon=io.github.jsnjack.BunkGui
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;prompt;command;agent;claude;copilot;codex;tabs;split;
+StartupNotify=true
+StartupWMClass=io.github.jsnjack.BunkGui

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.jsnjack.BunkGui</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>bunk-gui</name>
+  <summary>Terminal for running coding agents side by side</summary>
+  <description>
+    <p>
+      bunk-gui is a GPU-rendered terminal built on the emulator core of the bunk
+      multiplexer. Each tab is a workspace for one coding agent, with splits
+      and scrollback.
+    </p>
+    <ul>
+      <li>Tabs show which agent runs, its repository and branch, and whether it is working or waiting for you</li>
+      <li>Jump to the next tab that needs you, or switch tabs from the keyboard</li>
+      <li>Recognises Claude Code, Copilot CLI, Codex and other agent CLIs; more are added in the config file</li>
+      <li>Splits, scrollback, mouse selection and clipboard</li>
+      <li>Draws only changed rows and no frames while idle</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.jsnjack.BunkGui.desktop</launchable>
+  <url type="homepage">https://github.com/jsnjack/bunk</url>
+  <url type="bugtracker">https://github.com/jsnjack/bunk/issues</url>
+  <url type="vcs-browser">https://github.com/jsnjack/bunk</url>
+  <developer id="io.github.jsnjack">
+    <name>Yauhen Shulitski</name>
+  </developer>
+  <provides>
+    <binary>bunk-gui</binary>
+  </provides>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+</component>
