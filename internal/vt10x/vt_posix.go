@@ -40,7 +40,7 @@ func (t *terminal) Write(p []byte) (int, error) {
 	t.lock()
 	defer t.unlock()
 	for i := 0; i < len(p); {
-		if n := t.putASCII(p[i:]); n > 0 {
+		if n := t.scan(p[i:]); n > 0 {
 			i += n
 			continue
 		}

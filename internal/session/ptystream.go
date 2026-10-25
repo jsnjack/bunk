@@ -54,6 +54,19 @@ func (s *ptyStream) scan(chunk []byte) []byte {
 			s.pending = append(s.pending[:0], b)
 			continue
 		}
+		if s.state == ptyCSI && !s.discard && !s.graphics {
+			// Parameter and intermediate bytes neither end nor cancel the
+			// sequence, and a CSI is never a graphics command: keep them
+			// in one append, up to the length limit.
+			n := 0
+			for limit := min(len(chunk)-i, oscMaxBuf-len(s.pending)); n < limit && chunk[i+n] >= 0x20 && chunk[i+n] < 0x40; n++ {
+			}
+			if n > 0 {
+				s.pending = append(s.pending, chunk[i:i+n]...)
+				i += n - 1
+				continue
+			}
+		}
 		if b == 0x18 || b == 0x1a { // CAN/SUB cancel an unfinished control.
 			if s.graphics {
 				out = append(out, b)

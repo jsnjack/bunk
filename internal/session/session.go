@@ -584,7 +584,10 @@ func (s *Session) writeTerminalChunk(chunk []byte) {
 	//      content if a previous TUI program crashed without sending \x1b[?1049l).
 	wrote := false
 	exitSplitAt := 0 // byte offset into chunk just after the ?1049l/47l sequence, 0 if none
-	if !altScreen {
+	// Every alt-screen switch starts with "\x1b[?"; most chunks of output
+	// hold none, and one search saves six.
+	private := bytes.Contains(chunk, []byte("\x1b[?"))
+	if !altScreen && private {
 		for _, seq := range []string{"\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"} {
 			b := []byte(seq)
 			if i := bytes.Index(chunk, b); i >= 0 {
@@ -620,7 +623,7 @@ func (s *Session) writeTerminalChunk(chunk []byte) {
 	//      were injected after chunk[end:], it would rewind the cursor to x=0 on
 	//      the prompt line (undoing the natural cursor advance from the prompt text)
 	//      causing subsequent input to overwrite PS1.
-	if !wrote && altScreen {
+	if !wrote && altScreen && private {
 		for _, seq := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
 			b := []byte(seq)
 			if i := bytes.Index(chunk, b); i >= 0 {
@@ -786,9 +789,12 @@ func vtColorToXParse(c vt10x.Color) string {
 
 func nextTerminalQuery(data []byte, from int) (terminalQuery, bool) {
 	for i := from; i+1 < len(data); i++ {
-		if data[i] != 0x1b {
-			continue
+		// Skip to the next ESC that has a byte after it.
+		j := bytes.IndexByte(data[i:len(data)-1], 0x1b)
+		if j < 0 {
+			break
 		}
+		i += j
 		switch data[i+1] {
 		case '[':
 			if q, ok := parseCSIQuery(data, i); ok {
@@ -831,39 +837,64 @@ func nextTerminalQuery(data []byte, from int) (terminalQuery, bool) {
 
 func parseCSIQuery(data []byte, start int) (terminalQuery, bool) {
 	rest := data[start:]
-	switch {
-	case bytes.HasPrefix(rest, []byte("\x1b[14t")):
-		return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 14}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[16t")):
-		return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 16}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[18t")):
-		return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 18}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[=c")):
-		return terminalQuery{start: start, end: start + 4, kind: terminalQueryDA3}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[=0c")):
-		return terminalQuery{start: start, end: start + 5, kind: terminalQueryDA3}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[5n")):
-		return terminalQuery{start: start, end: start + 4, kind: terminalQueryDSR}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[>0q")):
-		return terminalQuery{start: start, end: start + len("\x1b[>0q"), kind: terminalQueryXTVERSION}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[>q")):
-		return terminalQuery{start: start, end: start + len("\x1b[>q"), kind: terminalQueryXTVERSION}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[>0c")):
-		return terminalQuery{start: start, end: start + len("\x1b[>0c"), kind: terminalQueryDA2}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[>c")):
-		return terminalQuery{start: start, end: start + len("\x1b[>c"), kind: terminalQueryDA2}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[0c")):
-		return terminalQuery{start: start, end: start + len("\x1b[0c"), kind: terminalQueryDA}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[c")):
-		return terminalQuery{start: start, end: start + len("\x1b[c"), kind: terminalQueryDA}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[6n")):
-		return terminalQuery{start: start, end: start + len("\x1b[6n"), kind: terminalQueryCPR}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[?6n")):
-		return terminalQuery{start: start, end: start + 5, kind: terminalQueryCPR, mode: 1}, true
-	case bytes.HasPrefix(rest, []byte("\x1b[?")):
-		mode, end, ok := parseDECRQM(data, start)
-		if ok {
-			return terminalQuery{start: start, end: end, kind: terminalQueryDECRQM, mode: mode}, true
+	if len(rest) < 3 {
+		return terminalQuery{}, false
+	}
+	// The byte after "\x1b[" picks the candidates; most sequences, SGR
+	// among them, match none.
+	switch rest[2] {
+	case '1':
+		switch {
+		case bytes.HasPrefix(rest, []byte("\x1b[14t")):
+			return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 14}, true
+		case bytes.HasPrefix(rest, []byte("\x1b[16t")):
+			return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 16}, true
+		case bytes.HasPrefix(rest, []byte("\x1b[18t")):
+			return terminalQuery{start: start, end: start + 5, kind: terminalQuerySize, mode: 18}, true
+		}
+	case '=':
+		switch {
+		case bytes.HasPrefix(rest, []byte("\x1b[=c")):
+			return terminalQuery{start: start, end: start + 4, kind: terminalQueryDA3}, true
+		case bytes.HasPrefix(rest, []byte("\x1b[=0c")):
+			return terminalQuery{start: start, end: start + 5, kind: terminalQueryDA3}, true
+		}
+	case '5':
+		if bytes.HasPrefix(rest, []byte("\x1b[5n")) {
+			return terminalQuery{start: start, end: start + 4, kind: terminalQueryDSR}, true
+		}
+	case '>':
+		switch {
+		case bytes.HasPrefix(rest, []byte("\x1b[>0q")):
+			return terminalQuery{start: start, end: start + len("\x1b[>0q"), kind: terminalQueryXTVERSION}, true
+		case bytes.HasPrefix(rest, []byte("\x1b[>q")):
+			return terminalQuery{start: start, end: start + len("\x1b[>q"), kind: terminalQueryXTVERSION}, true
+		case bytes.HasPrefix(rest, []byte("\x1b[>0c")):
+			return terminalQuery{start: start, end: start + len("\x1b[>0c"), kind: terminalQueryDA2}, true
+		case bytes.HasPrefix(rest, []byte("\x1b[>c")):
+			return terminalQuery{start: start, end: start + len("\x1b[>c"), kind: terminalQueryDA2}, true
+		}
+	case '0':
+		if bytes.HasPrefix(rest, []byte("\x1b[0c")) {
+			return terminalQuery{start: start, end: start + len("\x1b[0c"), kind: terminalQueryDA}, true
+		}
+	case 'c':
+		if bytes.HasPrefix(rest, []byte("\x1b[c")) {
+			return terminalQuery{start: start, end: start + len("\x1b[c"), kind: terminalQueryDA}, true
+		}
+	case '6':
+		if bytes.HasPrefix(rest, []byte("\x1b[6n")) {
+			return terminalQuery{start: start, end: start + len("\x1b[6n"), kind: terminalQueryCPR}, true
+		}
+	case '?':
+		switch {
+		case bytes.HasPrefix(rest, []byte("\x1b[?6n")):
+			return terminalQuery{start: start, end: start + 5, kind: terminalQueryCPR, mode: 1}, true
+		case bytes.HasPrefix(rest, []byte("\x1b[?")):
+			mode, end, ok := parseDECRQM(data, start)
+			if ok {
+				return terminalQuery{start: start, end: end, kind: terminalQueryDECRQM, mode: mode}, true
+			}
 		}
 	}
 	return terminalQuery{}, false

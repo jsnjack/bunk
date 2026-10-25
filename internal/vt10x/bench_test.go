@@ -1,13 +1,22 @@
 package vt10x
 
 import (
+	"bunk/internal/termcorpus"
 	"bytes"
 	"fmt"
+	"slices"
 	"testing"
 )
 
+// syntheticKinds are the streams benchStream builds itself; the realistic
+// termcorpus streams follow them in BenchmarkWrite.
+var syntheticKinds = []string{"ascii", "sgr", "unicode", "tui"}
+
 // benchStream builds about 1 MiB of typical terminal output of one kind.
 func benchStream(kind string) []byte {
+	if !slices.Contains(syntheticKinds, kind) {
+		return termcorpus.Generate(kind, 1<<20)
+	}
 	var b bytes.Buffer
 	for i := 0; b.Len() < 1<<20; i++ {
 		switch kind {
@@ -26,7 +35,7 @@ func benchStream(kind string) []byte {
 }
 
 func BenchmarkWrite(b *testing.B) {
-	for _, kind := range []string{"ascii", "sgr", "unicode", "tui"} {
+	for _, kind := range append(syntheticKinds, termcorpus.Kinds...) {
 		data := benchStream(kind)
 		b.Run(kind, func(b *testing.B) {
 			t := New(WithSize(200, 50))

@@ -468,34 +468,7 @@ func FuzzParse(f *testing.F) {
 		}
 		defer watchdog()()
 		c, r := fuzzSize(cols, rows)
-		whole, chunked, runes := newFuzzTerm(c, r), newFuzzTerm(c, r), newFuzzTerm(c, r)
-		whole.write(data, false)
-		if err := checkInvariants(whole.State, sideTableBound(c)); err != nil {
-			t.Fatalf("%dx%d after %q: %v", c, r, data, err)
-		}
-		chunks := fuzzChunks(data, cuts)
-		// Checking every chunk boundary of a long input in a large grid is
-		// slow; check as many as a fixed budget of cells allows.
-		every := max(1, len(chunks)*c*r/maxCheckedCells)
-		for i, chunk := range chunks {
-			chunked.write(chunk, false)
-			runes.write(chunk, true)
-			if i%every != 0 {
-				continue
-			}
-			if err := checkInvariants(chunked.State, sideTableBound(c)); err != nil {
-				t.Fatalf("%dx%d after chunk %d %q: %v", c, r, i, chunk, err)
-			}
-		}
-		if len(chunked.carry) > 3 {
-			t.Fatalf("Write left %d bytes unconsumed", len(chunked.carry))
-		}
-		if d := snapshotDiff(whole.snapshot(), chunked.snapshot()); d != "" {
-			t.Fatalf("%dx%d: chunked write differs from whole write in %s", c, r, d)
-		}
-		if d := snapshotDiff(chunked.snapshot(), runes.snapshot()); d != "" {
-			t.Fatalf("%dx%d: ASCII fast path differs from rune parser in %s", c, r, d)
-		}
+		whole := checkWrites(t, c, r, cuts, data)
 		replies := whole.replies.Bytes()
 		if err := checkReplies(replies); err != nil {
 			t.Fatalf("malformed reply: %v", err)
@@ -515,6 +488,42 @@ func FuzzParse(f *testing.F) {
 			}
 		}
 	})
+}
+
+// checkWrites writes data to three c x r terminals: whole, in chunks cut
+// at cuts, and rune by rune without the fast paths. All three must end in
+// the same state and keep the grid invariants. It returns the first.
+func checkWrites(t *testing.T, c, r int, cuts, data []byte) *fuzzTerm {
+	t.Helper()
+	whole, chunked, runes := newFuzzTerm(c, r), newFuzzTerm(c, r), newFuzzTerm(c, r)
+	whole.write(data, false)
+	if err := checkInvariants(whole.State, sideTableBound(c)); err != nil {
+		t.Fatalf("%dx%d after %q: %v", c, r, data, err)
+	}
+	chunks := fuzzChunks(data, cuts)
+	// Checking every chunk boundary of a long input in a large grid is
+	// slow; check as many as a fixed budget of cells allows.
+	every := max(1, len(chunks)*c*r/maxCheckedCells)
+	for i, chunk := range chunks {
+		chunked.write(chunk, false)
+		runes.write(chunk, true)
+		if i%every != 0 {
+			continue
+		}
+		if err := checkInvariants(chunked.State, sideTableBound(c)); err != nil {
+			t.Fatalf("%dx%d after chunk %d %q: %v", c, r, i, chunk, err)
+		}
+	}
+	if len(chunked.carry) > 3 {
+		t.Fatalf("Write left %d bytes unconsumed", len(chunked.carry))
+	}
+	if d := snapshotDiff(whole.snapshot(), chunked.snapshot()); d != "" {
+		t.Fatalf("%dx%d: chunked write differs from whole write in %s", c, r, d)
+	}
+	if d := snapshotDiff(chunked.snapshot(), runes.snapshot()); d != "" {
+		t.Fatalf("%dx%d: fast paths differ from rune parser in %s", c, r, d)
+	}
+	return whole
 }
 
 // FuzzResize writes output, resizes the terminal, then writes more. The

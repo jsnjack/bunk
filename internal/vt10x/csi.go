@@ -22,9 +22,13 @@ func (c *csiEscape) reset() {
 	c.priv = false
 }
 
+// maxCSIBytes ends a control sequence that grows this long without a
+// final byte.
+const maxCSIBytes = 256
+
 func (c *csiEscape) put(b byte) bool {
 	c.buf = append(c.buf, b)
-	if b >= 0x40 && b <= 0x7E || len(c.buf) >= 256 {
+	if b >= 0x40 && b <= 0x7E || len(c.buf) >= maxCSIBytes {
 		c.parse()
 		return true
 	}
@@ -45,6 +49,30 @@ func (c *csiEscape) parse() {
 	s = s[:len(s)-1]
 	// Parameters are split on ';' without converting the buffer to a string.
 	// The first unparseable parameter, including an empty one, ends the list.
+	// Plain decimal parameters, the common case, are read in one pass.
+	for {
+		n, j := 0, 0
+		for j < len(s) && s[j]-'0' <= 9 {
+			n = min(n*10+int(s[j]-'0'), maxParam)
+			j++
+		}
+		if j < len(s) && s[j] != ';' {
+			break // the parameter holds sub-parameters or other bytes
+		}
+		if j == 0 {
+			return
+		}
+		c.args = append(c.args, n)
+		if j == len(s) {
+			return
+		}
+		s = s[j+1:]
+	}
+	c.parseParams(s)
+}
+
+// parseParams appends the parameters in s to args, splitting sub-parameters.
+func (c *csiEscape) parseParams(s []byte) {
 	for {
 		p, rest, more := cutByte(s, ';')
 		// Handle sub-parameters separated by ':' (e.g. "4:3" for curly underline,

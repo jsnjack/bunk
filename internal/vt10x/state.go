@@ -162,6 +162,7 @@ type State struct {
 	state              parseState
 	clusterOpen        bool
 	clusterX, clusterY int
+	clusters           clusterCache
 	str                strEscape
 	csi                csiEscape
 	numlock            bool
@@ -683,28 +684,56 @@ func runeCellWidth(c rune) int {
 		return 1
 	}
 	if c >= cachedWidthRunes {
-		return max(1, uniseg.StringWidth(string(c)))
+		return uncachedCellWidth(c)
 	}
-	// Each uint32 holds sixteen 2-bit entries: 0 = not cached, else the width.
-	word, shift := &runeWidths[c>>4], uint(c&15)*2
-	if w := word.Load() >> shift & 3; w != 0 {
-		return int(w)
-	}
-	w := max(1, uniseg.StringWidth(string(c)))
-	for {
-		old := word.Load()
-		if word.CompareAndSwap(old, old|uint32(w)<<shift) {
-			return w
-		}
-	}
+	return int(runeInfo(c) & infoWidth)
+}
+
+// uncachedCellWidth is the width of c in cells. Cells hold at most two
+// columns; uniseg gives U+2E3A and U+2E3B three and four.
+func uncachedCellWidth(c rune) int {
+	return min(2, max(1, uniseg.StringWidth(string(c))))
 }
 
 // cachedWidthRunes covers the BMP, emoji and CJK extension planes.
 const cachedWidthRunes = 0x30000
 
-// runeWidths caches runeCellWidth, filled on first use. Panes parse
-// concurrently, so entries are read and set atomically.
-var runeWidths [cachedWidthRunes / 16]atomic.Uint32
+// A runeInfo entry holds a rune's cell width in its low two bits,
+// infoSimple when the rune is a simple grapheme (simpleGrapheme), and
+// infoEndsCluster when no simple grapheme extends a cluster ending with it
+// (endsCluster). Every computed entry is non-zero, because the width is 1
+// or 2.
+const (
+	infoWidth       = 3
+	infoSimple      = 4
+	infoEndsCluster = 8
+)
+
+// runeInfos caches runeInfo, filled on first use. Each uint32 holds eight
+// 4-bit entries; 0 means not computed. Panes parse concurrently, so entries
+// are read and set atomically.
+var runeInfos [cachedWidthRunes / 8]atomic.Uint32
+
+// runeInfo returns the cached width and class of c < cachedWidthRunes.
+func runeInfo(c rune) uint32 {
+	word, shift := &runeInfos[c>>3], uint(c&7)*4
+	if info := word.Load() >> shift & 15; info != 0 {
+		return info
+	}
+	info := uint32(uncachedCellWidth(c))
+	if simpleGrapheme(c) {
+		info |= infoSimple
+	}
+	if endsCluster(c) {
+		info |= infoEndsCluster
+	}
+	for {
+		old := word.Load()
+		if word.CompareAndSwap(old, old|info<<shift) {
+			return info
+		}
+	}
+}
 
 // blankCell returns the glyph that erase operations write: the current
 // colours without character attributes, link or image.

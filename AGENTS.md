@@ -43,18 +43,23 @@ internal/vt10x/     Vendored VT100/ANSI emulator (fork of github.com/hinshun/vt1
   state.go          State struct, Cursor, Glyph, ModeFlag constants, setAttr, setMode
   csi.go            CSI escape sequence dispatcher (handleCSI)
   str.go            String escape handler (OSC, DCS, APC)
-  parse.go          Byte-by-byte parser state machine (put)
+  parse.go          Parser state machine (put); scan, putText and putCSI handle
+                    text runs and CSI sequences in bulk
   vt.go             Terminal / View interfaces, New() constructor
   vt_posix.go       terminal concrete type, Write, Parse (POSIX)
   color.go          Color type, named colour constants
   row.go            16-byte cell storage, Row with per-row side table
-  grapheme.go       Incremental grapheme assembly and bounded cell text
+  grapheme.go       Incremental grapheme assembly, bounded cell text, cached
+                    segmentations and the simple-grapheme classes
   status.go         DECRQSS setting serialization
   graphics.go       Image-to-cell painting, Kitty placement deletion
   rewrap.go         Rewrap: packs stored cells of logical lines at a new width
 
 internal/graphics/ Bounded SIXEL, Kitty, and iTerm2 static image decoders;
                     store.go keeps placement bitmaps for full-resolution drawing
+
+internal/termcorpus/ Realistic output streams for the parser benchmarks
+                    (agent transcript, highlighted Go, TUI, CJK, emoji)
 
 internal/input/     Toolkit-neutral key, mouse, focus and paste encoding
                     (legacy, application cursor/keypad, Kitty CSI u)
@@ -122,9 +127,18 @@ Key local extensions to vendored vt10x:
   `cells[x]` write must call `touch(x)` (or `touchAll` after shifting).
   `Cell`/`RawCell` still return `Glyph`; the scroll callback receives a `Row`,
   which bunk's scrollback ring copies without trailing blanks.
-- `putASCII` writes printable ASCII runs without grapheme segmentation. Any
-  change to `parse`/`setChar` must keep `TestASCIIFastPathMatchesRuneParser`
-  and the `FuzzParse` seeds green; track speed with `go test ./internal/vt10x -bench BenchmarkWrite`.
+- `Write` sends most input through `scan` instead of `put`. `putText` writes
+  printable ASCII and runes that never join a neighbour without grapheme
+  segmentation; `putCSI` collects CSI parameters in one pass. The rune
+  classes (`simpleGrapheme`, `endsCluster`) are cached with the width in
+  `runeInfo`. Joining runes still go through `extendGrapheme`, which keeps
+  recent segmentations in `State.clusters`.
+- Any change to `parse`, `print`, `setChar`, the scan paths or the rune
+  classes must keep `TestASCIIFastPathMatchesRuneParser`,
+  `TestFastPathsMatchRuneParser`, `TestSimpleGraphemesNeverJoin`,
+  `TestEndsCluster` and the `FuzzParse`/`FuzzFastPaths` seeds green. Track
+  speed with `go test ./internal/vt10x -bench BenchmarkWrite` and
+  `go test ./internal/session -bench BenchmarkOutput`.
 
 ---
 

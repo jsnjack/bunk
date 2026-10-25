@@ -1,9 +1,11 @@
 package session
 
 import (
+	"bunk/internal/termcorpus"
 	"bytes"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 )
 
@@ -16,8 +18,11 @@ func BenchmarkOutput(b *testing.B) {
 		b.Fatal(err)
 	}
 	source = bytes.ReplaceAll(source, []byte("\n"), []byte("\r\n"))
-	for _, kind := range []string{"ascii", "full-rows", "sgr", "go-source"} {
+	for _, kind := range append([]string{"ascii", "full-rows", "sgr", "go-source"}, termcorpus.Kinds...) {
 		var buf bytes.Buffer
+		if slices.Contains(termcorpus.Kinds, kind) {
+			buf.Write(termcorpus.Generate(kind, 1<<20))
+		}
 		for i := 0; buf.Len() < 1<<20; i++ {
 			switch kind {
 			case "go-source": // short lines, about 30 bytes on average

@@ -301,6 +301,35 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
   On the Zen 5c CPUs (4–11, 16–23) the same code runs about 35% slower, so
   pin benchmarks before comparing.
 
+### Parser throughput for coloured and Unicode output (2026-10-25)
+
+- `Write` hands text and CSI sequences to `scan` instead of parsing rune by
+  rune. CSI parameters are collected in one pass; plain decimal parameters
+  are read without splitting.
+- Runes that can never join a neighbour skip grapheme segmentation: CJK,
+  box drawing, Hangul syllables and most emoji. Their class and width share
+  one cached 4-bit entry per code point. The classes come from probing
+  uniseg, and `TestSimpleGraphemesNeverJoin` and `TestEndsCluster` check
+  them over random pairs and clusters.
+- Joining runes (accents, VS16, skin tones, ZWJ sequences, flags, keycaps)
+  still segment, but each State keeps 64 recent segmentations, so repeated
+  sequences cost no uniseg call and no allocation.
+- U+2E3A and U+2E3B are two cells wide. uniseg reports three and four, which
+  stored a negative width and joined the next character to the dash.
+- In the session, PTY framing appends CSI parameters in bulk, the OSC and
+  query scanners skip to the next ESC, and query matching switches on the
+  byte after `ESC [`.
+- `TestFastPathsMatchRuneParser` and `FuzzFastPaths` compare the fast paths
+  with the rune parser on streams of mixed runes and sequences;
+  `FuzzCSIParams` and `FuzzFraming` compare against the previous code.
+- Measured pinned to a Zen 5 core, ten interleaved runs, medians, before →
+  after. `BenchmarkWrite` (MB/s): ASCII 622 → 698, SGR 150 → 311, Unicode
+  31 → 186, TUI 271 → 617, agent transcript 74 → 367, highlighted Go
+  100 → 337, box drawing 96 → 486, CJK 32 → 294, emoji 56 → 156.
+  `BenchmarkOutput`: ASCII 290 → 402, full rows 345 → 549, SGR 68 → 148,
+  Go source 110 → 135, agent transcript 47 → 180, highlighted Go 51 → 156,
+  box drawing 56 → 195, CJK 28 → 200, emoji 47 → 117.
+
 ### Automated feature scripts (2026-10-25)
 
 - All seven `terminal_features.sh` groups run as Go tests
