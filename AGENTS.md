@@ -64,8 +64,12 @@ internal/session/   One terminal session, shared by front ends
   process.go        Foreground process, SSH host and container detection
   search.go         Case-insensitive search over scrollback and the live grid
   status.go         Agent status: AgentSpec detection, attention requests
-                    (OSC 9/99/777, BEL), failures (OSC 133;D), git branch
+                    (OSC 9/99/777, BEL), failures (OSC 133;D), git branch,
+                    explicit agent reports (Notify)
   winsize.go        PTY window size in cells and virtual pixels
+
+internal/notify/    Agent hook reports: Unix socket server (token → Session),
+                    client, `notify` CLI (RunCLI), hook snippets per agent
 
 third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
                     (local go.mod replacement; see BUNK_PATCHES.md)
@@ -74,6 +78,7 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             Demo assets (gif)
+docs/               agent-hooks.md: hook recipes and the notify protocol
 scripts/            Manual regression helpers; headless-gui.sh runs GUI tests
 ```
 
@@ -231,12 +236,17 @@ Key fields agents may need to know about:
 - **Terminal cleanup runs synchronously in `main` after the event loop.**
   Background goroutines can't be relied on to finish their cleanup before
   the process exits.
-- **Agent status is inferred, not reported.** `session.Status` names the
-  foreground agent from `DefaultAgents` (add a CLI there, or via
+- **Agent status is inferred unless the agent reports it.** `session.Status`
+  names the foreground agent from `DefaultAgents` (add a CLI there, or via
   `Options.Agents`), counts output in the last 2 s as working, and treats
   OSC 9/99/777 notifications and BEL from an agent as "needs you". VTE's
-  "Command completed" notices are ignored. Claude Code only sends OSC
-  notifications to terminals it recognises; elsewhere set its
+  "Command completed" notices are ignored. Agent hooks can report state
+  through `internal/notify` (`docs/agent-hooks.md`); `Session.Notify` takes
+  priority over inference until `Acknowledge`, `clear` or a foreground
+  change. Every change of the agent state runs `Hooks.StatusChanged` once:
+  the reader, its idle timer, the 1 s process tick and `Notify` share one
+  record of the last announced state. Without hooks, Claude Code only sends
+  OSC notifications to terminals it recognises; set its
   `preferredNotifChannel` to `terminal_bell`.
 - **Nested sessions are refused.** `BUNK=1` is exported into every pane's
   environment; the binary exits at startup if it sees it set.
