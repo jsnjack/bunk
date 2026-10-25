@@ -670,9 +670,7 @@ func (s *Session) trackFgProcess(h Hooks, done <-chan struct{}) {
 		// virtually all costly reads.
 		ct, cn, sshHost := lastCT, lastCN, lastSSHHost
 		pgidChanged := pgid != lastPGID
-		if s.refreshStatus(shellPid, pgid, name, pgidChanged) && h.StatusChanged != nil {
-			h.StatusChanged()
-		}
+		statusChanged := s.refreshStatus(shellPid, pgid, name, pgidChanged)
 		if pgidChanged {
 			lastPGID = pgid
 			ct, cn = "", ""
@@ -695,6 +693,9 @@ func (s *Session) trackFgProcess(h Hooks, done <-chan struct{}) {
 		}
 
 		if name == lastName && ct == lastCT && cn == lastCN && sshHost == lastSSHHost {
+			if statusChanged && h.StatusChanged != nil {
+				h.StatusChanged()
+			}
 			continue
 		}
 		L().Debug("trackFgProcess: status change", "pane", s.ID, "name", name, "container_type", ct, "container_id", cn, "ssh_host", sshHost)
