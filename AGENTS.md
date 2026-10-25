@@ -81,10 +81,10 @@ third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patch
 cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make check)
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
-assets/             Demo assets (gif)
+assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
 docs/               agent-hooks.md: hook recipes and the notify protocol
 scripts/            Terminal feature scripts (tested by terminal_features_test.go);
-                    headless-gui.sh runs GUI tests
+                    headless-gui.sh runs GUI tests; screenshots.sh renders assets/
 ```
 
 Key local extensions to vendored vt10x:

@@ -2,40 +2,161 @@
 
 # bunk
 
-Adds split panes to any terminal. Detects your current context - container, SSH, or sudo - and can open new panes inside the same environment.
+**bunk** adds split panes to any terminal. **bunk-gui** is a native GTK4 terminal for running coding agents side by side.
 
-![bunk demo](assets/bunk_demo.gif)
+![bunk-gui with five agent tabs in the rail: working, needs you, idle, done and failed; the selected tab splits an agent and a shell](assets/gui-hero.png)
 
 </div>
 
 ---
 
-bunk is a terminal multiplexer written in Go. Each pane has its own PTY. It's been used daily with Copilot CLI, Claude Code, btop, vim, and other TUI apps.
+## Main idea
 
-## Features
+A coding agent spends minutes on a task, then waits for an answer. With several agents running, you lose time checking each terminal.
 
-- Split panes (F1) - direction chosen by pixel cell aspect ratio, not column count
-- Context-aware split (Alt+F1) - opens a new shell in the same container, SSH host, or sudo
-- Zoom (F12) - fullscreen toggle for the active pane; other panes stay open
-- Content reflow - text rewraps at the new column width on every split or resize
-- Per-pane scrollback (10 000 lines by default) with Shift+PgUp/PgDn, preserved through vim and other alt-screen apps
-- Incremental search (Ctrl+F) across live output and scrollback
-- Copy/paste with Ctrl+C / Ctrl+V (Ctrl+C passes through when no selection is active)
-- Mouse: click to focus, drag to select, double-click word, scroll wheel; Shift overrides app mouse mode
-- Status badges: container name, SSH host, sudo, scroll depth
-- Themes: `terminal` (inherit from host), `default`, `solarized-dark`, `dracula`, `nord`
+- **Agent workspaces.** bunk-gui gives each agent a tab with its repo, branch, container or SSH host, and state.
+- **Five states.** Each tab shows working, idle, needs you, done or failed.
+- **Status in the TUI too.** bunk shows the same states on a badge in each pane.
+- **Next needing you.** One key jumps to the next agent that waits for you: Ctrl+Shift+J in bunk-gui, Alt+A in bunk.
+- **Real PTYs.** Every pane is a real PTY. Agents, vim, btop and shells behave as in any terminal.
 
-## Installation
+Both front ends run on one Go core. `internal/session` owns the PTY, the emulator, scrollback, reflow, search and agent status. Each front end adds input and drawing.
+
+| | bunk | bunk-gui |
+| :- | :- | :- |
+| Runs in | Any terminal: local, SSH, containers | Its own window on Linux (GTK4, libadwaita) |
+| Draws with | tcell, in the host terminal's cells | Its own OpenGL renderer, in device pixels |
+| Organises work as | Split panes, with agent status per pane | Tabs of split panes, with agent status per tab |
+| Use it for | Splits wherever a terminal runs | Several agents side by side on a desktop |
+
+- **Why the TUI.** bunk runs inside any terminal emulator, so it works over SSH and on servers.
+- **Why the GUI.** Only a native window gets real pixels, every key event and the GPU.
+- **Pixel-exact text.** bunk-gui draws each pane into a texture at the widget's device-pixel size. Text stays on the pixel grid at 133% and other fractional scales.
+
+## In progress
+
+These features are on other branches. This README and its screenshots do not show them yet.
+
+- **Parser speed.** Faster parsing of program output.
+- **Benchmark check.** `make bench-check` compares benchmarks with a stored baseline.
+- **Soak tests.** `make soak` runs long stress tests.
+- **New window.** Deferred: Ctrl+Shift+N shows "not built yet".
+
+## bunk-gui
+
+<table>
+<tr>
+<td width="50%"><img src="assets/gui-switcher.png" alt="Tab switcher listing needs-you first"></td>
+<td width="50%"><img src="assets/gui-bar.png" alt="Tabs in a bar on top"></td>
+</tr>
+<tr>
+<td>Switcher (Ctrl+Shift+Space): needs-you first, filter by agent, repo or branch</td>
+<td>Tabs on top: <code>tabs = "bar"</code></td>
+</tr>
+<tr>
+<td><img src="assets/gui-find.png" alt="Find bar with highlighted matches and a collapsed rail"></td>
+<td><img src="assets/gui-shortcuts.png" alt="Keyboard shortcuts window"></td>
+</tr>
+<tr>
+<td>Find (Ctrl+Shift+F) with the rail collapsed</td>
+<td>Shortcuts window (Ctrl+Shift+?): click a key to rebind it</td>
+</tr>
+</table>
+
+| Feature | Default keys | Details |
+| :- | :- | :- |
+| New / close tab | Ctrl+Shift+T / Ctrl+Shift+W | A new tab starts in the current pane's directory |
+| Switch tab | Ctrl+PgDn / Ctrl+PgUp, Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+1…9 | |
+| Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
+| Agent status | | Dot, state, repo ⎇ branch, container or SSH host, and the agent's notice; see [Agent status and hooks](#agent-status-and-hooks) |
+| Switcher | Ctrl+Shift+Space | Lists needs-you tabs first; type to filter |
+| Next needing you | Ctrl+Shift+J | Visits needs-you tabs, then done tabs, and acknowledges each |
+| Split | F1 / Alt+F1 | Side by side or stacked by pane shape; Alt+F1 opens a shell in the same container |
+| Zoom pane | F12 | |
+| Move between panes | Alt+arrows | |
+| Find | Ctrl+Shift+F | Enter or Ctrl+Shift+G: next; Shift+Enter: previous; Esc keeps the scroll position |
+| Scrollback | Shift+PgUp / Shift+PgDn | |
+| Copy / paste | Ctrl+Shift+C / Ctrl+Shift+V | Selecting copies to the primary selection; middle click pastes it |
+| Text size | Ctrl+= / Ctrl+- / Ctrl+0 | |
+| Images | | SIXEL, Kitty and iTerm2 images drawn at full resolution, 1:1 in device pixels |
+| Links | Ctrl+click | Opens OSC 8 links and plain http, https and file URLs; Ctrl+hover underlines them |
+| Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
+| Shortcuts window | Ctrl+Shift+? | Rebind or turn off any action; ⚠ marks keys terminal programs may use |
+| Preferences | Ctrl+, | Layout, rail, font, text zoom and extra agent CLIs |
+| Quit | Ctrl+Shift+Q | Asks first while a pane runs more than an idle shell |
+
+Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. bunk-gui draws their images 1:1:
+
+![A load-test chart from kitten icat, drawn 1:1 in a shell pane next to the agent tabs](assets/gui-image.png)
+
+- **Image memory.** Each pane keeps up to 64 MiB of bitmaps (`-image-bytes`). Images drawn least recently fall back to half-block cells.
+- **Links while a program reads the mouse.** Ctrl+Shift+click opens the link instead.
+
+## bunk
+
+![bunk demo](assets/bunk_demo.gif)
+
+| Feature | Default keys | Details |
+| :- | :- | :- |
+| Split | F1 | Direction from the pixel cell aspect ratio, not the column count |
+| Split in the same context | Alt+F1 | New shell in the same container, SSH host or sudo |
+| Zoom pane | F12 | Other panes stay open |
+| Move between panes | Alt+arrows | |
+| Scrollback | Shift+PgUp / Shift+PgDn | 10 000 lines per pane, kept through vim and other alt-screen programs |
+| Search | Ctrl+F | Enter or Ctrl+N: next; Ctrl+P: previous; Esc: exit |
+| Copy / paste | Ctrl+C / Ctrl+V | Ctrl+C reaches the program when nothing is selected |
+| Passthrough | Ctrl+F12 | Per pane: every other key goes to the program |
+| Agent status | | A badge per pane: working, idle, needs you (amber), done (green) or failed, with the agent's notice |
+| Next needing you | Alt+A | Focuses the next pane whose agent needs you, else one that is done |
+| Re-initialise host terminal | Alt+R | Recovers after binary output corrupts the host |
+| Quit | Ctrl+Q | Ctrl+D or `exit` closes one pane |
+| Mouse | | Click focuses, drag selects, double click selects a word; Shift overrides program mouse mode |
+| Reflow | | Text rewraps at the new width on every split and resize |
+| Themes | | `terminal` (host colours), `default`, `solarized-dark`, `dracula`, `nord` |
+
+Alt+F1 supports Podman, Docker, LXD/LXC, Incus, Toolbox, Distrobox, SSH and sudo/su.
+
+Badges in the top-right corner of each pane:
+
+| Badge | Meaning |
+| :- | :- |
+| `◐ claude needs you · Allow npm install?` | The agent's state and notice; needs you and done fill the badge |
+| `⬡ mycontainer` | Podman, Docker, LXD, LXC or Incus container |
+| `▣ my-toolbox` | Toolbox or Distrobox container |
+| `⇄ myserver.com` | SSH session |
+| `sudo` / `su` | Elevated shell |
+| `PASS` | Keyboard passthrough on; shown first when badges do not fit |
+| `ZOOM` | Pane zoomed with F12 |
+| `-42` | Scrolled back 42 lines |
+| `COPIED` | Selection copied to the clipboard |
+
+The separators around a pane that needs you or is done take the badge's colour.
+
+## Terminal emulation
+
+Both front ends share the emulator, so they support the same sequences.
+
+- **Colour and text.** Truecolour, SGR underline styles and colours, overline, dim, strike-through.
+- **Integration.** OSC 8 links, OSC 52 clipboard, OSC 133 command status, bracketed paste, focus reports.
+- **Host passthrough.** bunk forwards OSC 7, OSC 8 links and OSC 133 to the host terminal.
+- **Input.** Kitty keyboard protocol, application cursor and keypad modes, SGR mouse reports.
+- **Unicode.** Wide characters, combining marks and emoji sequences stay together through copy, search and reflow.
+- **Images.** SIXEL, Kitty and iTerm2 static images. bunk-gui draws them at full resolution; bunk draws half-block cells.
+- **Queries.** Each pane answers DA, DECRQM, DECRQSS and XTGETTCAP itself, also over SSH.
+
+[TERMINAL_AUDIT.md](TERMINAL_AUDIT.md) lists every feature with its status and limits.
+
+## Install
+
+### bunk
 
 ```bash
 grm install jsnjack/bunk
 ```
 
-Or grab a binary from [Releases](https://github.com/jsnjack/bunk/releases).
+Or download a binary from [Releases](https://github.com/jsnjack/bunk/releases) (Linux and macOS, amd64 and arm64).
 
-## Auto-launch
-
-Add to `~/.bashrc` or `~/.zshrc`:
+To start bunk in every new terminal, add this to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
 if [[ -t 1 ]] && [[ -z "$BUNK" ]] && [[ -z "$SSH_TTY" ]] && command -v bunk &>/dev/null; then
@@ -43,121 +164,168 @@ if [[ -t 1 ]] && [[ -z "$BUNK" ]] && [[ -z "$SSH_TTY" ]] && command -v bunk &>/d
 fi
 ```
 
-`BUNK=1` is set in every pane to prevent recursion.
+bunk sets `BUNK=1` in every pane and refuses to start inside itself.
 
-## Key Bindings
+### bunk-gui
 
-| Key | Action |
-|-----|--------|
-| `F1` | Split pane (taller than wide → splits top/bottom; wider than tall → splits left/right) |
-| `Alt+F1` | Split with a new shell in the same context (SSH / container / sudo) |
-| `Ctrl+F12` | Toggle keyboard passthrough for the active pane |
-| `F12` | Toggle fullscreen zoom |
-| `Alt+←↑→↓` | Navigate between panes |
-| `Shift+PgUp` / `Shift+PgDn` | Scroll history |
-| `Ctrl+F` | Search (Enter / Ctrl+N = next, Ctrl+P = prev, Esc = exit) |
-| `Ctrl+C` | Copy selection; passes `^C` through if nothing is selected |
-| `Ctrl+V` | Paste |
-| `Ctrl+Q` | Quit |
-| `Ctrl+D` / `exit` | Close active pane |
-| `Alt+R` | Re-initialise host terminal (recovery after binary corruption) |
-| Mouse drag | Select text (hold Shift to override app mouse mode) |
-| Double-click | Select word |
-| Drag to edge | Auto-scroll into history while selecting |
+bunk-gui runs on Linux and needs Go 1.26, gcc, GTK 4, libadwaita and OpenGL 3.3. On Fedora:
 
-With passthrough enabled, all keyboard shortcuts except the passthrough toggle
-reach the application, including F1, Alt+arrows, and Ctrl+Q. Mouse controls
-remain available. Each pane remembers its own mode; new panes start with it off.
-Remap the toggle with `passthrough` in `[keys]`.
+```bash
+sudo dnf install golang gcc gtk4-devel libadwaita-devel
+make gui            # writes bin/bunk-gui
+bin/bunk-gui
+```
 
-## Context-aware splitting (`Alt+F1`)
+`make rpm` builds a Fedora RPM in `bin/rpmbuild`. Packaging is still being finalised.
 
-`F1` always opens a plain host shell. `Alt+F1` opens a new shell in the same context as the current pane.
-
-Supported contexts: Podman, Docker, LXD/LXC, Incus, Toolbox, Distrobox, SSH, sudo/su.
-
-## Status badges
-
-Shown in the top-right corner of each pane:
-
-| Badge | Meaning |
-|---|---|
-| `⬡ mycontainer` | Podman / Docker / LXD / LXC / Incus container |
-| `▣ my-toolbox` | Toolbox or Distrobox container |
-| `⇄ myserver.com` | SSH session |
-| `sudo` / `su` | Elevated shell |
-| `PASS` | Keyboard passthrough enabled (`Ctrl+F12` to disable); takes priority when badges do not fit |
-| `ZOOM` | Pane is in fullscreen zoom mode (`F12`) |
-| `-42` | Scrolled back 42 lines |
-| `COPIED` | Selection copied to clipboard |
+| Flag | Effect |
+| :- | :- |
+| `-e CMD` | Run `CMD` with `sh -c` in the first tab; quit when it exits |
+| `-tab CMD` | Open another tab running `CMD`; repeatable |
+| `-layout rail\|bar` | Tab layout for this run |
+| `-font "Noto Sans Mono 11"` | Font family and size for this run |
+| `-size 120x36` | Initial size in cells |
+| `-config FILE` | Settings file instead of `~/.config/bunk-gui/config.toml` |
 
 ## Configuration
 
-```bash
-bunk config init    # writes ~/.config/bunk/config.toml
-```
+### bunk
+
+`bunk config init` writes a documented `~/.config/bunk/config.toml`. Every key is optional.
 
 ```toml
-# Built-in themes: terminal, default, solarized-dark, dracula, nord
-# "terminal" inherits all colours from the host terminal emulator.
-theme = "default"
+theme = "default"      # terminal, default, solarized-dark, dracula, nord
+# scrollback = 10000   # lines per pane
+# cell_aspect = 2.25   # cell height / width when the host does not report pixels
 
-# Per-pane scrollback limit (default: 10 000 lines).
-# scrollback = 10000
+[ui]                   # "#RRGGBB" overrides; empty uses the theme
+active_border = ""
 
-# Log destination - only written when --debug or --trace is passed.
-# log_file = "/tmp/bunk.log"
-
-# Cell aspect ratio (height / width). Controls split direction.
-# Default 2.25 suits most monospace fonts.
-# cell_aspect = 2.25
-
-[keybindings]
-split         = "f1"
-split_context = "alt+f1"
-zoom          = "f12"
-quit          = "ctrl+q"
-copy          = "ctrl+c"
-paste         = "ctrl+v"
-search        = "ctrl+f"
-
-[ui]
-# Hex colour overrides ("#RRGGBB"). Empty = use theme default.
-active_border   = ""
-inactive_border = ""
-scrollbar_thumb = ""
-scrollbar_track = ""
+[keys]                 # empty keeps the default; "none" sends the key to the pane
+split          = "f1"
+split_context  = "alt+f1"
+zoom           = "f12"
+passthrough    = "ctrl+f12"
+next_needs_you = "alt+a"
+search         = "ctrl+f"
+quit           = "ctrl+q"
 ```
 
-## CLI flags
+Flags: `--config FILE`, `--theme NAME`, `--debug`, `--trace` (logs raw PTY bytes to `/tmp/bunk.log`).
 
+### bunk-gui
+
+bunk-gui reads `~/.config/bunk-gui/config.toml`. Every key is optional.
+
+```toml
+tabs = "rail"              # "rail" (side) or "bar" (top)
+rail_open = false          # start with the rail expanded
+font = "Noto Sans Mono"
+font_size = 11             # points
+text_zoom = 100            # % of font_size at start and after Ctrl+0
+
+[keys]                     # one key or a list; actions in cmd/bunk-gui/bindings.go
+switcher = "ctrl+shift+space"
+next_needs_you = ["ctrl+shift+j", "f9"]
+zoom = "none"              # F12 goes to the terminal
+
+[[agents]]                 # another agent CLI to recognise; repeatable
+name = "myagent"
+processes = ["myagent"]
+scripts = ["@me/myagent"]  # for agents that run under node, python, bun, deno or ruby
 ```
-bunk [flags]
-bunk config init [--force]
 
-Flags:
-  --config string    Config file path (default ~/.config/bunk/config.toml)
-  --theme  string    Override theme name
-  --debug            Debug logging
-  --trace            Trace logging (includes raw PTY bytes)
-```
+- **Live reload.** bunk-gui watches the file and applies edits to the running window.
+- **Bad values.** A bad value shows a toast, and the setting keeps its default.
+- **Shared names.** `[keys]` uses bunk's action names and key syntax where both have the action.
+- **"none".** `"none"` or `""` turns an action off, so its keys reach the terminal.
+- **Passthrough.** Ctrl+F12 or the menu's "Send all keys to terminal" works per pane.
+- **Shortcuts and preferences.** Both windows write to this file and rewrite only the lines they change.
 
-## Debugging
+## Agent status and hooks
 
-If your shell auto-launches bunk from `.bashrc` / `.zshrc`, use this workflow:
+Both front ends infer each agent's state from these sources:
+
+- **Foreground process.** Both recognise 15 agent CLIs, such as claude, codex, copilot and gemini. bunk-gui's `[[agents]]` adds more.
+- **Output.** Output in the last 2 s means working; silence means idle.
+- **Notifications.** OSC 9/99/777 and BEL from an agent mean needs you.
+- **Exit codes.** A failed command reported through OSC 133;D means failed.
+- **Acknowledge.** Focusing the pane or typing into it clears needs you and done.
+
+With hooks, the agent reports its own state, and the report takes priority over inference:
 
 ```bash
-# 1) Open a terminal that does NOT auto-exec bunk
-BUNK=1 gnome-terminal
-
-# 2) From that terminal, run the local binary directly
-BUNK= ./bunk
-
-# (or: BUNK= ./bunk --trace for detailed logs of all input/output)
+bunk notify hooks claude        # print the hook snippet for Claude Code
+bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
 ```
 
-Or use the Makefile shortcut — builds the local binary, resets `/tmp/bunk.log`, and opens a new terminal with trace logging in one step:
+- **One CLI.** `bunk notify` and `bunk-gui notify` take the same arguments. The snippets call whichever is installed.
+- **Environment.** Each pane gets `BUNK_NOTIFY_SOCKET` and `BUNK_NOTIFY_SESSION`. Sockets live under `$XDG_RUNTIME_DIR/bunk/`.
+- **Details.** [docs/agent-hooks.md](docs/agent-hooks.md) has snippets for Claude Code, Codex, Copilot CLI and Gemini CLI, the wire format and exit codes.
+
+## Packages
+
+```
+   bunk (package main)                bunk-gui (cmd/bunk-gui)
+   tcell, any terminal                GTK4 window, OpenGL panes, tabs
+          │                                │
+          └───────────────┬────────────────┘
+                 ┌────────┴─────────────────────────┐
+                 ▼                                  ▼
+          internal/session  ◀──────────────  internal/notify
+          PTY, scrollback, reflow,           hook socket, notify CLI
+          search, agent status
+             │            │
+             ▼            ▼
+     internal/vt10x   internal/input
+     emulator         key and mouse encoding
+             │
+             ▼
+     internal/graphics
+     image decoders, bitmap store
+```
+
+| Path | What it does |
+| :- | :- |
+| `/` (package main) | bunk TUI: tcell screen, BSP layout, borders, badges with agent status, search bar, config, `bunk notify` |
+| `cmd/bunk-gui/` | bunk-gui: window, tabs, rail and bar, OpenGL pane view, images, links, find, shortcuts, preferences. A separate Go module with cgo. |
+| `cmd/bunk-gui/gl/` | OpenGL 3.3 binding, loaded at run time through EGL |
+| `internal/session/` | One terminal session: PTY, emulator, scrollback, reflow, search, selection, query replies, agent status |
+| `internal/vt10x/` | VT/xterm emulator, a fork of hinshun/vt10x: parser, 16-byte cells, graphemes, rewrap |
+| `internal/input/` | Key, mouse, focus and paste encoding: legacy, application modes, Kitty CSI u |
+| `internal/notify/` | Agent hook reports: Unix socket server, the `notify` CLI both binaries run, hook snippets per agent |
+| `internal/graphics/` | Bounded SIXEL, Kitty and iTerm2 image decoders; the bitmap store behind full-resolution drawing |
+| `third_party/tcell/` | tcell v2.13.9 with overline, keypad and keycap-width patches |
+| `scripts/` | `headless-gui.sh`, `screenshots.sh`, terminal feature scripts |
+| `packaging/` | Desktop entry, icon, AppStream metainfo; `fedora/` holds the RPM spec |
+| `docs/` | `agent-hooks.md`: hook snippets and the notify protocol |
+
+## Development
 
 ```bash
-make run
+make check         # bunk and the core: fmt, vet, race tests, build, lint
+make gui-test      # bunk-gui: vet, race tests on a headless compositor, packaging checks
+make check-all     # both; run it before calling work done
+make fuzz          # every Fuzz target for FUZZTIME each (default 30s); not in check-all
+make screenshots   # render the README screenshots into assets/
+make run           # build bunk and open it with --trace in a new terminal
 ```
+
+- **No windows on the desktop.** GUI tests run on a private mutter from `scripts/headless-gui.sh`.
+- **Private session.** The compositor has one 2560x1600 monitor at 133%, its own D-Bus and its own clipboard.
+- **Checks in tests.** Pixel, idle-frame, allocation and latency checks are Go tests. Turn a manual check into a test.
+- **Package builds.** `go test -short` skips window tests; the RPM's `%check` uses it.
+- **Tools.** Window tests need mutter, gdctl and dbus-run-session. Packaging checks need desktop-file-validate and appstreamcli.
+- **Screenshots.** `TestGUIScreenshots` renders the README scenario in every `make gui-test`.
+- **Saving shots.** `make screenshots` copies the PNGs to `assets/` and shrinks them with pngquant, oxipng, optipng or ImageMagick.
+
+To debug a bunk that auto-starts from `.bashrc`, run the local build from a terminal without it:
+
+```bash
+BUNK=1 gnome-terminal          # a terminal that does not start bunk
+BUNK= ./bunk --trace           # inside it: the local build, logging to /tmp/bunk.log
+```
+
+## License
+
+MIT, see [LICENSE](LICENSE).

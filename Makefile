@@ -97,6 +97,10 @@ gui-test:
 	desktop-file-validate packaging/$(APP_ID).desktop
 	appstreamcli validate --no-net packaging/$(APP_ID).metainfo.xml
 
+# README screenshots of bunk-gui, rendered headlessly into assets/.
+screenshots:
+	scripts/screenshots.sh
+
 # Everything: bunk's gate, then bunk-gui and its packaging.
 check-all: check gui-test
 
@@ -127,4 +131,4 @@ rpm: version
 clean:
 	rm -rf bin/ $(BINARY)
 
-.PHONY: version build release test vet fmt lint check standards run clean gui gui-test check-all rpm fuzz
+.PHONY: version build release test vet fmt lint check standards run clean gui gui-test screenshots check-all rpm fuzz
