@@ -4,6 +4,7 @@ package main
 import (
 	"bunk/internal/session"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"sync"
@@ -51,6 +52,10 @@ type App struct {
 	// flushes it to os.Stdout before tcell.Show() so the host terminal
 	// receives OSC 7/8/52/133 (CWD, hyperlinks, clipboard, prompt markers).
 	oscBuf *oscBuffer
+
+	// hostOut receives what bunk writes to the host terminal outside tcell
+	// (see host). nil means os.Stdout; tests capture it.
+	hostOut io.Writer
 
 	// lastEmittedTitle is the most recent title we wrote to the host terminal
 	// via OSC 0.  Compared each frame to avoid redundant writes.
@@ -203,7 +208,7 @@ func (app *App) reinitHost() {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
-	if _, err := os.Stdout.Write([]byte("\x1b[m\x1b(B\x1b]8;;\x1b\\")); err != nil {
+	if _, err := app.host().Write([]byte("\x1b[m\x1b(B\x1b]8;;\x1b\\")); err != nil {
 		L.Warn("reinitHost: reset write failed", "err", err)
 	}
 

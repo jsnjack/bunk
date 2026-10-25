@@ -181,10 +181,10 @@ func (app *App) render() {
 			app.screen.HideCursor()
 		}
 
-		app.oscBuf.flush(os.Stdout)
+		app.oscBuf.flush(app.host())
 		app.emitTitle(active)
 		app.emitCursorStyle(zp)
-		closeHostHyperlink(os.Stdout)
+		closeHostHyperlink(app.host())
 		zp.Lock()
 		needsSync := zp.NeedsSync
 		zp.NeedsSync = false
@@ -246,10 +246,10 @@ func (app *App) render() {
 	}
 
 	// Step 5 - drain OSC passthrough sequences and update host tab title.
-	app.oscBuf.flush(os.Stdout)
+	app.oscBuf.flush(app.host())
 	app.emitTitle(active)
 	app.emitCursorStyle(active)
-	closeHostHyperlink(os.Stdout)
+	closeHostHyperlink(app.host())
 
 	if checkAndClearNeedsSync(root) {
 		app.screen.Sync()
@@ -287,6 +287,15 @@ func paneHasTransientLineClear(p *Pane) bool {
 // cursorDisplayX uses the emulator's display-cell coordinates.
 func cursorDisplayX(_ *Pane, cur vt10x.Cursor) int {
 	return cur.X
+}
+
+// host returns the writer for bytes bunk sends to the host terminal outside
+// tcell: OSC passthrough, titles and hyperlink closes.
+func (app *App) host() io.Writer {
+	if app.hostOut != nil {
+		return app.hostOut
+	}
+	return os.Stdout
 }
 
 // closeHostHyperlink writes an OSC 8 close to w.  The render loop calls this
@@ -383,7 +392,7 @@ func (app *App) emitTitle(active *Pane) {
 	}
 	app.lastEmittedTitle = title
 	// OSC 0 sets both icon name and window title; BEL-terminated.
-	os.Stdout.Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
+	app.host().Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
 }
 
 // sanitizeTitle keeps only printable runes (no C0/C1 controls), validates
@@ -696,6 +705,14 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			var combining []rune
 			if ch == cell.Char {
 				combining = []rune(cell.Combining)
+			}
+			// With DECRST 2027 a one-column cell can hold a cluster that
+			// tcell measures as two columns (VS16, keycaps). Paint only the
+			// base character so later cells keep the emulator's columns.
+			if cell.Width == 1 && len(combining) > 0 {
+				if _, w := scr.Put(p.x+col, p.y+row, cell.Text(), style); w > 1 {
+					combining = nil
+				}
 			}
 			scr.SetContent(p.x+col, p.y+row, ch, combining, style)
 			if cell.Width == 2 && isBlank && col+1 < p.w-1 {
@@ -1023,7 +1040,7 @@ func vtColor(c vt10x.Color, def tcell.Color, rt resolvedTheme) tcell.Color {
 		return tcell.PaletteColor(int(c))
 	}
 	if c < vt10x.DefaultFG {
-		// True-color RGB: packed as r<<16 | g<<8 | b by vt10x.
+		// True-color RGB from vt10x.RGB: r<<16 | g<<8 | b in the low 24 bits.
 		return tcell.NewRGBColor(int32(c>>16&0xff), int32(c>>8&0xff), int32(c&0xff))
 	}
 	return def

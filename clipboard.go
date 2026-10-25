@@ -41,7 +41,7 @@ func (app *App) copyToClipboard(text string) {
 	app.oscBuf.append([]byte(osc))
 
 	// Native clipboard as best-effort fallback.
-	go copyTextToNativeClipboard(text)
+	go writeNativeClipboard(text)
 }
 
 // mirrorOSC52ToNativeClipboard mirrors a child application's OSC 52 clipboard
@@ -53,7 +53,7 @@ func mirrorOSC52ToNativeClipboard(seq []byte) {
 		return
 	}
 	go func() {
-		if copyTextToNativeClipboard(text) {
+		if writeNativeClipboard(text) {
 			L.Debug("osc52: mirrored to native clipboard", "bytes", len(text))
 		} else {
 			L.Debug("osc52: native clipboard mirror failed", "bytes", len(text))
@@ -110,6 +110,10 @@ func osc52TargetsClipboard(selection []byte) bool {
 	}
 	return bytes.IndexByte(selection, 'c') >= 0
 }
+
+// writeNativeClipboard copies text to the desktop clipboard. Tests replace
+// it so they never change the user's clipboard.
+var writeNativeClipboard = copyTextToNativeClipboard
 
 func copyTextToNativeClipboard(text string) bool {
 	if tryClipboardCmd(exec.Command("wl-copy"), text) {

@@ -44,12 +44,18 @@ func (t *State) extendGrapheme(c rune) bool {
 	if bytes.ContainsRune(text, '\u20e3') && (g.Char >= '0' && g.Char <= '9' || g.Char == '#' || g.Char == '*') {
 		width = 2
 	}
-	if len(rest) != 0 || (t.mode&ModeGrapheme == 0 && uniseg.StringWidth(string(c)) != 0) {
+	legacy := t.mode&ModeGrapheme == 0
+	if len(rest) != 0 || (legacy && uniseg.StringWidth(string(c)) != 0) {
 		return false
 	}
 	// A pathological combining sequence must not grow per-cell storage forever.
 	if len(text) > 1024 {
 		return true
+	}
+	// Per-codepoint widths (DECRST 2027): a zero-width code point such as
+	// VS16 or a keycap joins the cell without widening it.
+	if legacy && g.Width > 0 {
+		width = int(g.Width)
 	}
 	// Cells hold at most two columns. uniseg adds up Prepend widths, so
 	// "\u0600\u0600a" reports 3.

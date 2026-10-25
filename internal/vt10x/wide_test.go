@@ -67,7 +67,7 @@ func TestReplaceScreenPreservesState(t *testing.T) {
 	if got := term.Link(term.Cell(0, 0).Link); got != "https://new.example" {
 		t.Fatalf("remapped link = %q", got)
 	}
-	if term.RawCell(0, 0).BG != DefaultBG || term.Cell(0, 0).BG != Color(0x112233) {
+	if term.RawCell(0, 0).BG != DefaultBG || term.Cell(0, 0).BG != RGB(0x11, 0x22, 0x33) {
 		t.Fatal("default colour identity/override was lost")
 	}
 	if _, err := term.Write([]byte("\x1b]111\x07")); err != nil {
