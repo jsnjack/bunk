@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"os"
+	"strings"
 	"unicode"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -64,25 +65,10 @@ func (p *Pane) attachInput() {
 	w.AddController(scroll)
 }
 
-// onKey handles a key press that the input method did not consume: window
-// shortcuts first, then terminal input. kittyFlags and the modes are read
-// under the session lock.
+// onKey sends a key press that no window shortcut took and the input
+// method did not consume to the terminal. kittyFlags and the modes are
+// read under the session lock.
 func (a *App) onKey(p *Pane, keyval uint, state gdk.ModifierType) bool {
-	ctrl, shift := state&gdk.ControlMask != 0, state&gdk.ShiftMask != 0
-	switch {
-	case ctrl && shift && (keyval == gdk.KEY_C || keyval == gdk.KEY_c):
-		a.copySelection(p)
-		return true
-	case ctrl && shift && (keyval == gdk.KEY_V || keyval == gdk.KEY_v):
-		a.paste(p, false)
-		return true
-	case shift && !ctrl && keyval == gdk.KEY_Page_Up:
-		p.scrollBy(max(1, p.tv.rows-1))
-		return true
-	case shift && !ctrl && keyval == gdk.KEY_Page_Down:
-		p.scrollBy(-max(1, p.tv.rows-1))
-		return true
-	}
 	ev, ok := keyEvent(keyval, state)
 	if !ok {
 		return false
@@ -110,97 +96,149 @@ func (a *App) onKey(p *Pane, keyval uint, state gdk.ModifierType) bool {
 	return true
 }
 
-// installShortcuts adds the window's shortcuts. They run in the capture
-// phase, before the focused pane or its input method sees the key, so they
-// work wherever the focus is. Keys that only make sense in some states (Alt+
-// arrows and F12 with a split, Ctrl+B with the rail) reach the terminal
-// otherwise.
+// installShortcuts adds the window's key bindings ([keys] in config.toml).
+// They run in the capture phase, before the focused pane or its input
+// method sees the key, so they work wherever the focus is.
 func (a *App) installShortcuts() {
 	keys := gtk.NewEventControllerKey()
 	keys.SetPropagationPhase(gtk.PhaseCapture)
-	keys.ConnectKeyPressed(func(keyval, _ uint, state gdk.ModifierType) bool {
-		return a.onShortcut(keyval, state)
+	keys.ConnectKeyPressed(func(keyval, keycode uint, state gdk.ModifierType) bool {
+		return a.onShortcut(keyval, keycode, state)
 	})
 	a.win.AddController(keys)
 }
 
-func (a *App) onShortcut(keyval uint, state gdk.ModifierType) bool {
-	state &= gdk.ControlMask | gdk.ShiftMask | gdk.AltMask | gdk.SuperMask
-	ctrl, shift, alt := state&gdk.ControlMask != 0, state&gdk.ShiftMask != 0, state&gdk.AltMask != 0
-	if state&gdk.SuperMask != 0 {
+// onShortcut runs the action bound to a key press. It returns false, so
+// the key goes on to the focused widget (usually the terminal), when no
+// action is bound, when the focused pane sends all keys to the terminal
+// (passthrough; only its own toggle still works), while a dialog is open,
+// and when the action does not apply (zoom without a split). keycode 0
+// means unknown.
+func (a *App) onShortcut(keyval, keycode uint, state gdk.ModifierType) bool {
+	if a.modalOpen() {
 		return false
 	}
+	unshift := func() uint {
+		if keycode == 0 {
+			return 0
+		}
+		kv, _, _, _, ok := gdk.DisplayGetDefault().TranslateKey(keycode, state&^gdk.ShiftMask, 0)
+		if !ok {
+			return 0
+		}
+		return kv
+	}
+	name, ok := a.keys().match(keyval, state, unshift)
+	if !ok {
+		return false
+	}
+	if p := a.activePane(); p != nil && p.passthrough && name != "passthrough" && a.switcher == nil {
+		return false
+	}
+	return a.runAction(name)
+}
+
+// keys is the key map in force.
+func (a *App) keys() keymap { return a.settings.keymap }
+
+// modalOpen reports a dialog that takes the keyboard.
+func (a *App) modalOpen() bool {
+	return a.about != nil || a.shortcutsWin != nil || a.quitDialog != nil
+}
+
+// runAction runs a bound action and reports whether it applied.
+func (a *App) runAction(name string) bool {
 	t, p := a.active, a.activePane()
 	split := t != nil && t.root != nil && t.root.pane == nil
-	run := func(f func()) bool {
+	// Window actions close the switcher first; pane actions leave its keys
+	// alone while it is open.
+	global := func(f func()) bool {
 		if a.switcher != nil {
 			a.closeSwitcher()
 		}
 		f()
 		return true
 	}
-	switch {
-	case ctrl && !shift && !alt && keyval == gdk.KEY_space:
+	if n, ok := strings.CutPrefix(name, "select_tab_"); ok {
+		i := int(n[0] - '1')
+		if i < 0 || i >= len(a.tabs) {
+			return true
+		}
+		return global(func() { a.selectTab(a.tabs[i]) })
+	}
+	switch name {
+	case "switcher":
 		a.openSwitcher() // toggles
 		return true
-	case ctrl && !shift && !alt && (keyval == gdk.KEY_j || keyval == gdk.KEY_J):
-		return run(a.jumpNeedingYou)
-	case ctrl && !shift && !alt && keyval >= gdk.KEY_1 && keyval <= gdk.KEY_9:
-		if i := int(keyval - gdk.KEY_1); i < len(a.tabs) {
-			return run(func() { a.selectTab(a.tabs[i]) })
-		}
-		return true
-	case ctrl && !shift && !alt && (keyval == gdk.KEY_b || keyval == gdk.KEY_B) && a.layout == "rail":
-		return run(func() { a.setLayout("rail", !a.railOpen) })
-	case ctrl && !alt && (keyval == gdk.KEY_equal || keyval == gdk.KEY_plus || keyval == gdk.KEY_KP_Add):
-		return run(func() { a.zoom(+1) })
-	case ctrl && !shift && !alt && (keyval == gdk.KEY_minus || keyval == gdk.KEY_KP_Subtract):
-		// Ctrl+Shift+- (Ctrl+_, readline undo) still reaches the terminal.
-		return run(func() { a.zoom(-1) })
-	case ctrl && !shift && !alt && (keyval == gdk.KEY_0 || keyval == gdk.KEY_KP_0):
-		return run(func() { a.zoom(0) })
-	case ctrl && !shift && !alt && (keyval == gdk.KEY_q || keyval == gdk.KEY_Q):
-		return run(func() { a.finish("quit") })
-	// Ctrl+F (Find in the menu) reaches the terminal until Find exists:
-	// shells and vim use it.
-	case ctrl && !shift && !alt && keyval == gdk.KEY_comma:
-		return run(func() { a.menuButtons["Preferences"].Emit("clicked") })
-	case ctrl && !alt && keyval == gdk.KEY_question:
-		return run(func() { a.menuButtons["Keyboard shortcuts"].Emit("clicked") })
-	case ctrl && shift && (keyval == gdk.KEY_N || keyval == gdk.KEY_n):
-		return run(func() { a.toast("New window is not built yet") })
-	case ctrl && shift && (keyval == gdk.KEY_T || keyval == gdk.KEY_t):
-		return run(func() { a.newTab("", a.cwdForNew()) })
-	case ctrl && shift && (keyval == gdk.KEY_W || keyval == gdk.KEY_w):
-		return run(func() { a.closeTab(t) })
-	case ctrl && !shift && keyval == gdk.KEY_Page_Up, ctrl && keyval == gdk.KEY_ISO_Left_Tab:
-		return run(func() { a.selectOffset(-1) })
-	case ctrl && !shift && (keyval == gdk.KEY_Page_Down || keyval == gdk.KEY_Tab):
-		return run(func() { a.selectOffset(+1) })
-	case a.switcher != nil:
-		return false // the switcher's entry gets the rest
-	case !ctrl && !shift && keyval == gdk.KEY_F1 && p != nil:
-		a.splitActive(alt)
-		return true
-	case !ctrl && !shift && !alt && keyval == gdk.KEY_F12 && split:
-		t.toggleZoom(p)
-		return true
-	case alt && !ctrl && !shift && split && t.zoom == nil:
-		switch keyval {
-		case gdk.KEY_Left:
-			t.moveFocus(-1, 0)
-		case gdk.KEY_Right:
-			t.moveFocus(1, 0)
-		case gdk.KEY_Up:
-			t.moveFocus(0, -1)
-		case gdk.KEY_Down:
-			t.moveFocus(0, 1)
-		default:
+	case "next_needs_you":
+		return global(a.jumpNeedingYou)
+	case "new_tab":
+		return global(func() { a.newTab("", a.cwdForNew()) })
+	case "close_tab":
+		return global(func() { a.closeTab(t) })
+	case "new_window":
+		return global(func() { a.toast("New window is not built yet") })
+	case "next_tab":
+		return global(func() { a.selectOffset(+1) })
+	case "prev_tab":
+		return global(func() { a.selectOffset(-1) })
+	case "toggle_rail":
+		if a.layout != "rail" {
 			return false
 		}
-		return true
+		return global(func() { a.setLayout("rail", !a.railOpen) })
+	case "font_bigger":
+		return global(func() { a.zoom(+1) })
+	case "font_smaller":
+		return global(func() { a.zoom(-1) })
+	case "font_reset":
+		return global(func() { a.zoom(0) })
+	case "menu":
+		return global(func() { a.optionsBtn.Popup() })
+	case "preferences":
+		return global(a.showPreferences)
+	case "shortcuts":
+		return global(a.showShortcuts)
+	case "quit":
+		return global(a.requestQuit)
 	}
-	return false
+	if a.switcher != nil || p == nil {
+		return false
+	}
+	switch name {
+	case "passthrough":
+		a.setPassthrough(p, !p.passthrough)
+	case "split":
+		a.splitActive(false)
+	case "split_context":
+		a.splitActive(true)
+	case "zoom":
+		if !split {
+			return false
+		}
+		t.toggleZoom(p)
+	case "nav_up", "nav_down", "nav_left", "nav_right":
+		if !split || t.zoom != nil {
+			return false
+		}
+		d := focusDirs[strings.TrimPrefix(name, "nav_")]
+		t.moveFocus(d[0], d[1])
+	case "scroll_up":
+		p.scrollBy(max(1, p.tv.rows-1))
+	case "scroll_down":
+		p.scrollBy(-max(1, p.tv.rows-1))
+	case "copy":
+		a.copySelection(p)
+	case "paste":
+		a.paste(p, false)
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) showPreferences() {
+	a.toast("Preferences are not built yet: edit " + a.cfg.configFile)
 }
 
 // splitActive splits the focused pane (F1). With sameContainer (Alt+F1) the

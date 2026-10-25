@@ -160,11 +160,11 @@ func (a *App) injectKeys(spec string) error {
 		}
 		mods = append(mods, k)
 	}
-	key := gdk.KeyvalFromName(name)
-	if len([]rune(name)) == 1 {
-		key = gdk.UnicodeToKeyval(uint32(unicodeLower(name)))
-	}
-	if key == 0 || key == 0xffffff {
+	// Key names as in [keys] ("f12", "pgup", "return"), else GDK's.
+	var key uint
+	if c, err := parseCombo(name); err == nil {
+		key = c.key
+	} else if key = gdk.KeyvalFromName(name); key == 0 || key == 0xffffff {
 		return errors.New("unknown key " + name)
 	}
 	var level C.int
@@ -190,11 +190,6 @@ func (a *App) injectKeys(spec string) error {
 		}
 	}
 	return err
-}
-
-func unicodeLower(s string) rune {
-	r := []rune(strings.ToLower(s))
-	return r[0]
 }
 
 // addDevices taps Shift and nudges the pointer: mutter adds a virtual
@@ -296,6 +291,15 @@ func (a *App) pointerDrag(dx, dy float64, steps int) error {
 
 func (a *App) pointerScroll(steps int) error { return injectOK(C.inj_scroll(C.int(steps))) }
 
+// walkWidgets calls f for w and its descendants, depth first.
+func walkWidgets(w gtk.Widgetter, f func(*gtk.Widget)) {
+	base := gtk.BaseWidget(w)
+	f(base)
+	for c := base.FirstChild(); c != nil; c = gtk.BaseWidget(c).NextSibling() {
+		walkWidgets(c, f)
+	}
+}
+
 // menuTarget is the centre of an options menu item in window coordinates:
 // the popover is its own surface, placed relative to the window's.
 func (a *App) menuTarget(label string) (float64, float64, error) {
@@ -372,6 +376,30 @@ func (a *App) target(args []string) (float64, float64, error) {
 			return 0, 0, errors.New("pane not shown")
 		}
 		return x + cx, y + cy, nil
+	case "shortcut-keys", "shortcut-switch":
+		if a.shortcutsWin == nil || len(args) < 2 {
+			return 0, 0, errors.New("the shortcuts window is not open")
+		}
+		r, ok := a.shortcutsWin.rows[args[1]]
+		if !ok {
+			return 0, 0, errors.New("no shortcut row " + args[1])
+		}
+		if args[0] == "shortcut-keys" {
+			return centre(r.keys)
+		}
+		return centre(r.sw)
+	case "button":
+		want := strings.Join(args[1:], " ")
+		var found gtk.Widgetter
+		walkWidgets(a.win, func(w *gtk.Widget) {
+			if b, ok := w.Cast().(*gtk.Button); ok && w.IsDrawable() && strings.ReplaceAll(b.Label(), "_", "") == want {
+				found = b
+			}
+		})
+		if found == nil {
+			return 0, 0, errors.New("no button " + want)
+		}
+		return centre(found)
 	case "divider":
 		if a.active == nil || len(args) < 2 || !strings.HasPrefix(args[1], "r") {
 			return 0, 0, errors.New("divider PATH: r, ra, rb, …")

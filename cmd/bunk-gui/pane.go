@@ -29,10 +29,15 @@ type Pane struct {
 	app    *App
 	tab    *Tab
 	s      *session.Session
-	widget *gtk.Widget
-	view   cview
-	im     *gtk.IMMulticontext
-	imPtr  uintptr
+	widget *gtk.Widget  // the TermView
+	frame  *gtk.Overlay // widget plus the PASS badge; what splits hold
+	token  string       // notify session token; "" without the socket
+
+	passthrough bool // every key but the passthrough binding goes to the terminal
+	passBadge   *gtk.Label
+	view        cview
+	im          *gtk.IMMulticontext
+	imPtr       uintptr
 
 	// Agent status, refreshed on the main thread when the session reports
 	// a change (Hooks.StatusChanged). statusOverride replaces it in tests
@@ -145,12 +150,12 @@ func (p *Pane) status() session.Status {
 // acknowledge clears a needs-you request: the user focused or typed into
 // the pane.
 func (p *Pane) acknowledge() {
-	if p.statusOverride != nil && p.statusOverride.State == session.AgentNeedsYou {
-		p.statusOverride.State, p.statusOverride.Notice = session.AgentIdle, ""
+	if o := p.statusOverride; o != nil && (o.State == session.AgentNeedsYou || o.State == session.AgentDone) {
+		o.State, o.Notice = session.AgentIdle, ""
 		p.queueRender()
 		p.app.refreshChrome()
 	}
-	if p.st.State != session.AgentNeedsYou || p.s == nil {
+	if (p.st.State != session.AgentNeedsYou && p.st.State != session.AgentDone) || p.s == nil {
 		return
 	}
 	p.s.Acknowledge()

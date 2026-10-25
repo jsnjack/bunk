@@ -230,6 +230,14 @@ Key fields agents may need to know about:
 
 `config.go` is the authoritative reference for every field and its default.
 
+bunk-gui reads `~/.config/bunk-gui/config.toml` (`-config`): `tabs`,
+`rail_open`, `font`, `font_size`, `[[agents]]` and `[keys]`. `[keys]` uses
+bunk's action names and key syntax where they overlap; "none" sends the key
+to the terminal. The file is watched and reloads live, and a bad value shows
+a toast and keeps the default. The shortcuts window (Ctrl+Shift+?) rewrites
+only the `[keys]` lines it changes. `cmd/bunk-gui/bindings.go` lists every
+action and its default.
+
 ---
 
 ## Design Decisions

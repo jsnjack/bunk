@@ -25,6 +25,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"runtime"
@@ -40,6 +41,8 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+
+	"bunk/internal/notify"
 )
 
 const appID = "io.github.jsnjack.BunkGui"
@@ -108,12 +111,22 @@ type App struct {
 	closeWinBtn gtk.Widgetter
 	menuButtons map[string]*gtk.Button
 	about       *adw.AboutDialog
-	toastLog    []string
-	chromeKey   string // what the tab items show, to skip identical rebuilds
-	layout      string // "bar" or "rail"
-	railOpen    bool
-	fontSize    float64 // points; settings.FontSize is 100 %
-	fontDesc    string  // Pango description at fontSize; atlases are keyed by it
+	passCheck   *gtk.CheckButton // menu: Send all keys to terminal
+	syncingMenu bool             // passCheck is being set from the pane
+
+	shortcutsWin *shortcutsWindow
+	quitDialog   *adw.AlertDialog
+	quitBody     []string // the quit dialog's list of busy tabs
+
+	notify       *notify.Server // agent hook reports; nil when the socket failed
+	cfgMonitor   gio.FileMonitorrer
+	fileSettings Settings // as the config file last read had them
+	toastLog     []string
+	chromeKey    string // what the tab items show, to skip identical rebuilds
+	layout       string // "bar" or "rail"
+	railOpen     bool
+	fontSize     float64 // points; settings.FontSize is 100 %
+	fontDesc     string  // Pango description at fontSize; atlases are keyed by it
 
 	tabs               []*Tab
 	active             *Tab
@@ -160,6 +173,10 @@ var theApp *App
 var keyX = []byte{'x'}
 
 func main() {
+	// "bunk-gui notify …" is the agent hook CLI: no window, no GTK.
+	if len(os.Args) > 1 && os.Args[1] == "notify" {
+		os.Exit(notify.RunCLI(os.Args[2:], os.Environ(), os.Stdin))
+	}
 	var cfg config
 	flag.StringVar(&cfg.cmd, "e", "", "run `CMD` with sh -c instead of $SHELL in the first tab")
 	flag.Var(&cfg.tabs, "tab", "open another tab running `CMD` (repeatable); the first tab stays selected")
@@ -183,6 +200,7 @@ func main() {
 	flag.Parse()
 	if cfg.allocProbe || cfg.memProfile != "" {
 		runtime.MemProfileRate = 1
+		runtime.KeepAlive(make([]byte, 8<<20)) // the next sample point was drawn at the old rate
 	}
 
 	// GTK 4.22 picks the Vulkan GSK renderer by default. With it, every GL
@@ -201,6 +219,7 @@ func main() {
 	a := &App{cfg: cfg, done: make(chan struct{}), st: &runStats{}, atlases: map[atlasKey]*Atlas{},
 		rep: &runReport{Marks: []markReport{}, Snapshots: []*uiSnapshot{}, Errors: []string{}}}
 	a.settings, a.configErr = loadSettings(cfg.configFile)
+	a.fileSettings = a.settings
 	if cfg.font != "" {
 		// A full Pango description: split off a trailing size.
 		a.settings.Font = cfg.font
@@ -223,10 +242,18 @@ func main() {
 	monoBase = glibMonotonicUs() * 1000
 	monoStart = time.Now()
 
+	if srv, err := notify.Listen(); err != nil {
+		slog.Warn("notify: running without agent hook reports", "err", err)
+	} else {
+		a.notify = srv
+	}
 	a.app = adw.NewApplication(appID, gio.ApplicationNonUnique)
 	a.app.ConnectActivate(a.activate)
 	code := a.app.Run(os.Args[:1])
 	close(a.done)
+	if a.notify != nil {
+		_ = a.notify.Close()
+	}
 	for _, p := range a.panes {
 		if p != nil && p.s != nil {
 			p.s.Close()
@@ -283,7 +310,9 @@ func (a *App) activate() {
 	}
 	a.win.SetDefaultSize(w, h)
 	a.win.NotifyProperty("is-active", a.onActive)
+	a.win.ConnectCloseRequest(a.onCloseRequest)
 	a.installShortcuts()
+	a.watchConfig()
 	ptr := gtk.NewEventControllerMotion()
 	ptr.ConnectMotion(func(x, y float64) { a.ptrX, a.ptrY = x, y })
 	a.win.AddController(ptr)

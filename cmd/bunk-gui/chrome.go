@@ -46,6 +46,10 @@ button.tabclose:hover { background: alpha(#ffffff, 0.08); }
 .needs-fg { color: #ffb454; }
 .idle { color: #9aa0a8; }
 .failed { color: #ff8a8a; }
+.done { color: #7ee2a8; }
+.passbadge { background: #e6e8eb; color: #131416; font-weight: 700; font-size: 11px; padding: 1px 6px; border-radius: 4px;
+	margin: 6px 14px 0 0; }
+.passtag { background: #e6e8eb; color: #131416; font-weight: 700; font-size: 9px; padding: 0 4px; border-radius: 3px; }
 .agent { font-weight: 600; font-size: 13px; }
 .repo { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
 .loc { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #c7b8ff; }
@@ -73,6 +77,8 @@ button.sizebtn { min-width: 36px; min-height: 32px; border: 1px solid #34373e; b
 button.menuitem { background: none; box-shadow: none; border: none; min-height: 34px; padding: 0 10px; border-radius: 6px;
 	color: #e6e8eb; font-size: 14px; }
 button.menuitem:hover { background: #2a2c31; }
+checkbutton.menucheck { min-height: 34px; padding: 0 10px 0 6px; border-radius: 6px; color: #e6e8eb; font-size: 14px; }
+checkbutton.menucheck:hover { background: #2a2c31; }
 .keys { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
 .switcher-bg { background: rgba(8, 9, 11, 0.62); }
 .switcher { background: #1b1c20; border: 1px solid #2f3238; border-radius: 10px; padding: 10px; }
@@ -86,6 +92,10 @@ button.switchrow:hover { background: #23252a; }
 button.switchclose { min-height: 36px; padding: 0 12px; border: 1px solid #34373e; border-radius: 6px; background: none;
 	color: #b4b9c1; box-shadow: none; margin-top: 4px; }
 paned > separator { min-width: 1px; min-height: 1px; background: #2a2c31; }
+.shortcutrow { padding: 6px 4px; border-bottom: 1px solid #2a2c31; }
+.shortcutdesc { font-size: 14px; color: #e6e8eb; }
+.collide { color: #ffb454; font-size: 15px; }
+button.shortcutkeys { font-family: "Noto Sans Mono", monospace; font-size: 12px; min-width: 150px; }
 button.tabbtn label, button.rowbtn label, button.menuitem label, button.switchrow label, button.raildot label { font-weight: normal; }
 button label.agent { font-weight: 600; }
 `
@@ -112,6 +122,8 @@ func lookOf(state session.AgentState) look {
 		return look{"✕", "failed", "failed"}
 	case session.AgentIdle:
 		return look{"○", "idle", "idle"}
+	case session.AgentDone:
+		return look{"✓", "done", "done"}
 	}
 	return look{"○", "", "idle"} // a plain shell
 }
@@ -125,6 +137,7 @@ type tabInfo struct {
 	agent, repo, loc   string
 	locGlyph           string
 	active, needs      bool
+	pass               bool // a pane of the tab sends all keys to the terminal
 	tooltip, accessKey string
 }
 
@@ -139,6 +152,9 @@ func (a *App) tabInfos() []tabInfo {
 		st := p.status()
 		in := tabInfo{t: t, index: i, st: st, look: lookOf(st.State), active: t == a.active,
 			needs: st.State == session.AgentNeedsYou}
+		for _, q := range t.panes() {
+			in.pass = in.pass || q.passthrough
+		}
 		in.agent = st.Agent
 		if in.agent == "" {
 			in.agent = st.Process
@@ -170,6 +186,9 @@ func (a *App) tabInfos() []tabInfo {
 		if in.look.label != "" {
 			parts = append(parts, in.look.label)
 		}
+		if in.pass {
+			parts = append(parts, "all keys go to the terminal")
+		}
 		in.tooltip = strings.Join(parts, " · ")
 		if st.Notice != "" {
 			in.tooltip += "\n" + st.Notice
@@ -178,6 +197,14 @@ func (a *App) tabInfos() []tabInfo {
 		out = append(out, in)
 	}
 	return out
+}
+
+// passTag marks a tab whose pane sends all keys to the terminal.
+func passTag() *gtk.Label {
+	l := label("PASS", "passtag")
+	l.SetVAlign(gtk.AlignCenter)
+	l.SetHAlign(gtk.AlignCenter)
+	return l
 }
 
 func label(text string, classes ...string) *gtk.Label {
@@ -262,7 +289,7 @@ func (a *App) buildChrome() {
 		bar.AddCSSClass("bunk-bar")
 		a.tabsBox = gtk.NewBox(gtk.OrientationHorizontal, 2)
 		a.tabsBox.SetVAlign(gtk.AlignCenter)
-		plus := iconButton("list-add-symbolic", 16, "New tab · Ctrl+Shift+T", "chrome")
+		plus := iconButton("list-add-symbolic", 16, a.withKeys("New tab", "new_tab"), "chrome")
 		plus.SetVAlign(gtk.AlignCenter)
 		plus.ConnectClicked(func() { a.newTab("", a.cwdForNew()) })
 		a.newTabBtn = plus
@@ -296,7 +323,7 @@ func (a *App) buildChrome() {
 			newTab.SetChild(nb)
 			newTab.AddCSSClass("chrome")
 			newTab.AddCSSClass("wide")
-			newTab.SetTooltipText("New tab · Ctrl+Shift+T")
+			newTab.SetTooltipText(a.withKeys("New tab", "new_tab"))
 			newTab.SetFocusOnClick(false)
 			newTab.ConnectClicked(func() { a.newTab("", a.cwdForNew()) })
 			a.newTabBtn = newTab
@@ -309,7 +336,7 @@ func (a *App) buildChrome() {
 			rail.Append(a.tabsBox)
 			spacer := dragArea(false)
 			rail.Append(spacer)
-			hint := label("Ctrl+B rail · Ctrl+J next needing you · Ctrl+Space switch · Ctrl+1…9 tab", "hint")
+			hint := label(a.railHint(), "hint")
 			hint.SetWrap(true)
 			hint.SetMaxWidthChars(28) // a wrapping label is as wide as its text otherwise
 			hint.SetXAlign(0)
@@ -331,7 +358,7 @@ func (a *App) buildChrome() {
 			a.tabsBox.SetHAlign(gtk.AlignCenter)
 			rail.Append(a.tabsBox)
 			rail.Append(dragArea(false))
-			plus := iconButton("list-add-symbolic", 16, "New tab · Ctrl+Shift+T", "chrome")
+			plus := iconButton("list-add-symbolic", 16, a.withKeys("New tab", "new_tab"), "chrome")
 			plus.SetSizeRequest(40, 40)
 			plus.SetHAlign(gtk.AlignCenter)
 			plus.ConnectClicked(func() { a.newTab("", a.cwdForNew()) })
@@ -363,7 +390,7 @@ func (a *App) refreshChrome() {
 	infos := a.tabInfos()
 	var key strings.Builder
 	for _, in := range infos {
-		fmt.Fprintf(&key, "%p|%s|%s|%s|%s|%s|%v|%v\x00", in.t, in.look, in.agent, in.repo, in.loc, in.tooltip, in.active, in.needs)
+		fmt.Fprintf(&key, "%p|%s|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.agent, in.repo, in.loc, in.tooltip, in.active, in.needs, in.pass)
 	}
 	if key.String() == a.chromeKey {
 		return
@@ -409,6 +436,9 @@ func (a *App) barTab(in tabInfo) tabItem {
 	inner := gtk.NewBox(gtk.OrientationHorizontal, 8)
 	inner.Append(label(in.look.dot, "dot", in.look.cls))
 	inner.Append(label(in.agent, "agent"))
+	if in.pass {
+		inner.Append(passTag())
+	}
 	repo := label(in.repo, "repo")
 	repo.SetEllipsize(pango.EllipsizeEnd)
 	repo.SetMaxWidthChars(22)
@@ -435,7 +465,15 @@ func (a *App) barTab(in tabInfo) tabItem {
 
 func (a *App) railDot(in tabInfo) tabItem {
 	b := gtk.NewButton()
-	b.SetLabel(in.look.dot)
+	if in.pass {
+		box := gtk.NewBox(gtk.OrientationVertical, 1)
+		box.SetVAlign(gtk.AlignCenter)
+		box.Append(gtk.NewLabel(in.look.dot))
+		box.Append(passTag())
+		b.SetChild(box)
+	} else {
+		b.SetLabel(in.look.dot)
+	}
 	b.AddCSSClass("raildot")
 	b.AddCSSClass(in.look.cls)
 	if in.active {
@@ -465,6 +503,9 @@ func (a *App) railRow(in tabInfo) tabItem {
 	top := gtk.NewBox(gtk.OrientationHorizontal, 8)
 	top.Append(label(in.look.dot, "dot", in.look.cls))
 	top.Append(label(in.agent, "agent"))
+	if in.pass {
+		top.Append(passTag())
+	}
 	state := label(in.look.label, "statelabel")
 	if in.needs {
 		state.AddCSSClass("needs-fg")
@@ -519,46 +560,77 @@ func (a *App) setLayout(layout string, railOpen bool) {
 // ---- options menu ----
 
 type menuItem struct {
-	label, keys string
-	run         func()
+	label, action string // action: the bound action whose keys the item shows
+	run           func()
+	check         bool // a check item (passthrough)
+}
+
+// firstKey is the first key bound to an action, as menus show it.
+func (a *App) firstKey(action string) string {
+	if cs := a.keys().bind[action]; len(cs) > 0 {
+		return cs[0].Label()
+	}
+	return ""
+}
+
+func (a *App) withKeys(text, action string) string {
+	if k := a.firstKey(action); k != "" {
+		return text + " · " + k
+	}
+	return text
+}
+
+// railHint lists the rail's main keys, as bound.
+func (a *App) railHint() string {
+	var parts []string
+	for _, h := range []struct{ action, what string }{
+		{"toggle_rail", "rail"}, {"next_needs_you", "next needing you"}, {"switcher", "switch"},
+	} {
+		if k := a.firstKey(h.action); k != "" {
+			parts = append(parts, k+" "+h.what)
+		}
+	}
+	if k := a.firstKey("select_tab_1"); k != "" {
+		parts = append(parts, k+"…9 tab")
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (a *App) menuGroups() [][]menuItem {
 	later := func(what string) func() { return func() { a.toast(what + " is not built yet") } }
-	prefs := func() { a.toast("Preferences are not built yet: edit " + a.cfg.configFile) }
-	shortcuts := func() { a.toast("The shortcuts window is not built yet: see the options menu") }
 	layout := []menuItem{}
 	if a.layout == "rail" {
 		if a.railOpen {
-			layout = append(layout, menuItem{"Collapse rail", "Ctrl+B", func() { a.setLayout("rail", false) }})
+			layout = append(layout, menuItem{label: "Collapse rail", action: "toggle_rail", run: func() { a.setLayout("rail", false) }})
 		} else {
-			layout = append(layout, menuItem{"Expand rail", "Ctrl+B", func() { a.setLayout("rail", true) }})
+			layout = append(layout, menuItem{label: "Expand rail", action: "toggle_rail", run: func() { a.setLayout("rail", true) }})
 		}
-		layout = append(layout, menuItem{"Tabs on top", "", func() { a.setLayout("bar", a.railOpen) }})
+		layout = append(layout, menuItem{label: "Tabs on top", run: func() { a.setLayout("bar", a.railOpen) }})
 	} else {
-		layout = append(layout, menuItem{"Tabs on the side", "", func() { a.setLayout("rail", a.railOpen) }})
+		layout = append(layout, menuItem{label: "Tabs on the side", run: func() { a.setLayout("rail", a.railOpen) }})
 	}
 	layout = append(layout,
-		menuItem{"Switch tab", "Ctrl+Space", a.openSwitcher},
-		menuItem{"Next needing you", "Ctrl+J", a.jumpNeedingYou})
+		menuItem{label: "Switch tab", action: "switcher", run: a.openSwitcher},
+		menuItem{label: "Next needing you", action: "next_needs_you", run: a.jumpNeedingYou})
 	return [][]menuItem{
 		{
-			{"New tab", "Ctrl+Shift+T", func() { a.newTab("", a.cwdForNew()) }},
-			{"New window", "Ctrl+Shift+N", later("New window")},
-			{"Close tab", "Ctrl+Shift+W", func() { a.closeTab(a.active) }},
+			{label: "New tab", action: "new_tab", run: func() { a.newTab("", a.cwdForNew()) }},
+			{label: "New window", action: "new_window", run: later("New window")},
+			{label: "Close tab", action: "close_tab", run: func() { a.closeTab(a.active) }},
 		},
 		{
-			{"Split pane", "F1", func() { a.splitActive(false) }},
-			{"Split in same container", "Alt+F1", func() { a.splitActive(true) }},
-			{"Zoom pane", "F12", func() { a.active.toggleZoom(a.activePane()) }},
-			{"Find", "Ctrl+F", later("Find")},
+			{label: "Split pane", action: "split", run: func() { a.splitActive(false) }},
+			{label: "Split in same container", action: "split_context", run: func() { a.splitActive(true) }},
+			{label: "Zoom pane", action: "zoom", run: func() { a.active.toggleZoom(a.activePane()) }},
+			{label: "Send all keys to terminal", action: "passthrough", check: true},
+			{label: "Find", run: later("Find")},
 		},
 		layout,
 		{
-			{"Preferences", "Ctrl+,", prefs},
-			{"Keyboard shortcuts", "Ctrl+?", shortcuts},
-			{"About bunk-gui", "", a.showAbout},
-			{"Quit", "Ctrl+Q", func() { a.finish("quit") }},
+			{label: "Preferences", action: "preferences", run: a.showPreferences},
+			{label: "Keyboard shortcuts", action: "shortcuts", run: a.showShortcuts},
+			{label: "About bunk-gui", run: a.showAbout},
+			{label: "Quit", action: "quit", run: a.requestQuit},
 		},
 	}
 }
@@ -584,11 +656,11 @@ func (a *App) buildMenu() *gtk.Popover {
 	minus := gtk.NewButton()
 	minus.SetLabel("−")
 	minus.AddCSSClass("sizebtn")
-	minus.SetTooltipText("Smaller text · Ctrl+-")
+	minus.SetTooltipText(a.withKeys("Smaller text", "font_smaller"))
 	plus := gtk.NewButton()
 	plus.SetLabel("+")
 	plus.AddCSSClass("sizebtn")
-	plus.SetTooltipText("Larger text · Ctrl+=")
+	plus.SetTooltipText(a.withKeys("Larger text", "font_bigger"))
 	a.zoomLabel = label(a.zoomText(), "sizelabel")
 	minus.ConnectClicked(func() { a.zoom(-1) })
 	plus.ConnectClicked(func() { a.zoom(+1) })
@@ -601,14 +673,29 @@ func (a *App) buildMenu() *gtk.Popover {
 		g := gtk.NewBox(gtk.OrientationVertical, 0)
 		g.AddCSSClass("menugroup")
 		for _, it := range group {
-			b := gtk.NewButton()
-			b.AddCSSClass("menuitem")
 			row := gtk.NewBox(gtk.OrientationHorizontal, 12)
 			l := gtk.NewLabel(it.label)
 			l.SetHExpand(true)
 			l.SetXAlign(0)
 			row.Append(l)
-			row.Append(label(it.keys, "keys"))
+			row.Append(label(a.firstKey(it.action), "keys"))
+			if it.check {
+				// Send all keys to terminal: follows the focused pane.
+				c := gtk.NewCheckButton()
+				c.AddCSSClass("menucheck")
+				c.SetChild(row)
+				c.ConnectToggled(func() {
+					if p := a.activePane(); p != nil && !a.syncingMenu && c.Active() != p.passthrough {
+						a.setPassthrough(p, c.Active())
+						pop.Popdown()
+					}
+				})
+				a.passCheck = c
+				g.Append(c)
+				continue
+			}
+			b := gtk.NewButton()
+			b.AddCSSClass("menuitem")
 			b.SetChild(row)
 			run := it.run
 			b.ConnectClicked(func() {
@@ -620,6 +707,7 @@ func (a *App) buildMenu() *gtk.Popover {
 		}
 		box.Append(g)
 	}
+	pop.ConnectShow(a.syncPassCheck)
 	pop.SetChild(box)
 	a.menuBox = box
 	return pop
@@ -688,7 +776,8 @@ type switcher struct {
 }
 
 var stateOrder = map[session.AgentState]int{
-	session.AgentNeedsYou: 0, session.AgentFailed: 1, session.AgentWorking: 2, session.AgentIdle: 3, session.AgentNone: 4,
+	session.AgentNeedsYou: 0, session.AgentDone: 1, session.AgentFailed: 2, session.AgentWorking: 3, session.AgentIdle: 4,
+	session.AgentNone: 5,
 }
 
 // openSwitcher shows the tab switcher: a filter field and the tabs, those

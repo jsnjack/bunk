@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -175,22 +174,34 @@ func TestFrameAllocs(t *testing.T) {
 		f.term.Write(line) //nolint:errcheck
 		f.frame()
 	}
-	var before, after runtime.MemStats
-	var mallocs uint64
 	const n = 200
-	for i := 0; i < n; i++ {
+	mallocs := frameMallocs(t, func(i int) {
 		f.term.Write(line) //nolint:errcheck
-		runtime.ReadMemStats(&before)
-		ok, rows := f.frame()
-		runtime.ReadMemStats(&after)
-		if !ok || rows != 70 {
+		if ok, rows := f.frame(); !ok || rows != 70 {
 			t.Fatalf("frame %d: ok=%v rows=%d, want all 70 rows after a scroll", i, ok, rows)
 		}
-		mallocs += after.Mallocs - before.Mallocs
-	}
+	}, n)
 	if mallocs != 0 {
 		t.Errorf("%d frames allocated %d times", n, mallocs)
 	}
+}
+
+// frameMallocs runs step n times and counts the objects allocated by the
+// frame path (termView.pull and termView.convert) only: other goroutines
+// and the test's own writes do not count.
+func frameMallocs(t *testing.T, step func(int), n int) int64 {
+	t.Helper()
+	frame := []string{"(*termView).pull", "(*termView).convert"}
+	before := mallocsUnder(frame...)
+	if before == 0 {
+		// The first frames allocate their rows: zero means the names match
+		// nothing and the count below would pass vacuously.
+		t.Fatalf("no allocation attributed to %v so far", frame)
+	}
+	for i := 0; i < n; i++ {
+		step(i)
+	}
+	return mallocsUnder(frame...) - before
 }
 
 func TestKeyEvents(t *testing.T) {

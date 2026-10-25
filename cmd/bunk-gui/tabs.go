@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"unsafe"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
 	"bunk/internal/input"
+	"bunk/internal/notify"
 	"bunk/internal/session"
 )
 
@@ -37,7 +39,7 @@ type node struct {
 
 func (n *node) widget() gtk.Widgetter {
 	if n.pane != nil {
-		return n.pane.widget
+		return n.pane.frame
 	}
 	return n.paned
 }
@@ -106,7 +108,7 @@ func (a *App) newTab(cmd, dir string) *Tab {
 	}
 	t.root = &node{pane: p}
 	t.focus = p
-	t.holder.Append(p.widget)
+	t.holder.Append(p.frame)
 	a.tabs = append(a.tabs, t)
 	a.stack.AddChild(t.holder)
 	a.selectTab(t)
@@ -128,6 +130,15 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 	ptr, cv := viewNewC(p.id)
 	p.view = cv
 	p.widget = wrapWidget(ptr)
+	// The pane sits in an overlay for its PASS badge.
+	p.frame = gtk.NewOverlay()
+	p.frame.SetChild(p.widget)
+	p.passBadge = label("PASS", "passbadge")
+	p.passBadge.SetHAlign(gtk.AlignEnd)
+	p.passBadge.SetVAlign(gtk.AlignStart)
+	p.passBadge.SetCanTarget(false)
+	p.passBadge.SetVisible(false)
+	p.frame.AddOverlay(p.passBadge)
 	atlas, err := a.atlasFor(a.monScale)
 	if err != nil {
 		a.fatal("%v", err)
@@ -137,13 +148,22 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 	p.attachInput()
 
 	hex := func(rgb uint32) string { return session.XParseColor(fmt.Sprintf("%06x", rgb)) }
-	s, err := session.Start(session.Options{
+	opts := session.Options{
 		ID: p.id, Cols: max(2, cols), Rows: max(1, rows), Scrollback: session.DefaultScrollbackLines, Dir: dir, Args: args,
 		ThemeFG: hex(theme.fg), ThemeBG: hex(theme.bg), ThemeCursor: hex(theme.fg),
 		CellAspect: []float64{float64(atlas.CellH) / float64(atlas.CellW)},
 		Backspace:  input.KeyBackspace,
 		Agents:     a.settings.Agents,
-	})
+	}
+	// Agent hooks report through the notify socket with the session's token.
+	if a.notify != nil {
+		if tok, err := notify.NewToken(); err == nil {
+			p.token, opts.NotifySocket, opts.NotifySession = tok, a.notify.Path(), tok
+		} else {
+			slog.Warn("notify token", "err", err)
+		}
+	}
+	s, err := session.Start(opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bunk-gui: start session: %v\n", err)
 		a.toast("Could not start a session: " + err.Error())
@@ -158,6 +178,9 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 		Redraw: p.wake, Exited: p.onExited, Closed: p.onClosed,
 		StatusChanged: p.onStatusChanged,
 	}, a.done)
+	if p.token != "" {
+		a.notify.Register(p.token, s)
+	}
 	return p
 }
 
@@ -238,6 +261,9 @@ func (a *App) removePane(p *Pane) {
 		return
 	}
 	p.removeOnce = true
+	if p.token != "" {
+		a.notify.Unregister(p.token)
+	}
 	p.s.Close()
 }
 
@@ -295,8 +321,8 @@ func (a *App) split(p *Pane, args []string) *Pane {
 	paned.SetShrinkStartChild(false)
 	paned.SetShrinkEndChild(false)
 	t.replace(n, paned)
-	paned.SetStartChild(p.widget)
-	paned.SetEndChild(np.widget)
+	paned.SetStartChild(p.frame)
+	paned.SetEndChild(np.frame)
 	if vertical {
 		paned.SetPosition(h / 2)
 	} else {
@@ -516,20 +542,44 @@ func (a *App) setTitle(p *Pane, title string) {
 }
 
 // jumpNeedingYou selects the next tab (after the selected one) whose agent
-// needs the user (Ctrl+J).
+// needs the user, else the next whose agent reported done
+// (next_needs_you). Focusing the pane acknowledges it.
 func (a *App) jumpNeedingYou() {
 	i := a.tabIndex(a.active)
-	for k := 1; k <= len(a.tabs); k++ {
-		t := a.tabs[(i+k)%len(a.tabs)]
-		for _, p := range t.panes() {
-			if p.status().State == session.AgentNeedsYou {
-				a.selectTab(t)
-				if t.focus != p {
-					p.widget.GrabFocus()
+	for _, want := range []session.AgentState{session.AgentNeedsYou, session.AgentDone} {
+		for k := 1; k <= len(a.tabs); k++ {
+			t := a.tabs[(i+k)%len(a.tabs)]
+			for _, p := range t.panes() {
+				if p.status().State == want {
+					a.selectTab(t)
+					if t.focus != p {
+						p.widget.GrabFocus()
+					}
+					a.onPaneFocus(p)
+					return
 				}
-				return
 			}
 		}
 	}
 	a.toast("No agent needs you")
+}
+
+// setPassthrough turns sending all keys to the terminal on or off for p:
+// every key but the passthrough binding then goes to the terminal.
+func (a *App) setPassthrough(p *Pane, on bool) {
+	p.passthrough = on
+	p.passBadge.SetVisible(on)
+	a.refreshChrome()
+	a.syncPassCheck()
+}
+
+// syncPassCheck shows the focused pane's passthrough in the options menu.
+func (a *App) syncPassCheck() {
+	p := a.activePane()
+	if a.passCheck == nil || p == nil {
+		return
+	}
+	a.syncingMenu = true
+	a.passCheck.SetActive(p.passthrough)
+	a.syncingMenu = false
 }

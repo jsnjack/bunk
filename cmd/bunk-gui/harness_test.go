@@ -10,6 +10,9 @@ package main
 //   - bunk-gui is built once per test run (with -race when the tests are),
 //     driven by a -do script per scenario, and checked through its -report
 //     JSON and pixels of its PNG dumps.
+//   - Every scenario gets a compositor of its own (the wrapper again, nested),
+//     so scenarios that call t.Parallel run side by side without sharing
+//     keyboard focus, pointer or clipboard. At most guiParallel run at once.
 
 import (
 	"encoding/json"
@@ -21,8 +24,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -30,6 +35,7 @@ import (
 const wrapper = "../../scripts/headless-gui.sh"
 
 func TestMain(m *testing.M) {
+	recordAllocs() // frame allocation tests count with mallocsUnder
 	flag.Parse()
 	if !testing.Short() && os.Getenv("BUNK_HEADLESS") == "" {
 		if w, err := filepath.Abs(wrapper); err == nil {
@@ -100,10 +106,11 @@ func guiBinary(t *testing.T) string {
 
 // scenario is one bunk-gui launch.
 type scenario struct {
-	args   []string // flags besides -do, -report and -config
-	config string   // config.toml contents
-	script []string // "TIME ACTION" lines
-	env    []string // extra environment
+	args   []string          // flags besides -do, -report and -config
+	config string            // config.toml contents
+	script []string          // "TIME ACTION" lines
+	env    []string          // extra environment
+	files  map[string]string // more files in the scenario's directory (the panes' cwd)
 	limit  time.Duration
 }
 
@@ -113,29 +120,51 @@ type guiRun struct {
 	dir string
 }
 
-// runGUI launches bunk-gui with the scenario and returns its report. The
-// child shell is /bin/sh with a plain prompt and no history file, so pane
-// text does not depend on the user's shell setup.
+// guiSlots limits how many scenarios run at once (BUNK_GUI_PARALLEL).
+var guiSlots = func() chan struct{} {
+	n := 4
+	if v, err := strconv.Atoi(os.Getenv("BUNK_GUI_PARALLEL")); err == nil && v > 0 {
+		n = v
+	}
+	return make(chan struct{}, n)
+}()
+
+// runGUI launches bunk-gui with the scenario on a compositor of its own and
+// returns its report. The child shell is /bin/sh with a plain prompt and
+// no history file, so pane text does not depend on the user's shell setup.
 func runGUI(t *testing.T, sc scenario) *guiRun {
 	t.Helper()
 	needWindow(t)
 	bin := guiBinary(t)
+	w, err := filepath.Abs(wrapper)
+	must(t, err)
+	guiSlots <- struct{}{}
+	defer func() { <-guiSlots }()
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.toml")
 	rep := filepath.Join(dir, "report.json")
 	do := filepath.Join(dir, "script.do")
 	must(t, os.WriteFile(cfg, []byte(sc.config), 0o600))
 	must(t, os.WriteFile(do, []byte(strings.Join(sc.script, "\n")+"\n"), 0o600))
+	for name, text := range sc.files {
+		must(t, os.WriteFile(filepath.Join(dir, name), []byte(text), 0o700))
+	}
 	limit := sc.limit
 	if limit == 0 {
 		limit = 30 * time.Second
 	}
 	args := append([]string{"-wait-focus", "-do", "@" + do, "-report", rep, "-config", cfg, "-timeout", limit.String()}, sc.args...)
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(w, append([]string{bin}, args...)...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // a timeout kills the compositor too
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "SHELL=/bin/sh", "PS1=$ ", "ENV=", "HISTFILE=/dev/null", "BUNK_TEST_DIR="+dir)
+	// An interactive sh reads $ENV; PS1 itself would not survive the
+	// wrapper, which is a bash script.
+	shrc := filepath.Join(dir, "shrc")
+	must(t, os.WriteFile(shrc, []byte("PS1='$ '\n"), 0o600))
+	cmd.Env = append(os.Environ(), "SHELL=/bin/sh", "ENV="+shrc, "HISTFILE=/dev/null", "BUNK_TEST_DIR="+dir)
 	cmd.Env = append(cmd.Env, sc.env...)
-	stdout, err := os.Create(filepath.Join(dir, "stdout.txt"))
+	var stdout *os.File
+	stdout, err = os.Create(filepath.Join(dir, "stdout.txt"))
 	must(t, err)
 	defer func() { _ = stdout.Close() }()
 	stderr, err := os.Create(filepath.Join(dir, "stderr.txt"))
@@ -149,7 +178,7 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	select {
 	case err = <-done:
 	case <-time.After(limit + 15*time.Second):
-		_ = cmd.Process.Kill()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		err = <-done
 		t.Errorf("bunk-gui did not quit within %v", limit+15*time.Second)
 	}

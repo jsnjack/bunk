@@ -22,20 +22,32 @@ import (
 //	font = "Noto Sans Mono"  # terminal font family
 //	font_size = 11           # points
 //
+//	[keys]                   # key bindings (see bindings.go for the actions)
+//	switcher = "ctrl+shift+space"
+//	next_needs_you = ["ctrl+shift+j", "f9"]
+//	zoom = "none"            # "none" or "": the key goes to the terminal
+//
 //	[[agents]]               # extra agent CLIs to recognise (repeatable)
 //	name = "myagent"
 //	processes = ["myagent"]
 //	scripts = ["@me/myagent"]
+//
+// The file is watched: edits apply to the running window.
 type Settings struct {
 	Tabs     string              `toml:"tabs"`
 	RailOpen bool                `toml:"rail_open"`
 	Font     string              `toml:"font"`
 	FontSize float64             `toml:"font_size"`
 	Agents   []session.AgentSpec `toml:"agents"`
+	Keys     map[string]any      `toml:"keys"`
+
+	keymap keymap              // Keys applied to the defaults
+	was    map[string][]string // bindings of disabled actions, from "# was" comments
 }
 
 func defaultSettings() Settings {
-	return Settings{Tabs: "rail", Font: "Noto Sans Mono", FontSize: 11}
+	km, _ := resolveKeys(nil)
+	return Settings{Tabs: "rail", Font: "Noto Sans Mono", FontSize: 11, keymap: km, was: map[string][]string{}}
 }
 
 // configPath is $XDG_CONFIG_HOME/bunk-gui/config.toml.
@@ -95,6 +107,9 @@ func loadSettings(path string) (Settings, error) {
 			problems = append(problems, fmt.Sprintf("font_size = %v (want 4-96)", f.FontSize))
 		}
 	}
+	km, keyProblems := resolveKeys(f.Keys)
+	st.Keys, st.keymap, st.was = f.Keys, km, keysWas(string(data))
+	problems = append(problems, keyProblems...)
 	for i, a := range f.Agents {
 		if a.Name == "" || len(a.Processes)+len(a.Scripts) == 0 {
 			problems = append(problems, fmt.Sprintf("agents[%d] needs a name and processes or scripts", i))

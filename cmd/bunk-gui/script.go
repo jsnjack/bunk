@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -43,7 +44,8 @@ import (
 //	kbd-type TEXT                    text typed key by key
 //	ptr-move X Y                     pointer to window coordinates
 //	ptr-at TARGET [DX DY]            tab N | tabclose N | newtab | options | closewin |
-//	                                 pane ID | cell ID COL ROW | divider r[a|b…] | menu LABEL
+//	                                 pane ID | cell ID COL ROW | divider r[a|b…] | menu LABEL |
+//	                                 shortcut-keys ACTION | shortcut-switch ACTION | button LABEL
 //	ptr-press [BTN] | ptr-release [BTN] | ptr-click [BTN] [N] | ptr-drag DX DY [STEPS] | ptr-scroll N
 //
 // Window and tabs:
@@ -51,12 +53,16 @@ import (
 //	new-tab [CMD] | close-tab | next-tab | prev-tab | select-tab N (1-based)
 //	split [container] | close-pane | zoom | focus left|right|up|down
 //	fake-container TYPE ID           pretend the focused pane runs in a container
-//	layout bar|rail | rail open|closed | font +|-|0 | menu open|close | menu-item LABEL
+//	layout bar|rail | rail open|closed | font +|-|0 | menu open|close | menu-item LABEL | menu-check
 //	switcher [filter TEXT|enter|close] | jump
 //	status [tab=N|pane=ID] [agent=A] [state=working|needs|idle|failed|none]
 //	       [repo=R] [branch=B] [container=C] [ssh=H] [notice=TEXT...]
 //	                                 override a pane's status (test hook)
 //	status-clear [tab=N|pane=ID]
+//	run CMD                          a shell command, e.g. to edit config.toml
+//	shortcut-scroll ACTION           scroll the shortcuts window to a row
+//	quit-dialog cancel               close the quit dialog
+//	dialog-close                     close the open dialog (quit, shortcuts, About)
 //	maximize | unmaximize | quit
 //
 // Records:
@@ -159,7 +165,7 @@ func (a *App) doAction(action string) {
 			a.reportError("%s: unknown key", action)
 			return
 		}
-		if !a.onShortcut(keyval, state) && p != nil {
+		if !a.onShortcut(keyval, 0, state) && p != nil {
 			a.onKey(p, keyval, state)
 		}
 	case "type":
@@ -296,6 +302,13 @@ func (a *App) doAction(action string) {
 		} else {
 			a.optionsBtn.Popup()
 		}
+	case "menu-check":
+		// Send all keys to terminal, activated like a click.
+		if a.passCheck == nil {
+			a.reportError("%s: no check item", action)
+			return
+		}
+		a.passCheck.Activate()
 	case "menu-item":
 		b, ok := a.menuButtons[arg]
 		if !ok {
@@ -332,6 +345,34 @@ func (a *App) doAction(action string) {
 	case "quit":
 		a.finish("script")
 
+	case "run":
+		// A shell command, synchronously: tests edit config.toml with it.
+		if out, err := exec.Command("/bin/sh", "-c", unescape(arg)).CombinedOutput(); err != nil {
+			a.reportError("%s: %v: %s", action, err, out)
+		}
+	case "shortcut-scroll":
+		if a.shortcutsWin == nil {
+			a.reportError("%s: the shortcuts window is not open", action)
+			return
+		}
+		check(a.shortcutsWin.scrollTo(arg))
+	case "quit-dialog":
+		if a.quitDialog == nil {
+			a.reportError("%s: no quit dialog", action)
+			return
+		}
+		a.quitDialog.Close() // the close response: cancel
+	case "dialog-close":
+		switch {
+		case a.quitDialog != nil:
+			a.quitDialog.Close()
+		case a.shortcutsWin != nil:
+			a.shortcutsWin.dlg.Close()
+		case a.about != nil:
+			a.about.Close()
+		default:
+			a.reportError("%s: no dialog", action)
+		}
 	case "snap":
 		if !a.reportOn() {
 			a.reportError("%s: needs -report", action)

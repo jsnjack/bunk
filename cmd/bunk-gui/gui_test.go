@@ -125,6 +125,7 @@ func TestGUIFrame(t *testing.T) {
 // an application's OSC 52 write. The compositor has its own clipboard.
 // It also types a command key by key through the input method.
 func TestGUIClipboard(t *testing.T) {
+	t.Parallel()
 	g := runGUI(t, scenario{
 		args: []string{"-size", "80x24"},
 		script: []string{
@@ -183,6 +184,7 @@ func strp(s *string) string {
 // sizes of the prototypes; Ctrl+=/-/0 and the menu's −/+ change the text
 // size.
 func TestGUILayoutsAndMenu(t *testing.T) {
+	t.Parallel()
 	g := runGUI(t, scenario{
 		config: "tabs = \"bar\"\nfont = \"Noto Sans Mono\"\nfont_size = 12\n",
 		args:   []string{"-size", "100x30", "-tab", ""},
@@ -195,10 +197,10 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 			"1500ms menu-item Tabs on the side",
 			"1900ms snap rail",
 			"1950ms shot rail.png",
-			"2000ms kbd ctrl+b",
+			"2000ms kbd ctrl+shift+b",
 			"2400ms snap rail-open",
 			"2450ms shot rail-open.png",
-			"2500ms kbd ctrl+b",
+			"2500ms kbd ctrl+shift+b",
 			"2900ms snap rail-closed",
 			"3000ms kbd ctrl+equal",
 			"3400ms snap zoom-in",
@@ -236,6 +238,8 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 			"10600ms menu-item Preferences",
 			"10700ms menu open",
 			"11000ms menu-item Keyboard shortcuts",
+			"11050ms snap shortcuts-open",
+			"11080ms dialog-close",
 			"11100ms menu open",
 			"11400ms menu-item Expand rail",
 			"11700ms snap expand-menu",
@@ -357,8 +361,11 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 	if s := g.snap("switcher"); !s.Switcher.Open || len(s.Switcher.Rows) != 2 {
 		t.Errorf("Switch tab: switcher %+v", s.Switcher)
 	}
+	if s := g.snap("shortcuts-open"); s.Shortcuts == nil || len(s.Shortcuts.Rows) != len(keyActions) {
+		t.Errorf("Keyboard shortcuts: window %+v", s.Shortcuts)
+	}
 	for _, want := range []string{"No agent needs you", "New window is not built yet", "Find is not built yet",
-		"Preferences are not built yet", "The shortcuts window is not built yet"} {
+		"Preferences are not built yet"} {
 		if !slices.ContainsFunc(g.Toasts, func(s string) bool { return strings.HasPrefix(s, want) }) {
 			t.Errorf("no toast %q in %q", want, g.Toasts)
 		}
@@ -371,6 +378,7 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 // TestGUIConfigErrors: a config with bad values or unknown keys, or one
 // that does not parse, shows a toast and leaves the defaults.
 func TestGUIConfigErrors(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, config string
 		want         []string
@@ -379,6 +387,7 @@ func TestGUIConfigErrors(t *testing.T) {
 		{"broken", "tabs = [\n", []string{"toml"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			g := runGUI(t, scenario{config: c.config, args: []string{"-size", "60x20"},
 				script: []string{"700ms snap start", "800ms quit"}})
 			s := g.snap("start")
@@ -403,6 +412,7 @@ func TestGUIConfigErrors(t *testing.T) {
 // tabs; a pane needing you gets the ring until it is focused; inactive
 // panes are dimmed.
 func TestGUITabsAndStatus(t *testing.T) {
+	t.Parallel()
 	g := runGUI(t, scenario{
 		config: "tabs = \"rail\"\nrail_open = true\n",
 		args:   []string{"-size", "100x30", "-tab", "", "-tab", "", "-tab", ""},
@@ -412,7 +422,7 @@ func TestGUITabsAndStatus(t *testing.T) {
 			"700ms status tab=4 agent=claude state=failed repo=gh-mirror branch=main ssh=build01",
 			"1000ms snap states",
 			"1050ms shot states.png",
-			"1100ms kbd ctrl+space",
+			"1100ms kbd ctrl+shift+space",
 			"1400ms snap switcher",
 			"1500ms kbd-type gh-mirror",
 			"1900ms snap switcher-filter",
@@ -420,11 +430,11 @@ func TestGUITabsAndStatus(t *testing.T) {
 			"2300ms snap picked",
 			"2400ms kbd ctrl+1",
 			"2500ms status tab=4 state=needs notice=Second request",
-			"2600ms kbd ctrl+j",
+			"2600ms kbd ctrl+shift+j",
 			"2900ms snap jump1",
-			"3000ms kbd ctrl+j",
+			"3000ms kbd ctrl+shift+j",
 			"3300ms snap jump2",
-			"3400ms kbd ctrl+j",
+			"3400ms kbd ctrl+shift+j",
 			"3700ms snap jump3",
 			"3800ms kbd ctrl+3",
 			"4000ms snap ctrl3",
@@ -566,6 +576,7 @@ func maxBright(img image.Image, m int) int {
 // the tab follows each state, needs-you shows the tint and the ring, and
 // focusing or typing acknowledges it.
 func TestGUIAgentStatus(t *testing.T) {
+	t.Parallel()
 	bin := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(bin, "claude"), []byte(`#!/bin/sh
 echo "fake claude working"
@@ -593,7 +604,7 @@ exit 3
 			"2600ms snap working",
 			"4200ms snap needs",
 			"4250ms shot needs.png",
-			"4400ms kbd ctrl+j",
+			"4400ms kbd ctrl+shift+j",
 			"4700ms snap acked",
 			"4800ms type yes\\r",
 			"6300ms snap bell",
@@ -657,6 +668,7 @@ exit 3
 // zooms, the divider drags, Alt+F1 opens a shell in the pane's container,
 // exits close panes and tabs, and clicks on the chrome and the menu work.
 func TestGUISplitsAndPointer(t *testing.T) {
+	t.Parallel()
 	bin := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(bin, "toolbox"), []byte(`#!/bin/sh
 printf '%s\n' "$@" > "$BUNK_TEST_DIR/toolbox-args"

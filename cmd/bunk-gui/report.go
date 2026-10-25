@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,6 +44,7 @@ type runReport struct {
 	Toasts      []string             `json:"toasts"`
 	Settings    map[string]any       `json:"settings"`
 	ConfigError string               `json:"config_error"`
+	Reloads     int                  `json:"reloads"` // config.toml reloads after a change
 }
 
 type verifyReport struct {
@@ -85,6 +88,7 @@ type rectReport struct {
 }
 
 type statusReport struct {
+	Reported  bool   `json:"reported"` // from the agent's own hook report
 	Agent     string `json:"agent"`
 	State     string `json:"state"`
 	Process   string `json:"process"`
@@ -116,6 +120,7 @@ type tabReport struct {
 	Item     *rectReport  `json:"item,omitempty"`
 	Close    *rectReport  `json:"close,omitempty"`
 	Status   statusReport `json:"status"` // of the agent pane
+	Pass     bool         `json:"pass"`   // shows the PASS tag
 }
 
 type paneReport struct {
@@ -132,6 +137,8 @@ type paneReport struct {
 	Ring     bool         `json:"ring"`
 	Visible  bool         `json:"visible"`
 	Override bool         `json:"override"`
+	Pass     bool         `json:"passthrough"`
+	Badge    *rectReport  `json:"badge,omitempty"` // the PASS badge, when shown
 	Status   statusReport `json:"status"`
 	Title    string       `json:"title"`
 	Scroll   int          `json:"scroll"`
@@ -148,32 +155,56 @@ type treeReport struct {
 }
 
 type uiSnapshot struct {
-	Label         string       `json:"label"`
-	TMs           int64        `json:"t_ms"`
-	Layout        string       `json:"layout"`
-	RailOpen      bool         `json:"rail_open"`
-	Window        windowReport `json:"window"`
-	Chrome        *rectReport  `json:"chrome"`
-	NewTab        *rectReport  `json:"new_tab,omitempty"`
-	Options       *rectReport  `json:"options,omitempty"`
-	CloseWindow   *rectReport  `json:"close_window,omitempty"`
-	Tabs          []tabReport  `json:"tabs"`
-	SelectedTab   int          `json:"selected_tab"`
-	Panes         []paneReport `json:"panes"`
-	Tree          *treeReport  `json:"tree"`
-	FocusedPane   int          `json:"focused_pane"`
-	ZoomedPane    int          `json:"zoomed_pane"`
-	Font          string       `json:"font"`
-	FontSize      float64      `json:"font_size"`
-	TextPercent   int          `json:"text_percent"`
-	Switcher      switchReport `json:"switcher"`
-	MenuOpen      bool         `json:"menu_open"`
-	AboutOpen     bool         `json:"about_open"`
-	LastToast     string       `json:"last_toast"`
-	Clipboard     *string      `json:"clipboard"`
-	Primary       *string      `json:"primary"`
-	Pointer       [2]float64   `json:"pointer"` // last position seen by the window, logical
-	KeyboardFocus string       `json:"keyboard_focus"`
+	Label         string              `json:"label"`
+	TMs           int64               `json:"t_ms"`
+	Layout        string              `json:"layout"`
+	RailOpen      bool                `json:"rail_open"`
+	Window        windowReport        `json:"window"`
+	Chrome        *rectReport         `json:"chrome"`
+	NewTab        *rectReport         `json:"new_tab,omitempty"`
+	Options       *rectReport         `json:"options,omitempty"`
+	CloseWindow   *rectReport         `json:"close_window,omitempty"`
+	Tabs          []tabReport         `json:"tabs"`
+	SelectedTab   int                 `json:"selected_tab"`
+	Panes         []paneReport        `json:"panes"`
+	Tree          *treeReport         `json:"tree"`
+	FocusedPane   int                 `json:"focused_pane"`
+	ZoomedPane    int                 `json:"zoomed_pane"`
+	Font          string              `json:"font"`
+	FontSize      float64             `json:"font_size"`
+	TextPercent   int                 `json:"text_percent"`
+	Switcher      switchReport        `json:"switcher"`
+	MenuOpen      bool                `json:"menu_open"`
+	AboutOpen     bool                `json:"about_open"`
+	LastToast     string              `json:"last_toast"`
+	Clipboard     *string             `json:"clipboard"`
+	Primary       *string             `json:"primary"`
+	Pointer       [2]float64          `json:"pointer"` // last position seen by the window, logical
+	KeyboardFocus string              `json:"keyboard_focus"`
+	Keys          map[string][]string `json:"keys"` // action → bindings in force
+	ConfigError   string              `json:"config_error"`
+	Shortcuts     *shortcutsReport    `json:"shortcuts,omitempty"`
+	Quit          *quitReport         `json:"quit_dialog,omitempty"`
+	MenuPassCheck bool                `json:"menu_pass_check"`
+}
+
+type shortcutsReport struct {
+	Capturing string               `json:"capturing"`
+	Message   string               `json:"message"`
+	Rows      []shortcutsRowReport `json:"rows"`
+}
+
+type shortcutsRowReport struct {
+	Action   string      `json:"action"`
+	Keys     string      `json:"keys"` // as the row shows them
+	Enabled  bool        `json:"enabled"`
+	Collides bool        `json:"collides"`
+	KeysBtn  *rectReport `json:"keys_button,omitempty"`
+	Switch   *rectReport `json:"switch,omitempty"`
+}
+
+type quitReport struct {
+	Body []string `json:"body"`
 }
 
 type windowReport struct {
@@ -193,12 +224,12 @@ type switchReport struct {
 
 var stateName = map[session.AgentState]string{
 	session.AgentNone: "none", session.AgentWorking: "working", session.AgentIdle: "idle",
-	session.AgentNeedsYou: "needs", session.AgentFailed: "failed",
+	session.AgentNeedsYou: "needs", session.AgentFailed: "failed", session.AgentDone: "done",
 }
 
 func statusOf(st session.Status) statusReport {
 	return statusReport{
-		Agent: st.Agent, State: stateName[st.State], Process: st.Process, Notice: st.Notice,
+		Reported: st.Reported, Agent: st.Agent, State: stateName[st.State], Process: st.Process, Notice: st.Notice,
 		Repo: st.Repo, Branch: st.Branch, Cwd: st.Cwd, Container: st.Container, SSHHost: st.SSHHost,
 	}
 }
@@ -278,7 +309,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		tr := tabReport{
 			Index: in.index + 1, Agent: in.agent, State: stateName[in.st.State], Label: in.look.label, Dot: in.look.dot,
 			Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.st.Notice, Tooltip: in.tooltip,
-			Selected: in.active, Needs: in.needs, Focus: -1, Zoomed: -1, Status: statusOf(in.st),
+			Selected: in.active, Needs: in.needs, Focus: -1, Zoomed: -1, Status: statusOf(in.st), Pass: in.pass,
 		}
 		if t.focus != nil {
 			tr.Focus, tr.Title = t.focus.id, t.focus.title
@@ -320,6 +351,33 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		}
 	}
 	s.KeyboardFocus = a.keyboardFocus()
+	s.Keys = map[string][]string{}
+	for name, cs := range a.keys().bind {
+		s.Keys[name] = []string{}
+		for _, c := range cs {
+			s.Keys[name] = append(s.Keys[name], c.String())
+		}
+	}
+	if a.configErr != nil {
+		s.ConfigError = a.configErr.Error()
+	}
+	if a.passCheck != nil {
+		s.MenuPassCheck = a.passCheck.Active()
+	}
+	if w := a.shortcutsWin; w != nil {
+		sr := &shortcutsReport{Capturing: w.capturing, Message: w.message.Text()}
+		for _, act := range keyActions {
+			r := w.rows[act.name]
+			sr.Rows = append(sr.Rows, shortcutsRowReport{
+				Action: act.name, Keys: r.keys.Label(), Enabled: r.sw.Active(), Collides: r.warn.Opacity() > 0,
+				KeysBtn: a.widgetRect(g, r.keys), Switch: a.widgetRect(g, r.sw),
+			})
+		}
+		s.Shortcuts = sr
+	}
+	if a.quitDialog != nil {
+		s.Quit = &quitReport{Body: a.quitBody}
+	}
 	return s
 }
 
@@ -353,6 +411,10 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		Focused: t.focus == p, HasFocus: p.widget.HasFocus(), Dimmed: t.dimmed(p), Zoomed: t.zoom == p,
 		Ring: p.status().State == session.AgentNeedsYou, Visible: p.widget.IsDrawable(),
 		Override: p.statusOverride != nil, Status: statusOf(p.status()), Title: p.title,
+		Pass: p.passthrough,
+	}
+	if p.passthrough {
+		r.Badge = a.widgetRect(g, p.passBadge)
 	}
 	if r.Visible {
 		r.Rect = a.widgetRect(g, p.widget)
@@ -437,9 +499,25 @@ func (a *App) snap(label string) {
 }
 
 // renderMallocs counts objects allocated under (*Pane).render so far. It
-// needs runtime.MemProfileRate = 1 (-alloc-probe), and two collections so
-// the profile includes the latest allocations.
-func renderMallocs() int64 {
+// needs runtime.MemProfileRate = 1 (-alloc-probe).
+func renderMallocs() int64 { return mallocsUnder("(*Pane).render") }
+
+// pkgPrefix starts this package's function names: "main." in bunk-gui,
+// the import path in its test binary.
+var pkgPrefix = strings.TrimSuffix(runtime.FuncForPC(reflect.ValueOf(pkgAnchor).Pointer()).Name(), "pkgAnchor")
+
+func pkgAnchor() {}
+
+// mallocsUnder counts the objects allocated so far by calls with one of
+// funcs (names in this package, e.g. "(*Pane).render") on the stack. Other
+// goroutines do not count, unlike runtime.MemStats.Mallocs. It needs
+// runtime.MemProfileRate = 1, and runs two collections so the profile
+// includes the latest allocations.
+func mallocsUnder(funcs ...string) int64 {
+	full := make([]string, len(funcs))
+	for i, f := range funcs {
+		full[i] = pkgPrefix + f
+	}
 	runtime.GC()
 	runtime.GC()
 	n, _ := runtime.MemProfile(nil, true)
@@ -454,7 +532,7 @@ func renderMallocs() int64 {
 		frames := runtime.CallersFrames(r.Stack())
 		for {
 			f, more := frames.Next()
-			if f.Function == "main.(*Pane).render" {
+			if slices.Contains(full, f.Function) {
 				total += r.AllocObjects
 				break
 			}

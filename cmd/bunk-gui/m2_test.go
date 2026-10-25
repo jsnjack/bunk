@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"runtime"
 	"testing"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -163,18 +162,12 @@ func TestScrolledFrameAllocs(t *testing.T) {
 	f.s.SelActive, f.s.SelAnchor, f.s.SelCursor = true, session.SelPos{Row: 400, Col: 3}, session.SelPos{Row: 410, Col: 9}
 	f.frame()
 	line := []byte("more output while scrolled back\r\n")
-	var before, after runtime.MemStats
-	var mallocs uint64
-	for i := 0; i < 100; i++ {
+	mallocs := frameMallocs(t, func(i int) {
 		f.term.Write(line) //nolint:errcheck
-		runtime.ReadMemStats(&before)
-		ok, rows := f.frame()
-		runtime.ReadMemStats(&after)
-		if !ok || rows != 36 {
+		if ok, rows := f.frame(); !ok || rows != 36 {
 			t.Fatalf("frame %d: ok=%v rows=%d", i, ok, rows)
 		}
-		mallocs += after.Mallocs - before.Mallocs
-	}
+	}, 100)
 	if mallocs != 0 {
 		t.Errorf("100 scrolled frames allocated %d times", mallocs)
 	}
