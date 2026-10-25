@@ -183,7 +183,8 @@ make test     # tests only (race-enabled)
 make build    # cross-compiles bin/bunk_{linux,darwin}_{amd64,arm64}
 make run      # builds local binary and opens a debug session with --trace
 make gui-test # bunk-gui: vet, race tests, packaging validation
-make check-all # check + gui-test
+make check-all # fmt+vet, then core and GUI tests in parallel, then build+lint
+make check-all FRESH=1 # the same, uncached and goimports on every file
 make rpm      # Fedora RPM of bunk-gui in bin/rpmbuild, checked by packaging/fedora/check-rpm.sh
 make fuzz     # every Fuzz target in turn, FUZZTIME each (default 30s); not in check-all
 make soak     # leak and soak tests at full length (SOAK=1); not in check-all
@@ -275,11 +276,19 @@ in the test suite; turn a manual check into a test before relying on it.
 
 **Run `make check-all` before reporting any work as done.** Work is not done
 until the full suite is green; report its result, including failures.
+Run `make check-all FRESH=1` before a merge or commit: the plain form reuses
+Go's test cache for unchanged packages and runs goimports only on files
+changed since HEAD (gofmt still sees every file).
+
+**Iterate with package tests, not the gate.** While working, run the package
+you change (`go test -race ./internal/session -run TestX`); run check-all
+once when done. Several agents running check-all at once slow everything
+by ~2x, so run at most three in parallel.
 
 Tests run with `-race` and are required to pass before any binary is built.
 `make test` includes the locally patched tcell module and its terminfo tests.
-The gate is serialized even with `make -j`; the project-specific test-before-
-build rule takes precedence over the generic gate ordering.
+Targets are serialized even with `make -j`; check-all runs the two test
+suites as background jobs itself and builds only after both pass.
 
 Terminal feature scripts (`terminal_features.sh`, `scripts/terminal_features/`):
 - **All seven groups are automated.** `terminal_features_test.go` has one

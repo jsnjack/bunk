@@ -6,6 +6,22 @@ MONOVA  := $(shell which monova 2> /dev/null)
 LDFLAGS  = -ldflags="-X main.Version=$(VERSION)"
 # The repo's own Go files: not build output, vendored code or agent worktrees.
 GOFILES  = $(shell find . -name '*.go' -not -path './bin/*' -not -path './.claude/*' -not -path '*/vendor/*')
+# Go files changed since HEAD or untracked: goimports takes ~25 s on every
+# file but only ~0.1 s per file, and committed files already passed it.
+CHANGED_GOFILES = $(shell { git diff --name-only --diff-filter=ACMR HEAD -- '*.go'; \
+	git ls-files -o --exclude-standard -- '*.go'; } 2>/dev/null | grep -v -E '^(bin|\.claude)/|/vendor/' | sort -u)
+
+# FRESH=1 is the full gate before a merge: tests run uncached and goimports
+# sees every file. Without it, go test reuses results for packages whose
+# code, read files and env vars are unchanged.
+ifdef FRESH
+TEST_COUNT  := -count=1
+IMPORTS_FILES = $(GOFILES)
+else
+IMPORTS_FILES = $(CHANGED_GOFILES)
+endif
+# Binaries wait for the tests; check-all clears this after running them.
+TEST_GATE ?= test
 
 # Formatting, tests, and binaries share files even with make -j.
 .NOTPARALLEL:
@@ -21,7 +37,7 @@ else
 endif
 
 test:
-	go test $(PKG) github.com/gdamore/tcell/v2/... -count=1 -race
+	go test $(PKG) github.com/gdamore/tcell/v2/... $(TEST_COUNT) -race
 
 vet:
 	go vet $(PKG)
@@ -32,7 +48,8 @@ fmt:
 	  echo "  go install golang.org/x/tools/cmd/goimports@latest"; \
 	  exit 1; \
 	}
-	goimports -w $(GOFILES)
+	$(if $(strip $(GOFILES)),gofmt -w $(GOFILES))
+	$(if $(strip $(IMPORTS_FILES)),goimports -w $(IMPORTS_FILES))
 
 lint: vet
 	@command -v golangci-lint >/dev/null 2>&1 || { \
@@ -54,13 +71,13 @@ standards:
 bin/$(BINARY): bin/$(BINARY)_linux_amd64
 	cp $< $@
 	ln -sf bin/$(BINARY) $(BINARY)
-bin/$(BINARY)_linux_amd64: test version
+bin/$(BINARY)_linux_amd64: $(TEST_GATE) version
 	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $@
-bin/$(BINARY)_linux_arm64: test version
+bin/$(BINARY)_linux_arm64: $(TEST_GATE) version
 	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $@
-bin/$(BINARY)_darwin_amd64: test version
+bin/$(BINARY)_darwin_amd64: $(TEST_GATE) version
 	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $@
-bin/$(BINARY)_darwin_arm64: test version
+bin/$(BINARY)_darwin_arm64: $(TEST_GATE) version
 	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $@
 
 build: bin/$(BINARY) bin/$(BINARY)_linux_amd64 bin/$(BINARY)_linux_arm64 bin/$(BINARY)_darwin_amd64 bin/$(BINARY)_darwin_arm64
@@ -93,7 +110,7 @@ gui:
 # Window tests run on a private headless compositor, never on the desktop.
 gui-test:
 	cd $(GUI_DIR) && go vet ./... && \
-		../../scripts/headless-gui.sh go test -race -count=1 ./...
+		../../scripts/headless-gui.sh go test -race $(TEST_COUNT) ./...
 	desktop-file-validate packaging/$(APP_ID).desktop
 	appstreamcli validate --no-net packaging/$(APP_ID).metainfo.xml
 
@@ -101,8 +118,18 @@ gui-test:
 screenshots:
 	scripts/screenshots.sh
 
-# Everything: bunk's gate, then bunk-gui and its packaging.
-check-all: check gui-test
+# Everything: format and vet, then bunk's tests and bunk-gui's window tests
+# at the same time (separate modules; logs print after both finish), then
+# the binaries and lint without running the tests again.
+check-all: fmt vet
+	@mkdir -p bin; \
+	$(MAKE) --no-print-directory test > bin/check-test.log 2>&1 & t=$$!; \
+	$(MAKE) --no-print-directory gui-test > bin/check-gui.log 2>&1 & g=$$!; \
+	wait $$t; tr=$$?; wait $$g; gr=$$?; \
+	cat bin/check-test.log bin/check-gui.log; \
+	test $$tr -eq 0 && test $$gr -eq 0
+	@$(MAKE) --no-print-directory build lint TEST_GATE=
+	@echo "==> make check-all: all green"
 
 # Runs every Fuzz target in turn for FUZZTIME each. Not part of check or
 # check-all: make test already runs the seed corpora in testdata/fuzz.
