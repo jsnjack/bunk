@@ -4,6 +4,8 @@ PKG     := ./...
 VERSION := 0.0.0
 MONOVA  := $(shell which monova 2> /dev/null)
 LDFLAGS  = -ldflags="-X main.Version=$(VERSION)"
+# The repo's own Go files: not build output, vendored code or agent worktrees.
+GOFILES  = $(shell find . -name '*.go' -not -path './bin/*' -not -path './.claude/*' -not -path '*/vendor/*')
 
 # Formatting, tests, and binaries share files even with make -j.
 .NOTPARALLEL:
@@ -30,7 +32,7 @@ fmt:
 	  echo "  go install golang.org/x/tools/cmd/goimports@latest"; \
 	  exit 1; \
 	}
-	goimports -w .
+	goimports -w $(GOFILES)
 
 lint: vet
 	@command -v golangci-lint >/dev/null 2>&1 || { \
@@ -80,7 +82,36 @@ run: test
 	> /tmp/bunk.log
 	BUNK=1 gnome-terminal -- bash -c 'cd $(PWD) && BUNK= ./$(BINARY) --trace'
 
+# bunk-gui is a separate Go module (cgo, GTK4); check never builds it.
+GUI_DIR := cmd/bunk-gui
+RPM_TOP := $(PWD)/bin/rpmbuild
+APP_ID  := io.github.jsnjack.BunkGui
+
+gui:
+	cd $(GUI_DIR) && go build -o ../../bin/bunk-gui .
+
+# Window tests run on a private headless compositor, never on the desktop.
+gui-test:
+	cd $(GUI_DIR) && go vet ./... && \
+		../../scripts/headless-gui.sh go test -race -count=1 ./...
+	desktop-file-validate packaging/$(APP_ID).desktop
+	appstreamcli validate --no-net packaging/$(APP_ID).metainfo.xml
+
+# Everything: bunk's gate, then bunk-gui and its packaging.
+check-all: check gui-test
+
+rpm: version
+	rm -rf $(RPM_TOP)
+	packaging/fedora/sources.sh $(VERSION) $(RPM_TOP)/SOURCES
+	rpmbuild -ba --define "_topdir $(RPM_TOP)" \
+		--define "bunk_version $(VERSION)" \
+		--define "snapinfo git$$(git rev-parse --short HEAD)" \
+		packaging/fedora/bunk-gui.spec
+	packaging/fedora/check-rpm.sh $(RPM_TOP)/RPMS/*/bunk-gui-$(VERSION)-*.$$(uname -m).rpm \
+		$(RPM_TOP)/SOURCES/bunk-gui-$(VERSION).tar.gz
+	@ls $(RPM_TOP)/RPMS/*/bunk-gui-*.rpm $(RPM_TOP)/SRPMS/*.rpm
+
 clean:
 	rm -rf bin/ $(BINARY)
 
-.PHONY: version build release test vet fmt lint check standards run clean
+.PHONY: version build release test vet fmt lint check standards run clean gui gui-test check-all rpm
