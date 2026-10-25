@@ -33,28 +33,41 @@ func TestGUINeverReadingPane(t *testing.T) {
 		child = append(child, shellQuote(kv))
 	}
 	g := runGUI(t, scenario{
+		cost: 3,
 		args: []string{"-size", "100x30", "-input-bytes", strconv.Itoa(inputCap),
 			"-e", "exec env " + strings.Join(child, " ") + " " + shellQuote(self), "-tab", ""},
 		script: []string{
-			"300ms split",
-			"700ms focus left",
-			"2500ms snap flooded",
-			"2600ms type " + strings.Repeat("k", 2000),
-			"2700ms clip " + strings.Repeat("p", inputCap+1),
-			"2800ms paste",
-			"3300ms snap refused",
-			"3400ms focus right",
-			"3500ms mark type-start",
-			"3550ms typing start 25ms",
-			"5550ms typing stop",
-			"5600ms mark type-end",
-			"5650ms key ctrl+u", // the typed x's
-			"5700ms type echo pane-ok\\r",
-			"6200ms snap pane-echo",
-			"6300ms select-tab 2",
-			"6500ms type echo tab-ok\\r",
-			"7000ms snap tab-echo",
-			"7100ms quit",
+			"split",
+			"wait tab.1.panes.#=2 focused.settled=true",
+			"focus left",
+			"wait focused_pane=0",
+			"wait pane.0.text~\"" + ptychild.FloodDone + " 30000\" pane.0.writer.dropped_replies>0 pane.0.writer.pending_replies>0",
+			"snap flooded",
+			"type " + strings.Repeat("k", 2000),
+			"clip " + strings.Repeat("p", inputCap+1),
+			"wait clipboard " + strings.Repeat("p", inputCap+1),
+			"paste",
+			"wait pane.0.writer.refused_input=1 pane.0.writer.pending_input=2000 run.toasts=\"" + refusedToast + "\"",
+			"snap refused",
+			"focus right",
+			"wait focused_pane=2 focused.line=$",
+			// Real time: the window must keep drawing and run the script
+			// on time while typing.
+			"mark type-start",
+			"typing start 25ms",
+			"sleep 2s",
+			"typing stop",
+			"mark type-end",
+			"key ctrl+u", // the typed x's
+			"type echo pane-ok\\r",
+			"wait pane.2.text=pane-ok",
+			"snap pane-echo",
+			"select-tab 2",
+			"wait selected_tab=2 focused.line=$",
+			"type echo tab-ok\\r",
+			"wait pane.1.text=tab-ok",
+			"snap tab-echo",
+			"quit",
 		},
 		limit: 20 * time.Second,
 	})
@@ -84,7 +97,7 @@ func TestGUINeverReadingPane(t *testing.T) {
 		t.Errorf("typing beside the flooding pane: %d frames, %d key echoes drawn; want at least 20", typing.Frames, typing.KeyRenders)
 	}
 	// Script actions run on the main thread: a late mark means it was blocked.
-	if late := g.mark("type-end").TMs - (g.ActiveMs + 5600); late > int64(500*slack()) {
+	if late := typing.TMs - 2000; late > int64(500*slack()) {
 		t.Errorf("the type-end mark ran %d ms late: the main thread was blocked", late)
 	}
 	kr := g.Latency["key_render"]

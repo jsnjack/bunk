@@ -21,33 +21,34 @@ func TestGUITabLeaks(t *testing.T) {
 	if os.Getenv("SOAK") == "1" {
 		tabs = 200
 	}
-	at := 1500 * time.Millisecond
-	var script []string
-	step := func(action string, gap time.Duration) {
-		script = append(script, fmt.Sprintf("%dms %s", at.Milliseconds(), action))
-		at += gap
-	}
-	step("mark start", 100*time.Millisecond)
+	// Every step waits until it took effect: a tab's panes have drawn
+	// before it closes, so their textures exist.
+	script := []string{"mark start"}
 	for i := range tabs {
 		if i%5 == 0 {
-			step(`new-tab stty raw -echo; yes "$(printf '\\033[5n')" | head -c 300000; sleep 100`, 700*time.Millisecond)
-			step("type "+strings.Repeat("k", 1000), 80*time.Millisecond)
-			step(fmt.Sprintf("snap flooding-%d", i), 50*time.Millisecond)
-			step("close-tab", 80*time.Millisecond)
+			script = append(script,
+				`new-tab stty raw -echo; yes "$(printf '\\033[5n')" | head -c 300000; sleep 100`,
+				"wait tabs.#=2 focused.settled=true focused.writer.dropped_replies>0 focused.writer.pending_replies>0",
+				"type "+strings.Repeat("k", 1000),
+				"wait focused.writer.pending_input=1000",
+				fmt.Sprintf("snap flooding-%d", i),
+				"close-tab",
+				"wait tabs.#=1")
 			continue
 		}
-		step("new-tab", 80*time.Millisecond)
-		step("split", 80*time.Millisecond)
+		script = append(script, "new-tab", "wait tabs.#=2 focused.settled=true", "split", "wait tab.2.panes.#=2 focused.settled=true")
 		if i%2 == 1 {
-			step("close-pane", 80*time.Millisecond) // the split pane alone
+			script = append(script, "close-pane", "wait tab.2.panes.#=1") // the split pane alone
 		}
-		step("close-tab", 80*time.Millisecond)
+		script = append(script, "close-tab", "wait tabs.#=1")
 	}
-	at += 2 * time.Second // the shells exit and their views unrealize
-	step("mark end", 100*time.Millisecond)
-	step("snap end", 100*time.Millisecond)
-	step("quit", 0)
-	g := runGUI(t, scenario{args: []string{"-size", "100x30"}, script: script, limit: at + 30*time.Second})
+	// The shells exit and their views unrealize: wait for the counts the
+	// checks below compare.
+	script = append(script,
+		"wait res.panes=@start.panes res.children<=@start.children res.zombies=0 res.fds<=@start.fds+2 res.goroutines<=@start.goroutines+2 timeout=20s",
+		"mark end", "snap end", "quit")
+	g := runGUI(t, scenario{cost: 3, args: []string{"-size", "100x30"}, script: script,
+		limit: 30*time.Second + time.Duration(tabs)*time.Second})
 
 	start, end := g.mark("start"), g.mark("end")
 	t.Logf("%d tabs: fds %d → %d, goroutines %d → %d, children %d → %d (zombies %d), panes %d → %d, textures %d → %d",

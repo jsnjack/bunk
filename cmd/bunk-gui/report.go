@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
@@ -152,12 +153,17 @@ type paneReport struct {
 	Status   statusReport `json:"status"`
 	Title    string       `json:"title"`
 	Scroll   int          `json:"scroll"`
-	Text     []string     `json:"text"`   // live grid rows, trailing blanks trimmed
-	Cursor   string       `json:"cursor"` // pointer cursor over the view: text or pointer
-	Hover    string       `json:"hover"`  // link underlined under the pointer (Ctrl held)
-	Images   imageReport  `json:"images"`
-	Writer   writerReport `json:"writer"`
-	Links    linkReport   `json:"links"`
+	Text     []string     `json:"text"` // live grid rows, trailing blanks trimmed
+	Line     string       `json:"line"` // the text cursor's row of Text: "$" at an idle sh prompt
+	// Settled: the pane's last frame was drawn at its current size and
+	// font, no frame or reflow is pending, and the grid fits the frame.
+	Settled bool         `json:"settled"`
+	Busy    string       `json:"busy"`   // the foreground process when not an idle shell (quit asks)
+	Cursor  string       `json:"cursor"` // pointer cursor over the view: text or pointer
+	Hover   string       `json:"hover"`  // link underlined under the pointer (Ctrl held)
+	Images  imageReport  `json:"images"`
+	Writer  writerReport `json:"writer"`
+	Links   linkReport   `json:"links"`
 }
 
 // writerReport is what the session's PTY writer holds for a child that
@@ -272,6 +278,7 @@ type matchReport struct {
 type shortcutsReport struct {
 	Capturing string               `json:"capturing"`
 	Message   string               `json:"message"`
+	Indicator float64              `json:"indicator"` // opacity of the list's overlay scroll indicator
 	Rows      []shortcutsRowReport `json:"rows"`
 }
 
@@ -446,7 +453,8 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		s.MenuPassCheck = a.passCheck.Active()
 	}
 	if w := a.shortcutsWin; w != nil {
-		sr := &shortcutsReport{Capturing: w.capturing, Message: w.message.Text()}
+		sr := &shortcutsReport{Capturing: w.capturing, Message: w.message.Text(),
+			Indicator: gtk.BaseWidget(w.scroll.VScrollbar()).Opacity()}
 		for _, act := range keyActions {
 			r := w.rows[act.name]
 			sr.Rows = append(sr.Rows, shortcutsRowReport{
@@ -549,6 +557,12 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		r.Rect = a.widgetRect(g, p.widget)
 		vg := viewGeomC(p.view)
 		r.Texture = [4]int{vg.x0 - ox, vg.y0 - oy, vg.dw, vg.dh}
+		r.Settled = p.atlas != nil && p.r != nil && vg.dw > 0 && p.atlas.Font == a.fontDesc &&
+			math.Abs(p.atlas.Scale-vg.scale) < 1e-6 && !p.renderQueued.Load() && !p.resizing.Load() &&
+			p.cols == max(2, vg.dw/p.atlas.CellW) && p.rows == max(1, vg.dh/p.atlas.CellH)
+	}
+	if name, busy := p.busy(); busy {
+		r.Busy = name
 	}
 	if p.s != nil {
 		ws := p.s.WriteStats()
@@ -556,6 +570,7 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 			DroppedReplies: ws.DroppedReplies, RefusedInput: ws.RefusedInput}
 		p.s.Lock()
 		cols, rows := p.s.Term.Size()
+		r.Settled = r.Settled && cols == p.cols && rows == p.rows
 		r.Scroll = p.s.ScrollOffset
 		if st := p.s.Images(); st != nil {
 			r.Images.Stored, r.Images.StoredBytes, r.Images.Evicted, r.Images.Swept = st.Len(), st.Bytes(), st.Evicted, st.Swept
@@ -575,6 +590,9 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 				}
 			}
 			r.Text = append(r.Text, strings.TrimRight(b.String(), " "))
+		}
+		if cy := p.s.Term.Cursor().Y; cy >= 0 && cy < len(r.Text) {
+			r.Line = r.Text[cy]
 		}
 		p.s.Unlock()
 	}
@@ -614,11 +632,33 @@ func (a *App) dividerRect(n *node) (x, y, w, h float64, ok bool) {
 	return ax + aw, py, bx - (ax + aw), ph, true
 }
 
-// snap records a snapshot in the report and fills in the clipboard and
-// primary selection texts when GTK has read them.
-func (a *App) snap(label string) {
+// snap records a snapshot in the report after the next frame and fills in
+// the clipboard and primary selection texts when GTK has read them; then
+// done runs (after two seconds at most).
+func (a *App) snap(label string, done func()) {
+	// After a frame, so widgets changed by earlier steps have their size
+	// and position.
+	a.win.QueueDraw()
+	a.onNextPaint(func() {
+		if !a.finished {
+			a.snapNow(label, done)
+		} else if done != nil {
+			done()
+		}
+	})
+}
+
+func (a *App) snapNow(label string, done func()) {
 	s := a.snapshot(label)
 	a.rep.Snapshots = append(a.rep.Snapshots, s)
+	pending := 2
+	finish := func() {
+		if done != nil {
+			d := done
+			done = nil
+			d()
+		}
+	}
 	for _, primary := range []bool{false, true} {
 		cb := clipboard(primary)
 		cb.ReadTextAsync(context.Background(), func(res gio.AsyncResulter) {
@@ -631,8 +671,15 @@ func (a *App) snap(label string) {
 			} else {
 				s.Clipboard = &text
 			}
+			if pending--; pending == 0 {
+				finish()
+			}
 		})
 	}
+	coreglib.TimeoutAdd(2000, func() bool {
+		finish()
+		return false
+	})
 }
 
 // renderMallocs counts objects allocated under (*Pane).render so far. It

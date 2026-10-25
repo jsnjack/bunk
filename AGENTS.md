@@ -276,6 +276,12 @@ virtual monitor at 133% on the GPU, with its own D-Bus and clipboard. Every
 GUI check, including pixel, idle-frame, allocation and latency checks, lives
 in the test suite; turn a manual check into a test before relying on it.
 `go test -short` skips the window tests (the RPM's %check uses it).
+Scenarios drive bunk-gui with `-do` steps that run in sequence. A `wait`
+step holds until the UI reaches a state (`cmd/bunk-gui/wait.go`): a field of
+the `-report` snapshot, frames drawn, no frames for a while, or injected
+input received. Use `sleep` only where a check measures time (idle frames,
+typing latency, CSS fades in screenshots). At most `BUNK_GUI_PARALLEL`
+scenarios run at once (default 8); those with a higher `cost` start first.
 
 **Run `make check-all` before reporting any work as done.** Work is not done
 until the full suite is green; report its result, including failures.

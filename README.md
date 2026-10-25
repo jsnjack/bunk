@@ -316,6 +316,7 @@ make run           # build bunk and open it with --trace in a new terminal
 - **Checks in tests.** Pixel, idle-frame, allocation and latency checks are Go tests. Turn a manual check into a test.
 - **Leak checks.** check-all counts fds, goroutines, child processes and heap around session, TUI and GUI cycles.
 - **Package builds.** `go test -short` skips window tests; the RPM's `%check` uses it.
+- **Waits, not timelines.** Scenario steps wait for UI states. `BUNK_GUI_PARALLEL` (default 8) sets how many scenarios run at once.
 - **Tools.** Window tests need mutter, gdctl and dbus-run-session. Packaging checks need desktop-file-validate and appstreamcli.
 - **Screenshots.** `TestGUIScreenshots` renders the README scenario in every `make gui-test`.
 - **Saving shots.** `make screenshots` copies the PNGs to `assets/` and shrinks them with pngquant, oxipng, optipng or ImageMagick.

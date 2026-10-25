@@ -120,9 +120,14 @@ func (w *shortcutsWindow) refresh() {
 	km := w.a.keys()
 	for name, r := range w.rows {
 		cs := km.bind[name]
-		r.syncing = true
-		r.sw.SetActive(len(cs) > 0)
-		r.syncing = false
+		// Setting the state it has would end a toggle that a click
+		// started (a reload after an earlier edit came in meanwhile), and
+		// the click would be lost.
+		if on := len(cs) > 0; r.sw.Active() != on {
+			r.syncing = true
+			r.sw.SetActive(on)
+			r.syncing = false
+		}
 		switch {
 		case w.capturing == name:
 			r.keys.SetLabel("Press a key…")

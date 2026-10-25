@@ -12,7 +12,9 @@ package main
 //     JSON and pixels of its PNG dumps.
 //   - Every scenario gets a compositor of its own (the wrapper again, nested),
 //     so scenarios that call t.Parallel run side by side without sharing
-//     keyboard focus, pointer or clipboard. At most guiParallel run at once.
+//     keyboard focus, pointer or clipboard. At most BUNK_GUI_PARALLEL run
+//     at once (default 8), the costliest first.
+//   - Scripts wait for conditions (wait.go), not for guessed times.
 
 import (
 	"encoding/json"
@@ -113,6 +115,12 @@ type scenario struct {
 	env    []string          // extra environment
 	files  map[string]string // more files in the scenario's directory (the panes' cwd)
 	limit  time.Duration
+	// cost is the scenario's rough length in seconds, run and checks
+	// (default 1): costly scenarios get a slot first.
+	cost float64
+	// prepare runs once the scenario has a slot, so slow setup does not
+	// delay its place in the queue.
+	prepare func()
 }
 
 type guiRun struct {
@@ -122,13 +130,75 @@ type guiRun struct {
 }
 
 // guiSlots limits how many scenarios run at once (BUNK_GUI_PARALLEL).
-var guiSlots = func() chan struct{} {
-	n := 4
+var guiSlots = func() *slotQueue {
+	n := 8
 	if v, err := strconv.Atoi(os.Getenv("BUNK_GUI_PARALLEL")); err == nil && v > 0 {
 		n = v
 	}
-	return make(chan struct{}, n)
+	return &slotQueue{free: n}
 }()
+
+// slotQueue hands out scenario slots, the highest cost first. The
+// parallel tests start together: a request waits 50 ms for the others to
+// queue before slots are given out, so the longest scenarios do not end up
+// last.
+type slotQueue struct {
+	mu      sync.Mutex
+	free    int
+	seq     int // arrivals; also orders equal costs
+	held    bool
+	waiting []*slotWaiter
+}
+
+type slotWaiter struct {
+	cost float64
+	seq  int
+	ch   chan struct{}
+}
+
+func (q *slotQueue) acquire(cost float64) {
+	w := &slotWaiter{cost: cost, ch: make(chan struct{})}
+	q.mu.Lock()
+	q.seq++
+	w.seq = q.seq
+	q.waiting = append(q.waiting, w)
+	seq := q.seq
+	q.held = true
+	q.mu.Unlock()
+	time.AfterFunc(50*time.Millisecond, func() {
+		q.mu.Lock()
+		if q.seq == seq { // no request came after this one
+			q.held = false
+		}
+		q.mu.Unlock()
+		q.dispatch()
+	})
+	<-w.ch
+}
+
+func (q *slotQueue) release() {
+	q.mu.Lock()
+	q.free++
+	q.mu.Unlock()
+	q.dispatch()
+}
+
+func (q *slotQueue) dispatch() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for !q.held && q.free > 0 && len(q.waiting) > 0 {
+		best := 0
+		for i, w := range q.waiting {
+			if b := q.waiting[best]; w.cost > b.cost || w.cost == b.cost && w.seq < b.seq {
+				best = i
+			}
+		}
+		w := q.waiting[best]
+		q.waiting = append(q.waiting[:best], q.waiting[best+1:]...)
+		q.free--
+		close(w.ch)
+	}
+}
 
 // runGUI launches bunk-gui with the scenario on a compositor of its own and
 // returns its report. The child shell is /bin/sh with a plain prompt and
@@ -139,8 +209,15 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	bin := guiBinary(t)
 	w, err := filepath.Abs(wrapper)
 	must(t, err)
-	guiSlots <- struct{}{}
-	defer func() { <-guiSlots }()
+	cost := sc.cost
+	if cost == 0 {
+		cost = 1
+	}
+	guiSlots.acquire(cost)
+	defer guiSlots.release()
+	if sc.prepare != nil {
+		sc.prepare()
+	}
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.toml")
 	rep := filepath.Join(dir, "report.json")
@@ -197,6 +274,7 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	t.Cleanup(func() {
 		if t.Failed() {
 			g.logOutput()
+			g.logLastSnapshot()
 		}
 	})
 	if len(g.Errors) > 0 {
@@ -223,6 +301,25 @@ func (g *guiRun) logOutput() {
 		}
 		g.t.Logf("%s (last %d lines):\n%s", name, len(lines), strings.Join(lines, "\n"))
 	}
+}
+
+// logLastSnapshot logs the UI state where the script stopped: the
+// snapshot a timed-out wait took, else the final one (key bindings left
+// out).
+func (g *guiRun) logLastSnapshot() {
+	s := g.Final
+	for _, x := range g.Snapshots {
+		if x.Label == "wait-timeout" {
+			s = x
+		}
+	}
+	if s == nil {
+		return
+	}
+	c := *s
+	c.Keys = nil
+	data, _ := json.Marshal(&c)
+	g.t.Logf("snapshot %q (%s): %s", c.Label, g.Reason, data)
 }
 
 func must(t *testing.T, err error) {
@@ -318,7 +415,25 @@ func loadPNG(t *testing.T, path string) image.Image {
 	return img
 }
 
+// at reads a pixel. Opaque pixels of the decoded PNGs are read straight
+// from their bytes: checks scan millions of pixels, and At allocates and
+// is slow under -race. Other pixels go through At, with the same result.
 func at(img image.Image, x, y int) rgb {
+	var pix []byte
+	i := -1
+	switch m := img.(type) {
+	case *image.RGBA:
+		if (image.Point{x, y}).In(m.Rect) {
+			pix, i = m.Pix, m.PixOffset(x, y)
+		}
+	case *image.NRGBA:
+		if (image.Point{x, y}).In(m.Rect) {
+			pix, i = m.Pix, m.PixOffset(x, y)
+		}
+	}
+	if i >= 0 && pix[i+3] == 0xff {
+		return rgb{int(pix[i]), int(pix[i+1]), int(pix[i+2])}
+	}
 	r, g, b, _ := img.At(x, y).RGBA()
 	return rgb{int(r >> 8), int(g >> 8), int(b >> 8)}
 }

@@ -17,14 +17,23 @@ import (
 	"bunk/internal/session"
 )
 
-// runScript schedules -do actions. Each action is "TIME VERB [ARGS]" with
-// TIME measured from startup, or from keyboard focus with -wait-focus;
-// actions are separated by ';'. They run on the
-// main thread. Most call the same handlers as the GTK controllers; kbd* and
-// ptr* inject real input through the headless test compositor instead.
-// Arguments take Go escapes (\n, \x1b). "-do @FILE" reads the actions from
-// a file, one per line. A failed or unknown action is listed under "errors"
-// in -report.
+// runScript runs -do actions in order, one step at a time. A step is
+// "[TIME] VERB [ARGS]": with TIME (a Go duration) it starts no earlier than
+// TIME after the script started (startup, or keyboard focus with
+// -wait-focus); without, right after the previous step finished. Steps are
+// separated by ';', or one per line in "-do @FILE". Waits ("wait", see
+// wait.go) hold the script until the UI reaches a state, so scenarios need
+// no guessed timelines; "sleep DUR" holds it for a fixed time where the
+// time itself is measured. Actions run on the main thread. Most call the
+// same handlers as the GTK controllers; kbd* and ptr* inject real input
+// through the headless test compositor instead. Arguments take Go escapes
+// (\n, \x1b). A failed or unknown action is listed under "errors" in
+// -report.
+//
+// Script control:
+//
+//	wait COND... [timeout=DUR]       until conditions hold (wait.go), e.g. wait tab.2.state=needs
+//	sleep DUR                        a fixed pause, for windows of time a check measures
 //
 // Terminal input, called directly:
 //
@@ -38,7 +47,8 @@ import (
 //	copy | paste | paste-primary | clip TEXT | print-clip | print-primary
 //	typing start DUR | typing stop   write 'x' to the focused pane every DUR (latency)
 //
-// Real input through the compositor (window maximized for ptr*):
+// Real input through the compositor (window maximized for ptr*); "wait
+// input" holds until the window has seen every key and button event:
 //
 //	kbd SPEC...                      key combinations, e.g. kbd ctrl+shift+t F1 alt+Left
 //	kbd-down KEY... | kbd-up KEY...  hold or release keys, e.g. kbd-down ctrl shift
@@ -47,7 +57,9 @@ import (
 //	ptr-at TARGET [DX DY]            tab N | tabclose N | newtab | options | closewin |
 //	                                 pane ID | cell ID COL ROW | divider r[a|b…] | menu LABEL |
 //	                                 shortcut-keys ACTION | shortcut-switch ACTION | button LABEL |
-//	                                 pref NAME (tabs-rail, font-size, agent-0-name, agent-add, …)
+//	                                 pref NAME (tabs-rail, font-size, agent-0-name, agent-add, …);
+//	                                 waits until the target exists and stays put for two
+//	                                 frames, and until the window sees the pointer there
 //	ptr-press [BTN] | ptr-release [BTN] | ptr-click [BTN] [N] | ptr-drag DX DY [STEPS] | ptr-scroll N
 //
 // Window and tabs:
@@ -67,12 +79,13 @@ import (
 //	dialog-close                     close the open dialog (quit, shortcuts, preferences, About)
 //	maximize | unmaximize | quit
 //
-// Records:
+// Records (snap, dump and shot finish before the next step starts):
 //
-//	snap LABEL                       UI state snapshot in -report
+//	snap LABEL                       UI state snapshot in -report, clipboard texts read
 //	mark NAME                        frame and allocation counters in -report
-//	dump FILE [WxH] | dump-pane ID FILE   a pane's last frame
-//	shot FILE [window|chrome|menu]   a widget rendered offscreen through GSK
+//	dump FILE [WxH] | dump-pane ID FILE   a pane's frame, drawn after the step started
+//	shot FILE [window|chrome|menu]   a widget rendered offscreen through GSK, after the
+//	                                 next frame (panes drawn afresh)
 //	print-size | print-tabs | print-status | print-ui
 func (a *App) runScript(script string) {
 	if path, ok := strings.CutPrefix(script, "@"); ok { // -do @FILE
@@ -88,22 +101,84 @@ func (a *App) runScript(script string) {
 	if strings.HasPrefix(a.cfg.script, "@") {
 		sep = "\n" // a file holds one action per line, so text may contain ';'
 	}
-	for _, step := range strings.Split(script, sep) {
-		step = strings.TrimSpace(step)
-		if step == "" || strings.HasPrefix(step, "#") {
+	a.watchInput()
+	a.steps = a.steps[:0]
+	for _, line := range strings.Split(script, sep) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		at, rest, _ := strings.Cut(step, " ")
-		d, err := time.ParseDuration(at)
-		if err != nil {
-			a.reportError("-do %q: %v", step, err)
-			continue
+		st := scriptStep{at: -1, action: line}
+		if first, rest, _ := strings.Cut(line, " "); first != "" {
+			if d, err := time.ParseDuration(first); err == nil {
+				st.at, st.action = d, strings.TrimSpace(rest)
+			} else if first[0] >= '0' && first[0] <= '9' {
+				a.reportError("-do %q: %v", line, err)
+				continue
+			}
 		}
-		rest = strings.TrimSpace(rest)
+		a.steps = append(a.steps, st)
+	}
+	a.stepNext = 0
+	a.scriptT0 = time.Now()
+	a.nextStep()
+}
+
+// scriptStep is one -do action; at < 0 means right after the previous step.
+type scriptStep struct {
+	at     time.Duration
+	action string
+}
+
+// nextStep runs the next step once the main loop has handled pending
+// events.
+func (a *App) nextStep() {
+	coreglib.IdleAdd(func() {
+		if a.finished || a.stepNext >= len(a.steps) {
+			return
+		}
+		st := a.steps[a.stepNext]
+		if st.at >= 0 {
+			if d := st.at - time.Since(a.scriptT0); d > 0 {
+				coreglib.TimeoutAdd(uint((d+time.Millisecond-1)/time.Millisecond), func() bool {
+					a.nextStep()
+					return false
+				})
+				return
+			}
+		}
+		a.stepNext++
+		a.prevStepFrames, a.stepFrames = a.stepFrames, a.st.frames
+		a.runStep(st.action, a.nextStep)
+	})
+}
+
+// runStep runs one action and calls next when it is done: at once for
+// most, later for waits, pauses and records that need a frame.
+func (a *App) runStep(action string, next func()) {
+	verb, arg, _ := strings.Cut(action, " ")
+	arg = strings.TrimSpace(arg)
+	switch verb {
+	case "wait":
+		fmt.Printf("do: %s\n", action)
+		a.startWait(arg, next)
+	case "sleep":
+		fmt.Printf("do: %s\n", action)
+		d, err := time.ParseDuration(arg)
+		if err != nil || d < 0 {
+			a.reportError("%s: want sleep DURATION", action)
+			next()
+			return
+		}
 		coreglib.TimeoutAdd(uint(d.Milliseconds()), func() bool {
-			a.doAction(rest)
+			next()
 			return false
 		})
+	case "snap", "shot", "dump", "dump-pane", "ptr-at", "ptr-drag", "print-clip", "print-primary":
+		a.doAction(action, next)
+	default:
+		a.doAction(action, nil)
+		next()
 	}
 }
 
@@ -122,7 +197,16 @@ var paneVerbs = map[string]bool{
 	"zoom": true, "focus": true, "fake-container": true, "dump": true, "print-size": true,
 }
 
-func (a *App) doAction(action string) {
+// doAction runs one action. Actions that finish later (records, pointer
+// moves and drags) take done and call it when finished; for the rest, and
+// when an action fails at once, done runs before doAction returns.
+func (a *App) doAction(action string, done func()) {
+	async := false // done was handed to an action that finishes later
+	defer func() {
+		if !async && done != nil {
+			done()
+		}
+	}()
 	if a.finished {
 		return
 	}
@@ -225,9 +309,13 @@ func (a *App) doAction(action string) {
 		clipboard(false).SetText(unescape(arg))
 	case "print-clip", "print-primary":
 		cb := clipboard(verb == "print-primary")
+		async = true
 		cb.ReadTextAsync(context.Background(), func(res gio.AsyncResulter) {
 			text, err := cb.ReadTextFinish(res)
 			fmt.Printf("%s: %q err=%v\n", verb, text, err)
+			if done != nil {
+				done()
+			}
 		})
 	case "typing":
 		if len(args) > 0 && args[0] == "stop" {
@@ -246,7 +334,21 @@ func (a *App) doAction(action string) {
 			a.reportError("%s: %v", action, err)
 			return
 		}
-		check(a.injectAction(verb, arg, args, num, fnum))
+		switch verb {
+		case "ptr-at":
+			async = true
+			a.pointerAt(action, arg, args, done)
+		case "ptr-drag":
+			async = true
+			a.pointerDrag(fnum(0), fnum(1), num(2, 10), func(err error) {
+				check(err)
+				if done != nil {
+					done()
+				}
+			})
+		default:
+			check(a.injectAction(verb, arg, args, num, fnum))
+		}
 
 	case "new-tab":
 		a.newTab(unescape(arg), p.s.Cwd())
@@ -382,7 +484,8 @@ func (a *App) doAction(action string) {
 			a.reportError("%s: needs -report", action)
 			return
 		}
-		a.snap(arg)
+		async = true
+		a.snap(arg, done)
 	case "mark":
 		if !a.reportOn() {
 			a.reportError("%s: needs -report", action)
@@ -390,25 +493,32 @@ func (a *App) doAction(action string) {
 		}
 		a.addMark(arg)
 	case "shot":
-		check(a.shot(args))
+		err := a.shot(args, done)
+		check(err)
+		async = err == nil
 	case "dump":
-		if len(args) > 1 {
-			a.cfg.dumpSize = args[1]
+		if len(args) == 0 {
+			a.reportError("%s: want dump FILE [WxH]", action)
+			return
 		}
-		a.writeDump(p, args[0])
+		size := a.cfg.dumpSize
+		if len(args) > 1 {
+			size = args[1]
+		}
+		async = true
+		a.dumpFresh(p, args[0], size, done)
 	case "dump-pane":
 		id := num(0, -1)
 		if id < 0 || id >= len(a.panes) || a.panes[id] == nil || len(args) < 2 {
 			a.reportError("%s: want dump-pane ID FILE", action)
 			return
 		}
-		saved := a.cfg.dumpSize
-		a.cfg.dumpSize = "100000x100000"
-		a.writeDump(a.panes[id], args[1])
-		a.cfg.dumpSize = saved
+		async = true
+		a.dumpFresh(a.panes[id], args[1], "100000x100000", done)
 	case "print-ui":
-		fmt.Printf("print-ui: active=%v maximized=%v layout=%s rail_open=%v font=%q text=%s switcher=%v keyboard=%s pointer=%.1f,%.1f last_toast=%q\n",
-			a.win.IsActive(), a.win.IsMaximized(), a.layout, a.railOpen, a.fontDesc, a.zoomText(), a.switcher != nil, a.keyboardFocus(), a.ptrX, a.ptrY, a.lastToast)
+		sx, sy := pointerSeen()
+		fmt.Printf("print-ui: active=%v maximized=%v layout=%s rail_open=%v font=%q text=%s switcher=%v keyboard=%s pointer=%.1f,%.1f seen=%.1f,%.1f last_toast=%q\n",
+			a.win.IsActive(), a.win.IsMaximized(), a.layout, a.railOpen, a.fontDesc, a.zoomText(), a.switcher != nil, a.keyboardFocus(), a.ptrX, a.ptrY, sx, sy, a.lastToast)
 	case "print-status":
 		for _, in := range a.tabInfos() {
 			fmt.Printf("print-status: tab %d %s %s %q repo=%q loc=%q needs=%v active=%v panes=%d tooltip=%q\n",
@@ -451,26 +561,6 @@ func (a *App) injectAction(verb, arg string, args []string, num func(int, int) i
 		return a.injectText(unescape(arg))
 	case "ptr-move":
 		return a.pointerTo(fnum(0), fnum(1))
-	case "ptr-at":
-		var x, y float64
-		var err error
-		dx, dy := 0.0, 0.0
-		if len(args) > 0 && args[0] == "menu" {
-			x, y, err = a.menuTarget(strings.TrimSpace(strings.TrimPrefix(arg, "menu")))
-		} else {
-			// Trailing numbers after the target are an offset.
-			targ := args
-			if n := len(args); n >= 3 && isNum(args[n-1]) && isNum(args[n-2]) && (args[0] != "cell" || n != 4) {
-				dx, _ = strconv.ParseFloat(args[n-2], 64)
-				dy, _ = strconv.ParseFloat(args[n-1], 64)
-				targ = args[:n-2]
-			}
-			x, y, err = a.target(targ)
-		}
-		if err != nil {
-			return err
-		}
-		return a.pointerTo(x+dx, y+dy)
 	case "ptr-press", "ptr-release":
 		return a.pointerButton(num(0, 1), verb == "ptr-press")
 	case "ptr-click":
@@ -482,8 +572,6 @@ func (a *App) injectAction(verb, arg string, args []string, num func(int, int) i
 				return err
 			}
 		}
-	case "ptr-drag":
-		return a.pointerDrag(fnum(0), fnum(1), num(2, 10))
 	case "ptr-scroll":
 		return a.pointerScroll(num(0, 1))
 	}
@@ -593,9 +681,11 @@ func (a *App) scriptStatus(clear bool, arg string) {
 	a.refreshChrome()
 }
 
-// shot writes a widget's last drawn contents as a PNG: the whole window
-// (default), the tab chrome, or the options menu.
-func (a *App) shot(args []string) error {
+// shot writes a widget's contents as a PNG: the whole window (default),
+// the tab chrome, or the options menu. Every shown pane is drawn afresh and
+// the widget is redrawn; the shot is taken after that frame, then done
+// runs.
+func (a *App) shot(args []string, done func()) error {
 	if len(args) == 0 {
 		return fmt.Errorf("want shot FILE [window|chrome|menu]")
 	}
@@ -622,27 +712,70 @@ func (a *App) shot(args []string) error {
 		fmt.Printf("shot: %s %dx%d -> %s\n", what, wd, ht, args[0])
 		return true
 	}
-	if take() {
-		return nil
-	}
-	// A widget that changed has no render node until the next frame draws
-	// it: try again each frame for up to a second.
-	tries := 0
 	a.shotsPending++
-	coreglib.TimeoutAdd(16, func() bool {
-		if a.finished {
-			return false
-		}
-		tries++
-		switch {
-		case take():
-		case tries < 60:
-			return true
-		default:
-			a.reportError("shot %s: %s: nothing drawn", args[0], what)
-		}
+	end := func() {
 		a.shotsPending--
-		return false
+		if done != nil {
+			done()
+		}
+	}
+	for _, p := range a.panes {
+		if p != nil && !p.removeOnce && p.widget.IsDrawable() {
+			p.queueRender()
+		}
+	}
+	gtk.BaseWidget(w).QueueDraw()
+	a.onNextPaint(func() {
+		if a.finished || take() {
+			end()
+			return
+		}
+		// A widget just shown has no render node until a frame draws
+		// it: try again each frame for up to a second.
+		tries := 0
+		coreglib.TimeoutAdd(16, func() bool {
+			if a.finished {
+				end()
+				return false
+			}
+			tries++
+			switch {
+			case take():
+			case tries < 60:
+				return true
+			default:
+				a.reportError("shot %s: %s: nothing drawn", args[0], what)
+			}
+			end()
+			return false
+		})
 	})
 	return nil
+}
+
+// dumpFresh writes p's frame like -dump, cropped to size (WxH), once the
+// pane has drawn a frame after this call, so the dump shows everything
+// the pane held when the step started. A pane that is not shown draws
+// nothing: its last frame is written after a second.
+func (a *App) dumpFresh(p *Pane, path, size string, done func()) {
+	p.queueRender()
+	n0 := viewGeomC(p.view).snapshots
+	start := time.Now()
+	var check func()
+	check = func() {
+		if !a.finished && viewGeomC(p.view).snapshots == n0 && time.Since(start) < time.Second {
+			a.onNextPaint(check)
+			return
+		}
+		if !a.finished {
+			saved := a.cfg.dumpSize
+			a.cfg.dumpSize = size
+			a.writeDump(p, path)
+			a.cfg.dumpSize = saved
+		}
+		if done != nil {
+			done()
+		}
+	}
+	a.onNextPaint(check)
 }

@@ -160,8 +160,17 @@ type App struct {
 	typingStop                         chan struct{}
 	pngJobs                            sync.WaitGroup
 	shotsPending                       int // shots waiting for a frame
-	pngMu                              sync.Mutex
-	pngErrs                            []string
+	// -do script (script.go): its steps, the next one, and its start.
+	steps    []scriptStep
+	stepNext int
+	scriptT0 time.Time
+	// Frames rendered when the current and the previous step started
+	// ("wait frames N" counts from the step before it).
+	stepFrames, prevStepFrames int
+	inputSent                  int      // injected key and button events (wait input)
+	paintWaiters               []func() // onNextPaint callbacks
+	pngMu                      sync.Mutex
+	pngErrs                    []string
 
 	started            time.Time
 	childExit          atomic.Int64 // UnixNano when a child exited
@@ -327,6 +336,7 @@ func (a *App) activate() {
 	a.watchConfig()
 	ptr := gtk.NewEventControllerMotion()
 	ptr.ConnectMotion(func(x, y float64) { a.ptrX, a.ptrY = x, y })
+	ptr.ConnectEnter(func(x, y float64) { a.ptrX, a.ptrY = x, y })
 	a.win.AddController(ptr)
 
 	a.started = time.Now()
@@ -494,6 +504,7 @@ func (a *App) afterPaint() {
 	}
 	a.rendered = false
 	a.pollPresentation()
+	a.paintDone()
 	if a.exitArmed {
 		a.finish("child exited")
 	}

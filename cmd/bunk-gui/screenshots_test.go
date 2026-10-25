@@ -16,11 +16,13 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/png"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -34,9 +36,10 @@ func TestGUIScreenshots(t *testing.T) {
 	}
 	bin := filepath.Dir(guiBinary(t))
 	demo := t.TempDir()
-	writeDemo(t, demo)
 	g := runGUI(t, scenario{
-		config: "tabs = \"rail\"\nrail_open = true\nfont = \"Noto Sans Mono\"\nfont_size = 11\n",
+		cost:    10,
+		prepare: func() { writeDemo(t, demo) },
+		config:  "tabs = \"rail\"\nrail_open = true\nfont = \"Noto Sans Mono\"\nfont_size = 11\n",
 		args: []string{"-size", "120x32",
 			"-e", `cd "$DEMO/src/api" && exec claude`,
 			"-tab", "", "-tab", "", "-tab", `exec sh "$DEMO/done.sh"`, "-tab", ""},
@@ -46,48 +49,78 @@ func TestGUIScreenshots(t *testing.T) {
 			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_PAGER=cat",
 			"LC_COLLATE=C", "LS_COLORS=",
 		},
-		// Each entry shot follows a key press into the entry by 250 ms, while
-		// GTK draws the caret solid before it starts to blink. The
-		// shortcuts shot waits for the scroll indicator to fade out.
+		// Shots wait until the panes have drawn their programs' output at
+		// their size (the fake agent redraws on SIGWINCH) and nothing moves.
+		// An entry's focus ring fades in (a 200 ms CSS transition) and its
+		// caret blinks: entry shots sleep out the fade, then follow a key
+		// press into the entry (wait input), while GTK draws the caret
+		// solid. The shortcuts shot waits for the scroll indicator to fade
+		// out.
 		script: []string{
-			"300ms split",
-			"800ms type ls\\r",
-			"1100ms type git log --oneline --graph --all\\r",
-			"1500ms status pane=0 agent=claude state=working repo=api branch=feat/rate-limit",
-			"1500ms status tab=2 agent=codex state=needs repo=web branch=fix-login notice=Allow npm install?",
-			"1500ms status tab=3 agent=copilot state=idle repo=infra branch=main container=toolbox:fedora-42",
-			"1500ms status tab=5 agent=gemini state=failed repo=ml branch=main ssh=gpu01 notice=API error: quota exceeded",
+			"split",
+			"wait tab.1.panes.#=2 focused.line=❯",
+			"type ls\\r",
+			"wait focused.text~Makefile focused.line=❯",
+			"type git log --oneline --graph --all\\r",
+			"wait focused.text~\"Start the API server\" focused.line=❯",
+			"status pane=0 agent=claude state=working repo=api branch=feat/rate-limit",
+			"status tab=2 agent=codex state=needs repo=web branch=fix-login notice=Allow npm install?",
+			"status tab=3 agent=copilot state=idle repo=infra branch=main container=toolbox:fedora-42",
+			"status tab=5 agent=gemini state=failed repo=ml branch=main ssh=gpu01 notice=API error: quota exceeded",
 			// Tab 4 keeps the state of its notify report: done.
-			"2000ms status tab=4 agent=claude repo=docs branch=main",
-			"2200ms snap hero",
-			"2250ms shot gui-hero.png",
-			"2400ms switcher",
-			"2700ms kbd BackSpace",
-			"2950ms snap switcher",
-			"2950ms shot gui-switcher.png",
-			"3100ms switcher close",
-			"3250ms layout bar",
-			"3650ms snap bar",
-			"3650ms shot gui-bar.png",
-			"3800ms layout rail",
-			"3900ms type clear\\r",
-			"4200ms type kitten icat docs/load-test.png\\r",
-			"5000ms snap image",
-			"5000ms shot gui-image.png",
-			"5100ms rail closed",
-			"5250ms new-tab exec sh \"$DEMO/gotest.sh\"",
-			"5850ms kbd ctrl+shift+f",
-			"6150ms kbd-type limit",
-			"6800ms kbd End",
-			"7050ms snap find",
-			"7050ms shot gui-find.png",
-			"7150ms kbd Escape",
-			"7250ms kbd ctrl+1",
-			"7400ms kbd ctrl+shift+question",
-			"7800ms shortcut-scroll switcher",
-			"11300ms snap shortcuts",
-			"11300ms shot gui-shortcuts.png",
-			"11400ms quit",
+			"wait tab.4.status.reported=true tab.4.state=done",
+			"status tab=4 agent=claude repo=docs branch=main",
+			"wait pane.0.text~\"Running the integration tests\" pane.0.settled=true pane.5.settled=true idle 300ms",
+			"snap hero",
+			"shot gui-hero.png",
+			"switcher",
+			"wait switcher.open=true keyboard_focus=switcher",
+			"sleep 500ms",
+			"kbd BackSpace",
+			"wait input",
+			"snap switcher",
+			"shot gui-switcher.png",
+			"switcher close",
+			"wait switcher.open=false",
+			"layout bar",
+			"wait layout=bar",
+			"wait pane.0.settled=true pane.5.settled=true idle 300ms",
+			"snap bar",
+			"shot gui-bar.png",
+			"layout rail",
+			"wait layout=rail",
+			"type clear\\r",
+			"wait focused.text!~\"git log\" focused.line=❯",
+			"type kitten icat docs/load-test.png\\r",
+			"wait focused.images.cells>0 focused.line=❯",
+			"wait pane.0.settled=true pane.5.settled=true idle 300ms",
+			"snap image",
+			"shot gui-image.png",
+			"rail closed",
+			"wait rail_open=false",
+			"new-tab exec sh \"$DEMO/gotest.sh\"",
+			"wait tabs.#=6 focused.text~3.472s focused.line=❯",
+			"kbd ctrl+shift+f",
+			"wait find.focused=true",
+			"sleep 500ms",
+			"kbd-type limit",
+			"wait find.query=limit find.busy=false find.total>=3",
+			"kbd End",
+			"wait input",
+			"snap find",
+			"shot gui-find.png",
+			"kbd Escape",
+			"wait find=null",
+			"kbd ctrl+1",
+			"wait selected_tab=1",
+			"kbd ctrl+shift+question",
+			"wait shortcuts!=null",
+			"shortcut-scroll switcher",
+			"wait shortcuts.indicator>0",
+			"wait shortcuts.indicator=0 idle 200ms",
+			"snap shortcuts",
+			"shot gui-shortcuts.png",
+			"quit",
 		},
 	})
 
@@ -148,10 +181,29 @@ func TestGUIScreenshots(t *testing.T) {
 		t.Error("shortcuts: the window is not open")
 	}
 
-	for _, name := range demoShots {
-		img := loadPNG(t, g.file(name))
-		if b := img.Bounds(); b.Dx() < 800 || b.Dy() < 400 {
-			t.Errorf("%s: %dx%d px, want a whole window", name, b.Dx(), b.Dy())
+	// Decoded side by side: each takes a while under -race.
+	sizes := make([]image.Rectangle, len(demoShots))
+	errs := make([]error, len(demoShots))
+	var wg sync.WaitGroup
+	for i, name := range demoShots {
+		wg.Go(func() {
+			f, err := os.Open(g.file(name))
+			if err == nil {
+				var img image.Image
+				if img, err = png.Decode(f); err == nil {
+					sizes[i] = img.Bounds()
+				}
+				_ = f.Close()
+			}
+			errs[i] = err
+		})
+	}
+	wg.Wait()
+	for i, b := range sizes {
+		if errs[i] != nil {
+			t.Errorf("%s: %v", demoShots[i], errs[i])
+		} else if b.Dx() < 800 || b.Dy() < 400 {
+			t.Errorf("%s: %dx%d px, want a whole window", demoShots[i], b.Dx(), b.Dy())
 		}
 	}
 	if out := os.Getenv("BUNK_SCREENSHOTS"); out != "" && !t.Failed() {
@@ -186,7 +238,9 @@ func writeDemo(t *testing.T, dir string) {
 		// A fake agent: like a TUI, it draws on the alternate screen and
 		// draws again after a resize.
 		"bin/claude": "#!/bin/sh\ndraw() { printf '\\033[?1049h\\033[?25l\\033[H\\033[2J'; cat \"$DEMO/transcript.txt\"; }\n" +
-			"trap draw WINCH\ndraw\nwhile :; do sleep 0.2; done\n",
+			// wait returns at once on a trapped signal, so a resize redraws
+			// without waiting for the sleep.
+			"trap draw WINCH\ndraw\nwhile :; do sleep 0.2 & wait $!; done\n",
 		// The prompt is fixed text: the shell pane stays in src/api.
 		"shrc": "PS1='\x1b[1;34m~/src/api\x1b[0m \x1b[35mfeat/rate-limit\x1b[0m\n\x1b[32m❯\x1b[0m '\n" +
 			"alias ls='ls --color=auto'\n",

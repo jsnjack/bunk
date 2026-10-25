@@ -198,47 +198,64 @@ func TestGUIImages(t *testing.T) {
 	all := "\x1b[H\x1b[2J" + "\x1b[2;2H" + sixelPic.sixel() + "\x1b[2;12H" + kittyPic.kitty("") + "\x1b[2;22H" + itermPic.iterm() + "\x1b[8;1H"
 	edge := "\x1b[H\x1b[2J\x1b[2;999H" + kittyPic.kitty(",C=1") + "\x1b[8;1H"
 	// The same scroll steps twice: the first pass lets each row of the
-	// view grow its storage for the image rows that land in it.
+	// view grow its storage for the image rows that land in it. Each step
+	// waits for its frame.
 	scroll := []string{}
-	for pass, t0 := range []int{3800, 4500} {
-		for i := 0; i < 5; i++ {
-			scroll = append(scroll, fmt.Sprintf("%dms scroll -2", t0+i*60), fmt.Sprintf("%dms scroll 2", t0+300+i*60))
+	for pass := range 2 {
+		for _, n := range []int{-2, -2, -2, -2, -2, 2, 2, 2, 2, 2} {
+			scroll = append(scroll, fmt.Sprintf("scroll %d", n), "wait frames 1")
 		}
 		if pass == 0 {
-			scroll = append(scroll, "4450ms mark scroll-start")
+			scroll = append(scroll, "mark scroll-start")
 		}
 	}
 	script := []string{
-		"700ms type cat all.bin\\r",
-		"1500ms snap shown", "1550ms dump-pane 0 shown.png",
-		"1700ms mark idle-start", "2700ms mark idle-end",
-		"2800ms type seq 1 80\\r",
-		"3300ms snap off", "3350ms dump-pane 0 off.png",
-		"3400ms scroll 1000",
-		"3700ms snap back", "3750ms dump-pane 0 back.png",
+		"wait focused.line=$",
+		"type cat all.bin\\r",
+		"wait pane.0.images.textures=3 focused.line=$",
+		"snap shown", "dump-pane 0 shown.png",
+		// The status poll (once a second) saw cat or not; once it shows
+		// the shell nothing changes until the window is used.
+		"wait tab.1.status.process=sh idle 300ms",
+		"mark idle-start", "sleep 1s", "mark idle-end",
+		"type seq 1 80\\r",
+		"wait focused.text=80 focused.line=$",
+		"snap off", "dump-pane 0 off.png",
+		"scroll 1000",
+		"wait focused.scroll>0 frames 1",
+		"snap back", "dump-pane 0 back.png",
 	}
 	script = append(script, scroll...)
 	script = append(script,
-		"5150ms mark scroll-end",
-		"5200ms scroll-reset",
-		"5250ms type clear; cat all.bin\\r",
-		"5900ms mark type-start",
-		"5950ms typing start 25ms",
-		"6800ms typing stop",
-		"6850ms mark type-end",
-		"6900ms key ctrl+u",
-		"7000ms font +",
-		"7800ms snap zoomed", "7850ms dump-pane 0 zoomed.png",
-		"7900ms font 0",
-		"8400ms type cat edge.bin\\r",
-		"9100ms snap edge", "9150ms dump-pane 0 edge.png",
-		"9200ms split",
-		"9800ms focus left",
-		"9900ms type cat edge.bin\\r",
-		"10700ms snap split", "10750ms shot split.png",
-		"10800ms quit",
+		"mark scroll-end",
+		"scroll-reset",
+		"type clear; cat all.bin\\r",
+		"wait pane.0.images.cells>0 focused.line=$ idle 100ms",
+		"mark type-start",
+		"typing start 25ms",
+		"wait frames 12",
+		"typing stop",
+		"mark type-end",
+		"key ctrl+u",
+		"font +",
+		"wait text_percent=110 focused.settled=true",
+		"snap zoomed", "dump-pane 0 zoomed.png",
+		"font 0",
+		"wait text_percent=100 focused.settled=true",
+		"type cat edge.bin; echo edge-shown\\r",
+		"wait focused.text=edge-shown focused.line=$",
+		"snap edge", "dump-pane 0 edge.png",
+		"split",
+		"wait tab.1.panes.#=2 pane.1.line=$ pane.1.settled=true",
+		"focus left",
+		"wait focused_pane=0 pane.0.settled=true",
+		"type cat edge.bin; echo split-shown\\r",
+		"wait pane.0.text=split-shown pane.0.line=$ pane.0.settled=true pane.1.settled=true",
+		"snap split", "shot split.png",
+		"quit",
 	)
 	g := runGUI(t, scenario{
+		cost:   7,
 		args:   []string{"-alloc-probe", "-size", "100x30"},
 		files:  map[string]string{"all.bin": all, "edge.bin": edge},
 		script: script,
@@ -336,14 +353,19 @@ func TestGUIImages(t *testing.T) {
 func TestGUIImageReflow(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
+		cost:  2,
 		args:  []string{"-size", "40x12"},
 		files: map[string]string{"reflow.bin": "\x1b[H\x1b[2J" + strings.Repeat("x", 50) + kittyPic.kitty(",C=1") + "\x1b[6;1H"},
 		script: []string{
-			"700ms type cat reflow.bin\\r",
-			"1500ms snap small", "1550ms dump-pane 0 small.png",
-			"1600ms maximize",
-			"2800ms snap big", "2850ms dump-pane 0 big.png",
-			"2900ms quit",
+			"wait focused.line=$",
+			"type cat reflow.bin\\r",
+			"wait pane.0.images.cells>0 focused.line=$",
+			"snap small", "dump-pane 0 small.png",
+			"maximize",
+			"wait window.maximized=true window.w>1800",
+			"wait focused.settled=true idle 100ms",
+			"snap big", "dump-pane 0 big.png",
+			"quit",
 		},
 	})
 	small, big := g.snap("small").pane(t, 0), g.snap("big").pane(t, 0)
@@ -393,13 +415,17 @@ func TestGUIImageEviction(t *testing.T) {
 			"b.bin": "\x1b[2;20H" + kittyPic.kitty(",C=1") + "\x1b[10;1H",
 		},
 		script: []string{
-			"700ms type cat a.bin\\r",
-			"1400ms snap a", "1450ms dump-pane 0 a.png",
-			"1500ms type cat b.bin\\r",
-			"2200ms snap b", "2250ms dump-pane 0 b.png",
-			"2300ms type clear\\r",
-			"2900ms snap cleared",
-			"3000ms quit",
+			"wait focused.line=$",
+			"type cat a.bin\\r",
+			"wait pane.0.images.textures=1 focused.line=$",
+			"snap a", "dump-pane 0 a.png",
+			"type cat b.bin\\r",
+			"wait pane.0.images.evicted=1 pane.0.images.half_blocks>0 focused.line=$",
+			"snap b", "dump-pane 0 b.png",
+			"type clear\\r",
+			"wait pane.0.images.stored=0 pane.0.images.textures=0 focused.line=$",
+			"snap cleared",
+			"quit",
 		},
 	})
 	a := g.snap("a").pane(t, 0)
@@ -458,15 +484,20 @@ func TestGUIImageTextures(t *testing.T) {
 			"d.bin": "\x1b[2;30H" + kittyPic.kitty(",C=1") + "\x1b[8;1H",
 		},
 		script: []string{
-			"700ms type cat c.bin\\r",
-			"1300ms snap c",
-			"1400ms type seq 1 80; cat d.bin\\r", // the scrollback outgrows the screen
-			"2100ms snap d",
-			"2200ms scroll 1000",
-			"2600ms snap back", "2650ms dump-pane 0 back.png",
-			"2700ms scroll-reset",
-			"3100ms snap live",
-			"3200ms quit",
+			"wait focused.line=$",
+			"type cat c.bin\\r",
+			"wait pane.0.images.textures=1 focused.line=$",
+			"snap c",
+			"type seq 1 80; cat d.bin\\r", // the scrollback outgrows the screen
+			"wait pane.0.images.stored=2 pane.0.images.textures=1 pane.0.images.uploads=2 pane.0.images.freed=1 focused.line=$",
+			"snap d",
+			"scroll 1000",
+			"wait pane.0.images.textures=1 pane.0.images.uploads=3 pane.0.images.freed=2",
+			"snap back", "dump-pane 0 back.png",
+			"scroll-reset",
+			"wait pane.0.images.textures=1 pane.0.images.uploads=4",
+			"snap live",
+			"quit",
 		},
 	})
 	c, d, back, live := g.snap("c").pane(t, 0).Images, g.snap("d").pane(t, 0).Images, g.snap("back").pane(t, 0).Images, g.snap("live").pane(t, 0).Images
@@ -492,35 +523,62 @@ func TestGUIImageTextures(t *testing.T) {
 func TestGUILinks(t *testing.T) {
 	t.Parallel()
 	links := "\x1b[H\x1b[2Josc8: \x1b]8;;https://osc8.example/doc\x1b\\the docs\x1b]8;;\x1b\\ end\r\nplain: see https://plain.example/a-(b) now\r\n\r\n"
-	mouse := "printf '\\033[?1000h\\033[?1006happ: https://app.example/x\\n'; stty raw -echo; timeout --foreground 5 cat > clicks.bin; stty sane; printf '\\033[?1000l\\033[?1006l'\n"
+	// The application reports the mouse and writes what it reads to
+	// clicks.bin until it reads a q.
+	mouse := `import os, termios, tty
+saved = termios.tcgetattr(0)
+tty.setraw(0)
+os.write(1, b"\x1b[?1000h\x1b[?1006happ: https://app.example/x\r\n")
+with open("clicks.bin", "wb", buffering=0) as f:
+    while True:
+        b = os.read(0, 64)
+        if not b or b"q" in b:
+            f.write(b.split(b"q")[0])
+            break
+        f.write(b)
+os.write(1, b"\x1b[?1000l\x1b[?1006l")
+termios.tcsetattr(0, termios.TCSADRAIN, saved)
+`
 	g := runGUI(t, scenario{
+		cost:  3,
 		args:  []string{"-size", "100x30"},
-		files: map[string]string{"links.txt": links, "mouse.sh": mouse},
+		files: map[string]string{"links.txt": links, "mouse.py": mouse},
 		script: []string{
-			"300ms maximize",
-			"1000ms type cat links.txt\\r",
-			"1600ms ptr-at cell 0 8 0",
-			"1700ms snap no-ctrl",
-			"1800ms kbd-down ctrl",
-			"2000ms snap hover-osc8", "2050ms dump-pane 0 hover-osc8.png",
-			"2100ms ptr-click",
-			"2300ms ptr-at cell 0 15 1",
-			"2500ms snap hover-plain", "2550ms dump-pane 0 hover-plain.png",
-			"2600ms ptr-click",
-			"2700ms kbd-up ctrl",
-			"2900ms snap released", "2950ms dump-pane 0 released.png",
-			"3000ms type sh mouse.sh\\r",
-			"3700ms ptr-at cell 0 2 4",
-			"3800ms ptr-click",
-			"4000ms kbd-down ctrl",
-			"4100ms ptr-at cell 0 10 4",
-			"4200ms ptr-click",
-			"4300ms kbd-down shift",
-			"4400ms ptr-click",
-			"4500ms kbd-up shift",
-			"4600ms kbd-up ctrl",
-			"9500ms snap end",
-			"9600ms quit",
+			"maximize",
+			"wait window.maximized=true window.w>1800 focused.line=$",
+			"type cat links.txt\\r",
+			"wait pane.0.text~\"plain: see\" focused.line=$ pane.0.settled=true",
+			"ptr-at cell 0 8 0",
+			"snap no-ctrl",
+			"kbd-down ctrl",
+			"wait pane.0.hover=https://osc8.example/doc pane.0.cursor=pointer",
+			"snap hover-osc8", "dump-pane 0 hover-osc8.png",
+			"ptr-click",
+			"wait run.opened.#=1",
+			"ptr-at cell 0 15 1",
+			"wait pane.0.hover=\"https://plain.example/a-(b)\"",
+			"snap hover-plain", "dump-pane 0 hover-plain.png",
+			"ptr-click",
+			"wait run.opened.#=2",
+			"kbd-up ctrl",
+			"wait pane.0.hover=\"\" pane.0.cursor=text",
+			"snap released", "dump-pane 0 released.png",
+			"type python3 mouse.py\\r",
+			"wait pane.0.text~\"app: https://app.example/x\"",
+			"ptr-at cell 0 2 4",
+			"ptr-click",
+			"kbd-down ctrl",
+			"ptr-at cell 0 10 4",
+			"ptr-click",
+			"kbd-down shift",
+			"ptr-click",
+			"kbd-up shift",
+			"kbd-up ctrl",
+			"wait input run.opened.#=3",
+			"kbd q",
+			"wait focused.line=$",
+			"snap end",
+			"quit",
 		},
 		limit: 20e9,
 	})

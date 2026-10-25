@@ -24,33 +24,45 @@ func TestGUILinksAfterSweeps(t *testing.T) {
 	}
 	b.WriteString("\x1b[2;1Hfresh: \x1b]8;;https://fresh.example/new\x1b\\the fresh one\x1b]8;;\x1b\\\x1b[5;1H")
 	g := runGUI(t, scenario{
+		cost:  3,
 		args:  []string{"-size", "100x30"},
 		files: map[string]string{"sweep.txt": b.String()},
 		script: []string{
-			"300ms maximize",
-			"1000ms type cat sweep.txt\\r",
-			"8000ms snap printed",
-			"8100ms ptr-at cell 0 8 0",
-			"8200ms kbd-down ctrl",
-			"8400ms snap hover-keep",
-			"8500ms ptr-click",
-			"8700ms ptr-at cell 0 10 1",
-			"8900ms snap hover-fresh",
-			"9000ms ptr-click",
-			"9100ms kbd-up ctrl",
-			"9300ms scroll 1000",
-			"9600ms ptr-at cell 0 3 1",
-			"9700ms kbd-down ctrl",
-			"9900ms snap hover-scrolled",
-			"10000ms ptr-click",
-			"10100ms kbd-up ctrl",
-			"10300ms quit",
+			"maximize",
+			"wait window.maximized=true window.w>1800 focused.line=$",
+			"type cat sweep.txt\\r",
+			"wait pane.0.text~\"the fresh one\" pane.0.line=$ timeout=20s",
+			"snap printed",
+			"ptr-at cell 0 8 0",
+			"kbd-down ctrl",
+			"wait pane.0.hover=https://keep.example/doc",
+			"snap hover-keep",
+			"ptr-click",
+			"wait run.opened.#=1",
+			"ptr-at cell 0 10 1",
+			"wait pane.0.hover=https://fresh.example/new",
+			"snap hover-fresh",
+			"ptr-click",
+			"wait run.opened.#=2",
+			"kbd-up ctrl",
+			"wait input pane.0.hover=\"\"",
+			"scroll 1000",
+			"wait pane.0.scroll>0 frames 1",
+			"ptr-at cell 0 3 1",
+			"kbd-down ctrl",
+			"wait pane.0.hover=https://scrolled.example/doc",
+			"snap hover-scrolled",
+			"ptr-click",
+			"wait run.opened.#=3",
+			"kbd-up ctrl",
+			"wait input",
+			"quit",
 		},
 		limit: 25e9,
 	})
 	p := g.snap("printed").pane(t, 0)
 	if len(p.Text) < 3 || !strings.Contains(p.Text[1], "the fresh one") {
-		t.Fatalf("output not printed by 8 s: %q", p.Text)
+		t.Fatalf("output not printed: %q", p.Text)
 	}
 	if p.Links.Sweeps == 0 || p.Links.Freed < churn-linkSweepLive || p.Links.URLs > linkSweepLive {
 		t.Errorf("link table after %d unique URLs: %+v", churn+3, p.Links)

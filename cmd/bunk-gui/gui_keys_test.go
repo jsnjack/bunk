@@ -4,6 +4,7 @@ package main
 // quitting and agent hook reports.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,6 +41,19 @@ func keylogLines(p paneReport) []string {
 
 func keys(s *uiSnapshot, action string) string { return strings.Join(s.Keys[action], ",") }
 
+// keylogSteps presses each key of "KEY HEX" pairs in turn and waits until
+// the keylog pane (pane ID) has printed its bytes after those before.
+func keylogSteps(pane int, keys ...string) []string {
+	var out []string
+	seen := "keylog ready"
+	for _, k := range keys {
+		key, hex, _ := strings.Cut(k, " ")
+		seen += "\\n" + hex
+		out = append(out, "kbd "+key, fmt.Sprintf("wait pane.%d.screen~\"%s\"", pane, seen))
+	}
+	return out
+}
+
 // TestGUIKeysConfig: [keys] rebinds and disables actions, disabled and
 // freed keys reach the terminal (the bytes the pane reads are checked),
 // edits to config.toml apply live, and bad bindings produce the Settings
@@ -54,28 +68,33 @@ func TestGUIKeysConfig(t *testing.T) {
 			"next.toml": "tabs = \"bar\"\nfont_size = 12\n\n[keys]\nswitcher = \"ctrl+alt+s\"\nzoom = \"none\"\n",
 			"bad.toml":  "[keys]\nfrobnicate = \"f3\"\nsplit = \"ctrl+banana\"\nswitcher = \"ctrl+alt+s\"\ncopy = \"ctrl+alt+s\"\n",
 		},
-		script: []string{
-			"500ms snap start",
-			"700ms kbd ctrl+shift+space",
-			"850ms kbd ctrl+j",
-			"1000ms kbd ctrl+b",
-			"1150ms kbd ctrl+space",
-			"1300ms kbd ctrl+q",
-			"1450ms kbd ctrl+shift+t",
-			"1600ms kbd f9",
-			"1900ms snap keylog",
-			"2000ms kbd ctrl+alt+n",
-			"2400ms snap rebound",
-			"2500ms kbd ctrl+1",
-			"2600ms run cp next.toml config.toml",
-			"3200ms snap reloaded",
-			"3300ms kbd ctrl+alt+s",
-			"3600ms snap switcher",
-			"3700ms switcher close",
-			"3800ms run cp bad.toml config.toml",
-			"4400ms snap bad",
-			"4500ms quit",
+		script: append(append([]string{
+			"wait pane.0.text~\"keylog ready\"",
+			"snap start",
 		},
+			// One key at a time, so the pane reads each in a chunk of its own.
+			keylogSteps(0, "ctrl+shift+space 00", "ctrl+j 0a", "ctrl+b 02", "ctrl+space 00", "ctrl+q 11", "ctrl+shift+t 14")...),
+			"kbd f9",
+			"wait last_toast=\"No agent needs you\" input",
+			"snap keylog",
+			"kbd ctrl+alt+n",
+			"wait tabs.#=2",
+			"snap rebound",
+			"kbd ctrl+1",
+			"wait selected_tab=1",
+			"run cp next.toml config.toml",
+			"wait run.reloads>=1 keys.switcher=ctrl+alt+s layout=bar font=\"Noto Sans Mono 12\"",
+			"snap reloaded",
+			"kbd ctrl+alt+s",
+			"wait switcher.open=true",
+			"snap switcher",
+			"switcher close",
+			"wait switcher.open=false",
+			"run cp bad.toml config.toml",
+			"wait last_toast~frobnicate last_toast~\"ctrl+alt+s is bound to both switcher and copy\"",
+			"snap bad",
+			"quit",
+		),
 	})
 	s := g.snap("start")
 	if keys(s, "new_tab") != "ctrl+alt+n" || keys(s, "switcher") != "" || keys(s, "next_needs_you") != "ctrl+shift+j,f9" ||
@@ -126,26 +145,32 @@ func TestGUIPassthrough(t *testing.T) {
 	g := runGUI(t, scenario{
 		args:  []string{"-size", "100x30", "-e", "python3 keylog.py", "-tab", ""},
 		files: map[string]string{"keylog.py": keylog},
-		script: []string{
-			"500ms kbd ctrl+f12",
-			"800ms snap on",
-			"850ms shot on.png",
-			"950ms kbd ctrl+shift+t",
-			"1100ms kbd ctrl+shift+q",
-			"1250ms kbd f12",
-			"1400ms kbd ctrl+shift+space",
-			"1700ms snap keys",
-			"1800ms kbd ctrl+f12",
-			"2100ms snap off",
-			"2150ms shot off.png",
-			"2250ms kbd ctrl+shift+t",
-			"2700ms snap new-tab",
-			"2800ms kbd ctrl+1",
-			"2900ms menu open",
-			"3200ms menu-check",
-			"3500ms snap menu",
-			"3600ms quit",
+		script: append(append([]string{
+			"wait pane.0.text~\"keylog ready\"",
+			"kbd ctrl+f12",
+			"wait pane.0.passthrough=true tab.1.pass=true menu_pass_check=true",
+			"snap on",
+			"shot on.png",
 		},
+			keylogSteps(0, "ctrl+shift+t 14", "ctrl+shift+q 11", "f12 1b5b32347e", "ctrl+shift+space 00")...),
+			"wait input",
+			"snap keys",
+			"kbd ctrl+f12",
+			"wait pane.0.passthrough=false tab.1.pass=false menu_pass_check=false",
+			"snap off",
+			"shot off.png",
+			"kbd ctrl+shift+t",
+			"wait tabs.#=3",
+			"snap new-tab",
+			"kbd ctrl+1",
+			"wait selected_tab=1",
+			"menu open",
+			"wait menu_open=true",
+			"menu-check",
+			"wait pane.0.passthrough=true menu_pass_check=true menu_open=false",
+			"snap menu",
+			"quit",
+		),
 	})
 	on := g.snap("on")
 	p := on.pane(t, 0)
@@ -206,43 +231,59 @@ name = "aider"
 processes = ["aider"]
 `
 	g := runGUI(t, scenario{
+		cost:   2,
 		config: cfg,
 		args:   []string{"-size", "100x30"},
 		script: []string{
-			"300ms maximize",
-			"1200ms kbd ctrl+shift+question",
-			"1500ms snap open",
-			"1600ms shortcut-scroll switcher",
-			"1900ms ptr-at shortcut-switch switcher",
-			"2000ms ptr-click",
-			"2400ms snap off",
-			"2500ms shortcut-scroll new_tab",
-			"2800ms ptr-at shortcut-keys new_tab",
-			"2900ms ptr-click",
-			"3100ms snap capturing",
-			"3200ms kbd ctrl+alt+t",
-			"3600ms snap rebound",
-			"3700ms shortcut-scroll zoom",
-			"4000ms ptr-at shortcut-keys zoom",
-			"4100ms ptr-click",
-			"4300ms kbd Escape",
-			"4600ms snap escaped",
-			"4700ms ptr-click",
-			"4900ms kbd BackSpace",
-			"5300ms snap cleared",
-			"5400ms shortcut-scroll copy",
-			"5700ms ptr-at shortcut-keys copy",
-			"5800ms ptr-click",
-			"6000ms kbd ctrl+alt+t",
-			"6300ms snap conflict",
-			"6400ms shortcut-scroll switcher",
-			"6700ms ptr-at shortcut-switch switcher",
-			"6800ms ptr-click",
-			"7200ms snap on-again",
-			"7300ms dialog-close",
-			"7600ms kbd ctrl+alt+t",
-			"8000ms snap after",
-			"8100ms quit",
+			"maximize",
+			"wait window.maximized=true window.w>1800",
+			"kbd ctrl+shift+question",
+			"wait shortcuts!=null",
+			"snap open",
+			"shortcut-scroll switcher",
+			"ptr-at shortcut-switch switcher",
+			"ptr-click",
+			"wait shortcuts.rows.switcher.enabled=false",
+			"snap off",
+			"shortcut-scroll new_tab",
+			"ptr-at shortcut-keys new_tab",
+			"ptr-click",
+			"wait shortcuts.capturing=new_tab",
+			"snap capturing",
+			"kbd ctrl+alt+t",
+			"wait keys.new_tab=ctrl+alt+t shortcuts.capturing=\"\"",
+			"snap rebound",
+			"shortcut-scroll zoom",
+			"ptr-at shortcut-keys zoom",
+			"ptr-click",
+			"wait shortcuts.capturing=zoom",
+			"kbd Escape",
+			"wait shortcuts.capturing=\"\" input",
+			"snap escaped",
+			"ptr-click",
+			"wait shortcuts.capturing=zoom",
+			"kbd BackSpace",
+			"wait shortcuts.rows.zoom.enabled=false",
+			"snap cleared",
+			"shortcut-scroll copy",
+			"ptr-at shortcut-keys copy",
+			"ptr-click",
+			"wait shortcuts.capturing=copy",
+			"kbd ctrl+alt+t",
+			"wait shortcuts.message~\"already used by New tab\"",
+			"snap conflict",
+			"shortcut-scroll switcher",
+			"ptr-at shortcut-switch switcher",
+			"ptr-click",
+			"wait shortcuts.rows.switcher.enabled=true keys.switcher=ctrl+shift+space",
+			"snap on-again",
+			"dialog-close",
+			"wait shortcuts=null",
+			"kbd ctrl+alt+t",
+			"wait tabs.#=2",
+			"snap after",
+			"wait run.reloads>=1",
+			"quit",
 		},
 	})
 	row := func(s *uiSnapshot, action string) shortcutsRowReport {
@@ -320,7 +361,7 @@ func TestGUIQuitIdle(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
 		args:   []string{"-size", "80x24", "-tab", ""},
-		script: []string{"600ms kbd ctrl+shift+q", "3000ms snap still-running"},
+		script: []string{"kbd ctrl+shift+q", "sleep 1500ms", "snap still-running"},
 	})
 	if g.Reason != "quit" || len(g.Snapshots) != 0 {
 		t.Errorf("run ended by %q with %d snapshots; want an immediate quit", g.Reason, len(g.Snapshots))
@@ -336,20 +377,27 @@ func TestGUIQuitIdle(t *testing.T) {
 func TestGUIQuitBusy(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
+		cost: 2,
 		args: []string{"-size", "80x24", "-tab", ""},
 		script: []string{
-			"300ms maximize",
-			"800ms type sleep 30\\r",
-			"1600ms kbd ctrl+shift+q",
-			"1900ms snap asked",
-			"2000ms kbd Return",
-			"2300ms snap cancelled",
-			"2400ms ptr-at closewin",
-			"2500ms ptr-click",
-			"2900ms snap asked-again",
-			"3000ms ptr-at button Quit",
-			"3100ms ptr-click",
-			"6000ms snap not-quit",
+			"maximize",
+			"wait window.maximized=true window.w>1800 focused.line=$",
+			"type sleep 30\\r",
+			"wait focused.busy=sleep",
+			"kbd ctrl+shift+q",
+			"wait quit_dialog!=null keyboard_focus=other",
+			"snap asked",
+			"kbd Return",
+			"wait quit_dialog=null",
+			"snap cancelled",
+			"ptr-at closewin",
+			"ptr-click",
+			"wait quit_dialog!=null",
+			"snap asked-again",
+			"ptr-at button Quit",
+			"ptr-click",
+			"sleep 3s", // the click quits: no more snapshots
+			"snap not-quit",
 		},
 	})
 	for _, label := range []string{"asked", "asked-again"} {
@@ -373,6 +421,7 @@ func TestGUINotify(t *testing.T) {
 	t.Parallel()
 	bin := guiBinary(t)
 	g := runGUI(t, scenario{
+		cost: 2.5,
 		args: []string{"-size", "100x30", "-tab", ""},
 		env:  []string{"PATH=" + filepath.Dir(bin) + ":" + os.Getenv("PATH")},
 		files: map[string]string{"agent.sh": `bunk-gui notify needs-you "Allow npm install?"
@@ -381,20 +430,26 @@ bunk-gui notify done "Finished the refactor"
 sleep 30
 `},
 		script: []string{
-			"500ms kbd ctrl+2",
-			"600ms type sh agent.sh\\r",
-			"800ms kbd ctrl+1",
-			"1500ms snap needs",
-			"1550ms shot needs.png",
-			"1650ms kbd ctrl+shift+j",
-			"2000ms snap acked",
-			"2100ms type yes\\r",
-			"2400ms kbd ctrl+1",
-			"3000ms snap done",
-			"3050ms shot done.png",
-			"3150ms kbd ctrl+shift+j",
-			"3500ms snap done-acked",
-			"3600ms quit",
+			"kbd ctrl+2",
+			"wait selected_tab=2 focused.line=$",
+			"type sh agent.sh\\r",
+			"kbd ctrl+1",
+			"wait selected_tab=1 tab.2.state=needs",
+			"snap needs",
+			"shot needs.png",
+			"kbd ctrl+shift+j",
+			"wait selected_tab=2 tab.2.state!=needs",
+			"snap acked",
+			"type yes\\r",
+			"wait tab.2.state=done",
+			"kbd ctrl+1",
+			"wait selected_tab=1",
+			"snap done",
+			"shot done.png",
+			"kbd ctrl+shift+j",
+			"wait selected_tab=2 tab.2.state!=done",
+			"snap done-acked",
+			"quit",
 		},
 	})
 	s := g.snap("needs")

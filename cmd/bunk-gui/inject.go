@@ -79,6 +79,55 @@ static int inj_map_keyval(unsigned keyval, int* level) {
 }
 static int inj_scroll(int steps) { return inj_call("NotifyPointerAxisDiscrete", g_variant_new("(ui)", 0u, steps)); }
 
+// Input the app's surfaces receive, seen by an emission hook on
+// GdkSurface::event: it runs before GTK's own handler, for every surface
+// (the window, menus) and whatever grab a dialog holds. Key and button
+// events are counted (wait input); the pointer position on the main
+// surface is kept in window coordinates (ptr-at).
+static int inj_seen;
+static GdkEvent* inj_last; // held, so a later event cannot reuse its address
+static GtkWidget* inj_win;
+static double inj_px = -1, inj_py = -1;
+
+static gboolean inj_event_hook(GSignalInvocationHint* hint, guint n, const GValue* params, gpointer data) {
+	if (n < 2) return TRUE;
+	GdkSurface* surface = g_value_get_object(&params[0]);
+	GdkEvent* ev = g_value_peek_pointer(&params[1]);
+	if (!ev) return TRUE;
+	switch (gdk_event_get_event_type(ev)) {
+	case GDK_KEY_PRESS: case GDK_KEY_RELEASE: case GDK_BUTTON_PRESS: case GDK_BUTTON_RELEASE:
+		if (ev != inj_last) {
+			if (inj_last) gdk_event_unref(inj_last);
+			inj_last = gdk_event_ref(ev);
+			inj_seen++;
+		}
+		break;
+	case GDK_MOTION_NOTIFY: case GDK_ENTER_NOTIFY:
+		if (inj_win && surface == gtk_native_get_surface(GTK_NATIVE(inj_win))) {
+			double x, y, tx = 0, ty = 0;
+			if (gdk_event_get_position(ev, &x, &y)) {
+				gtk_native_get_surface_transform(GTK_NATIVE(inj_win), &tx, &ty);
+				inj_px = x - tx;
+				inj_py = y - ty;
+			}
+		}
+		break;
+	default:
+		break;
+	}
+	return TRUE; // stay installed
+}
+
+static void inj_watch_input(uintptr_t win) {
+	if (inj_win) return;
+	inj_win = (GtkWidget*)win;
+	g_type_class_ref(GDK_TYPE_SURFACE); // its signals exist once the class does; kept
+	g_signal_add_emission_hook(g_signal_lookup("event", GDK_TYPE_SURFACE), 0, inj_event_hook, NULL, NULL);
+}
+
+static int inj_seen_count(void) { return inj_seen; }
+static void inj_pointer(double* x, double* y) { *x = inj_px; *y = inj_py; }
+
 // The position of a popover's surface relative to its parent surface.
 static int inj_popup_pos(uintptr_t popover, int* x, int* y) {
 	GdkSurface* s = gtk_native_get_surface(GTK_NATIVE((GtkWidget*)popover));
@@ -92,10 +141,13 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -130,6 +182,29 @@ func headlessOnly() error {
 		return errors.New("input injection refused: D-Bus is the desktop session bus")
 	}
 	return nil
+}
+
+// watchInput starts counting the key and button events the app's surfaces
+// receive (wait input) and following the pointer over the window (ptr-at).
+func (a *App) watchInput() { C.inj_watch_input(C.uintptr_t(nativePtr(a.win))) }
+
+// inputSeen is how many key and button events the app received.
+func inputSeen() int { return int(C.inj_seen_count()) }
+
+// pointerSeen is the last pointer position over the window, in window
+// coordinates; -1, -1 before any.
+func pointerSeen() (float64, float64) {
+	var x, y C.double
+	C.inj_pointer(&x, &y)
+	return float64(x), float64(y)
+}
+
+// sent counts an injected key or button event for "wait input".
+func (a *App) sent(rc C.int) C.int {
+	if rc != 0 {
+		a.inputSent++
+	}
+	return rc
 }
 
 func injectOK(rc C.int) error {
@@ -176,16 +251,16 @@ func (a *App) injectKeys(spec string) error {
 		mods = append(mods, modKeycodes["shift"])
 	}
 	for _, m := range mods {
-		if err := injectOK(C.inj_keycode(C.uint(m), 1)); err != nil {
+		if err := injectOK(a.sent(C.inj_keycode(C.uint(m), 1))); err != nil {
 			return err
 		}
 	}
-	err := injectOK(C.inj_keycode(C.uint(code), 1))
+	err := injectOK(a.sent(C.inj_keycode(C.uint(code), 1)))
 	if err == nil {
-		err = injectOK(C.inj_keycode(C.uint(code), 0))
+		err = injectOK(a.sent(C.inj_keycode(C.uint(code), 0)))
 	}
 	for i := len(mods) - 1; i >= 0; i-- {
-		if e := injectOK(C.inj_keycode(C.uint(mods[i]), 0)); err == nil {
+		if e := injectOK(a.sent(C.inj_keycode(C.uint(mods[i]), 0))); err == nil {
 			err = e
 		}
 	}
@@ -200,7 +275,7 @@ func (a *App) injectKeyState(name string, pressed bool) error {
 		p = 1
 	}
 	if code, ok := modKeycodes[strings.ToLower(name)]; ok {
-		return injectOK(C.inj_keycode(C.uint(code), p))
+		return injectOK(a.sent(C.inj_keycode(C.uint(code), p)))
 	}
 	key := gdk.KeyvalFromName(name)
 	if key == 0 || key == 0xffffff {
@@ -211,7 +286,7 @@ func (a *App) injectKeyState(name string, pressed bool) error {
 	if code < 0 {
 		return errors.New("no key in the layout for " + name)
 	}
-	return injectOK(C.inj_keycode(C.uint(code), p))
+	return injectOK(a.sent(C.inj_keycode(C.uint(code), p)))
 }
 
 // addDevices taps Shift and nudges the pointer: mutter adds a virtual
@@ -245,10 +320,10 @@ func (a *App) injectText(text string) error {
 		default:
 			key = gdk.UnicodeToKeyval(uint32(r))
 		}
-		if err := injectOK(C.inj_keysym(C.uint(key), 1)); err != nil {
+		if err := injectOK(a.sent(C.inj_keysym(C.uint(key), 1))); err != nil {
 			return err
 		}
-		if err := injectOK(C.inj_keysym(C.uint(key), 0)); err != nil {
+		if err := injectOK(a.sent(C.inj_keysym(C.uint(key), 0))); err != nil {
 			return err
 		}
 	}
@@ -280,35 +355,113 @@ func (a *App) pointerButton(btn int, pressed bool) error {
 	if pressed {
 		p = 1
 	}
-	return injectOK(C.inj_button(b, C.int(p)))
+	return injectOK(a.sent(C.inj_button(b, C.int(p))))
 }
 
 // pointerDrag presses button 1 where the pointer is, moves by (dx, dy) in
-// steps one frame apart, and releases.
-func (a *App) pointerDrag(dx, dy float64, steps int) error {
+// steps one frame apart, releases, and calls done.
+func (a *App) pointerDrag(dx, dy float64, steps int, done func(error)) {
 	if err := a.pointerButton(1, true); err != nil {
-		return err
+		done(err)
+		return
 	}
 	steps = max(1, steps)
 	i := 0
 	coreglib.TimeoutAdd(16, func() bool {
 		i++
 		if err := injectOK(C.inj_motion(C.double(dx/float64(steps)), C.double(dy/float64(steps)))); err != nil {
-			a.reportError("ptr-drag: %v", err)
+			done(err)
 			return false
 		}
 		if i < steps {
 			return true
 		}
 		coreglib.TimeoutAdd(50, func() bool {
-			if err := a.pointerButton(1, false); err != nil {
-				a.reportError("ptr-drag: %v", err)
-			}
+			done(a.pointerButton(1, false))
 			return false
 		})
 		return false
 	})
-	return nil
+}
+
+// pointerAt aims the pointer at a ptr-at target, then calls done. The
+// target must resolve to the same point over two painted frames (or for
+// 100 ms without frames), so layouts and animations have settled; then the
+// window must report the pointer there (not for menu items, which are on
+// the menu's own surface). The first motion of the virtual pointer can
+// land short, so the move is repeated every 300 ms until the window sees
+// it. It gives up after five seconds.
+func (a *App) pointerAt(action, arg string, args []string, done func()) {
+	start := time.Now()
+	var cand [2]float64
+	have := false
+	var candClock int
+	var candAt, movedAt time.Time
+	var lastErr error
+	menu := len(args) > 0 && args[0] == "menu"
+	coreglib.TimeoutAdd(10, func() bool {
+		if a.finished {
+			done()
+			return false
+		}
+		if time.Since(start) > 5*time.Second {
+			if lastErr == nil {
+				x, y := pointerSeen()
+				lastErr = fmt.Errorf("the window saw the pointer at %.1f,%.1f, want %.1f,%.1f", x, y, cand[0], cand[1])
+			}
+			a.reportError("%s: %v", action, lastErr)
+			done()
+			return false
+		}
+		if !movedAt.IsZero() {
+			x, y := pointerSeen()
+			if menu || (math.Abs(x-cand[0]) <= 1 && math.Abs(y-cand[1]) <= 1) {
+				done()
+				return false
+			}
+			if time.Since(movedAt) < 300*time.Millisecond {
+				return true
+			}
+		}
+		x, y, err := a.ptrTarget(arg, args)
+		if err != nil {
+			lastErr, have = err, false
+			return true
+		}
+		lastErr = nil
+		if !have || cand != [2]float64{x, y} {
+			cand, have, candClock, candAt = [2]float64{x, y}, true, a.st.clockFrames, time.Now()
+			return true
+		}
+		if movedAt.IsZero() && a.st.clockFrames < candClock+2 && time.Since(candAt) < 100*time.Millisecond {
+			return true
+		}
+		if err := a.pointerTo(x, y); err != nil {
+			a.reportError("%s: %v", action, err)
+			done()
+			return false
+		}
+		fmt.Printf("%s: pointer to %.1f,%.1f\n", action, x, y)
+		movedAt = time.Now()
+		return true
+	})
+}
+
+// ptrTarget resolves a ptr-at target to window coordinates: trailing
+// numbers after the target are an offset.
+func (a *App) ptrTarget(arg string, args []string) (float64, float64, error) {
+	if len(args) > 0 && args[0] == "menu" {
+		return a.menuTarget(strings.TrimSpace(strings.TrimPrefix(arg, "menu")))
+	}
+	dx, dy := 0.0, 0.0
+	targ := args
+	if n := len(args); n >= 3 && isNum(args[n-1]) && isNum(args[n-2]) && (args[0] != "cell" || n != 4) {
+		dx, _ = strconv.ParseFloat(args[n-2], 64)
+		dy, _ = strconv.ParseFloat(args[n-1], 64)
+		targ = args[:n-2]
+	}
+	x, y, err := a.target(targ)
+	return x + dx, y + dy, err
 }
 
 func (a *App) pointerScroll(steps int) error { return injectOK(C.inj_scroll(C.int(steps))) }
