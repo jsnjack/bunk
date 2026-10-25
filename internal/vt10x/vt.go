@@ -97,6 +97,15 @@ type View interface {
 	// when nothing is dirty (zero allocation).  The caller must not retain
 	// the returned slice past the next Write call.
 	ConsumeDirty() (rows []bool, any bool)
+
+	// ConsumeDirtyInto is ConsumeDirty without the allocation: it copies the
+	// dirty flags into dst (grown only when it is shorter than the screen),
+	// clears them, and returns dst resliced to the row count.
+	ConsumeDirtyInto(dst []bool) (rows []bool, any bool)
+
+	// CopyRow copies live row y into dst, reusing dst's storage. Decode cells
+	// with dst.Glyph; dynamic colour overrides are not applied.
+	CopyRow(y int, dst *Row)
 }
 
 type TerminalOption func(*TerminalInfo)

@@ -62,6 +62,23 @@ func (r Row) Glyph(x int) Glyph {
 	return g
 }
 
+// CellAt returns the stored parts of the cell at x without building a Glyph:
+// character, colours, attribute bits and width. extra reports side-table
+// data (combining marks, underline colour, hyperlink, image); read it with
+// Glyph or Combining. Renderers use it for cells that have none.
+func (r Row) CellAt(x int) (ch rune, fg, bg Color, mode int16, width int8, extra bool) {
+	c := &r.cells[x]
+	return c.Char, c.FG, c.BG, c.Mode, c.width(), c.meta>>widthBits != 0
+}
+
+// Combining returns the combining suffix of the cell at x.
+func (r Row) Combining(x int) string {
+	if i := r.cells[x].extra(); i != 0 {
+		return r.extras[i-1].Combining
+	}
+	return ""
+}
+
 // AppendGlyphs appends every cell of the row to dst as Glyphs.
 func (r Row) AppendGlyphs(dst []Glyph) []Glyph {
 	for x := range r.cells {

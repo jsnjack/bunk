@@ -493,6 +493,29 @@ func (t *State) ConsumeDirty() ([]bool, bool) {
 	return out, true
 }
 
+// ConsumeDirtyInto copies the dirty flags into dst, clears them, and returns
+// dst resliced to the row count. It allocates only when dst is too short.
+func (t *State) ConsumeDirtyInto(dst []bool) ([]bool, bool) {
+	if cap(dst) < len(t.dirty) {
+		dst = make([]bool, len(t.dirty))
+	}
+	dst = dst[:len(t.dirty)]
+	if !t.anydirty {
+		clear(dst)
+		return dst, false
+	}
+	copy(dst, t.dirty)
+	clear(t.dirty)
+	t.anydirty = false
+	return dst, true
+}
+
+// CopyRow copies live row y into dst, reusing dst's storage.
+func (t *State) CopyRow(y int, dst *Row) {
+	src := t.lines[y]
+	dst.CopyFrom(src, src.Len())
+}
+
 // markDirty marks row y as dirty and sets the anydirty flag.
 func (t *State) markDirty(y int) {
 	t.dirty[y] = true

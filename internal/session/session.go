@@ -245,6 +245,20 @@ func (s *Session) Feed(chunk []byte) {
 	s.CaptureAndWrite(s.feed.scan(chunk))
 }
 
+// Resize changes the emulator and PTY size, reflowing stored lines first so
+// the application redraws over the reflowed screen. It reports whether stored
+// cells were reflowed to a new width.
+func (s *Session) Resize(cols, rows int) (reflowed bool) {
+	s.Lock()
+	reflowed = s.ResizeAndReflow(cols, rows)
+	cw, ch := s.Term.CellPixels()
+	s.Unlock()
+	if s.PTY != nil {
+		pty.Setsize(s.PTY, Winsize(cols, rows, cw, ch)) //nolint:errcheck
+	}
+	return reflowed
+}
+
 // ContentRows returns the number of live rows up to the last one with
 // content or the cursor. Must be called with the session locked.
 func (s *Session) ContentRows() int {
