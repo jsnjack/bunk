@@ -20,6 +20,7 @@ other TUI apps.
 main.go             Entry point — calls Execute()
 cmd.go              cobra root command, run(), app initialization
 cmd_config.go       "bunk config" subcommand tree
+cmd_notify.go       "bunk notify": the agent hook CLI (notify.RunCLI)
 app.go              App struct, event loop, key handling, triggerRedraw()
 input_modes.go      Host focus forwarding
 input_tcell.go      tcell key/mouse events → internal/input (keyToBytesMode, mouseToBytes)
@@ -29,7 +30,8 @@ graphics.go         Image colour blending
 layout.go           BSP tree: Node, split/remove/resize math
 osc.go              Host passthrough buffer for OSC 7/52/133
 mouse.go            Mouse events → PTY byte sequences
-status.go           Status badges (scroll count, container, SSH, flash messages)
+status.go           Status badges (agent state, scroll count, container, SSH,
+                    flash messages); agent-state separator colours
 search.go           In-pane search UI (matching is session.FindAll)
 config.go           TOML config, theme registry, keybinding resolution
 hostcolors.go       Host terminal OSC colour probing
@@ -226,7 +228,8 @@ Key fields agents may need to know about:
 - `scrollback` — per-pane scrollback line cap (default 10 000)
 - `log_file` — destination for `--debug` / `--trace` output (default `/tmp/bunk.log`)
 - `cell_aspect` — fallback height/width ratio when the host terminal doesn't answer the pixel-size query
-- `[keybindings]` — overrides for split / zoom / quit / search / copy / paste
+- `[keys]` — overrides for split / zoom / quit / search / copy / paste /
+  next_needs_you; "none" disables an action and sends its key to the pane
 - `[ui]` — hex colour overrides for borders and scrollbar
 
 `config.go` is the authoritative reference for every field and its default.
@@ -330,6 +333,12 @@ its default.
   record of the last announced state. Without hooks, Claude Code only sends
   OSC notifications to terminals it recognises; set its
   `preferredNotifChannel` to `terminal_bell`.
+- **The TUI shows agent status per pane.** `renderPane` reads
+  `Session.Status` before taking the session lock; the badge and the
+  needs-you/done separator colours use that copy (`Pane.agent`).
+  `Hooks.StatusChanged` only wakes the render loop. Focus or typing calls
+  `Acknowledge`; `next_needs_you` (Alt+A) jumps. bunk serves the notify
+  socket like bunk-gui, and `bunk notify` runs the same CLI.
 - **Nested sessions are refused.** `BUNK=1` is exported into every pane's
   environment; the binary exits at startup if it sees it set.
 

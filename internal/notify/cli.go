@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,15 +33,17 @@ var stdinTimeout = 2 * time.Second
 // notify program, Gemini CLI AfterAgent, failures.
 var hookTextFields = []string{"message", "last_assistant_message", "last-assistant-message", "prompt_response", "error"}
 
-const usage = `usage: bunk-gui notify <event> [message | -]
-       bunk-gui notify hooks [agent]
+// usage is the help text; %[1]s is the program name, bunk or bunk-gui.
+const usage = `usage: %[1]s notify <event> [message | -]
+       %[1]s notify hooks [agent]
 
-Reports an agent's state to the bunk-gui session it runs in.
+Reports an agent's state to the bunk session it runs in, in bunk's
+terminal UI or in bunk-gui.
 Events: working, idle, needs-you, done, failed, clear.
 The message is the notice for needs-you, done and failed. "-" reads it
 from stdin. A hook's JSON input gives its "message",
 "last_assistant_message" or similar field.
-Outside bunk-gui (BUNK_GUI_SOCKET or BUNK_GUI_SESSION unset) it does
+Outside bunk (BUNK_NOTIFY_SOCKET or BUNK_NOTIFY_SESSION unset) it does
 nothing and exits 0.
 
 "hooks" lists the agents with ready hook snippets; "hooks <agent>"
@@ -49,20 +52,26 @@ prints one.
 
 // RunCLI runs the notify command; args exclude the "notify" word itself,
 // env is the process environment and stdin is read for a "-" message. It
-// returns the exit status: 0 on success and whenever bunk-gui is not
-// running the session, 1 on errors.
+// returns the exit status: 0 on success and whenever no bunk front end is
+// running the session, 1 on errors. Messages name the program after
+// os.Args[0], so bunk and bunk-gui can both run it.
 func RunCLI(args []string, env []string, stdin io.Reader) int {
-	return runCLI(args, env, stdin, os.Stdout, os.Stderr)
+	prog := filepath.Base(os.Args[0])
+	if prog == "." || prog == string(filepath.Separator) {
+		prog = "bunk"
+	}
+	return runCLI(prog, args, env, stdin, os.Stdout, os.Stderr)
 }
 
-func runCLI(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	help := fmt.Sprintf(usage, prog)
 	if len(args) == 0 {
-		write(stderr, usage)
+		write(stderr, help)
 		return exitError
 	}
 	switch args[0] {
 	case "help", "-h", "-help", "--help":
-		write(stdout, usage)
+		write(stdout, help)
 		return 0
 	case "hooks":
 		switch len(args) {
@@ -75,17 +84,17 @@ func runCLI(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				return 0
 			}
 		}
-		write(stderr, "bunk-gui notify: hooks takes one of:\n"+HookAgents())
+		write(stderr, prog+" notify: hooks takes one of:\n"+HookAgents())
 		return exitError
 	}
 	ev, ok := session.ParseEvent(args[0])
 	if !ok {
-		write(stderr, fmt.Sprintf("bunk-gui notify: unknown event %q\n\n%s", args[0], usage))
+		write(stderr, fmt.Sprintf("%s notify: unknown event %q\n\n%s", prog, args[0], help))
 		return exitError
 	}
 	socket, token := lookupEnv(env, EnvSocket), lookupEnv(env, EnvSession)
 	if socket == "" || token == "" {
-		return 0 // not inside bunk-gui
+		return 0 // not inside bunk
 	}
 	text := strings.Join(args[1:], " ")
 	if text == "-" {
@@ -96,11 +105,11 @@ func runCLI(args, env []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case err == nil:
 		return 0
 	case serverGone(err):
-		// The bunk-gui that started this session has exited, as when an
+		// The front end that started this session has exited, as when an
 		// agent outlives it inside tmux.
 		return 0
 	}
-	write(stderr, "bunk-gui notify: "+err.Error()+"\n")
+	write(stderr, prog+" notify: "+err.Error()+"\n")
 	return exitError
 }
 

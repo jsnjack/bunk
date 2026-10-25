@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bunk/internal/notify"
 	"bunk/internal/session"
 	"bytes"
 	"fmt"
@@ -62,6 +63,14 @@ type Pane struct {
 
 	passthrough bool // protected by mu
 
+	// agent is the agent status that the last renderPane read for the
+	// badge and the borders. Protected by mu.
+	agent paneAgent
+
+	// token routes agent hook reports to this pane's session through the
+	// notify socket; "" when bunk runs without the socket.
+	token string
+
 	// Temporary status message (e.g. "COPIED") shown in the status bar.
 	// Clears automatically after statusMsgEnd.  Protected by mu.
 	statusMsg    string
@@ -73,6 +82,14 @@ type Pane struct {
 	pendingTransientClear bool
 	pendingClearUntil     time.Time
 	pendingInPlaceUpdate  bool
+}
+
+// paneAgent is the part of session.Status that the pane badge and borders
+// show.
+type paneAgent struct {
+	name   string // "claude", …; "" when no agent runs
+	state  session.AgentState
+	notice string
 }
 
 // NewPane spawns a shell inside a new PTY with the given geometry, starts the
@@ -87,24 +104,61 @@ type Pane struct {
 //	colors    - default OSC 10/11/12 colours for the pane (from theme or host probe)
 //	oscBuf    - receives OSC 7/8/52/133 sequences to forward to the host terminal
 func NewPane(id, x, y, w, h, scrollback int, dir string, spawnArgs []string, colors hostOSCColors, redraw chan struct{}, paneDead chan *Pane, done chan struct{}, oscBuf *oscBuffer, cellAspect ...float64) (*Pane, error) {
-	if w < 2 || h < 1 {
-		return nil, fmt.Errorf("pane too small: %dx%d", w, h)
+	return startPane(paneSpec{
+		id: id, x: x, y: y, w: w, h: h, scrollback: scrollback, dir: dir, args: spawnArgs,
+		colors: colors, redraw: redraw, paneDead: paneDead, done: done, oscBuf: oscBuf,
+		cellAspect: cellAspect,
+	})
+}
+
+// paneSpec describes a new pane; NewPane lists its fields as arguments.
+type paneSpec struct {
+	id, x, y, w, h, scrollback int
+	dir                        string
+	args                       []string
+	colors                     hostOSCColors
+	redraw                     chan struct{}
+	paneDead                   chan *Pane
+	done                       chan struct{}
+	oscBuf                     *oscBuffer
+	cellAspect                 []float64
+	// notify, when set, receives the agent hook reports of the pane's
+	// session: the child gets the socket and a fresh token.
+	notify *notify.Server
+}
+
+// startPane starts the pane sp describes.
+func startPane(sp paneSpec) (*Pane, error) {
+	if sp.w < 2 || sp.h < 1 {
+		return nil, fmt.Errorf("pane too small: %dx%d", sp.w, sp.h)
 	}
 	// The PTY is one column narrower than the pane: the last column holds
 	// the scrollbar. BUNK=1 lets shell rc files detect they're running
 	// inside bunk and skip auto-launching it again.
-	s, err := session.Start(session.Options{
-		ID: id, Cols: w - 1, Rows: h, Scrollback: scrollback, Dir: dir, Args: spawnArgs,
+	opts := session.Options{
+		ID: sp.id, Cols: sp.w - 1, Rows: sp.h, Scrollback: sp.scrollback, Dir: sp.dir, Args: sp.args,
 		Env:     []string{"BUNK=1"},
-		ThemeFG: colors.fg, ThemeBG: colors.bg, ThemeCursor: colors.cursor,
-		CellAspect: cellAspect,
-	})
+		ThemeFG: sp.colors.fg, ThemeBG: sp.colors.bg, ThemeCursor: sp.colors.cursor,
+		CellAspect: sp.cellAspect,
+	}
+	token := ""
+	if sp.notify != nil {
+		if tok, err := notify.NewToken(); err == nil {
+			token, opts.NotifySocket, opts.NotifySession = tok, sp.notify.Path(), tok
+		} else {
+			L.Warn("pane: no notify token, agent hooks cannot report", "err", err)
+		}
+	}
+	s, err := session.Start(opts)
 	if err != nil {
 		return nil, err
 	}
-	p := &Pane{Session: s, x: x, y: y, w: w, h: h}
-	L.Debug("pane spawned", "id", p.ID, "x", x, "y", y, "w", w, "h", h)
-	s.Run(p.hooks(redraw, paneDead, done, oscBuf), done)
+	p := &Pane{Session: s, x: sp.x, y: sp.y, w: sp.w, h: sp.h, token: token}
+	L.Debug("pane spawned", "id", p.ID, "x", sp.x, "y", sp.y, "w", sp.w, "h", sp.h)
+	s.Run(p.hooks(sp.redraw, sp.paneDead, sp.done, sp.oscBuf), sp.done)
+	if token != "" {
+		sp.notify.Register(token, s)
+	}
 	return p, nil
 }
 
@@ -127,6 +181,9 @@ func (p *Pane) hooks(redraw chan struct{}, paneDead chan *Pane, done chan struct
 			mirrorOSC52ToNativeClipboard(seq)
 		},
 		Redraw: wake,
+		// The render pass reads the status itself, so the hook only asks
+		// for a frame and never blocks the session.
+		StatusChanged: wake,
 		Exited: func() {
 			select {
 			case paneDead <- p:

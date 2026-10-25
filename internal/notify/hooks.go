@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
-// Command is how hook snippets run the notify CLI.
-const Command = "bunk-gui notify"
+// Command is how hook snippets run the notify CLI: bunk's when bunk is on
+// PATH, else bunk-gui's. Both binaries run the same CLI (RunCLI) and serve
+// the same protocol, so either reaches the front end of the session.
+const Command = `"$(command -v bunk || echo bunk-gui)" notify`
 
 // hookTimeout is the timeout snippets give each hook, in seconds. The CLI
 // gives up after clientTimeout plus stdinTimeout.
@@ -54,7 +57,7 @@ var recipes = []agentHooks{
 		render: renderCodex,
 	},
 	{
-		name: "copilot", dest: "~/.copilot/hooks/bunk-gui.json",
+		name: "copilot", dest: "~/.copilot/hooks/bunk.json",
 		hooks: []hook{
 			{event: "userPromptSubmitted", args: "working"},
 			{event: "notification", matcher: "permission_prompt|elicitation_dialog", args: "needs-you -"},
@@ -100,8 +103,8 @@ func HookAgents() string {
 	return b.String()
 }
 
-// shellCommand runs the notify CLI only inside bunk-gui, so the hook
-// succeeds in other terminals even where bunk-gui is not installed.
+// shellCommand runs the notify CLI only inside a bunk session, so the hook
+// succeeds in other terminals even where bunk is not installed.
 func shellCommand(args string) string {
 	return `[ -z "$` + EnvSession + `" ] || ` + Command + " " + args
 }
@@ -168,7 +171,7 @@ func renderClaude(hs []hook) (string, error) {
 func renderGemini(hs []hook) (string, error) {
 	events := object{}
 	for _, h := range hs {
-		name := "bunk-gui-" + strings.Fields(h.args)[0]
+		name := "bunk-" + strings.Fields(h.args)[0]
 		handler := object{{"name", name}, {"type", "command"}, {"command", shellCommand(h.args)}, {"timeout", hookTimeout * 1000}}
 		group := object{}
 		if h.matcher != "" {
@@ -196,13 +199,14 @@ func renderCopilot(hs []hook) (string, error) {
 }
 
 // renderCodex writes inline [hooks] tables for Codex's config.toml, with
-// the notify program as a commented alternative.
+// the notify program as a commented alternative. Codex appends its JSON
+// payload to the program's arguments, so sh passes it on as "$1".
 func renderCodex(hs []hook) (string, error) {
 	var b strings.Builder
-	b.WriteString("# bunk-gui agent status. Run /hooks in Codex once to trust these hooks.\n")
+	b.WriteString("# bunk agent status. Run /hooks in Codex once to trust these hooks.\n")
 	b.WriteString("# Codex without hooks: use the notify program instead, as a top-level\n")
 	b.WriteString("# key above the first [table]:\n")
-	b.WriteString(`# notify = ["bunk-gui", "notify", "done"]` + "\n")
+	fmt.Fprintf(&b, "# notify = [\"sh\", \"-c\", %s, \"sh\"]\n", strconv.Quote(shellCommand(`done "$1"`)))
 	for _, h := range hs {
 		cmd := shellCommand(h.args)
 		if strings.Contains(cmd, "'") {

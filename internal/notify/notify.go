@@ -2,11 +2,13 @@
 // CLI, …) report their state to a front end exactly, instead of the front
 // end inferring it from output, bells and OSC notifications.
 //
-// The front end listens on a Unix socket under $XDG_RUNTIME_DIR (Listen) and
-// starts every session with Options.NotifySocket and Options.NotifySession,
-// which export BUNK_GUI_SOCKET and BUNK_GUI_SESSION, a random per-session
-// token. An agent hook runs "bunk-gui notify <event> [message]" (RunCLI),
-// which sends one JSON line per message:
+// The protocol does not depend on the front end: bunk's TUI and bunk-gui
+// both serve it, and both binaries run the same CLI. The front end listens
+// on a Unix socket under $XDG_RUNTIME_DIR (Listen) and starts every session
+// with Options.NotifySocket and Options.NotifySession, which export
+// BUNK_NOTIFY_SOCKET and BUNK_NOTIFY_SESSION, a random per-session token.
+// An agent hook runs "bunk notify <event> [message]" or "bunk-gui notify
+// <event> [message]" (RunCLI), which sends one JSON line per message:
 //
 //	{"v":1,"session":"<token>","event":"needs-you","message":"Allow npm install?"}
 //
@@ -51,7 +53,7 @@ const (
 
 // Message is one report from an agent.
 type Message struct {
-	Session string        // token from BUNK_GUI_SESSION
+	Session string        // token from BUNK_NOTIFY_SESSION
 	Event   session.Event // what the agent reports
 	Text    string        // notice text for needs-you, done and failed
 }

@@ -177,9 +177,9 @@ type Options struct {
 	// tcell front end sends) or input.KeyBackspace (DEL).
 	Backspace input.Key
 	// NotifySocket and NotifySession are exported to the child as
-	// BUNK_GUI_SOCKET and BUNK_GUI_SESSION, so agent hooks can report their
-	// state (internal/notify). Inherited values are always removed; ""
-	// exports nothing.
+	// BUNK_NOTIFY_SOCKET and BUNK_NOTIFY_SESSION, so agent hooks can report
+	// their state (internal/notify). Inherited values are always removed;
+	// "" exports nothing.
 	NotifySocket, NotifySession string
 	// ImageBytes keeps the bitmaps of image placements, up to this many
 	// bytes, so the front end can draw them at full resolution (Images).
@@ -235,7 +235,7 @@ func Start(o Options) (*Session, error) {
 	// (Simply appending would not override them on most shells/kernels.)
 	// • TERM=xterm-256color - the emulation profile we advertise.
 	// • COLORTERM=truecolor - tells colour-aware apps 24-bit RGB works.
-	// • BUNK_GUI_SOCKET/BUNK_GUI_SESSION come only from Options, so a
+	// • BUNK_NOTIFY_SOCKET/BUNK_NOTIFY_SESSION come only from Options, so a
 	//   session never reports to the front end that started its parent.
 	filtered := make([]string, 0, len(os.Environ()))
 	for _, e := range os.Environ() {
