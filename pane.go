@@ -16,8 +16,6 @@ import (
 	"bytes"
 	"fmt"
 	"time"
-
-	"github.com/creack/pty"
 )
 
 // Pane is bunk's view of a Session: its place on the host screen and the
@@ -255,7 +253,9 @@ func (p *Pane) resize(x, y, w, h int) {
 	cw, ch := p.Term.CellPixels()
 	p.Unlock()
 	if p.PTY != nil {
-		pty.Setsize(p.PTY, session.Winsize(w-1, h, cw, ch)) //nolint:errcheck
+		if err := session.Setsize(p.PTY, session.Winsize(w-1, h, cw, ch)); err != nil {
+			L.Debug("pane resize: PTY size", "pane", p.ID, "err", err)
+		}
 	}
 }
 

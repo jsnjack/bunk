@@ -113,6 +113,18 @@ fuzz:
 		go test "$$pkg" -run '^$$' -fuzz "^$$name\$$" -fuzztime $(FUZZTIME) < /dev/null || exit 1; \
 	done
 
+# Leak and soak tests at full length (SOAK=1): 2000 sessions, 500 MiB of
+# output, 200 TUI cycles, 400 notify sessions, 200 bunk-gui tabs. Not part
+# of check or check-all, which run the short versions with -race.
+# SOAKFLAGS=-race adds the race detector (about ten times slower).
+SOAKFLAGS ?=
+SOAK_TESTS := ^Test(SessionLeaks|OutputSoak|TUISoak|NotifySessionLeaks)$$
+
+soak:
+	SOAK=1 go test $(SOAKFLAGS) -count=1 -timeout 60m -v -run '$(SOAK_TESTS)' . ./internal/session ./internal/notify
+	cd $(GUI_DIR) && SOAK=1 ../../scripts/headless-gui.sh \
+		go test $(SOAKFLAGS) -count=1 -timeout 30m -v -run '^TestGUITabLeaks$$' .
+
 rpm: version
 	rm -rf $(RPM_TOP)
 	packaging/fedora/sources.sh $(VERSION) $(RPM_TOP)/SOURCES
@@ -127,4 +139,4 @@ rpm: version
 clean:
 	rm -rf bin/ $(BINARY)
 
-.PHONY: version build release test vet fmt lint check standards run clean gui gui-test check-all rpm fuzz
+.PHONY: version build release test vet fmt lint check standards run clean gui gui-test check-all rpm fuzz soak
