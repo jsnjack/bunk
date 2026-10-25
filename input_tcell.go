@@ -2,6 +2,7 @@ package main
 
 import (
 	"bunk/internal/input"
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
@@ -19,16 +20,7 @@ func keyToBytesMode(ev *tcell.EventKey, flags int, mode vt10x.ModeFlag) []byte {
 	if !ok {
 		return nil
 	}
-	return input.EncodeKey(k, paneInputModes(flags, mode))
-}
-
-// paneInputModes collects the modes that change how keys are encoded.
-func paneInputModes(kittyFlags int, mode vt10x.ModeFlag) input.Modes {
-	return input.Modes{
-		KittyFlags: kittyFlags,
-		AppCursor:  mode&vt10x.ModeAppCursor != 0,
-		AppKeypad:  mode&vt10x.ModeAppKeypad != 0,
-	}
+	return input.EncodeKey(k, session.InputModes(flags, mode))
 }
 
 // tcellKeys maps tcell's named keys to input keys. tcell reports Ctrl+H,

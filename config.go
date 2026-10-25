@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bunk/internal/session"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -466,7 +467,7 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 
 	scrollback := fc.Scrollback
 	if scrollback <= 0 {
-		scrollback = defaultScrollbackLines
+		scrollback = session.DefaultScrollbackLines
 	}
 
 	return Config{

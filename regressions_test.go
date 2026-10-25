@@ -10,14 +10,15 @@ import (
 	"testing"
 	"time"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
 )
 
 func regressionPane(cols, rows int) *Pane {
-	p := &Pane{cmd: &exec.Cmd{}, w: cols + 1, h: rows, scrollbackLines: 1000, sb: sbRing{maxLines: 1000}}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow), vt10x.WithScrollbackClearCallback(p.onScrollbackClear))
+	p := &Pane{Session: &session.Session{Cmd: &exec.Cmd{}, ScrollbackLines: 1000, Scrollback: session.Ring{MaxLines: 1000}}, w: cols + 1, h: rows}
+	p.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.OnScrollRow), vt10x.WithScrollbackClearCallback(p.OnScrollbackClear))
 	return p
 }
 
@@ -25,11 +26,11 @@ func TestRegressionResizeRetainsModes(t *testing.T) {
 	for _, size := range [][2]int{{39, 3}, {40, 4}, {40, 2}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			p := regressionPane(40, 3)
-			p.captureAndWrite([]byte("hello\x1b[?2004h\x1b[?1004h\x1b[?25l\x1b[5 q"))
-			before := p.term.Mode()
+			p.CaptureAndWrite([]byte("hello\x1b[?2004h\x1b[?1004h\x1b[?25l\x1b[5 q"))
+			before := p.Term.Mode()
 			p.resize(0, 0, size[0]+1, size[1])
-			if p.term.Mode() != before || p.term.Cursor().Shape != 5 {
-				t.Fatalf("resize lost terminal state: modes %v -> %v; shape 5 -> %d", before, p.term.Mode(), p.term.Cursor().Shape)
+			if p.Term.Mode() != before || p.Term.Cursor().Shape != 5 {
+				t.Fatalf("resize lost terminal state: modes %v -> %v; shape 5 -> %d", before, p.Term.Mode(), p.Term.Cursor().Shape)
 			}
 		})
 	}
@@ -39,15 +40,15 @@ func TestRegressionClearAfterResize(t *testing.T) {
 	for _, size := range [][2]int{{39, 3}, {40, 4}, {40, 2}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			p := regressionPane(40, 3)
-			p.captureAndWrite([]byte(strings.Repeat("history\r\n", 20)))
+			p.CaptureAndWrite([]byte(strings.Repeat("history\r\n", 20)))
 			p.resize(0, 0, size[0]+1, size[1])
-			p.captureAndWrite([]byte("fresh\r\nmore\r\nlines\r\n"))
-			if p.sb.count == 0 {
+			p.CaptureAndWrite([]byte("fresh\r\nmore\r\nlines\r\n"))
+			if p.Scrollback.Count == 0 {
 				t.Fatal("setup produced no scrollback")
 			}
-			p.captureAndWrite([]byte("\x1b[3J"))
-			if p.sb.count != 0 {
-				t.Fatalf("ED3 failed after resize: %d saved rows remain", p.sb.count)
+			p.CaptureAndWrite([]byte("\x1b[3J"))
+			if p.Scrollback.Count != 0 {
+				t.Fatalf("ED3 failed after resize: %d saved rows remain", p.Scrollback.Count)
 			}
 		})
 	}
@@ -56,18 +57,18 @@ func TestRegressionClearAfterResize(t *testing.T) {
 func TestRegressionShortLineHistory(t *testing.T) {
 	p := regressionPane(80, 3)
 	for i := 0; i < 100; i++ {
-		p.captureAndWrite([]byte(fmt.Sprintf("%03d\r\n", i)))
+		p.CaptureAndWrite([]byte(fmt.Sprintf("%03d\r\n", i)))
 	}
-	before := p.sb.count
+	before := p.Scrollback.Count
 	p.resize(0, 0, 80, 3)
-	if p.sb.count != before {
-		t.Fatalf("width 80 -> 79 discarded short-line history: %d -> %d rows", before, p.sb.count)
+	if p.Scrollback.Count != before {
+		t.Fatalf("width 80 -> 79 discarded short-line history: %d -> %d rows", before, p.Scrollback.Count)
 	}
 }
 
 func TestRegressionWideCharacterWrap(t *testing.T) {
 	p := regressionPane(5, 3)
-	p.captureAndWrite([]byte("界界AB"))
+	p.CaptureAndWrite([]byte("界界AB"))
 	scr := tcell.NewSimulationScreen("UTF-8")
 	if err := scr.Init(); err != nil {
 		t.Fatal(err)
@@ -81,18 +82,6 @@ func TestRegressionWideCharacterWrap(t *testing.T) {
 	}
 }
 
-func TestRegressionUnterminatedOSCBounded(t *testing.T) {
-	data := append([]byte("\x1b]0;"), bytes.Repeat([]byte{'x'}, 2*oscMaxBuf)...)
-	var stream ptyStream
-	complete := stream.scan(data)
-	if len(stream.pending) > oscMaxBuf {
-		t.Fatalf("unterminated OSC bypasses scanner cap: complete=%d carry=%d", len(complete), len(stream.pending))
-	}
-	if got := string(stream.scan([]byte("\x1b\\recovered"))); got != "recovered" {
-		t.Fatalf("oversized OSC recovery = %q", got)
-	}
-}
-
 func TestRegressionKittySurvivesFirstPoll(t *testing.T) {
 	done := make(chan struct{})
 	p, err := NewPane(0, 0, 0, 40, 3, 100, "", []string{"/bin/sh", "-c", "printf '\033[>1u'; sleep 5"}, hostOSCColors{}, make(chan struct{}, 1), make(chan *Pane, 1), done, newOSCBuffer())
@@ -100,13 +89,13 @@ func TestRegressionKittySurvivesFirstPoll(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer close(done)
-	defer p.close()
+	defer p.Close()
 	deadline := time.Now().Add(500 * time.Millisecond)
 	negotiated := false
 	for time.Now().Before(deadline) {
-		p.mu.Lock()
-		negotiated = len(p.kittyStack) > 0
-		p.mu.Unlock()
+		p.Lock()
+		negotiated = len(p.KittyStack) > 0
+		p.Unlock()
 		if negotiated {
 			break
 		}
@@ -116,32 +105,10 @@ func TestRegressionKittySurvivesFirstPoll(t *testing.T) {
 		t.Fatal("child failed to negotiate kitty mode")
 	}
 	time.Sleep(1200 * time.Millisecond)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.kittyStack) == 0 {
+	p.Lock()
+	defer p.Unlock()
+	if len(p.KittyStack) == 0 {
 		t.Fatal("first foreground poll erased currently running child's kitty negotiation")
-	}
-}
-
-func TestRegressionKittyOwnership(t *testing.T) {
-	for _, tc := range []struct {
-		name              string
-		owner, foreground int
-		wantEnabled       bool
-	}{
-		{"current app", 12, 12, true},
-		{"exited app", 12, 11, false},
-		{"new app negotiated before poll", 13, 13, true},
-		{"foreground unavailable", 12, 0, true},
-		{"owner unavailable", 0, 12, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p := &Pane{kittyStack: []int{1}, kittyOwnerPGID: tc.owner}
-			p.clearStaleKittyMode(tc.foreground)
-			if got := len(p.kittyStack) > 0; got != tc.wantEnabled {
-				t.Fatalf("enabled = %v, want %v", got, tc.wantEnabled)
-			}
-		})
 	}
 }
 
@@ -151,9 +118,9 @@ func TestRegressionRepeatedTransientClear(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.ptmx = r
+	p.PTY = r
 	readDone := make(chan struct{})
-	go func() { p.readPTY(make(chan struct{}, 1), newOSCBuffer()); close(readDone) }()
+	go func() { p.ReadLoop(p.hooks(make(chan struct{}, 1), nil, nil, newOSCBuffer())); close(readDone) }()
 	defer func() {
 		if err := w.Close(); err != nil {
 			t.Error(err)
@@ -165,9 +132,9 @@ func TestRegressionRepeatedTransientClear(t *testing.T) {
 			t.Fatal(err)
 		}
 		time.Sleep(100 * time.Millisecond)
-		p.mu.Lock()
+		p.Lock()
 		held := p.transientLineClear
-		p.mu.Unlock()
+		p.Unlock()
 		if held {
 			t.Fatalf("clear %d remains render-suppressed after timer expiry", n+1)
 		}
@@ -177,8 +144,8 @@ func TestRegressionRepeatedTransientClear(t *testing.T) {
 func TestRegressionSyncDoesNotFreezeOtherPane(t *testing.T) {
 	p, other := regressionPane(10, 3), regressionPane(10, 3)
 	other.x = 12
-	p.captureAndWrite([]byte("\x1b[?2026h"))
-	other.captureAndWrite([]byte("updated"))
+	p.CaptureAndWrite([]byte("\x1b[?2026h"))
+	other.CaptureAndWrite([]byte("updated"))
 	scr := tcell.NewSimulationScreen("UTF-8")
 	if err := scr.Init(); err != nil {
 		t.Fatal(err)
@@ -206,8 +173,8 @@ func TestRegressionMouseReleaseForwarding(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			p.ptmx = f
-			p.captureAndWrite([]byte(fmt.Sprintf("\x1b[?%dh\x1b[?1006h", mode)))
+			p.PTY = f
+			p.CaptureAndWrite([]byte(fmt.Sprintf("\x1b[?%dh\x1b[?1006h", mode)))
 			app := &App{root: newLeaf(p, 0, 0, 11, 3), active: p}
 			app.handleMouse(tcell.NewEventMouse(1, 1, tcell.Button1, tcell.ModNone))
 			app.handleMouse(tcell.NewEventMouse(1, 1, tcell.ButtonNone, tcell.ModNone))
@@ -225,37 +192,6 @@ func TestRegressionMouseReleaseForwarding(t *testing.T) {
 	}
 }
 
-func TestRegressionSyncTimeout(t *testing.T) {
-	p := regressionPane(10, 3)
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.ptmx = r
-	redraw := make(chan struct{}, 1)
-	readDone := make(chan struct{})
-	go func() { p.readPTY(redraw, newOSCBuffer()); close(readDone) }()
-	defer func() {
-		if err := w.Close(); err != nil {
-			t.Error(err)
-		}
-		<-readDone
-	}()
-	if _, err := w.Write([]byte("\x1b[?2026hheld")); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-redraw:
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if p.term.Mode()&vt10x.ModeSync != 0 || !p.syncDeadline.IsZero() {
-			t.Fatal("sync timeout did not release rendering")
-		}
-	case <-time.After(3 * syncUpdateTimeout):
-		t.Fatal("missing redraw after abandoned synchronized update")
-	}
-}
-
 func TestRegressionWideSelectionAndSearch(t *testing.T) {
 	for _, tc := range []struct {
 		text string
@@ -265,26 +201,26 @@ func TestRegressionWideSelectionAndSearch(t *testing.T) {
 	} {
 		t.Run(tc.text, func(t *testing.T) {
 			p := regressionPane(tc.cols, 3)
-			p.captureAndWrite([]byte(tc.text))
-			p.selActive = true
-			p.selAnchor = selPos{row: 0, col: 0}
-			cur := p.term.Cursor()
-			p.selCursor = selPos{row: cur.Y, col: cur.X - 1}
-			if got := p.selText(); got != tc.text {
+			p.CaptureAndWrite([]byte(tc.text))
+			p.SelActive = true
+			p.SelAnchor = session.SelPos{Row: 0, Col: 0}
+			cur := p.Term.Cursor()
+			p.SelCursor = session.SelPos{Row: cur.Y, Col: cur.X - 1}
+			if got := p.SelText(); got != tc.text {
 				t.Fatalf("copied %q, want %q", got, tc.text)
 			}
 		})
 	}
 	t.Run("search display columns", func(t *testing.T) {
 		p := regressionPane(10, 3)
-		p.captureAndWrite([]byte("a界界b"))
+		p.CaptureAndWrite([]byte("a界界b"))
 		app := &App{searchPane: p, searchQuery: "界界b"}
 		app.runSearchScan()
-		if len(app.searchMatches) != 1 || app.searchMatches[0].col != 1 || app.searchMatches[0].length != 5 {
+		if len(app.searchMatches) != 1 || app.searchMatches[0].Col != 1 || app.searchMatches[0].Length != 5 {
 			t.Fatalf("matches = %+v", app.searchMatches)
 		}
-		selectWord(p, selPos{row: 0, col: 2})
-		if got := p.selText(); got != "a界界b" {
+		selectWord(p, session.SelPos{Row: 0, Col: 2})
+		if got := p.SelText(); got != "a界界b" {
 			t.Fatalf("word on wide continuation = %q", got)
 		}
 	})
@@ -292,14 +228,14 @@ func TestRegressionWideSelectionAndSearch(t *testing.T) {
 
 func TestRegressionResizePreservesLinkIdentities(t *testing.T) {
 	p := regressionPane(20, 3)
-	p.captureAndWrite([]byte("\x1b]8;;https://old.example\x07old\x1b]8;;\x07\r\n"))
-	p.captureAndWrite([]byte("\x1b]8;;https://new.example\x07new\x1b]8;;\x07\r\none\r\ntwo\r\nthree\r\n"))
+	p.CaptureAndWrite([]byte("\x1b]8;;https://old.example\x07old\x1b]8;;\x07\r\n"))
+	p.CaptureAndWrite([]byte("\x1b]8;;https://new.example\x07new\x1b]8;;\x07\r\none\r\ntwo\r\nthree\r\n"))
 	p.resize(0, 0, 20, 3)
-	if p.sb.count == 0 {
+	if p.Scrollback.Count == 0 {
 		t.Fatal("missing rebuilt scrollback")
 	}
 	for i, want := range []string{"https://old.example", "https://new.example"} {
-		if got := p.term.Link(p.sb.get(i)[0].Link); got != want {
+		if got := p.Term.Link(p.Scrollback.Get(i)[0].Link); got != want {
 			t.Fatalf("scrollback link %d = %q, want %q", i, got, want)
 		}
 	}

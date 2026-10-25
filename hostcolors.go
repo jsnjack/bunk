@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bunk/internal/session"
 	"bytes"
 	"fmt"
 	"os"
@@ -223,7 +224,7 @@ func normalizeOSCColorReply(s string) string {
 		if len(hex) != 6 || !isHexString(hex) {
 			return ""
 		}
-		return xParseColor(hex)
+		return session.XParseColor(hex)
 	}
 
 	return ""

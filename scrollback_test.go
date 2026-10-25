@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 )
 
@@ -23,8 +24,8 @@ func TestScrollbackEviction(t *testing.T) {
 
 func testScrollbackEviction(t *testing.T, suffix string) {
 	const cols, rows, keep = 6, 2, 3
-	p := &Pane{cmd: &exec.Cmd{}, w: cols + 1, h: rows, scrollbackLines: keep, sb: sbRing{maxLines: keep}}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p := &Pane{Session: &session.Session{Cmd: &exec.Cmd{}, ScrollbackLines: keep, Scrollback: session.Ring{MaxLines: keep}}, w: cols + 1, h: rows}
+	p.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.OnScrollRow))
 
 	text := func(row []vt10x.Glyph) string {
 		var b strings.Builder
@@ -34,24 +35,24 @@ func testScrollbackEviction(t *testing.T, suffix string) {
 		return strings.TrimRight(b.String(), " \x00")
 	}
 	for i := 0; i < 10; i++ {
-		p.captureAndWrite([]byte(fmt.Sprintf("\r\nline%d%s", i, suffix)))
+		p.CaptureAndWrite([]byte(fmt.Sprintf("\r\nline%d%s", i, suffix)))
 		// After line i is written, lines up to i-2 have left the 2-row screen
 		// (the first row of output is the empty line before line0).
-		for j := 0; j < p.sb.count; j++ {
-			want := fmt.Sprintf("line%d%s", i-1-p.sb.count+j, suffix)
-			if i-1-p.sb.count+j < 0 {
+		for j := 0; j < p.Scrollback.Count; j++ {
+			want := fmt.Sprintf("line%d%s", i-1-p.Scrollback.Count+j, suffix)
+			if i-1-p.Scrollback.Count+j < 0 {
 				want = ""
 			}
-			if got := text(p.sb.get(j)); got != want {
+			if got := text(p.Scrollback.Get(j)); got != want {
 				t.Fatalf("after line%d: scrollback[%d] = %q, want %q", i, j, got, want)
 			}
 		}
 	}
-	if p.sb.count != keep {
-		t.Fatalf("scrollback holds %d rows, want %d", p.sb.count, keep)
+	if p.Scrollback.Count != keep {
+		t.Fatalf("scrollback holds %d rows, want %d", p.Scrollback.Count, keep)
 	}
 	for y, want := range []string{"line8" + suffix, "line9" + suffix} {
-		if got := text(captureRow(p.term, y, cols)); got != want {
+		if got := text(session.CaptureRow(p.Term, y, cols)); got != want {
 			t.Fatalf("screen row %d = %q, want %q", y, got, want)
 		}
 	}
@@ -74,11 +75,11 @@ func TestScrollbackDropsOnlyPlainBlanks(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := regressionPane(8, 1)
-			p.captureAndWrite([]byte(tc.output + "\r\nnext"))
-			if p.sb.count == 0 {
+			p.CaptureAndWrite([]byte(tc.output + "\r\nnext"))
+			if p.Scrollback.Count == 0 {
 				t.Fatal("nothing reached scrollback")
 			}
-			if got := len(p.sb.get(0)); got != tc.want {
+			if got := len(p.Scrollback.Get(0)); got != tc.want {
 				t.Fatalf("stored row has %d cells, want %d", got, tc.want)
 			}
 		})

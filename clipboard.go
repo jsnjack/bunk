@@ -24,6 +24,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 )
 
@@ -67,13 +68,13 @@ func osc52ClipboardText(seq []byte) (string, bool) {
 	if len(seq) < 3 || seq[0] != 0x1b || seq[1] != ']' {
 		return "", false
 	}
-	body := oscPayloadStripTerm(seq[2:])
+	body := session.StripOSCTerminator(seq[2:])
 	semi := bytes.IndexByte(body, ';')
 	if semi < 0 || string(body[:semi]) != "52" {
 		return "", false
 	}
 	payload := body[semi+1:]
-	if !isSafeOSC52(payload) {
+	if !session.IsSafeOSC52(payload) {
 		return "", false
 	}
 	semi = bytes.IndexByte(payload, ';')
@@ -129,7 +130,7 @@ func (app *App) pasteFromClipboard() bool {
 	app.mu.Lock()
 	active := app.active
 	app.mu.Unlock()
-	if active == nil || active.isDead() {
+	if active == nil || active.IsDead() {
 		return true // consumed, nothing useful to forward
 	}
 
@@ -150,16 +151,16 @@ func (app *App) pasteFromClipboard() bool {
 	text = strings.ReplaceAll(text, "\r\n", "\r")
 	text = strings.ReplaceAll(text, "\n", "\r")
 
-	active.mu.Lock()
-	bracketed := active.term.Mode()&vt10x.ModeSetPaste != 0
-	active.mu.Unlock()
+	active.Lock()
+	bracketed := active.Term.Mode()&vt10x.ModeSetPaste != 0
+	active.Unlock()
 
 	if bracketed {
-		active.writeInput([]byte("\x1b[200~"))
+		active.WriteInput([]byte("\x1b[200~"))
 	}
-	active.writeInput([]byte(text))
+	active.WriteInput([]byte(text))
 	if bracketed {
-		active.writeInput([]byte("\x1b[201~"))
+		active.WriteInput([]byte("\x1b[201~"))
 	}
 	return true
 }

@@ -27,9 +27,9 @@ func TestPassthroughKeys(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			p.ptmx = f
+			p.PTY = f
 			if kitty {
-				p.kittyStack = []int{1}
+				p.KittyStack = []int{1}
 			}
 			other := regressionPane(40, 4)
 			app := &App{active: p, keys: resolveKeybindings(nil), redraw: make(chan struct{}, 1)}
@@ -54,7 +54,7 @@ func TestPassthroughKeys(t *testing.T) {
 				{tcell.KeyCtrlV, tcell.ModCtrl, "\x16", "\x1b[118;5u"},
 				{tcell.KeyPgUp, tcell.ModShift, "\x1b[5;2~", "\x1b[5;2~"},
 			} {
-				p.selActive = true
+				p.SelActive = true
 				if !app.handleKey(keyEv(tc.key, tc.mod)) {
 					t.Fatal("passthrough initiated shutdown")
 				}
@@ -112,11 +112,11 @@ func TestPassthroughBadges(t *testing.T) {
 			p.passthrough = true
 			p.statusMsg = "COPIED"
 			p.statusMsgEnd = time.Now().Add(time.Minute)
-			p.fgProcess = "ssh"
-			p.sshHost = "host"
-			p.containerType = "podman"
-			p.containerID = "box"
-			p.sbOff = 2
+			p.FgProcess = "ssh"
+			p.SSHHost = "host"
+			p.ContainerType = "podman"
+			p.ContainerID = "box"
+			p.ScrollOffset = 2
 			// Leave room for the scrollbar even in the smallest case.
 			p.w = width + 1
 			drawPaneStatus(scr, p, false, testTheme(), true)

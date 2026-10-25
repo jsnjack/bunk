@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
@@ -587,7 +588,7 @@ func TestCheckAndClearNeedsSync_NoPanes(t *testing.T) {
 }
 
 func TestCheckAndClearNeedsSync_SingleLeaf_Clean(t *testing.T) {
-	p := &Pane{needsSync: false}
+	p := &Pane{Session: &session.Session{NeedsSync: false}}
 	n := &Node{pane: p}
 	if checkAndClearNeedsSync(n) {
 		t.Error("checkAndClearNeedsSync(clean pane) = true, want false")
@@ -595,20 +596,20 @@ func TestCheckAndClearNeedsSync_SingleLeaf_Clean(t *testing.T) {
 }
 
 func TestCheckAndClearNeedsSync_SingleLeaf_Dirty(t *testing.T) {
-	p := &Pane{needsSync: true}
+	p := &Pane{Session: &session.Session{NeedsSync: true}}
 	n := &Node{pane: p}
 	if !checkAndClearNeedsSync(n) {
 		t.Error("checkAndClearNeedsSync(dirty pane) = false, want true")
 	}
 	// Should have cleared the flag.
-	if p.needsSync {
+	if p.NeedsSync {
 		t.Error("needsSync not cleared after checkAndClearNeedsSync")
 	}
 }
 
 func TestCheckAndClearNeedsSync_Tree_OneDirty(t *testing.T) {
-	p1 := &Pane{needsSync: false}
-	p2 := &Pane{needsSync: true}
+	p1 := &Pane{Session: &session.Session{NeedsSync: false}}
+	p2 := &Pane{Session: &session.Session{NeedsSync: true}}
 	root := &Node{
 		left:  &Node{pane: p1},
 		right: &Node{pane: p2},
@@ -616,14 +617,14 @@ func TestCheckAndClearNeedsSync_Tree_OneDirty(t *testing.T) {
 	if !checkAndClearNeedsSync(root) {
 		t.Error("checkAndClearNeedsSync with one dirty = false, want true")
 	}
-	if p2.needsSync {
+	if p2.NeedsSync {
 		t.Error("p2.needsSync not cleared")
 	}
 }
 
 func TestCheckAndClearNeedsSync_Tree_AllDirty(t *testing.T) {
-	p1 := &Pane{needsSync: true}
-	p2 := &Pane{needsSync: true}
+	p1 := &Pane{Session: &session.Session{NeedsSync: true}}
+	p2 := &Pane{Session: &session.Session{NeedsSync: true}}
 	root := &Node{
 		left:  &Node{pane: p1},
 		right: &Node{pane: p2},
@@ -631,7 +632,7 @@ func TestCheckAndClearNeedsSync_Tree_AllDirty(t *testing.T) {
 	if !checkAndClearNeedsSync(root) {
 		t.Error("checkAndClearNeedsSync with both dirty = false, want true")
 	}
-	if p1.needsSync || p2.needsSync {
+	if p1.NeedsSync || p2.NeedsSync {
 		t.Error("not all needsSync flags cleared")
 	}
 }
@@ -675,14 +676,16 @@ func TestRenderLoop_CoalescesEraseAndRedrawBurst(t *testing.T) {
 	)
 	term := vt10x.New(vt10x.WithSize(w-1, h))
 	p := &Pane{
-		term:            term,
-		cmd:             &exec.Cmd{},
-		x:               0,
-		y:               0,
-		w:               w,
-		h:               h,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: w,
+		h: h,
 	}
 
 	base := tcell.NewSimulationScreen("UTF-8")
@@ -701,14 +704,14 @@ func TestRenderLoop_CoalescesEraseAndRedrawBurst(t *testing.T) {
 		theme:  testTheme(),
 	}
 
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\r                       \r"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("\r                       \r"))
+	p.Unlock()
 	app.triggerRedraw()
 
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\r  99% |████████████|"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("\r  99% |████████████|"))
+	p.Unlock()
 	app.triggerRedraw()
 
 	app.renderWg.Add(1)
@@ -738,14 +741,16 @@ func TestRender_SkipsTransientLineClear(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(w-1, h))
 	term.Write([]byte("  99% |████████████|")) //nolint:errcheck
 	p := &Pane{
-		term:               term,
-		cmd:                &exec.Cmd{},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 		x:                  0,
 		y:                  0,
 		w:                  w,
 		h:                  h,
-		scrollbackLines:    100,
-		sb:                 sbRing{maxLines: 100},
 		transientLineClear: true,
 	}
 
@@ -777,9 +782,9 @@ func TestRender_SkipsTransientLineClear(t *testing.T) {
 		t.Fatal("cursor visible during transient clear, want hidden")
 	}
 
-	p.mu.Lock()
+	p.Lock()
 	p.transientLineClear = false
-	p.mu.Unlock()
+	p.Unlock()
 	app.render()
 	if got := screen.shows.Load(); got != 2 {
 		t.Fatalf("render painted %d frames after transient clear resolved, want 2", got)
@@ -795,26 +800,30 @@ func TestRender_InactiveTransientLineClearDoesNotBlockActivePane(t *testing.T) {
 	activeTerm := vt10x.New(vt10x.WithSize(4, h))
 	activeTerm.Write([]byte("OK")) //nolint:errcheck
 	active := &Pane{
-		term:            activeTerm,
-		cmd:             &exec.Cmd{},
-		x:               0,
-		y:               0,
-		w:               5,
-		h:               h,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            activeTerm,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: 5,
+		h: h,
 	}
 	inactiveTerm := vt10x.New(vt10x.WithSize(4, h))
 	inactiveTerm.Write([]byte("OLD")) //nolint:errcheck
 	inactive := &Pane{
-		term:               inactiveTerm,
-		cmd:                &exec.Cmd{},
+		Session: &session.Session{
+			Term:            inactiveTerm,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 		x:                  6,
 		y:                  0,
 		w:                  5,
 		h:                  h,
-		scrollbackLines:    100,
-		sb:                 sbRing{maxLines: 100},
 		transientLineClear: true,
 	}
 
@@ -861,23 +870,37 @@ func TestRender_ZoomOutRepaintsStalePanes_BtopOverflow(t *testing.T) {
 	)
 	leftTerm := vt10x.New(vt10x.WithSize(4, h))
 	left := &Pane{
-		term: leftTerm, cmd: &exec.Cmd{},
-		x: 0, y: 0, w: 5, h: h,
-		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            leftTerm,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: 5,
+		h: h,
 	}
 	rightTerm := vt10x.New(vt10x.WithSize(4, h))
 	right := &Pane{
-		id:   1,
-		term: rightTerm, cmd: &exec.Cmd{},
-		x: 6, y: 0, w: 5, h: h,
-		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+		Session: &session.Session{
+			ID:              1,
+			Term:            rightTerm,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 6,
+		y: 0,
+		w: 5,
+		h: h,
 	}
-	left.mu.Lock()
-	left.captureAndWrite([]byte("LLLL"))
-	left.mu.Unlock()
-	right.mu.Lock()
-	right.captureAndWrite([]byte("RRRR"))
-	right.mu.Unlock()
+	left.Lock()
+	left.CaptureAndWrite([]byte("LLLL"))
+	left.Unlock()
+	right.Lock()
+	right.CaptureAndWrite([]byte("RRRR"))
+	right.Unlock()
 
 	base := tcell.NewSimulationScreen("UTF-8")
 	base.Init() //nolint:errcheck // simulation screen init does not fail in tests
@@ -906,9 +929,9 @@ func TestRender_ZoomOutRepaintsStalePanes_BtopOverflow(t *testing.T) {
 	// Zoom the right pane fullscreen and have it paint across the whole
 	// width — like btop redrawing after the zoom SIGWINCH.
 	app.zoomIn()
-	right.mu.Lock()
-	right.captureAndWrite([]byte("\rBBBBBBBBBB"))
-	right.mu.Unlock()
+	right.Lock()
+	right.CaptureAndWrite([]byte("\rBBBBBBBBBB"))
+	right.Unlock()
 	app.render()
 	mainc, _, _, _ = base.GetContent(0, 0) //nolint:staticcheck // rune-level access
 	if mainc != 'B' {
@@ -931,14 +954,16 @@ func TestRender_HidesCursorDuringInPlaceLineUpdate(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(w-1, h))
 	term.Write([]byte("  99% |==========|")) //nolint:errcheck
 	p := &Pane{
-		term:                      term,
-		cmd:                       &exec.Cmd{},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 		x:                         0,
 		y:                         0,
 		w:                         w,
 		h:                         h,
-		scrollbackLines:           100,
-		sb:                        sbRing{maxLines: 100},
 		progressCursorHiddenUntil: time.Now().Add(time.Second),
 	}
 
@@ -961,9 +986,9 @@ func TestRender_HidesCursorDuringInPlaceLineUpdate(t *testing.T) {
 		t.Fatal("cursor visible during in-place line update, want hidden")
 	}
 
-	p.mu.Lock()
+	p.Lock()
 	p.progressCursorHiddenUntil = time.Now().Add(-time.Second)
-	p.mu.Unlock()
+	p.Unlock()
 	app.render()
 	_, _, visible = base.GetCursor()
 	if !visible {
@@ -995,14 +1020,16 @@ func TestRenderPane_WideChar_CombiningPlaceholderPreserved(t *testing.T) {
 	term.Write([]byte("🔴X")) //nolint:errcheck
 
 	p := &Pane{
-		term:            term,
-		cmd:             &exec.Cmd{},
-		x:               0,
-		y:               0,
-		w:               w,
-		h:               h,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: w,
+		h: h,
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -1051,14 +1078,16 @@ func TestRenderPane_WideChar_TableBordersAligned(t *testing.T) {
 	term.Write([]byte("A🔴B│C")) //nolint:errcheck
 
 	p := &Pane{
-		term:            term,
-		cmd:             &exec.Cmd{},
-		x:               0,
-		y:               0,
-		w:               w,
-		h:               h,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: w,
+		h: h,
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -1101,14 +1130,16 @@ func TestRenderPane_WideChar_MultipleConsecutive(t *testing.T) {
 	term.Write([]byte("🔴🟡Z")) //nolint:errcheck
 
 	p := &Pane{
-		term:            term,
-		cmd:             &exec.Cmd{},
-		x:               0,
-		y:               0,
-		w:               w,
-		h:               h,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: w,
+		h: h,
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -1184,9 +1215,16 @@ func TestCursorDisplayX_WideChars(t *testing.T) {
 	// "❯ [📷 ab]" — one wide emoji before the cursor, which ends after ']'.
 	term.Write([]byte("❯ [📷 ab]")) //nolint:errcheck
 	p := &Pane{
-		term: term, cmd: &exec.Cmd{},
-		x: 0, y: 0, w: w, h: h,
-		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: w,
+		h: h,
 	}
 
 	cur := term.Cursor()
@@ -1202,7 +1240,7 @@ func TestCursorDisplayX_WideChars(t *testing.T) {
 	// No wide chars: display column must equal the vt10x column.
 	term2 := vt10x.New(vt10x.WithSize(w-1, h))
 	term2.Write([]byte("hello")) //nolint:errcheck
-	p2 := &Pane{term: term2, cmd: &exec.Cmd{}, x: 0, y: 0, w: w, h: h, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	p2 := &Pane{Session: &session.Session{Term: term2, Cmd: &exec.Cmd{}, ScrollbackLines: 100, Scrollback: session.Ring{MaxLines: 100}}, x: 0, y: 0, w: w, h: h}
 	c2 := term2.Cursor()
 	if got := cursorDisplayX(p2, c2); got != c2.X {
 		t.Errorf("ASCII: cursorDisplayX = %d, want %d (== vt10x col)", got, c2.X)
@@ -1221,9 +1259,16 @@ func TestRenderPane_OSC11RepaintsBlankRows(t *testing.T) {
 	rt := testTheme()
 	term := vt10x.New(vt10x.WithSize(w-1, h))
 	p := &Pane{
-		term: term, cmd: &exec.Cmd{},
-		x: 0, y: 0, w: w, h: h,
-		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: w,
+		h: h,
 	}
 	scr := tcell.NewSimulationScreen("UTF-8")
 	scr.Init() //nolint:errcheck
@@ -1231,9 +1276,9 @@ func TestRenderPane_OSC11RepaintsBlankRows(t *testing.T) {
 	scr.SetSize(w, h)
 
 	// 1. Clear the screen (no override yet) and render: blank cells show theme bg.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b[2J\x1b[HX")) // an X on row 0, rest blank
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b[2J\x1b[HX")) // an X on row 0, rest blank
+	p.Unlock()
 	renderPane(scr, p, rt)
 	scr.Show()
 
@@ -1245,9 +1290,9 @@ func TestRenderPane_OSC11RepaintsBlankRows(t *testing.T) {
 	// 2. App sets a new default background via OSC 11, then render again WITHOUT
 	//    touching the blank row.  The colour-generation change must force a full
 	//    repaint so the blank row picks up the new background.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b]11;#0D1117\x07"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b]11;#0D1117\x07"))
+	p.Unlock()
 	renderPane(scr, p, rt)
 	scr.Show()
 
@@ -1279,9 +1324,16 @@ func renderAndGetStyle(t *testing.T, ansi string) tcell.Style {
 	term.Write([]byte(ansi)) //nolint:errcheck
 
 	p := &Pane{
-		term: term, cmd: &exec.Cmd{},
-		x: 0, y: 0, w: w, h: h,
-		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: w,
+		h: h,
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -1339,9 +1391,16 @@ func TestRenderPane_SGR8_Invisible_RendersSpace(t *testing.T) {
 	term.Write([]byte("\x1b[8mX")) //nolint:errcheck
 
 	p := &Pane{
-		term: term, cmd: &exec.Cmd{},
-		x: 0, y: 0, w: w, h: h,
-		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: w,
+		h: h,
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -1533,14 +1592,16 @@ func TestRenderPane_ScrollbackBeyondWidth_UsesThemeBG(t *testing.T) {
 	// Build a pane whose live terminal is newCols wide.
 	term := vt10x.New(vt10x.WithSize(newCols, rows))
 	p := &Pane{
-		term:            term,
-		cmd:             &exec.Cmd{},
-		x:               0,
-		y:               0,
-		w:               paneW,
-		h:               rows,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: paneW,
+		h: rows,
 	}
 
 	// Manually push a scrollback row captured at oldCols width (content 'A').
@@ -1548,10 +1609,10 @@ func TestRenderPane_ScrollbackBeyondWidth_UsesThemeBG(t *testing.T) {
 	for i := range sbRow {
 		sbRow[i] = vt10x.Glyph{Char: 'A', FG: vt10x.DefaultFG, BG: vt10x.DefaultBG}
 	}
-	p.sb.push(sbRow)
+	p.Scrollback.Push(sbRow)
 
 	// Enter scrollback mode (show the one captured row at screen row 0).
-	p.sbOff = 1
+	p.ScrollOffset = 1
 
 	scr := tcell.NewSimulationScreen("UTF-8")
 	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
@@ -1611,12 +1672,17 @@ func TestRenderPane_DirtyOnlyRepaintsChangedRow(t *testing.T) {
 	)
 
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-		x:               0, y: 0, w: cols, h: rows,
-		cmd: &exec.Cmd{},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+			Cmd:             &exec.Cmd{},
+		},
+		x: 0,
+		y: 0,
+		w: cols,
+		h: rows,
 	}
-	p.term = vt10x.New(vt10x.WithSize(termCols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.Term = vt10x.New(vt10x.WithSize(termCols, rows), vt10x.WithScrollCallback(p.OnScrollRow))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
 	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
@@ -1625,9 +1691,9 @@ func TestRenderPane_DirtyOnlyRepaintsChangedRow(t *testing.T) {
 	rt := testTheme()
 
 	// Write distinct content to each row.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE"))
+	p.Unlock()
 
 	// First render: full repaint (all rows dirty from initial state).
 	renderPane(scr, p, rt)
@@ -1636,9 +1702,9 @@ func TestRenderPane_DirtyOnlyRepaintsChangedRow(t *testing.T) {
 
 	// Overwrite only row 2 (0-based) with exactly termCols characters.
 	// Using fewer than termCols avoids wrapping into row 3.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b[3;1HXXXXXXXXX")) // CSI 3;1H = row 3 col 1 (1-based = row 2 0-based); 9 chars = termCols
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b[3;1HXXXXXXXXX")) // CSI 3;1H = row 3 col 1 (1-based = row 2 0-based); 9 chars = termCols
+	p.Unlock()
 
 	// Second render: dirty-only — only row 2 should change.
 	renderPane(scr, p, rt)
@@ -1665,12 +1731,17 @@ func TestRenderPane_IdlePaneSkipsAllRows(t *testing.T) {
 	const cols, rows = 10, 4
 
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-		x:               0, y: 0, w: cols, h: rows,
-		cmd: &exec.Cmd{},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+			Cmd:             &exec.Cmd{},
+		},
+		x: 0,
+		y: 0,
+		w: cols,
+		h: rows,
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols-1, rows))
+	p.Term = vt10x.New(vt10x.WithSize(cols-1, rows))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
 	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
@@ -1678,9 +1749,9 @@ func TestRenderPane_IdlePaneSkipsAllRows(t *testing.T) {
 	scr.SetSize(cols, rows)
 	rt := testTheme()
 
-	p.mu.Lock()
-	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC"))
+	p.Unlock()
 
 	renderPane(scr, p, rt) // first render, drains dirty
 
@@ -1704,12 +1775,17 @@ func TestRenderPane_FullRepaintOnScrollChange(t *testing.T) {
 	const cols, rows = 10, 3
 
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-		x:               0, y: 0, w: cols, h: rows,
-		cmd: &exec.Cmd{},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+			Cmd:             &exec.Cmd{},
+		},
+		x: 0,
+		y: 0,
+		w: cols,
+		h: rows,
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.Term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.OnScrollRow))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
 	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
@@ -1718,22 +1794,22 @@ func TestRenderPane_FullRepaintOnScrollChange(t *testing.T) {
 	rt := testTheme()
 
 	// Fill enough content to create scrollback.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n"))
+	p.Unlock()
 
 	renderPane(scr, p, rt) // first render
 
-	if p.sb.count == 0 {
+	if p.Scrollback.Count == 0 {
 		t.Skip("no scrollback captured; cannot test scroll change")
 	}
 
 	before := screenRowFingerprints(scr, rows)
 
 	// Scroll back: sbOff > 0, full repaint required.
-	p.mu.Lock()
-	p.sbOff = p.sb.count
-	p.mu.Unlock()
+	p.Lock()
+	p.ScrollOffset = p.Scrollback.Count
+	p.Unlock()
 
 	renderPane(scr, p, rt)
 
@@ -1759,15 +1835,17 @@ func TestRenderPane_FullRepaintOnStatusOverlayChange(t *testing.T) {
 	const cols, rows = 14, 2
 
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-		x:               0,
-		y:               0,
-		w:               cols,
-		h:               rows,
-		cmd:             &exec.Cmd{},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+			Cmd:             &exec.Cmd{},
+		},
+		x: 0,
+		y: 0,
+		w: cols,
+		h: rows,
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.Term = vt10x.New(vt10x.WithSize(cols-1, rows), vt10x.WithScrollCallback(p.OnScrollRow))
 
 	scr := tcell.NewSimulationScreen("UTF-8")
 	scr.Init() //nolint:errcheck // simulation screen init does not fail in tests
@@ -1776,11 +1854,11 @@ func TestRenderPane_FullRepaintOnStatusOverlayChange(t *testing.T) {
 	rt := testTheme()
 	node := &Node{pane: p}
 
-	p.mu.Lock()
-	p.captureAndWrite([]byte("hello world"))
+	p.Lock()
+	p.CaptureAndWrite([]byte("hello world"))
 	p.statusMsg = "COPIED"
 	p.statusMsgEnd = time.Now().Add(time.Minute)
-	p.mu.Unlock()
+	p.Unlock()
 
 	renderPane(scr, p, rt)
 	drawScrollbars(scr, node, rt)
@@ -1791,9 +1869,9 @@ func TestRenderPane_FullRepaintOnStatusOverlayChange(t *testing.T) {
 		t.Fatalf("initial render missing status badge: row=%q", withBadge)
 	}
 
-	p.mu.Lock()
+	p.Lock()
 	p.statusMsgEnd = time.Now().Add(-time.Second)
-	p.mu.Unlock()
+	p.Unlock()
 
 	renderPane(scr, p, rt)
 	drawScrollbars(scr, node, rt)
@@ -1893,12 +1971,14 @@ func TestRenderPane_HyperlinkCellsCarryURL(t *testing.T) {
 	term.Write([]byte("\x1b]8;;file:///x\x1b\\foo\x1b]8;;\x1b\\ bar")) //nolint:errcheck
 
 	p := &Pane{
-		term:            term,
-		cmd:             &exec.Cmd{},
-		w:               w,
-		h:               h,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		w: w,
+		h: h,
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -1950,12 +2030,14 @@ func TestRenderPane_PS1AfterLsDoesNotCarryURL(t *testing.T) {
 			"\x1b[01;32mjsn@ydell\x1b[0m \x1b[01;34m~/x\x1b[0m\r\n$ "))
 
 	p := &Pane{
-		term:            term,
-		cmd:             &exec.Cmd{},
-		w:               w,
-		h:               h,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		w: w,
+		h: h,
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -2029,7 +2111,7 @@ func readBarRow(t *testing.T, scr tcell.SimulationScreen, x, y, w int) string {
 
 func TestDrawSearchBar_WideEnoughShowsHint(t *testing.T) {
 	const w, h = 80, 5
-	p := &Pane{x: 0, y: 0, w: w, h: h}
+	p := &Pane{Session: &session.Session{}, x: 0, y: 0, w: w, h: h}
 	kb := resolveKeybindings(nil) // built-in defaults
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -2058,7 +2140,7 @@ func TestDrawSearchBar_WideEnoughShowsHint(t *testing.T) {
 func TestDrawSearchBar_NarrowSuppressesHint(t *testing.T) {
 	// 24 cols leaves no room for the hint after label + cursor + gap.
 	const w, h = 24, 5
-	p := &Pane{x: 0, y: 0, w: w, h: h}
+	p := &Pane{Session: &session.Session{}, x: 0, y: 0, w: w, h: h}
 	kb := resolveKeybindings(nil)
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -2077,7 +2159,7 @@ func TestDrawSearchBar_NarrowSuppressesHint(t *testing.T) {
 func TestDrawSearchBar_RemappedKeysAppearInHint(t *testing.T) {
 	// User remapped search_next to f3; hint should reflect it.
 	const w, h = 80, 5
-	p := &Pane{x: 0, y: 0, w: w, h: h}
+	p := &Pane{Session: &session.Session{}, x: 0, y: 0, w: w, h: h}
 	kb := resolveKeybindings(map[string]string{"search_next": "f3"})
 
 	scr := tcell.NewSimulationScreen("UTF-8")
@@ -2154,8 +2236,14 @@ func TestRender_HostByteStream_NoLinkLeakAcrossFrames(t *testing.T) {
 	// --- Frame 1: hyperlinked filename, leaves tcell.curstyle.url == "X".
 	term.Write([]byte("\x1b]8;;file:///A\x1b\\AGENTS.MD\x1b]8;;\x1b\\")) //nolint:errcheck
 	p := &Pane{
-		term: term, cmd: &exec.Cmd{}, w: w, h: h,
-		scrollbackLines: 100, sb: sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		w: w,
+		h: h,
 	}
 	renderPane(scr, p, testTheme())
 	closeHostHyperlink(&tty.out) // mirror render() trailer
@@ -2198,12 +2286,14 @@ func TestRenderPane_TrailingClearedCellsAfterLink(t *testing.T) {
 	term.Write([]byte("\x1b]8;;file:///x\x1b\\foo\x1b[K\x1b]8;;\x1b\\")) //nolint:errcheck
 
 	p := &Pane{
-		term:            term,
-		cmd:             &exec.Cmd{},
-		w:               w,
-		h:               h,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			Cmd:             &exec.Cmd{},
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		w: w,
+		h: h,
 	}
 
 	scr := tcell.NewSimulationScreen("UTF-8")

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bunk/internal/session"
 	"fmt"
 	"math"
 	"os"
@@ -71,7 +72,7 @@ type App struct {
 
 	// Double-click detection (event loop goroutine only - no lock needed).
 	lastClickTime  time.Time
-	lastClickPos   selPos
+	lastClickPos   session.SelPos
 	lastClickPane  *Pane
 	dblClickActive bool // release should not overwrite word selection
 
@@ -99,7 +100,7 @@ type App struct {
 	searchMode    bool
 	searchQuery   string
 	searchPane    *Pane
-	searchMatches []searchMatch
+	searchMatches []session.Match
 	searchIdx     int
 	searchGen     int // incremented on every search state change; guards async goroutines
 	searchWake    chan struct{}
@@ -155,7 +156,7 @@ func (app *App) closeAllPanes() {
 	}
 	app.mu.Unlock()
 	for _, p := range panes {
-		p.close()
+		p.Close()
 	}
 }
 
@@ -292,12 +293,12 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 	pane := app.active
 	passthrough := false
 	if pane != nil {
-		pane.mu.Lock()
+		pane.Lock()
 		if app.keys.Passthrough.Matches(ev) {
 			pane.passthrough = !pane.passthrough
 		}
 		passthrough = pane.passthrough
-		pane.mu.Unlock()
+		pane.Unlock()
 	}
 	app.mu.Unlock()
 	if app.keys.Passthrough.Matches(ev) {
@@ -324,12 +325,12 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		active := app.active
 		app.mu.Unlock()
 		if active != nil {
-			active.mu.Lock()
-			text := active.selText()
+			active.Lock()
+			text := active.SelText()
 			if text != "" {
-				active.selActive = false
+				active.SelActive = false
 			}
-			active.mu.Unlock()
+			active.Unlock()
 			if text != "" {
 				app.copyToClipboard(text)
 				active.SetStatus("COPIED", 3*time.Second)
@@ -411,15 +412,15 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 	switch {
 	case kb.ScrollUp.Matches(ev):
 		if active != nil {
-			L.Debug("handleKey: scrollback up", "pane", active.id, "amount", max(1, h/2))
-			active.scrollUp(max(1, h/2))
+			L.Debug("handleKey: scrollback up", "pane", active.ID, "amount", max(1, h/2))
+			active.ScrollUp(max(1, h/2))
 			app.triggerRedraw()
 		}
 		return true
 	case kb.ScrollDown.Matches(ev):
 		if active != nil {
-			L.Debug("handleKey: scrollback down", "pane", active.id, "amount", max(1, h/2))
-			active.scrollDown(max(1, h/2))
+			L.Debug("handleKey: scrollback down", "pane", active.ID, "amount", max(1, h/2))
+			active.ScrollDown(max(1, h/2))
 			app.triggerRedraw()
 		}
 		return true
@@ -433,32 +434,32 @@ func (app *App) forwardKey(ev *tcell.EventKey) {
 	app.mu.Lock()
 	active := app.active
 	app.mu.Unlock()
-	if active != nil && !active.isDead() {
+	if active != nil && !active.IsDead() {
 		needRedraw := false
-		if active.inScrollback() {
-			L.Debug("handleKey: leaving scrollback on keypress", "pane", active.id)
-			active.scrollReset()
+		if active.InScrollback() {
+			L.Debug("handleKey: leaving scrollback on keypress", "pane", active.ID)
+			active.ScrollReset()
 			needRedraw = true
 		}
-		active.mu.Lock()
-		if active.selActive {
-			active.selActive = false
+		active.Lock()
+		if active.SelActive {
+			active.SelActive = false
 			needRedraw = true
 		}
-		active.mu.Unlock()
+		active.Unlock()
 		if needRedraw {
 			app.triggerRedraw()
 		}
 		kittyFlags := 0
-		active.mu.Lock()
-		if len(active.kittyStack) > 0 {
-			kittyFlags = active.kittyStack[len(active.kittyStack)-1]
+		active.Lock()
+		if len(active.KittyStack) > 0 {
+			kittyFlags = active.KittyStack[len(active.KittyStack)-1]
 		}
-		mode := active.term.Mode()
-		active.mu.Unlock()
+		mode := active.Term.Mode()
+		active.Unlock()
 		if data := keyToBytesMode(ev, kittyFlags, mode); len(data) > 0 {
-			L.Debug("handleKey: forwarding to PTY", "pane", active.id, "bytes", len(data))
-			active.writeInput(data)
+			L.Debug("handleKey: forwarding to PTY", "pane", active.ID, "bytes", len(data))
+			active.WriteInput(data)
 		}
 	}
 }
@@ -494,7 +495,7 @@ func (app *App) splitActive(inheritContext bool) {
 		d = splitHorizontal
 	}
 	L.Debug("splitActive: direction decision",
-		"pane", app.active.id,
+		"pane", app.active.ID,
 		"node_cols", node.w, "node_rows", node.h,
 		"cell_aspect", app.cellAspect,
 		"pixel_w", int(pixelW), "pixel_h", int(pixelH),
@@ -521,17 +522,17 @@ func (app *App) splitActive(inheritContext bool) {
 	nx, ny := rx, ry
 
 	// Inherit the working directory from the active pane's foreground process.
-	dir := app.active.cwd()
+	dir := app.active.Cwd()
 
-	app.active.mu.Lock()
-	cid := app.active.containerID
-	ct := app.active.containerType
-	fgProc := app.active.fgProcess
+	app.active.Lock()
+	cid := app.active.ContainerID
+	ct := app.active.ContainerType
+	fgProc := app.active.FgProcess
 	shellPid := 0
-	if app.active.cmd.Process != nil {
-		shellPid = app.active.cmd.Process.Pid
+	if app.active.Cmd.Process != nil {
+		shellPid = app.active.Cmd.Process.Pid
 	}
-	app.active.mu.Unlock()
+	app.active.Unlock()
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"
@@ -539,17 +540,17 @@ func (app *App) splitActive(inheritContext bool) {
 	var spawnArgs []string
 	if inheritContext {
 		L.Debug("splitActive: context inherit requested",
-			"pane", app.active.id, "fgProc", fgProc, "shellPid", shellPid,
+			"pane", app.active.ID, "fgProc", fgProc, "shellPid", shellPid,
 			"containerType", ct, "containerID", cid, "dir", dir)
 		switch {
 		case (ct == "lxc" || ct == "incus") && cid != "" && shellPid > 0:
 			// `lxc exec` is the foreground process — reuse its exact cmdline
 			// so that `lxc exec xx -- su --login jsn` is preserved verbatim.
-			if args := fgProcessCmdline(shellPid); len(args) > 0 {
+			if args := session.FgProcessCmdline(shellPid); len(args) > 0 {
 				spawnArgs = args
 				L.Debug("splitActive: cloning lxc/incus exec cmdline", "spawnArgs", spawnArgs)
-			} else if isRunningContainer(cid, ct) {
-				spawnArgs = containerSpawnArgs(cid, ct, shell)
+			} else if session.IsRunningContainer(cid, ct) {
+				spawnArgs = session.ContainerSpawnArgs(cid, ct, shell)
 				L.Debug("splitActive: lxc/incus fallback to containerSpawnArgs", "spawnArgs", spawnArgs)
 			}
 		case ct == "lxd" && shellPid > 0:
@@ -557,32 +558,32 @@ func (app *App) splitActive(inheritContext bool) {
 			// Walk the process tree up from the foreground to find the
 			// `lxc exec` ancestor and reuse its full cmdline — this preserves
 			// any `su --login <user>` or other entry command.
-			fgPid := termFgPGID(shellPid)
+			fgPid := session.TermFgPGID(shellPid)
 			if fgPid <= 0 {
 				fgPid = shellPid
 			}
-			if args := findLXCAncestorCmdline(fgPid); len(args) > 0 {
+			if args := session.FindLXCAncestorCmdline(fgPid); len(args) > 0 {
 				spawnArgs = args
 				L.Debug("splitActive: cloning lxc exec ancestor", "spawnArgs", spawnArgs)
 			} else {
 				L.Debug("splitActive: lxd container but no lxc ancestor found (bunk is inside container), using host shell")
 			}
-		case cid != "" && ct != "" && isRunningContainer(cid, ct):
-			spawnArgs = containerSpawnArgs(cid, ct, shell)
+		case cid != "" && ct != "" && session.IsRunningContainer(cid, ct):
+			spawnArgs = session.ContainerSpawnArgs(cid, ct, shell)
 			L.Debug("splitActive: using container context", "spawnArgs", spawnArgs)
 		case (ct == "podman" || ct == "docker") && shellPid > 0:
 			// "podman run <image>" — cid is an image name, not a running
 			// container ID.  Try two strategies:
 			// 1. Walk child process tree looking for libpod cgroup entry.
 			// 2. Ask podman/docker to list containers with the ancestor image.
-			fgPid := termFgPGID(shellPid)
+			fgPid := session.TermFgPGID(shellPid)
 			if fgPid <= 0 {
 				fgPid = shellPid
 			}
-			containerID := findRunningContainerFromPID(fgPid)
+			containerID := session.FindRunningContainerFromPID(fgPid)
 			L.Debug("splitActive: process-tree walk result", "containerID", containerID, "fgPid", fgPid)
 			if containerID == "" && cid != "" {
-				containerID = findContainerByAncestor(cid, ct)
+				containerID = session.FindContainerByAncestor(cid, ct)
 				L.Debug("splitActive: ancestor filter result", "containerID", containerID, "image", cid)
 			}
 			if containerID != "" {
@@ -592,14 +593,14 @@ func (app *App) splitActive(inheritContext bool) {
 				L.Debug("splitActive: podman/docker run but could not resolve container ID", "fgPid", fgPid, "image", cid)
 			}
 		case (fgProc == "ssh" || fgProc == "mosh") && shellPid > 0:
-			if args := fgProcessCmdline(shellPid); len(args) > 0 {
+			if args := session.FgProcessCmdline(shellPid); len(args) > 0 {
 				spawnArgs = args
 				L.Debug("splitActive: cloning ssh/mosh session", "spawnArgs", spawnArgs)
 			} else {
 				L.Debug("splitActive: ssh/mosh detected but cmdline empty", "shellPid", shellPid)
 			}
 		case fgProc == "sudo" && shellPid > 0:
-			if args := fgProcessCmdline(shellPid); len(args) > 0 {
+			if args := session.FgProcessCmdline(shellPid); len(args) > 0 {
 				spawnArgs = args
 				L.Debug("splitActive: cloning sudo session", "spawnArgs", spawnArgs)
 			} else {
@@ -620,7 +621,7 @@ func (app *App) splitActive(inheritContext bool) {
 		L.Error("splitActive: NewPane", "err", err, "dir", dir, "spawnArgs", spawnArgs, "container", ct, "containerID", cid)
 		return
 	}
-	L.Debug("splitActive: new pane created", "new_pane", newPane.id, "x", nx, "y", ny, "w", nw, "h", nh)
+	L.Debug("splitActive: new pane created", "new_pane", newPane.ID, "x", nx, "y", ny, "w", nw, "h", nh)
 	app.nextID++
 
 	node.split(newPane, d)
@@ -663,7 +664,7 @@ func (app *App) zoomIn() {
 	app.zoomGeom = [4]int{p.x, p.y, p.w, p.h}
 
 	w, h := app.screen.Size()
-	L.Debug("zoomIn", "pane", p.id, "screen", w, "x", h)
+	L.Debug("zoomIn", "pane", p.ID, "screen", w, "x", h)
 	p.resize(0, 0, w, h)
 	app.triggerRedraw()
 }
@@ -682,7 +683,7 @@ func (app *App) zoomOut() {
 	app.zoomedPane = nil
 
 	g := app.zoomGeom
-	L.Debug("zoomOut", "pane", p.id, "restore", g)
+	L.Debug("zoomOut", "pane", p.ID, "restore", g)
 	p.resize(g[0], g[1], g[2], g[3])
 
 	// While zoomed, the zoomed pane's frame filled the entire tcell cell
@@ -711,7 +712,7 @@ func (app *App) navigate(d dir) {
 
 			for _, leaf := range leaves {
 				p := leaf.pane
-				if p == app.active || p.isDead() {
+				if p == app.active || p.IsDead() {
 					continue
 				}
 				cx := float64(p.x) + float64(p.w)/2
@@ -746,7 +747,7 @@ func (app *App) navigate(d dir) {
 
 	if best != nil {
 		prev = app.active
-		L.Debug("navigate: focus change", "dir", d, "from_pane", prev.id, "to_pane", best.id)
+		L.Debug("navigate: focus change", "dir", d, "from_pane", prev.ID, "to_pane", best.ID)
 		app.active = best
 		app.triggerRedraw()
 	} else {
@@ -774,7 +775,7 @@ func (app *App) deathWatcher() {
 
 // removePane removes a dead pane from the layout and re-focuses if needed.
 func (app *App) removePane(p *Pane) {
-	L.Debug("removePane: removing pane", "pane", p.id)
+	L.Debug("removePane: removing pane", "pane", p.ID)
 	app.mu.Lock()
 
 	if app.root == nil {
@@ -791,9 +792,9 @@ func (app *App) removePane(p *Pane) {
 	var newActive *Pane
 	if app.active == p {
 		newActive = bestFocusAfterRemove(app.root, p)
-		L.Debug("removePane: refocusing", "from_pane", p.id, "to_pane", func() int {
+		L.Debug("removePane: refocusing", "from_pane", p.ID, "to_pane", func() int {
 			if newActive != nil {
-				return newActive.id
+				return newActive.ID
 			}
 			return -1
 		}())
@@ -849,7 +850,7 @@ func closestLivePane(n *Node, cx, cy float64, exclude *Pane) *Pane {
 	bestDist := math.MaxFloat64
 	for _, leaf := range n.leaves() {
 		p := leaf.pane
-		if p == exclude || p.isDead() {
+		if p == exclude || p.IsDead() {
 			continue
 		}
 		px := float64(p.x) + float64(p.w)/2

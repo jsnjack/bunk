@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"bunk/internal/graphics"
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
@@ -37,9 +38,8 @@ func TestGraphicsPaneProtocolsAndClipping(t *testing.T) {
 	} {
 		p := regressionPane(3, 4)
 		p.x, p.y = 2, 1
-		var stream ptyStream
 		for _, b := range []byte("\x1b[1;3H" + seq) {
-			p.captureAndWrite(stream.scan([]byte{b}))
+			p.Feed([]byte{b})
 		}
 		scr := tcell.NewSimulationScreen("UTF-8")
 		if err := scr.Init(); err != nil {
@@ -57,7 +57,7 @@ func TestGraphicsPaneProtocolsAndClipping(t *testing.T) {
 		if ch != 'S' {
 			t.Fatal("image overwrote scrollbar")
 		}
-		if p.term.Cell(0, 1).Image != nil {
+		if p.Term.Cell(0, 1).Image != nil {
 			t.Fatal("clipped image wrapped to next row")
 		}
 		scr.Fini()
@@ -66,7 +66,7 @@ func TestGraphicsPaneProtocolsAndClipping(t *testing.T) {
 
 func TestGraphicsColorsAlphaAndReflow(t *testing.T) {
 	p := regressionPane(8, 4)
-	p.captureAndWrite([]byte("\x1b_Ga=T,i=9,f=100,c=2,r=1,C=1;" + graphicsPNG(t) + "\x1b\\"))
+	p.CaptureAndWrite([]byte("\x1b_Ga=T,i=9,f=100,c=2,r=1,C=1;" + graphicsPNG(t) + "\x1b\\"))
 	scr := tcell.NewSimulationScreen("UTF-8")
 	if err := scr.Init(); err != nil {
 		t.Fatal(err)
@@ -83,46 +83,29 @@ func TestGraphicsColorsAlphaAndReflow(t *testing.T) {
 		t.Fatalf("alpha=%v", got)
 	}
 	p.resize(0, 0, 8, 4)
-	if cell := p.term.Cell(0, 0); cell.Image == nil || cell.Image.Bottom.B != 255 {
+	if cell := p.Term.Cell(0, 0); cell.Image == nil || cell.Image.Bottom.B != 255 {
 		t.Fatal("cached image lost on width reflow")
 	}
-	p.captureAndWrite([]byte("\x1b[4;1H\n"))
-	if p.sb.count == 0 || p.sb.get(0)[0].Image == nil {
+	p.CaptureAndWrite([]byte("\x1b[4;1H\n"))
+	if p.Scrollback.Count == 0 || p.Scrollback.Get(0)[0].Image == nil {
 		t.Fatal("image lost from scrollback")
 	}
 	p.resize(0, 0, 8, 5)
-	if p.term.Cell(0, 0).Image == nil {
+	if p.Term.Cell(0, 0).Image == nil {
 		t.Fatal("height-only reflow lost image")
 	}
 }
 
 func TestGraphicsPercentageReflowUsesPaneHeight(t *testing.T) {
 	p := regressionPane(10, 6)
-	p.captureAndWrite([]byte("\x1b]1337;File=inline=1;width=20%;height=50%;preserveAspectRatio=0:" + graphicsPNG(t) + "\a"))
+	p.CaptureAndWrite([]byte("\x1b]1337;File=inline=1;width=20%;height=50%;preserveAspectRatio=0:" + graphicsPNG(t) + "\a"))
 	p.resize(0, 0, 10, 6)
 	for row := 0; row < 6; row++ {
-		hasImage := p.term.Cell(0, row).Image != nil
+		hasImage := p.Term.Cell(0, row).Image != nil
 		if hasImage != (row < 3) {
 			t.Fatalf("row %d has image=%v; percentage used scratch height", row, hasImage)
 		}
 	}
-}
-
-func TestGraphicsFramingBounds(t *testing.T) {
-	for _, prefix := range []string{"\x1b_G", "\x1b]1337;File=inline=1:", "\x1bPq"} {
-		var stream ptyStream
-		sequence := []byte(prefix + strings.Repeat("A", oscMaxBuf+1) + "\x1b\\")
-		if got := stream.scan(sequence); !bytes.Equal(got, sequence) {
-			t.Fatal("graphics control truncated to text limit")
-		}
-		if got := stream.scan([]byte(prefix + strings.Repeat("A", graphics.MaxSequenceBytes+1) + "\x1b\\recovered")); string(got) != "\x18recovered" {
-			t.Fatal("oversized graphics payload leaked into text")
-		}
-		if len(stream.pending) != 0 || cap(stream.pending) > oscMaxBuf {
-			t.Fatal("graphics buffer retained after completion")
-		}
-	}
-
 }
 
 func TestGraphicsPaneQueries(t *testing.T) {
@@ -139,9 +122,9 @@ func TestGraphicsPaneQueries(t *testing.T) {
 		}
 	})
 	p := regressionPane(20, 5)
-	p.ptmx = pw
-	p.term = vt10x.New(vt10x.WithSize(20, 5), vt10x.WithGraphicsReply(p.writeInput))
-	p.captureAndWrite([]byte("\x1b[14t\x1b[16t\x1b[18t\x1b_Ga=q,i=7,f=24,s=1,v=1;/wAA\x1b\\"))
+	p.PTY = pw
+	p.Term = vt10x.New(vt10x.WithSize(20, 5), vt10x.WithGraphicsReply(p.WriteInput))
+	p.CaptureAndWrite([]byte("\x1b[14t\x1b[16t\x1b[18t\x1b_Ga=q,i=7,f=24,s=1,v=1;/wAA\x1b\\"))
 	if err := pw.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +136,7 @@ func TestGraphicsPaneQueries(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("replies=%q want=%q", got, want)
 	}
-	ws := paneWinsize(20, 5, 8, 16)
+	ws := session.Winsize(20, 5, 8, 16)
 	if ws.X != 160 || ws.Y != 80 {
 		t.Fatal("PTY virtual pixels do not match query replies")
 	}
@@ -165,11 +148,10 @@ func TestGraphicsFramingAbortsMultipart(t *testing.T) {
 		"\x1b_Gm=0;" + strings.Repeat("A", graphics.MaxSequenceBytes+1) + "\x1b\\",
 	} {
 		p := regressionPane(5, 3)
-		var stream ptyStream
-		p.captureAndWrite(stream.scan([]byte("\x1b_Ga=T,f=24,s=2,v=1,m=1;/wAA\x1b\\")))
-		p.captureAndWrite(stream.scan([]byte(cancellation)))
-		p.captureAndWrite(stream.scan([]byte("\x1b_Gm=0;AAD/\x1b\\OK")))
-		if p.term.Cell(0, 0).Image != nil || p.term.Cell(0, 0).Char != 'O' {
+		p.Feed([]byte("\x1b_Ga=T,f=24,s=2,v=1,m=1;/wAA\x1b\\"))
+		p.Feed([]byte(cancellation))
+		p.Feed([]byte("\x1b_Gm=0;AAD/\x1b\\OK"))
+		if p.Term.Cell(0, 0).Image != nil || p.Term.Cell(0, 0).Char != 'O' {
 			t.Fatal("cancelled upload was resumed")
 		}
 	}

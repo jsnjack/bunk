@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
@@ -122,29 +123,31 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	p := &Pane{
-		id:              99,
-		x:               0,
-		y:               0,
-		w:               80,
-		h:               24,
-		ptmx:            pw,
-		term:            term,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			ID:              99,
+			PTY:             pw,
+			Term:            term,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
+		x: 0,
+		y: 0,
+		w: 80,
+		h: 24,
 	}
 
 	// Enable mouse tracking + SGR mode in vt10x (simulates btop running).
-	p.term.Write([]byte("\x1b[?1003h\x1b[?1006h")) //nolint:errcheck
+	p.Term.Write([]byte("\x1b[?1003h\x1b[?1006h")) //nolint:errcheck
 
 	// Verify mouse mode is enabled.
-	if p.term.Mode()&vt10x.ModeMouseMask == 0 {
+	if p.Term.Mode()&vt10x.ModeMouseMask == 0 {
 		t.Fatal("mouse mode not enabled after DECSET 1003")
 	}
 
 	// Disable mouse mode first (simulates readPTY processing btop exit).
-	p.mu.Lock()
-	p.term.Write([]byte("\x1b[?1003l\x1b[?1006l")) //nolint:errcheck
-	p.mu.Unlock()
+	p.Lock()
+	p.Term.Write([]byte("\x1b[?1003l\x1b[?1006l")) //nolint:errcheck
+	p.Unlock()
 
 	// Drain any bytes already in the pipe from the enable/disable writes
 	// (there shouldn't be any, but be safe).
@@ -163,7 +166,7 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 	}
 	defer pr2.Close() //nolint:errcheck // test pipe cleanup
 	pw.Close()        //nolint:errcheck // close old write end
-	p.ptmx = pw2      // point pane at new pipe
+	p.PTY = pw2       // point pane at new pipe
 
 	// Now fire many mouse events with the double-check guard.
 	// Since mode is disabled, none should be written.
@@ -176,9 +179,9 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < eventsPerWriter; j++ {
 				// Replicate the exact guard from handleMouse:
-				p.mu.Lock()
-				mode := p.term.Mode()
-				p.mu.Unlock()
+				p.Lock()
+				mode := p.Term.Mode()
+				p.Unlock()
 				if mode&vt10x.ModeMouseMask == 0 {
 					continue
 				}
@@ -191,11 +194,11 @@ func TestMouseForwardRace_BtopExitLeak(t *testing.T) {
 					continue
 				}
 				// Re-check under lock before writing (THE FIX).
-				p.mu.Lock()
-				stillWants := p.term.Mode()&vt10x.ModeMouseMask != 0
-				p.mu.Unlock()
+				p.Lock()
+				stillWants := p.Term.Mode()&vt10x.ModeMouseMask != 0
+				p.Unlock()
 				if stillWants {
-					p.writeInput(data)
+					p.WriteInput(data)
 				}
 				runtime.Gosched()
 			}
@@ -278,10 +281,12 @@ func TestSendFocusIn_Enabled(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	term.Write([]byte("\x1b[?1004h")) //nolint:errcheck // enable focus events
 	p := &Pane{
-		ptmx:            pw,
-		term:            term,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			PTY:             pw,
+			Term:            term,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
 
 	sendFocusIn(p)
@@ -302,10 +307,12 @@ func TestSendFocusOut_Enabled(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	term.Write([]byte("\x1b[?1004h")) //nolint:errcheck
 	p := &Pane{
-		ptmx:            pw,
-		term:            term,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			PTY:             pw,
+			Term:            term,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
 
 	sendFocusOut(p)
@@ -326,10 +333,12 @@ func TestSendFocusIn_Disabled(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	// Don't enable focus events.
 	p := &Pane{
-		ptmx:            pw,
-		term:            term,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			PTY:             pw,
+			Term:            term,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
 
 	sendFocusIn(p)
@@ -362,10 +371,12 @@ func TestSendFocusOut_Disabled(t *testing.T) {
 
 	term := vt10x.New(vt10x.WithSize(80, 24))
 	p := &Pane{
-		ptmx:            pw,
-		term:            term,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			PTY:             pw,
+			Term:            term,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
 
 	sendFocusOut(p)

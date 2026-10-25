@@ -1,6 +1,7 @@
-package main
+package session
 
 import (
+	"bunk/internal/graphics"
 	"bytes"
 	"strings"
 	"testing"
@@ -56,5 +57,34 @@ func TestPTYStreamCancellation(t *testing.T) {
 		if string(got) != "recovered" {
 			t.Fatalf("cancel %x: got %q", cancel, got)
 		}
+	}
+}
+
+func TestGraphicsFramingBounds(t *testing.T) {
+	for _, prefix := range []string{"\x1b_G", "\x1b]1337;File=inline=1:", "\x1bPq"} {
+		var stream ptyStream
+		sequence := []byte(prefix + strings.Repeat("A", oscMaxBuf+1) + "\x1b\\")
+		if got := stream.scan(sequence); !bytes.Equal(got, sequence) {
+			t.Fatal("graphics control truncated to text limit")
+		}
+		if got := stream.scan([]byte(prefix + strings.Repeat("A", graphics.MaxSequenceBytes+1) + "\x1b\\recovered")); string(got) != "\x18recovered" {
+			t.Fatal("oversized graphics payload leaked into text")
+		}
+		if len(stream.pending) != 0 || cap(stream.pending) > oscMaxBuf {
+			t.Fatal("graphics buffer retained after completion")
+		}
+	}
+
+}
+
+func TestRegressionUnterminatedOSCBounded(t *testing.T) {
+	data := append([]byte("\x1b]0;"), bytes.Repeat([]byte{'x'}, 2*oscMaxBuf)...)
+	var stream ptyStream
+	complete := stream.scan(data)
+	if len(stream.pending) > oscMaxBuf {
+		t.Fatalf("unterminated OSC bypasses scanner cap: complete=%d carry=%d", len(complete), len(stream.pending))
+	}
+	if got := string(stream.scan([]byte("\x1b\\recovered"))); got != "recovered" {
+		t.Fatalf("oversized OSC recovery = %q", got)
 	}
 }

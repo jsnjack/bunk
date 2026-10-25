@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
@@ -25,25 +26,25 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestSpanContains_Hit(t *testing.T) {
-	spans := []searchSpan{{col: 3, end: 7}}
+	spans := []session.Span{{Col: 3, End: 7}}
 	for col := 3; col < 7; col++ {
-		if !spanContains(spans, col) {
+		if !session.SpanContains(spans, col) {
 			t.Errorf("spanContains(col=%d): want true", col)
 		}
 	}
 }
 
 func TestSpanContains_Miss(t *testing.T) {
-	spans := []searchSpan{{col: 3, end: 7}}
+	spans := []session.Span{{Col: 3, End: 7}}
 	for _, col := range []int{0, 1, 2, 7, 8, 100} {
-		if spanContains(spans, col) {
+		if session.SpanContains(spans, col) {
 			t.Errorf("spanContains(col=%d): want false", col)
 		}
 	}
 }
 
 func TestSpanContains_Empty(t *testing.T) {
-	if spanContains(nil, 5) {
+	if session.SpanContains(nil, 5) {
 		t.Error("spanContains(nil, 5): want false")
 	}
 }
@@ -53,31 +54,31 @@ func TestSpanContains_Empty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchHighlight_CurrentDistinctFromRegular(t *testing.T) {
-	matches := []searchMatch{
-		{vRow: 0, col: 2, length: 3},
-		{vRow: 1, col: 5, length: 3},
-		{vRow: 2, col: 0, length: 3},
+	matches := []session.Match{
+		{VRow: 0, Col: 2, Length: 3},
+		{VRow: 1, Col: 5, Length: 3},
+		{VRow: 2, Col: 0, Length: 3},
 	}
-	hl := buildSearchHighlight(matches, 1) // match[1] is current
+	hl := session.BuildHighlight(matches, 1) // match[1] is current
 
 	// Row 0: regular only.
-	if !spanContains(hl.regular[0], 2) {
+	if !session.SpanContains(hl.Regular[0], 2) {
 		t.Error("row 0 col 2: want in regular")
 	}
-	if spanContains(hl.current[0], 2) {
+	if session.SpanContains(hl.Current[0], 2) {
 		t.Error("row 0 col 2: want NOT in current")
 	}
 
 	// Row 1: current only.
-	if spanContains(hl.regular[1], 5) {
+	if session.SpanContains(hl.Regular[1], 5) {
 		t.Error("row 1 col 5: want NOT in regular")
 	}
-	if !spanContains(hl.current[1], 5) {
+	if !session.SpanContains(hl.Current[1], 5) {
 		t.Error("row 1 col 5: want in current")
 	}
 
 	// Row 2: regular only.
-	if !spanContains(hl.regular[2], 0) {
+	if !session.SpanContains(hl.Regular[2], 0) {
 		t.Error("row 2 col 0: want in regular")
 	}
 }
@@ -134,24 +135,29 @@ func TestSearchGen_StaleResultDiscarded(t *testing.T) {
 func newSearchPane(t *testing.T, cols, rows int, content string) *Pane {
 	t.Helper()
 	p := &Pane{
-		scrollbackLines: 200,
-		sb:              sbRing{maxLines: 200},
-		x:               0, y: 0, w: cols + 1, h: rows,
-		cmd: &exec.Cmd{},
+		Session: &session.Session{
+			ScrollbackLines: 200,
+			Scrollback:      session.Ring{MaxLines: 200},
+			Cmd:             &exec.Cmd{},
+		},
+		x: 0,
+		y: 0,
+		w: cols + 1,
+		h: rows,
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
-	p.mu.Lock()
-	p.captureAndWrite([]byte(content))
-	p.mu.Unlock()
+	p.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.OnScrollRow))
+	p.Lock()
+	p.CaptureAndWrite([]byte(content))
+	p.Unlock()
 	return p
 }
 
-func waitForSearchMatches(t *testing.T, app *App, ready func([]searchMatch) bool) {
+func waitForSearchMatches(t *testing.T, app *App, ready func([]session.Match) bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		app.mu.Lock()
-		matches := append([]searchMatch(nil), app.searchMatches...)
+		matches := append([]session.Match(nil), app.searchMatches...)
 		app.mu.Unlock()
 		if ready(matches) {
 			return
@@ -175,7 +181,7 @@ func TestUpdateSearch_FindsAllMatches(t *testing.T) {
 	app.mu.Unlock()
 
 	app.updateSearch()
-	waitForSearchMatches(t, app, func(matches []searchMatch) bool { return len(matches) == 3 })
+	waitForSearchMatches(t, app, func(matches []session.Match) bool { return len(matches) == 3 })
 
 	app.mu.Lock()
 	matches := app.searchMatches
@@ -185,8 +191,8 @@ func TestUpdateSearch_FindsAllMatches(t *testing.T) {
 		t.Errorf("expected 3 matches for 'foo', got %d", len(matches))
 	}
 	for _, m := range matches {
-		if m.col != 0 || m.length != 3 {
-			t.Errorf("unexpected match: vRow=%d col=%d length=%d", m.vRow, m.col, m.length)
+		if m.Col != 0 || m.Length != 3 {
+			t.Errorf("unexpected match: vRow=%d col=%d length=%d", m.VRow, m.Col, m.Length)
 		}
 	}
 }
@@ -196,13 +202,13 @@ func TestUpdateSearch_EmptyQueryClearsHL(t *testing.T) {
 	p := newSearchPane(t, cols, rows, "hello world\r\nhello again")
 
 	// Pre-populate searchHL with something.
-	p.mu.Lock()
-	p.searchHL = &searchHighlight{
-		regular: map[int][]searchSpan{0: {{0, 5}}},
-		current: map[int][]searchSpan{},
+	p.Lock()
+	p.SearchHL = &session.Highlight{
+		Regular: map[int][]session.Span{0: {{Col: 0, End: 5}}},
+		Current: map[int][]session.Span{},
 	}
-	p.searchHLGen++
-	p.mu.Unlock()
+	p.SearchHLGen++
+	p.Unlock()
 
 	app := &App{}
 	app.mu.Lock()
@@ -213,9 +219,9 @@ func TestUpdateSearch_EmptyQueryClearsHL(t *testing.T) {
 
 	app.updateSearch() // synchronous for empty query
 
-	p.mu.Lock()
-	hl := p.searchHL
-	p.mu.Unlock()
+	p.Lock()
+	hl := p.SearchHL
+	p.Unlock()
 
 	if hl != nil {
 		t.Error("empty query: expected searchHL to be nil after updateSearch")
@@ -273,10 +279,10 @@ func TestUpdateSearch_RapidQueriesPublishLatest(t *testing.T) {
 	app.mu.Unlock()
 	app.updateSearch()
 
-	waitForSearchMatches(t, app, func(matches []searchMatch) bool { return len(matches) == 3 })
+	waitForSearchMatches(t, app, func(matches []session.Match) bool { return len(matches) == 3 })
 
 	app.mu.Lock()
-	matches := append([]searchMatch(nil), app.searchMatches...)
+	matches := append([]session.Match(nil), app.searchMatches...)
 	idx := app.searchIdx
 	app.mu.Unlock()
 
@@ -300,7 +306,7 @@ func TestSearchNavigate_UpdatesCurrentHighlight(t *testing.T) {
 	app.mu.Unlock()
 	app.updateSearch()
 
-	waitForSearchMatches(t, app, func(matches []searchMatch) bool { return len(matches) == 3 })
+	waitForSearchMatches(t, app, func(matches []session.Match) bool { return len(matches) == 3 })
 
 	app.searchNavigate(+1)
 
@@ -311,16 +317,16 @@ func TestSearchNavigate_UpdatesCurrentHighlight(t *testing.T) {
 		t.Fatalf("searchIdx after navigate = %d, want 1", idx)
 	}
 
-	p.mu.Lock()
-	hl := p.searchHL
-	p.mu.Unlock()
+	p.Lock()
+	hl := p.SearchHL
+	p.Unlock()
 	if hl == nil {
 		t.Fatal("searchHL is nil after navigate")
 	}
-	if !spanContains(hl.current[2], 0) {
+	if !session.SpanContains(hl.Current[2], 0) {
 		t.Fatal("current highlight should move to the second match on row 2")
 	}
-	if spanContains(hl.current[0], 0) {
+	if session.SpanContains(hl.Current[0], 0) {
 		t.Fatal("first match should no longer be current after navigate")
 	}
 }

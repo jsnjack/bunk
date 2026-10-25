@@ -23,17 +23,14 @@ cmd_config.go       "bunk config" subcommand tree
 app.go              App struct, event loop, key handling, triggerRedraw()
 input_modes.go      Host focus forwarding
 input_tcell.go      tcell key/mouse events → internal/input (keyToBytesMode, mouseToBytes)
-pane.go             Pane struct, PTY spawn, readPTY, captureAndWrite, scrollback capture
-ptystream.go        Bounded streaming UTF-8/control framing before PTY parsing
+pane.go             Pane (embeds *session.Session): placement, render state, NewPane, Hooks
 render.go           render(), renderPane(), vtColor(), border/scrollbar drawing
-graphics.go         Image colour blending and virtual pixels
+graphics.go         Image colour blending
 layout.go           BSP tree: Node, split/remove/resize math
-scrollback.go       sbRing ring buffer, scroll-detection algorithm
-reflow.go           Cell-based reflow and scroll anchoring
-osc.go              OSC pre-scanner, passthrough of OSC 7/52/133 to host
+osc.go              Host passthrough buffer for OSC 7/52/133
 mouse.go            Mouse events → PTY byte sequences
 status.go           Status badges (scroll count, container, SSH, flash messages)
-search.go           In-pane text search
+search.go           In-pane search UI (matching is session.FindAll)
 config.go           TOML config, theme registry, keybinding resolution
 hostcolors.go       Host terminal OSC colour probing
 clipboard.go        OSC 52 clipboard passthrough
@@ -57,6 +54,16 @@ internal/graphics/ Bounded SIXEL, Kitty, and iTerm2 static image decoders
 
 internal/input/     Toolkit-neutral key, mouse, focus and paste encoding
                     (legacy, application cursor/keypad, Kitty CSI u)
+
+internal/session/   One terminal session, shared by front ends
+  session.go        Session, Start/Run/ReadLoop/Feed, Hooks, query replies, Kitty keys, selection
+  scrollback.go     Ring of compact scrollback rows without trailing blanks
+  reflow.go         Cell-based reflow and scroll anchoring
+  ptystream.go      Bounded streaming UTF-8/control framing before parsing
+  osc.go            OSC pre-scanner and sanitising (7, 52, 133)
+  process.go        Foreground process, SSH host and container detection
+  search.go         Case-insensitive search over scrollback and the live grid
+  winsize.go        PTY window size in cells and virtual pixels
 
 third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
                     (local go.mod replacement; see BUNK_PATCHES.md)
@@ -92,20 +99,23 @@ Key local extensions to vendored vt10x:
 1. **Startup** — `main()` → `Execute()` → `run()` loads config, initialises
    slog, queries cell aspect, probes host OSC colours, initialises tcell,
    spawns the first `Pane` and enters `App.eventLoop()`.
-2. **Pane I/O** — three goroutines per pane: `readPTY` (PTY → vt10x →
-   redraw), `waitForExit`, `trackFgProcess`. One shared `renderLoop` drains
+2. **Pane I/O** — `Session.Run` starts three goroutines per pane:
+   `ReadLoop` (PTY → vt10x), `waitForExit`, `trackFgProcess`. bunk attaches
+   through `session.Hooks`: `Applied` runs under the session lock after each
+   chunk, `Output` after it (repaint pacing). One shared `renderLoop` drains
    `app.redraw` (buffered 1).
 3. **Resize / reflow** — `App.handleResize()` coalesces host resizes and
    updates the BSP tree. Emulator reflow finishes before the PTY receives its
    new size and SIGWINCH; both are deferred together during resize bursts.
-   `Pane.resizeAndReflow()` joins soft-wrapped rows from scrollback and the live
+   `Session.ResizeAndReflow()` joins soft-wrapped rows from scrollback and the live
    grid, repacks their cells at the new width, and preserves terminal state.
 4. **OSC passthrough** — bounded `ptyStream` framing precedes `osc.go` scanning.
    OSC 7/52/133 reach the host through `app.oscBuf`; OSC 8 links are stored on
    glyphs and emitted with their rendered text.
 
-**Lock ordering:** always `app.mu` before `Pane.mu`. Never acquire `app.mu`
-while holding `Pane.mu`.
+**Lock ordering:** always `app.mu` before the session lock (`p.Lock()`, the
+mutex embedded in `session.Session`). Never acquire `app.mu` while holding a
+session lock.
 
 ---
 
@@ -224,11 +234,13 @@ Key fields agents may need to know about:
 ```go
 term := vt10x.New(vt10x.WithSize(cols, rows))
 p := &Pane{
-    term:            term,
-    cmd:             &exec.Cmd{},  // non-nil prevents cwd() nil-deref in emitTitle
+    Session: &session.Session{
+        Term:            term,
+        Cmd:             &exec.Cmd{}, // non-nil prevents Cwd() nil-deref in emitTitle
+        ScrollbackLines: 100,
+        Scrollback:      session.Ring{MaxLines: 100},
+    },
     x: 0, y: 0, w: cols, h: rows,
-    scrollbackLines: 100,
-    sb:              sbRing{maxLines: 100},
 }
 ```
 

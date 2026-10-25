@@ -8,14 +8,14 @@ func (app *App) handleFocus(focused bool) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	if p := app.active; p != nil {
-		p.mu.Lock()
-		enabled := !p.dead && p.term.Mode()&vt10x.ModeFocus != 0
-		p.mu.Unlock()
+		p.Lock()
+		enabled := !p.Dead && p.Term.Mode()&vt10x.ModeFocus != 0
+		p.Unlock()
 		if enabled {
 			if focused {
-				p.writeInput([]byte("\x1b[I"))
+				p.WriteInput([]byte("\x1b[I"))
 			} else {
-				p.writeInput([]byte("\x1b[O"))
+				p.WriteInput([]byte("\x1b[O"))
 			}
 		}
 	}

@@ -1,24 +1,24 @@
-package main
+package session
 
 import "bunk/internal/vt10x"
 
 // reflowCells copies glyphs directly: replaying old cursor commands at a new
 // width changes their targets and can recreate content that was already erased.
-func (p *Pane) reflowCells(cols, rows int) {
-	oldCols, oldRows := p.term.Size()
-	cursor := p.term.Cursor()
-	cursorRow := p.sb.count + cursor.Y
+func (s *Session) reflowCells(cols, rows int) {
+	oldCols, oldRows := s.Term.Size()
+	cursor := s.Term.Cursor()
+	cursorRow := s.Scrollback.Count + cursor.Y
 	cursorCol := cursor.X
 	if cursor.State&vt10x.CursorWrapNext != 0 {
 		cursorCol++
 	}
 	anchorRow := -1
-	if p.sbOff > 0 {
-		anchorRow = p.sb.count - p.sbOff + oldRows/2
+	if s.ScrollOffset > 0 {
+		anchorRow = s.Scrollback.Count - s.ScrollOffset + oldRows/2
 	}
 	mappedAnchor, mappedCursorRow, mappedCursorCol := 0, 0, 0
 	pending, cursorMapped := false, false
-	result := sbRing{maxLines: p.scrollbackLines + rows}
+	result := Ring{MaxLines: s.ScrollbackLines + rows}
 	// Zero glyphs carry palette colour 0, not the default colours.
 	blank := vt10x.Glyph{FG: vt10x.DefaultFG, BG: vt10x.DefaultBG, UL: vt10x.DefaultUL}
 	row := make([]vt10x.Glyph, cols)
@@ -29,7 +29,7 @@ func (p *Pane) reflowCells(cols, rows int) {
 			row[cols-1].Mode |= vt10x.AttrWrap
 		}
 		if !cursorMapped || y < mappedCursorRow+rows {
-			result.push(row)
+			result.Push(row)
 		}
 		fillRow(row, blank)
 		x = 0
@@ -43,12 +43,12 @@ func (p *Pane) reflowCells(cols, rows int) {
 			mappedCursorCol--
 		}
 	}
-	contentRows := findContentRows(p.term, oldCols, oldRows)
-	total := p.sb.count + contentRows
+	contentRows := findContentRows(s.Term, oldCols, oldRows)
+	total := s.Scrollback.Count + contentRows
 	for r := 0; r < total; r++ {
-		source := p.sb.view(r)
-		if r >= p.sb.count {
-			source = captureRow(p.term, r-p.sb.count, oldCols)
+		source := s.Scrollback.View(r)
+		if r >= s.Scrollback.Count {
+			source = CaptureRow(s.Term, r-s.Scrollback.Count, oldCols)
 		}
 		wrapped := len(source) > 0 && source[len(source)-1].Mode&vt10x.AttrWrap != 0
 		end := reflowContentEnd(source)
@@ -109,17 +109,17 @@ func (p *Pane) reflowCells(cols, rows int) {
 	// Rows below the cursor may be clipped, but its line must remain live.
 	storedRows := min(y, mappedCursorRow+rows)
 	firstVisible := max(0, storedRows-rows)
-	dropped := storedRows - result.count
-	p.sb = sbRing{maxLines: p.scrollbackLines}
+	dropped := storedRows - result.Count
+	s.Scrollback = Ring{MaxLines: s.ScrollbackLines}
 	for r := dropped; r < firstVisible; r++ {
-		p.sb.pushRow(result.row(r - dropped))
+		s.Scrollback.PushRow(result.Row(r - dropped))
 	}
 	visible := make([][]vt10x.Glyph, rows)
 	for r := 0; r < rows; r++ {
-		visible[r] = result.get(firstVisible + r - dropped)
+		visible[r] = result.Get(firstVisible + r - dropped)
 	}
-	if p.sbOff > 0 {
-		p.sbOff = min(p.sb.count, max(0, firstVisible-mappedAnchor+rows/2))
+	if s.ScrollOffset > 0 {
+		s.ScrollOffset = min(s.Scrollback.Count, max(0, firstVisible-mappedAnchor+rows/2))
 	}
 	cursor.X = mappedCursorCol
 	cursor.Y = max(0, min(mappedCursorRow-firstVisible, rows-1))
@@ -127,9 +127,8 @@ func (p *Pane) reflowCells(cols, rows int) {
 	if pending {
 		cursor.State |= vt10x.CursorWrapNext
 	}
-	p.term.ReplaceScreen(cols, rows, visible, cursor, p.term)
-	p.selActive = false
-	p.forceFullRepaint = true
+	s.Term.ReplaceScreen(cols, rows, visible, cursor, s.Term)
+	s.SelActive = false
 }
 
 func reflowContentEnd(row []vt10x.Glyph) int {

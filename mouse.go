@@ -50,6 +50,7 @@ import (
 	"time"
 	"unicode"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
@@ -92,15 +93,15 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	if target != nil && btn != tcell.ButtonNone &&
 		btn != tcell.WheelUp && btn != tcell.WheelDown &&
 		btn != tcell.WheelLeft && btn != tcell.WheelRight &&
-		target != app.active && !target.isDead() &&
+		target != app.active && !target.IsDead() &&
 		app.dragPane == nil {
 		prevActive = app.active
 		L.Debug("mouse: click-to-focus", "from_pane", func() int {
 			if prevActive != nil {
-				return prevActive.id
+				return prevActive.ID
 			}
 			return -1
-		}(), "to_pane", target.id, "x", x, "y", y)
+		}(), "to_pane", target.ID, "x", x, "y", y)
 		app.active = target
 		app.triggerRedraw()
 	}
@@ -118,14 +119,14 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		sendFocusIn(target)
 	}
 
-	if target == nil || target.isDead() {
+	if target == nil || target.IsDead() {
 		return
 	}
 
 	// ── Resolve mouse mode once ───────────────────────────────────────────
-	target.mu.Lock()
-	mode := target.term.Mode()
-	target.mu.Unlock()
+	target.Lock()
+	mode := target.Term.Mode()
+	target.Unlock()
 	wantsMouse := mode&vt10x.ModeMouseMask != 0
 
 	// ── Mouse wheel: scrollback vs. passthrough ───────────────────────────
@@ -133,26 +134,26 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		if !wantsMouse {
 			// 3 lines per notch — matches standard terminal / browser behaviour.
 			const scrollAmt = 3
-			L.Debug("mouse: wheel scroll", "pane", target.id, "btn", btn, "amount", scrollAmt)
+			L.Debug("mouse: wheel scroll", "pane", target.ID, "btn", btn, "amount", scrollAmt)
 			if btn == tcell.WheelUp {
-				target.scrollUp(scrollAmt)
+				target.ScrollUp(scrollAmt)
 			} else {
-				target.scrollDown(scrollAmt)
+				target.ScrollDown(scrollAmt)
 			}
 
 			// If button1 is currently held (drag-select in progress), extend
 			// the selection to the mouse's current position. screenToVirtual
 			// uses the post-scroll sbOff, so a stationary cursor naturally
 			// walks back through history as the viewport shifts.
-			target.mu.Lock()
-			extend := target.selActive && prevBtn == tcell.Button1
-			target.mu.Unlock()
+			target.Lock()
+			extend := target.SelActive && prevBtn == tcell.Button1
+			target.Unlock()
 			if extend {
 				vPos := screenToVirtual(target, x, y)
-				target.mu.Lock()
-				target.selCursor = vPos
-				target.mu.Unlock()
-				L.Debug("mouse: wheel-extend selection", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
+				target.Lock()
+				target.SelCursor = vPos
+				target.Unlock()
+				L.Debug("mouse: wheel-extend selection", "pane", target.ID, "vrow", vPos.Row, "vcol", vPos.Col)
 			}
 
 			app.triggerRedraw()
@@ -188,10 +189,10 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		dy := app.sbDragLastY - y // up = positive sbOff (further back in history)
 		app.sbDragLastY = y
 		if dy != 0 {
-			p.mu.Lock()
-			sbCount := p.sb.count
-			_, rows := p.term.Size()
-			p.mu.Unlock()
+			p.Lock()
+			sbCount := p.Scrollback.Count
+			_, rows := p.Term.Size()
+			p.Unlock()
 			if rows > 0 && sbCount > 0 {
 				// Natural ratio: (sbCount+rows)/rows lines per cell of drag.
 				// This ensures the full scrollback is reachable in exactly
@@ -208,9 +209,9 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 					newOff = sbCount
 					app.sbDragAccum = float64(sbCount)
 				}
-				p.mu.Lock()
-				p.sbOff = newOff
-				p.mu.Unlock()
+				p.Lock()
+				p.ScrollOffset = newOff
+				p.Unlock()
 			}
 		}
 		app.triggerRedraw()
@@ -219,10 +220,10 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	// Detect a Button1 press on the scrollbar column of any pane.
 	// Start a drag from the current sbOff — no position jump on click.
 	if isPress && target != nil {
-		target.mu.Lock()
-		sbCount := target.sb.count
-		curSbOff := target.sbOff
-		target.mu.Unlock()
+		target.Lock()
+		sbCount := target.Scrollback.Count
+		curSbOff := target.ScrollOffset
+		target.Unlock()
 		if sbCount > 0 && x == target.x+target.w-1 {
 			app.sbDragPane = target
 			app.sbDragLastY = y
@@ -252,7 +253,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			app.lastClickPane = target
 
 			if isDouble {
-				L.Debug("mouse: double-click word select", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
+				L.Debug("mouse: double-click word select", "pane", target.ID, "vrow", vPos.Row, "vcol", vPos.Col)
 				selectWord(target, vPos)
 				app.dblClickActive = true
 				app.mu.Lock()
@@ -262,18 +263,18 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				return
 			}
 
-			L.Debug("mouse: button1 press (clear selection)", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
+			L.Debug("mouse: button1 press (clear selection)", "pane", target.ID, "vrow", vPos.Row, "vcol", vPos.Col)
 			// Record the pane where the drag starts.
 			app.mu.Lock()
 			app.dragPane = target
 			app.mu.Unlock()
 			// Clear any existing selection immediately on press.
 			// Selection is only activated once the user starts dragging.
-			target.mu.Lock()
-			target.selActive = false
-			target.selAnchor = vPos
-			target.selCursor = vPos
-			target.mu.Unlock()
+			target.Lock()
+			target.SelActive = false
+			target.SelAnchor = vPos
+			target.SelCursor = vPos
+			target.Unlock()
 			app.triggerRedraw()
 			return
 
@@ -294,11 +295,11 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				app.stopDragEdgeScroll()
 			}
 			vPos := screenToVirtual(sel, x, y)
-			L.Debug("mouse: drag select", "pane", sel.id, "vrow", vPos.row, "vcol", vPos.col)
-			sel.mu.Lock()
-			sel.selActive = true // engage selection on real drag
-			sel.selCursor = vPos
-			sel.mu.Unlock()
+			L.Debug("mouse: drag select", "pane", sel.ID, "vrow", vPos.Row, "vcol", vPos.Col)
+			sel.Lock()
+			sel.SelActive = true // engage selection on real drag
+			sel.SelCursor = vPos
+			sel.Unlock()
 			app.triggerRedraw()
 			return
 
@@ -323,9 +324,9 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			// For a drag-select: finalise the cursor position.
 			// We hold sel.mu here, so inline the virtual-coord math
 			// instead of calling screenToVirtual (which also locks sel.mu).
-			sel.mu.Lock()
-			if sel.selActive {
-				cols, rows := sel.term.Size()
+			sel.Lock()
+			if sel.SelActive {
+				cols, rows := sel.Term.Size()
 				col := x - sel.x
 				row := y - sel.y
 				// Clamp coordinates to the terminal grid bounds (excludes scrollbar).
@@ -339,13 +340,13 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				} else if row >= rows {
 					row = rows - 1
 				}
-				vRow := (sel.sb.count - sel.sbOff) + row
-				sel.selCursor = selPos{row: vRow, col: col}
-				L.Debug("mouse: drag-select released", "pane", sel.id, "vrow", vRow, "vcol", col)
+				vRow := (sel.Scrollback.Count - sel.ScrollOffset) + row
+				sel.SelCursor = session.SelPos{Row: vRow, Col: col}
+				L.Debug("mouse: drag-select released", "pane", sel.ID, "vrow", vRow, "vcol", col)
 			}
 			// If selActive is false this was a plain click - selection
 			// was already cleared on press, nothing more to do.
-			sel.mu.Unlock()
+			sel.Unlock()
 			app.triggerRedraw()
 			return
 		}
@@ -354,9 +355,9 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		app.mu.Lock()
 		app.dragPane = nil
 		app.mu.Unlock()
-		target.mu.Lock()
-		target.selActive = false
-		target.mu.Unlock()
+		target.Lock()
+		target.SelActive = false
+		target.Unlock()
 	} else if isRelease {
 		app.mu.Lock()
 		app.dragPane = nil
@@ -392,11 +393,11 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		// an alt-screen exit chunk that disables mouse reporting.  Without
 		// this second check the shell receives raw SGR mouse sequences as
 		// visible garbage text (e.g. "51;80;29M51;77;28M…").
-		target.mu.Lock()
-		stillWants := target.term.Mode()&vt10x.ModeMouseMask != 0
-		target.mu.Unlock()
+		target.Lock()
+		stillWants := target.Term.Mode()&vt10x.ModeMouseMask != 0
+		target.Unlock()
 		if stillWants {
-			target.writeInput(data)
+			target.WriteInput(data)
 		}
 	}
 }
@@ -404,12 +405,12 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 // screenToVirtual converts a host-screen position into the pane's unified
 // virtual coordinate (scrollback row 0 … sb.count-1, then live rows).
 // Must NOT be called with p.mu held.
-func screenToVirtual(p *Pane, screenX, screenY int) selPos {
-	p.mu.Lock()
-	sbOff := p.sbOff
-	sbCount := p.sb.count
-	cols, _ := p.term.Size()
-	p.mu.Unlock()
+func screenToVirtual(p *Pane, screenX, screenY int) session.SelPos {
+	p.Lock()
+	sbOff := p.ScrollOffset
+	sbCount := p.Scrollback.Count
+	cols, _ := p.Term.Size()
+	p.Unlock()
 
 	col := screenX - p.x
 	row := screenY - p.y
@@ -423,7 +424,7 @@ func screenToVirtual(p *Pane, screenX, screenY int) selPos {
 	} else if row >= p.h {
 		row = p.h - 1
 	}
-	return selPos{row: (sbCount - sbOff) + row, col: col}
+	return session.SelPos{Row: (sbCount - sbOff) + row, Col: col}
 }
 
 // handlePaste forwards a tcell bracketed-paste event to the active pane.
@@ -441,15 +442,15 @@ func (app *App) handlePaste(ev *tcell.EventPaste) {
 	app.mu.Lock()
 	active := app.active
 	app.mu.Unlock()
-	if active == nil || active.isDead() {
+	if active == nil || active.IsDead() {
 		return
 	}
 
-	active.mu.Lock()
-	bracketed := active.term.Mode()&vt10x.ModeSetPaste != 0
-	active.mu.Unlock()
+	active.Lock()
+	bracketed := active.Term.Mode()&vt10x.ModeSetPaste != 0
+	active.Unlock()
 
-	L.Debug("handlePaste", "pane", active.id, "start", ev.Start(), "bracketed", bracketed)
+	L.Debug("handlePaste", "pane", active.ID, "start", ev.Start(), "bracketed", bracketed)
 
 	if !bracketed {
 		// Pane hasn't requested bracketed paste; content arrives as key events
@@ -458,9 +459,9 @@ func (app *App) handlePaste(ev *tcell.EventPaste) {
 	}
 
 	if ev.Start() {
-		active.writeInput([]byte("\x1b[200~"))
+		active.WriteInput([]byte("\x1b[200~"))
 	} else {
-		active.writeInput([]byte("\x1b[201~"))
+		active.WriteInput([]byte("\x1b[201~"))
 	}
 }
 
@@ -470,12 +471,12 @@ func sendFocusIn(p *Pane) {
 	if p == nil {
 		return
 	}
-	p.mu.Lock()
-	wants := p.term.Mode()&vt10x.ModeFocus != 0
-	p.mu.Unlock()
+	p.Lock()
+	wants := p.Term.Mode()&vt10x.ModeFocus != 0
+	p.Unlock()
 	if wants {
-		L.Debug("sendFocusIn", "pane", p.id)
-		p.writeInput([]byte("\x1b[I"))
+		L.Debug("sendFocusIn", "pane", p.ID)
+		p.WriteInput([]byte("\x1b[I"))
 	}
 }
 
@@ -484,12 +485,12 @@ func sendFocusOut(p *Pane) {
 	if p == nil {
 		return
 	}
-	p.mu.Lock()
-	wants := p.term.Mode()&vt10x.ModeFocus != 0
-	p.mu.Unlock()
+	p.Lock()
+	wants := p.Term.Mode()&vt10x.ModeFocus != 0
+	p.Unlock()
 	if wants {
-		L.Debug("sendFocusOut", "pane", p.id)
-		p.writeInput([]byte("\x1b[O"))
+		L.Debug("sendFocusOut", "pane", p.ID)
+		p.WriteInput([]byte("\x1b[O"))
 	}
 }
 
@@ -500,50 +501,50 @@ func sendFocusOut(p *Pane) {
 // selectWord selects the word that contains vPos in pane p.
 // Word characters: letters, digits, underscore, hyphen, dot, slash, tilde,
 // at-sign, plus, colon - covers shell identifiers, file paths, and URLs.
-func selectWord(p *Pane, vPos selPos) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func selectWord(p *Pane, vPos session.SelPos) {
+	p.Lock()
+	defer p.Unlock()
 
-	cols, rows := p.term.Size()
-	sbCount := p.sb.count
+	cols, rows := p.Term.Size()
+	sbCount := p.Scrollback.Count
 
 	// Fetch the row cells at vPos.
 	var cells []vt10x.Glyph
-	if vPos.row < sbCount {
-		cells = p.sb.get(vPos.row)
-	} else if tr := vPos.row - sbCount; tr >= 0 && tr < rows {
-		cells = captureRow(p.term, tr, cols)
+	if vPos.Row < sbCount {
+		cells = p.Scrollback.Get(vPos.Row)
+	} else if tr := vPos.Row - sbCount; tr >= 0 && tr < rows {
+		cells = session.CaptureRow(p.Term, tr, cols)
 	}
 	if cells == nil {
-		L.Debug("selectWord: no cells at position", "pane", p.id, "vrow", vPos.row, "vcol", vPos.col)
+		L.Debug("selectWord: no cells at position", "pane", p.ID, "vrow", vPos.Row, "vcol", vPos.Col)
 		return
 	}
-	if vPos.col > 0 && vPos.col < len(cells) && cells[vPos.col].Width == -1 {
-		vPos.col--
+	if vPos.Col > 0 && vPos.Col < len(cells) && cells[vPos.Col].Width == -1 {
+		vPos.Col--
 	}
 
 	// If clicked on whitespace, clear selection.
-	if vPos.col >= len(cells) || !isWordChar(cells[vPos.col].Char) {
-		L.Debug("selectWord: whitespace, clearing selection", "pane", p.id)
-		p.selActive = false
+	if vPos.Col >= len(cells) || !isWordChar(cells[vPos.Col].Char) {
+		L.Debug("selectWord: whitespace, clearing selection", "pane", p.ID)
+		p.SelActive = false
 		return
 	}
 
 	// Expand left.
-	start := vPos.col
+	start := vPos.Col
 	for start > 0 && (cells[start-1].Width == -1 || isWordChar(cells[start-1].Char)) {
 		start--
 	}
 	// Expand right.
-	end := vPos.col
+	end := vPos.Col
 	for end+1 < len(cells) && (cells[end+1].Width == -1 || isWordChar(cells[end+1].Char)) {
 		end++
 	}
 
-	L.Debug("selectWord: selected", "pane", p.id, "row", vPos.row, "start_col", start, "end_col", end)
-	p.selActive = true
-	p.selAnchor = selPos{row: vPos.row, col: start}
-	p.selCursor = selPos{row: vPos.row, col: end}
+	L.Debug("selectWord: selected", "pane", p.ID, "row", vPos.Row, "start_col", start, "end_col", end)
+	p.SelActive = true
+	p.SelAnchor = session.SelPos{Row: vPos.Row, Col: start}
+	p.SelCursor = session.SelPos{Row: vPos.Row, Col: end}
 }
 
 // isWordChar reports whether r is part of a "word" for selection purposes.
@@ -582,27 +583,27 @@ func (app *App) startDragEdgeScroll(sel *Pane, scrollUp bool) {
 				return
 			case <-ticker.C:
 				if scrollUp {
-					sel.scrollUp(1)
+					sel.ScrollUp(1)
 				} else {
-					sel.scrollDown(1)
+					sel.ScrollDown(1)
 				}
 				// Extend selCursor to the visible edge after scrolling.
-				sel.mu.Lock()
-				if sel.selActive {
-					cols, rows := sel.term.Size()
-					sbCount := sel.sb.count
-					sbOff := sel.sbOff
+				sel.Lock()
+				if sel.SelActive {
+					cols, rows := sel.Term.Size()
+					sbCount := sel.Scrollback.Count
+					sbOff := sel.ScrollOffset
 					if scrollUp {
 						// Extend to the new top-left of the view.
 						vRow := sbCount - sbOff
-						sel.selCursor = selPos{row: vRow, col: 0}
+						sel.SelCursor = session.SelPos{Row: vRow, Col: 0}
 					} else {
 						// Extend to the new bottom-right of the view.
 						vRow := (sbCount - sbOff) + rows - 1
-						sel.selCursor = selPos{row: vRow, col: cols - 1}
+						sel.SelCursor = session.SelPos{Row: vRow, Col: cols - 1}
 					}
 				}
-				sel.mu.Unlock()
+				sel.Unlock()
 				app.triggerRedraw()
 			}
 		}
