@@ -23,7 +23,8 @@ const (
 	AgentDone                       // the agent reported a finished turn; not yet acknowledged
 )
 
-// IdleAfter is how long an agent counts as working after its last output.
+// IdleAfter is how long an agent counts as working after its last output
+// (default of Timing.Idle).
 const IdleAfter = 2 * time.Second
 
 // Status describes a session for tab labels and switchers.
@@ -67,7 +68,7 @@ func (s *Session) Status() Status {
 // Acknowledge records that the user has seen the session. It clears a
 // pending attention request and the agent's explicit report, so inference
 // shows the session until the agent reports again. It runs no hook itself:
-// the next output or process tick (at most a second later) announces the
+// the next output or process tick (at most Timing.Poll later) announces the
 // change through Hooks.StatusChanged, so callers may hold their own locks.
 func (s *Session) Acknowledge() {
 	s.Lock()
@@ -132,7 +133,7 @@ func (s *Session) agentState(now time.Time) AgentState {
 		return AgentFailed
 	case s.needsYou:
 		return AgentNeedsYou
-	case now.Sub(s.lastOutput) < IdleAfter:
+	case now.Sub(s.lastOutput) < s.timing.idle():
 		return AgentWorking
 	}
 	return AgentIdle
@@ -370,7 +371,8 @@ func cleanNotice(text, fallback string) string {
 
 // recentlyLeft is how long after an agent leaves the foreground a command
 // result still counts as the agent's: the shell reports it once its prompt
-// returns, which can be after the next process poll.
+// returns, which can be after the next process poll (default of
+// Timing.RecentlyLeft).
 const recentlyLeft = 2 * time.Second
 
 // onStatusOSC is the OSC scanner's status callback. It runs on the reader
@@ -395,7 +397,7 @@ func (s *Session) onStatusOSC(num int, payload []byte) {
 		switch {
 		case s.agent != "" && !s.agentGone:
 			s.failed = true
-		case s.agent == "" && s.lastAgent != "" && time.Since(s.agentLeft) < recentlyLeft:
+		case s.agent == "" && s.lastAgent != "" && time.Since(s.agentLeft) < s.timing.recentlyLeft():
 			// The agent already left; show its failure until the next command.
 			s.agent, s.failed, s.agentGone = s.lastAgent, true, true
 		}

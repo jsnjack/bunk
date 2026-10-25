@@ -135,6 +135,10 @@ type App struct {
 	// notify receives agent hook reports ("bunk notify") and routes them to
 	// the panes' sessions. nil when the socket could not be created.
 	notify *notify.Server
+
+	// timing sets the intervals of new panes' session timers. bunk leaves
+	// it zero, the defaults; tests shorten it.
+	timing session.Timing
 }
 
 // shutdown is safe to call multiple times.  It closes every pane (sending
@@ -675,7 +679,7 @@ func (app *App) newPane(x, y, w, h int, dir string, args []string) (*Pane, error
 	p, err := startPane(paneSpec{
 		id: app.nextID, x: x, y: y, w: w, h: h, scrollback: app.scrollback, dir: dir, args: args,
 		colors: app.paneOSCColors(), redraw: app.redraw, paneDead: app.paneDead, done: app.done,
-		oscBuf: app.oscBuf, cellAspect: []float64{app.cellAspect}, notify: app.notify,
+		oscBuf: app.oscBuf, cellAspect: []float64{app.cellAspect}, notify: app.notify, timing: app.timing,
 	})
 	if err != nil {
 		return nil, err

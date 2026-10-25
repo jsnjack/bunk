@@ -105,6 +105,50 @@ func TestStatusStates(t *testing.T) {
 	}
 }
 
+// TestStatusTiming: Timing.Idle decides when an agent's output stops
+// counting as working, and Timing.RecentlyLeft how long a failed command
+// still counts as the agent's that left the foreground. Zero fields take
+// IdleAfter and recentlyLeft. The ages fall between the default and the
+// set value, so each case would give the other answer with the default.
+func TestStatusTiming(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		timing  Timing
+		age     time.Duration // since the last output, and since the agent left
+		working bool          // the agent still counts as working
+		blamed  bool          // a failure now is the agent's
+	}{
+		{"defaults, fresh", Timing{}, 0, true, true},
+		{"defaults, just past", Timing{}, max(IdleAfter, recentlyLeft) + time.Millisecond, false, false},
+		{"longer", Timing{Idle: time.Hour, RecentlyLeft: time.Hour}, max(IdleAfter, recentlyLeft) + time.Second, true, true},
+		{"shorter", Timing{Idle: time.Millisecond, RecentlyLeft: time.Millisecond},
+			min(IdleAfter, recentlyLeft) - time.Second, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestSession(20, 2)
+			s.timing = tc.timing
+			s.oscScan.status = s.onStatusOSC
+			s.agent = "claude"
+			s.lastOutput = time.Now().Add(-tc.age)
+			want := AgentIdle
+			if tc.working {
+				want = AgentWorking
+			}
+			if st := s.Status(); st.State != want {
+				t.Errorf("output %v ago: state %v, want %v", tc.age, st.State, want)
+			}
+
+			s.agent, s.lastAgent, s.agentLeft = "", "codex", time.Now().Add(-tc.age)
+			s.oscScan.Scan([]byte("\x1b]133;D;2\x07"), func([]byte) {})
+			st := s.Status()
+			if blamed := st.Agent == "codex" && st.State == AgentFailed; blamed != tc.blamed {
+				t.Errorf("failure %v after the agent left: %+v, want it the agent's: %v", tc.age, st, tc.blamed)
+			}
+		})
+	}
+}
+
 func TestParseStatusOSC(t *testing.T) {
 	long := strings.Repeat("x", noticeLimit+50)
 	for _, tc := range []struct {

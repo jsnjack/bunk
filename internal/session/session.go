@@ -156,6 +156,10 @@ type Session struct {
 	// backspace is the key the front end sends for Backspace; XTGETTCAP
 	// "kbs" reports its encoding.
 	backspace input.Key
+
+	// timing holds the intervals of the session's timers (Options.Timing).
+	// Set before the session runs; read without the lock.
+	timing Timing
 }
 
 // Options describe a new Session.
@@ -191,6 +195,9 @@ type Options struct {
 	// InputBytes caps the input queued for a child that does not read it
 	// (WriteInput); zero means DefaultInputBytes.
 	InputBytes int
+	// Timing sets the intervals of the session's timers; zero fields take
+	// the defaults (ProcessPoll, IdleAfter, HangupGrace, SyncUpdateTimeout).
+	Timing Timing
 }
 
 // Hooks connect a Session to its front end. Every hook is optional.
@@ -294,6 +301,7 @@ func Start(o Options) (*Session, error) {
 		backspace:       o.Backspace,
 		agents:          o.Agents,
 		exited:          make(chan struct{}),
+		timing:          o.Timing,
 	}
 	s.out.inputCap = o.InputBytes
 	s.oscScan.status = s.onStatusOSC
@@ -431,9 +439,10 @@ func (s *Session) ReadLoop(h Hooks) {
 			scrolled := s.ScrollOffset > 0
 			syncing := s.Term.Mode()&vt10x.ModeSync != 0
 			if syncing && s.syncDeadline.IsZero() {
-				until := now.Add(SyncUpdateTimeout)
+				release := s.timing.syncRelease()
+				until := now.Add(release)
 				s.syncDeadline = until
-				syncTimer = time.AfterFunc(SyncUpdateTimeout, func() {
+				syncTimer = time.AfterFunc(release, func() {
 					s.expireSyncUpdate(until)
 					if h.Redraw != nil {
 						h.Redraw()
@@ -454,20 +463,20 @@ func (s *Session) ReadLoop(h Hooks) {
 			}
 			// An agent's state follows its output: report output starting,
 			// an attention request or a failure, and idle once output has
-			// stopped for IdleAfter. trackFgProcess reports whatever this
+			// stopped for Timing.Idle. trackFgProcess reports whatever this
 			// misses, such as an agent that went quiet before it was known.
 			if agentChanged && h.StatusChanged != nil {
 				h.StatusChanged()
 			}
 			if watched && h.StatusChanged != nil {
 				if idleTimer == nil {
-					idleTimer = time.AfterFunc(IdleAfter, func() {
+					idleTimer = time.AfterFunc(s.timing.idle(), func() {
 						if s.agentChangedNow() {
 							h.StatusChanged()
 						}
 					})
 				} else {
-					idleTimer.Reset(IdleAfter)
+					idleTimer.Reset(s.timing.idle())
 				}
 			}
 		}
@@ -483,7 +492,7 @@ func (s *Session) ReadLoop(h Hooks) {
 }
 
 // SyncUpdateTimeout releases a synchronized update (DEC 2026) that an
-// application left open.
+// application left open (default of Timing.SyncRelease).
 const SyncUpdateTimeout = time.Second
 
 func (s *Session) expireSyncUpdate(until time.Time) {
@@ -1268,13 +1277,14 @@ func (s *Session) adjustAfterScrollbackPush(pushed, oldCount, oldSbOff int) {
 }
 
 // HangupGrace is how long Close lets the child handle SIGHUP before it
-// kills the child's process group.
+// kills the child's process group (default of Timing.HangupGrace).
 const HangupGrace = time.Second
 
 // Close shuts down the PTY and sends SIGHUP to the shell so it exits cleanly.
-// A child that ignores SIGHUP and still runs after HangupGrace is killed
-// with its process group, so a closed session never keeps its process,
-// its waitForExit and trackFgProcess goroutines. Safe to call multiple times.
+// A child that ignores SIGHUP and still runs after Timing.HangupGrace is
+// killed with its process group, so a closed session never keeps its
+// process, its waitForExit and trackFgProcess goroutines. Safe to call
+// multiple times.
 func (s *Session) Close() {
 	L().Debug("pane close", "pane", s.ID)
 	s.closePTX()
@@ -1284,7 +1294,7 @@ func (s *Session) Close() {
 			// The timer holds only what it needs, not the session with its
 			// emulator and scrollback.
 			id, proc, exited := s.ID, s.Cmd.Process, s.exited
-			time.AfterFunc(HangupGrace, func() { killIfRunning(id, proc, exited) })
+			time.AfterFunc(s.timing.hangupGrace(), func() { killIfRunning(id, proc, exited) })
 		})
 	}
 }

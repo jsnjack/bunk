@@ -6,8 +6,10 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"bunk/internal/ptychild"
+	"bunk/internal/session"
 )
 
 // testClipboard records what bunk would copy to the desktop clipboard.
@@ -15,6 +17,10 @@ var testClipboard struct {
 	sync.Mutex
 	texts []string
 }
+
+// fastTiming shortens the session timers of panes in tests that wait for
+// a foreground-process poll. Idle and the others keep their defaults.
+var fastTiming = session.Timing{Poll: 20 * time.Millisecond}
 
 // clipboardHas reports whether bunk tried to copy text to the desktop
 // clipboard during the test run.

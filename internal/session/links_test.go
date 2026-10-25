@@ -16,6 +16,7 @@ import (
 // there are link IDs keeps new links clickable. Before link IDs were
 // reclaimed, the table was full after 65,535 URLs and link 65,536 had none.
 func TestLinkPastIDLimitClickable(t *testing.T) {
+	t.Parallel()
 	s := newTestSession(40, 5)
 	s.Lock()
 	defer s.Unlock()
@@ -134,6 +135,7 @@ func TestSessionLinkSweep(t *testing.T) {
 // scrollback and the screen and rewraps them; sweeps between resizes keep
 // every link, and the new links that reuse freed IDs name their own URLs.
 func TestLinksSurviveReflowAndSweeps(t *testing.T) {
+	t.Parallel()
 	s := newTestSession(60, 8)
 	s.ScrollbackLines, s.Scrollback = 50, Ring{MaxLines: 50}
 	s.Lock()

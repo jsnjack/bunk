@@ -78,6 +78,7 @@ internal/session/   One terminal session, shared by front ends
                     (OSC 9/99/777, BEL), failures (OSC 133;D), git branch,
                     explicit agent reports (Notify)
   winsize.go        PTY window size in cells and virtual pixels
+  timing.go         Timing: per-session timer intervals (Options.Timing)
   ptyfd.go          Setsize: window-size ioctl that holds the PTY descriptor
   ptyfd_linux.go    Pollable PTY master, so Close ends ReadLoop
   writer.go         PTY writer: one queue for query replies and input,
@@ -479,6 +480,12 @@ its default.
   `Hooks.StatusChanged` only wakes the render loop. Focus or typing calls
   `Acknowledge`; `next_needs_you` (Alt+A) jumps. bunk serves the notify
   socket like bunk-gui, and `bunk notify` runs the same CLI.
+- **Session timers are set per session.** `Options.Timing` holds the
+  foreground poll (`ProcessPoll`, 1 s), idle (`IdleAfter`, 2 s), hang-up
+  grace (`HangupGrace`, 1 s), recently-left (2 s) and sync-release
+  (`SyncUpdateTimeout`, 1 s) intervals. A zero field takes the default;
+  both front ends leave it zero. Tests shorten it per session, never
+  through package variables, so parallel tests cannot race on it.
 - **Nested sessions are refused.** `BUNK=1` is exported into every pane's
   environment; the binary exits at startup if it sees it set.
 - **Closing a session ends it, whatever its child does.** `Session.Close`
@@ -544,6 +551,21 @@ app := &App{
     hostOut: &buf, // what render sends to the host; nil means os.Stdout
 }
 ```
+
+**Short timers:** session tests pass `fastTiming` (`helpers_test.go`) in
+`Options.Timing`; bunk's tests set `App.timing` or `paneSpec.timing`.
+- **Defaults stay covered.** A timer test loops over `timings(fast)`. That
+  gives a `short` subtest, plus a `default` one unless `-short`, run in
+  parallel. `TestStatusTiming` checks Idle and RecentlyLeft against their
+  defaults without waiting.
+- **Wait for a state, not a time.** Poll `Status()`, a hook or the PTY
+  until the state arrives, with a deadline of seconds.
+- **Parallel tests:** independent slow tests call `t.Parallel()`. They
+  start after every serial test of the package ends.
+- **Keep these serial:** tests that count process-wide descriptors,
+  goroutines, children or heap (`leakcheck`, `runtime.GC`), use
+  `testing.AllocsPerRun`, bound a latency, swap a package variable, or
+  call `t.Setenv`.
 
 **Clipboard:** `TestMain` (`main_test.go`) replaces `writeNativeClipboard`,
 so no test writes the desktop clipboard. `clipboardHas(text)` reports what

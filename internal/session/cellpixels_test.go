@@ -68,6 +68,7 @@ func TestWinsizeHelper(t *testing.T) {
 // size, the new size after SetCellPixels, and virtual pixels (8 wide,
 // height from CellAspect) when no cell size is given, as bunk's TUI does.
 func TestCellPixelsWinsize(t *testing.T) {
+	t.Parallel()
 	start := func(o Options) *Session {
 		t.Helper()
 		o.Cols, o.Rows, o.Scrollback = 40, 5, 100

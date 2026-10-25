@@ -196,6 +196,7 @@ func processCPUTime() time.Duration {
 // cells it claims to: soft wraps, wide characters, links, underline colours
 // and image samples.
 func TestReflowFixtureContent(t *testing.T) {
+	t.Parallel()
 	for _, kind := range reflowKinds {
 		t.Run(kind, func(t *testing.T) {
 			s := newReflowSession(kind, 200, 10, 300)

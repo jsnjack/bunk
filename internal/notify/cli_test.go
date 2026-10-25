@@ -250,6 +250,7 @@ func codexNotifyArgv(t *testing.T, snippet string) []string {
 // "bunk notify" with the recipe's arguments, or "bunk-gui notify" when bunk
 // is not on PATH. The Codex notify program passes Codex's JSON payload on.
 func TestHookSnippets(t *testing.T) {
+	t.Parallel()
 	both, guiOnly := t.TempDir(), t.TempDir()
 	out := filepath.Join(t.TempDir(), "calls")
 	fake := "#!/bin/sh\nprintf '%s %s\\n' \"${0##*/}\" \"$*\" >> \"$OUT\"\n"
@@ -333,6 +334,7 @@ func TestHookSnippets(t *testing.T) {
 
 // TestHookDocs: docs/agent-hooks.md shows exactly what "notify hooks" prints.
 func TestHookDocs(t *testing.T) {
+	t.Parallel()
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "agent-hooks.md"))
 	if err != nil {
 		t.Fatal(err)

@@ -569,8 +569,21 @@ func TestKittyStack_StaleAfterExit(t *testing.T) {
 	}
 }
 
+// TestRegressionSyncTimeout: a synchronized update the application never
+// ends is released after Timing.SyncRelease, with a redraw.
 func TestRegressionSyncTimeout(t *testing.T) {
+	t.Parallel()
+	for _, tc := range timings(fastTiming) {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testSyncTimeout(t, tc.timing)
+		})
+	}
+}
+
+func testSyncTimeout(t *testing.T, tm Timing) {
 	p := newTestSession(10, 3)
+	p.timing = tm
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -593,17 +606,25 @@ func TestRegressionSyncTimeout(t *testing.T) {
 		}
 		<-readDone
 	}()
+	written := time.Now()
 	if _, err := w.Write([]byte("\x1b[?2026hheld")); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case <-redraw:
+		took := time.Since(written)
+		if took < tm.syncRelease() {
+			t.Errorf("released after %v, before Timing.SyncRelease (%v)", took, tm.syncRelease())
+		}
+		if tm.SyncRelease > 0 && took >= SyncUpdateTimeout {
+			t.Errorf("released after %v: Timing.SyncRelease (%v) was not used", took, tm.SyncRelease)
+		}
 		p.Lock()
 		defer p.Unlock()
 		if p.Term.Mode()&vt10x.ModeSync != 0 || !p.syncDeadline.IsZero() {
 			t.Fatal("sync timeout did not release rendering")
 		}
-	case <-time.After(3 * SyncUpdateTimeout):
+	case <-time.After(max(3*tm.syncRelease(), 3*time.Second)):
 		t.Fatal("missing redraw after abandoned synchronized update")
 	}
 }

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -185,11 +187,31 @@ func screenText(scr tcell.SimulationScreen, x0, x1 int) string {
 // the paste comes before it, not inside the bracketed text. A paste whose
 // end marker never comes is sent after pasteTimeout.
 func TestTUIHostPasteIsOneEvent(t *testing.T) {
+	t.Parallel()
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { pr.Close(); pw.Close() }) //nolint:errcheck // test pipe cleanup
+	var mu sync.Mutex
+	var got []byte
+	read := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := pr.Read(buf)
+			mu.Lock()
+			got = append(got, buf[:n]...)
+			mu.Unlock()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					err = nil
+				}
+				read <- err
+				return
+			}
+		}
+	}()
 	p := regressionPane(20, 3)
 	p.PTY = pw
 	p.CaptureAndWrite([]byte("\x1b[?2004h"))
@@ -204,18 +226,32 @@ func TestTUIHostPasteIsOneEvent(t *testing.T) {
 
 	// No end marker: the paste goes out after pasteTimeout, then keys
 	// go one by one again.
+	began := time.Now()
 	app.handlePaste(tcell.NewEventPaste(true))
 	app.handleKey(runeEv('d', 0))
-	time.Sleep(pasteTimeout + 200*time.Millisecond)
+	sent := "\x1b[0n" + "\x1b[200~abc\x1b[201~" + "\x1b[200~d\x1b[201~"
+	for {
+		mu.Lock()
+		sofar := string(got)
+		mu.Unlock()
+		if len(sofar) >= len(sent) {
+			break
+		}
+		if time.Since(began) > pasteTimeout+10*time.Second {
+			t.Fatalf("the open paste was not sent; the pane got %q", sofar)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if waited := time.Since(began); waited < pasteTimeout {
+		t.Errorf("the open paste was sent after %v, before pasteTimeout", waited)
+	}
 	app.handleKey(runeEv('e', 0))
 
 	closeWriter(t, p.Session, pw)
-	got, err := io.ReadAll(pr)
-	if err != nil {
+	if err := <-read; err != nil {
 		t.Fatal(err)
 	}
-	want := "\x1b[0n" + "\x1b[200~abc\x1b[201~" + "\x1b[200~d\x1b[201~" + "e"
-	if string(got) != want {
+	if want := sent + "e"; string(got) != want {
 		t.Errorf("the pane got %q, want %q", got, want)
 	}
 }

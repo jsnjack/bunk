@@ -63,19 +63,20 @@ const holdPTY = `trap '' HUP; sleep 120 & echo ready; exit 0`
 
 // leakRun is one session of a leak batch.
 type leakRun struct {
-	kind   leakKind
-	s      *Session
-	out    atomic.Int64
-	ready  atomic.Bool
-	head   []byte        // the first output, for ready; reader goroutine only
-	output chan struct{} // signalled after each chunk
-	exited chan struct{}
-	closed chan struct{}
+	kind    leakKind
+	s       *Session
+	out     atomic.Int64
+	ready   atomic.Bool
+	head    []byte        // the first output, for ready; reader goroutine only
+	output  chan struct{} // signalled after each chunk
+	exited  chan struct{}
+	closed  chan struct{}
+	closing time.Time // when finish called Close
 }
 
-func startLeakRun(t *testing.T, id int, k leakKind, done <-chan struct{}) *leakRun {
+func startLeakRun(t *testing.T, id int, k leakKind, tm Timing, done <-chan struct{}) *leakRun {
 	t.Helper()
-	s, err := Start(Options{ID: id, Cols: 80, Rows: 24, Scrollback: 200, Args: k.args})
+	s, err := Start(Options{ID: id, Cols: 80, Rows: 24, Scrollback: 200, Args: k.args, Timing: tm})
 	if err != nil {
 		t.Fatalf("%s: %v", k.name, err)
 	}
@@ -125,6 +126,7 @@ func (r *leakRun) finish(t *testing.T) {
 		if r.kind.blocksWriter {
 			r.blockWriter(t, deadline)
 		}
+		r.closing = time.Now()
 		r.s.Close()
 	}
 	if r.kind.closeOnExit {
@@ -133,6 +135,7 @@ func (r *leakRun) finish(t *testing.T) {
 		case <-deadline:
 			t.Errorf("%s: child never exited", r.kind.name)
 		}
+		r.closing = time.Now()
 		r.s.Close()
 	}
 	for _, step := range []struct {
@@ -195,15 +198,15 @@ func waitGroupGone(t *testing.T, what string, pgid int) {
 }
 
 // runLeakBatch starts n sessions, cycling through leakKinds, and ends them
-// all.
+// all. Each session's ending starts as soon as it runs, so busy ones stop
+// at their limit instead of loading the machine while later ones start.
+// The sessions use fastTiming: a child that ignores SIGHUP is killed after
+// its HangupGrace.
 func runLeakBatch(t *testing.T, first, n int, done <-chan struct{}) {
 	t.Helper()
-	runs := make([]*leakRun, n)
-	for i := range runs {
-		runs[i] = startLeakRun(t, first+i, leakKinds[(first+i)%len(leakKinds)], done)
-	}
 	var wg sync.WaitGroup
-	for _, r := range runs {
+	for i := range n {
+		r := startLeakRun(t, first+i, leakKinds[(first+i)%len(leakKinds)], fastTiming, done)
 		wg.Go(func() { r.finish(t) })
 	}
 	wg.Wait()
@@ -211,7 +214,7 @@ func runLeakBatch(t *testing.T, first, n int, done <-chan struct{}) {
 
 // leakLimits: what a batch may leave behind once it settled. A session's
 // goroutines end when its child exits and its PTY closes; a child that
-// ignores SIGHUP exits HangupGrace after Close.
+// ignores SIGHUP exits Timing.HangupGrace after Close, at most HangupGrace.
 var leakLimits = leakcheck.Limits{FDs: 2, Goroutines: 2, Heap: 4 << 20, Settle: 4*time.Second + HangupGrace}
 
 // TestSessionLeaks starts and ends 300 sessions (2000 with SOAK=1) in
@@ -263,8 +266,9 @@ func TestSessionLeaks(t *testing.T) {
 
 // TestCloseKillsChildIgnoringSIGHUP: a child that handles SIGHUP exits from
 // it; one that ignores it is killed with its process group after
-// HangupGrace, so neither keeps its process or goroutines.
+// Timing.HangupGrace, so neither keeps its process or goroutines.
 func TestCloseKillsChildIgnoringSIGHUP(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		script string
@@ -273,29 +277,39 @@ func TestCloseKillsChildIgnoringSIGHUP(t *testing.T) {
 		{"handles SIGHUP", `echo ready; while :; do sleep 1; done`, syscall.SIGHUP},
 		{"ignores SIGHUP", `trap '' HUP; echo ready; while :; do sleep 1; done`, syscall.SIGKILL},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			done := make(chan struct{})
-			defer close(done)
-			k := leakKind{name: tt.name, args: shArgs(tt.script), closeAfter: 1, ready: "ready", killsGroup: true}
-			r := startLeakRun(t, 1, k, done)
-			began := time.Now()
-			r.finish(t)
-			if t.Failed() {
-				return
-			}
-			ws, ok := r.s.Cmd.ProcessState.Sys().(syscall.WaitStatus)
-			if !ok || !ws.Signaled() || ws.Signal() != tt.signal {
-				t.Fatalf("child ended with %v, want signal %v", r.s.Cmd.ProcessState, tt.signal)
-			}
-			took := time.Since(began)
-			if tt.signal == syscall.SIGHUP && took >= HangupGrace {
-				t.Errorf("a child that handles SIGHUP took %v to end", took)
-			}
-			if tt.signal == syscall.SIGKILL && took < HangupGrace {
-				t.Errorf("killed after %v, before HangupGrace", took)
-			}
-		})
+	// A child that handles SIGHUP must end within the grace on a loaded
+	// machine too.
+	fast := fastTiming
+	fast.HangupGrace = 500 * time.Millisecond
+	for _, tc := range timings(fast) {
+		grace := tc.timing.hangupGrace()
+		for _, tt := range tests {
+			t.Run(tc.name+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
+				done := make(chan struct{})
+				defer close(done)
+				k := leakKind{name: tt.name, args: shArgs(tt.script), closeAfter: 1, ready: "ready", killsGroup: true}
+				r := startLeakRun(t, 1, k, tc.timing, done)
+				r.finish(t)
+				if t.Failed() {
+					return
+				}
+				ws, ok := r.s.Cmd.ProcessState.Sys().(syscall.WaitStatus)
+				if !ok || !ws.Signaled() || ws.Signal() != tt.signal {
+					t.Fatalf("child ended with %v, want signal %v", r.s.Cmd.ProcessState, tt.signal)
+				}
+				took := time.Since(r.closing)
+				if tt.signal == syscall.SIGHUP && took >= grace {
+					t.Errorf("a child that handles SIGHUP took %v to end", took)
+				}
+				if tt.signal == syscall.SIGKILL && took < grace {
+					t.Errorf("killed %v after Close, before the grace of %v", took, grace)
+				}
+				if tt.signal == syscall.SIGKILL && tc.timing.HangupGrace > 0 && took >= HangupGrace {
+					t.Errorf("killed %v after Close: Timing.HangupGrace (%v) was not used", took, tc.timing.HangupGrace)
+				}
+			})
+		}
 	}
 }
 
@@ -311,7 +325,7 @@ func TestCloseReleasesHeldPTY(t *testing.T) {
 	done := make(chan struct{})
 	defer close(done)
 	before := leakcheck.FDs()
-	r := startLeakRun(t, 1, leakKind{name: "holds the pty", args: shArgs(holdPTY)}, done)
+	r := startLeakRun(t, 1, leakKind{name: "holds the pty", args: shArgs(holdPTY)}, fastTiming, done)
 	defer func() {
 		if err := syscall.Kill(-r.s.Cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 			t.Errorf("kill the process holding the PTY: %v", err)
@@ -347,10 +361,11 @@ func TestCloseReleasesHeldPTY(t *testing.T) {
 // hold the descriptor (the race detector checks it), or it could reach
 // another file that reused the number.
 func TestResizeWhileOutputCloses(t *testing.T) {
+	t.Parallel()
 	done := make(chan struct{})
 	defer close(done)
 	for i := range 20 {
-		r := startLeakRun(t, i, leakKind{name: "exits", args: shArgs(`printf 'bye\n'`)}, done)
+		r := startLeakRun(t, i, leakKind{name: "exits", args: shArgs(`printf 'bye\n'`)}, fastTiming, done)
 		resized := make(chan struct{})
 		go func() {
 			defer close(resized)

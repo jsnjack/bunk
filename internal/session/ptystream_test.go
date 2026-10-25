@@ -8,6 +8,7 @@ import (
 )
 
 func TestPTYStreamBoundedRecovery(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, start, end string }{
 		{"OSC BEL", "\x1b]0;", "\x07"},
 		{"OSC ST", "\x1b]0;", "\x1b\\"},
@@ -61,6 +62,7 @@ func TestPTYStreamCancellation(t *testing.T) {
 }
 
 func TestGraphicsFramingBounds(t *testing.T) {
+	t.Parallel()
 	for _, prefix := range []string{"\x1b_G", "\x1b]1337;File=inline=1:", "\x1bPq"} {
 		var stream ptyStream
 		sequence := []byte(prefix + strings.Repeat("A", oscMaxBuf+1) + "\x1b\\")

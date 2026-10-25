@@ -134,6 +134,7 @@ func sendRaw(t *testing.T, path string, data []byte) {
 }
 
 func TestEncodeDecode(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		m    Message
@@ -168,6 +169,7 @@ func TestEncodeDecode(t *testing.T) {
 }
 
 func TestEncodeRejects(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		m    Message
@@ -192,6 +194,7 @@ func TestEncodeRejects(t *testing.T) {
 }
 
 func TestDecodeRejects(t *testing.T) {
+	t.Parallel()
 	pad := func(n int) string {
 		head := `{"v":1,"session":"tok","event":"idle"`
 		return head + strings.Repeat(" ", n-len(head)-1) + "}"
@@ -230,6 +233,7 @@ func TestDecodeRejects(t *testing.T) {
 }
 
 func TestCleanText(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("é", MaxText) // 2 bytes each
 	for _, tc := range []struct {
 		name, in, want string
@@ -253,6 +257,7 @@ func TestCleanText(t *testing.T) {
 }
 
 func TestNewToken(t *testing.T) {
+	t.Parallel()
 	seen := map[string]bool{}
 	hex := regexp.MustCompile(`^[0-9a-f]{32}$`)
 	for range 100 {
@@ -271,6 +276,7 @@ func TestNewToken(t *testing.T) {
 // match these patterns from its hooks' environment
 // (packages/core/src/services/environmentSanitization.ts).
 func TestEnvNamesSurviveRedaction(t *testing.T) {
+	t.Parallel()
 	redacted := regexp.MustCompile(`(?i)TOKEN|SECRET|PASSWORD|PASSWD|KEY|AUTH|CREDENTIAL|CREDS|PRIVATE|CERT`)
 	for _, name := range []string{EnvSocket, EnvSession} {
 		if redacted.MatchString(name) {

@@ -214,6 +214,7 @@ sleep 30
 	const w, h = 100, 20
 	app, scr := newStatusApp(t, w, h)
 	app.notify = srv
+	app.timing = fastTiming // the first poll detects claude
 	// claude on top (0,0,100,10), a shell below (0,11,100,9); separator row 10.
 	claude := spawn(t, app, 0, 0, w, h/2, claudePath)
 	shell := spawn(t, app, 0, h/2+1, w, h-h/2-1, "/bin/sh", "-c", "sleep 30")

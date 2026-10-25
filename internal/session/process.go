@@ -1,8 +1,8 @@
 // process.go - foreground process tracking and container/context detection.
 //
 // Each session polls the foreground process group of its PTY every second
-// by reading /proc/<shellPid>/stat (field tpgid = terminal foreground PGID),
-// then reading /proc/<tpgid>/comm for the process name.
+// (Timing.Poll) by reading /proc/<shellPid>/stat (field tpgid = terminal
+// foreground PGID), then reading /proc/<tpgid>/comm for the process name.
 //
 // Container context is detected at session start by reading the shell
 // process's /proc/<pid>/environ.  Toolbox, Distrobox, Podman, and LXD each
@@ -621,15 +621,15 @@ func firstPositionalCLIArg(args []string) string {
 }
 
 // trackFgProcess polls the foreground process group of this pane's PTY once
-// per second.  When the process name or container context changes it updates
-// the Session fields and signals the render loop to repaint.
-// Stops when done is closed or the child exits.
+// per Timing.Poll (a second by default).  When the process name or container
+// context changes it updates the Session fields and signals the render loop
+// to repaint. Stops when done is closed or the child exits.
 func (s *Session) trackFgProcess(h Hooks, done <-chan struct{}) {
 	if s.Cmd.Process == nil {
 		return
 	}
 	shellPid := s.Cmd.Process.Pid
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(s.timing.poll())
 	defer ticker.Stop()
 
 	var lastName, lastCT, lastCN, lastSSHHost string

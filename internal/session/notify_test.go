@@ -1,6 +1,8 @@
 package session
 
 import (
+	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -304,7 +306,8 @@ func runEnv(t *testing.T, o Options) []string {
 // TestNotifyThroughRun: Run hands Hooks.StatusChanged to Notify, and the
 // first process poll keeps a report from the child's foreground group.
 func TestNotifyThroughRun(t *testing.T) {
-	s, err := Start(Options{Cols: 40, Rows: 5, Scrollback: 100, Args: []string{"/bin/sh", "-c", "sleep 30"}})
+	t.Parallel()
+	s, err := Start(Options{Cols: 40, Rows: 5, Scrollback: 100, Args: []string{"/bin/sh", "-c", "sleep 30"}, Timing: fastTiming})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,9 +324,13 @@ func TestNotifyThroughRun(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("StatusChanged did not run")
 	}
-	// trackFgProcess polls every second; its first poll sees the child's
-	// group for the first time.
-	time.Sleep(1500 * time.Millisecond)
+	// The first poll of trackFgProcess sees the child's group for the first
+	// time and names its foreground process.
+	for deadline := time.Now().Add(10 * time.Second); s.Status().Process == ""; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no process poll: %+v", s.Status())
+		}
+	}
 	if st := s.Status(); st.State != AgentNeedsYou || st.Notice != "Approve Bash?" || !st.Reported {
 		t.Fatalf("after the first poll: %+v", st)
 	}
@@ -331,13 +338,29 @@ func TestNotifyThroughRun(t *testing.T) {
 
 // TestIdleAfterSilentAgent: an agent that printed only before bunk
 // recognised it still gets exactly one StatusChanged for idle, from the
-// process tracker, within IdleAfter plus one tick of its detection.
+// process tracker, within Timing.Idle plus one poll of its detection.
 // ReadLoop's idle timer never runs here: no output arrives after detection.
 func TestIdleAfterSilentAgent(t *testing.T) {
+	t.Parallel()
+	// ReadLoop reads the agent's output before the first poll detects the
+	// agent, and the agent still counts as working then, on a loaded
+	// machine too.
+	fast := fastTiming
+	fast.Poll, fast.Idle = 100*time.Millisecond, time.Second
+	for _, tc := range timings(fast) {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testIdleAfterSilentAgent(t, tc.timing)
+		})
+	}
+}
+
+func testIdleAfterSilentAgent(t *testing.T, tm Timing) {
 	s, err := Start(Options{
 		Cols: 40, Rows: 5, Scrollback: 100,
 		Args:   []string{"/bin/sh", "-c", "printf ready; exec sleep 30"},
 		Agents: []AgentSpec{{Name: "silent", Processes: []string{"sleep"}}},
+		Timing: tm,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -352,6 +375,18 @@ func TestIdleAfterSilentAgent(t *testing.T) {
 		close(done)
 		s.Close()
 	}()
+	// The process is the agent, and its output waits in the PTY, before
+	// the session runs: a poll that saw the shell would never look again,
+	// since exec keeps the process group.
+	comm := fmt.Sprintf("/proc/%d/comm", s.Cmd.Process.Pid)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
+		if b, _ := os.ReadFile(comm); strings.TrimSpace(string(b)) == "sleep" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the child never ran sleep")
+		}
+	}
 	s.Run(Hooks{StatusChanged: func() { calls <- call{time.Now(), s.Status()} }}, done)
 
 	var detected time.Time
@@ -366,6 +401,10 @@ func TestIdleAfterSilentAgent(t *testing.T) {
 			}
 			if detected.IsZero() {
 				detected = c.at
+				if c.st.State != AgentWorking {
+					t.Fatalf("detected as %v, want working: detection came before the agent's output or %v after it",
+						c.st.State, tm.idle())
+				}
 			}
 			if len(seen) > 0 && seen[len(seen)-1] == c.st.State {
 				t.Fatalf("state %v announced twice in a row: %v", c.st.State, seen)
@@ -373,16 +412,16 @@ func TestIdleAfterSilentAgent(t *testing.T) {
 			seen = append(seen, c.st.State)
 			if c.st.State == AgentIdle {
 				idle++
-				if late := c.at.Sub(detected); late > IdleAfter+time.Second+500*time.Millisecond {
-					t.Fatalf("idle reported %v after detection, want at most IdleAfter + 1 tick", late)
+				if late := c.at.Sub(detected); late > tm.idle()+tm.poll()+500*time.Millisecond {
+					t.Fatalf("idle reported %v after detection, want at most Timing.Idle + 1 poll", late)
 				}
 			}
 		case <-timeout:
 			t.Fatalf("no idle StatusChanged; states announced: %v, status now %+v", seen, s.Status())
 		}
 	}
-	// One more tick: nothing else changes, so nothing else is announced.
-	quiet := time.After(1500 * time.Millisecond)
+	// More polls: nothing else changes, so nothing else is announced.
+	quiet := time.After(max(tm.poll()*3/2, 300*time.Millisecond))
 	for {
 		select {
 		case c := <-calls:

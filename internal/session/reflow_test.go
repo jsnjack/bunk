@@ -260,6 +260,7 @@ func widths(rows int, cols ...int) [][2]int {
 // TestReflowMatchesOracleContent reflows the benchmark's content through
 // narrowing, widening, single-column drags and height changes.
 func TestReflowMatchesOracleContent(t *testing.T) {
+	t.Parallel()
 	sequences := map[string][][2]int{
 		"narrow-widen": widths(12, 120, 200),
 		"narrow":       widths(12, 80),
@@ -288,6 +289,7 @@ func TestReflowMatchesOracleContent(t *testing.T) {
 // TestReflowMatchesOracleCases covers cursor, anchor, limit and storage
 // cases one at a time.
 func TestReflowMatchesOracleCases(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("0123456789", 9)
 	cases := []struct {
 		name             string
@@ -342,6 +344,7 @@ func TestReflowMatchesOracleCases(t *testing.T) {
 // TestReflowMatchesOracleStoredRows reflows scrollback rows vt10x does not
 // write itself, which reflow must still treat as before.
 func TestReflowMatchesOracleStoredRows(t *testing.T) {
+	t.Parallel()
 	g := func(ch rune, width int8, mode int16) vt10x.Glyph {
 		return vt10x.Glyph{Char: ch, Width: width, Mode: mode, FG: vt10x.DefaultFG, BG: vt10x.DefaultBG, UL: vt10x.DefaultUL}
 	}
@@ -499,20 +502,33 @@ func FuzzReflowEquivalence(f *testing.F) {
 }
 
 // TestReflowMatchesOracleRandom runs the fuzz target's generator on fixed
-// pseudo-random inputs, so every test run explores beyond the seeds.
+// pseudo-random inputs, so every test run explores beyond the seeds. The
+// inputs come from one generator; parallel subtests run them in slices.
 func TestReflowMatchesOracleRandom(t *testing.T) {
+	t.Parallel()
 	rng := rand.New(rand.NewPCG(1, 2))
 	n := 400
 	if testing.Short() {
 		n = 50
 	}
-	for i := 0; i < n; i++ {
+	inputs := make([][]byte, n)
+	for i := range inputs {
 		data := make([]byte, 3+rng.IntN(300))
 		for j := range data {
 			data[j] = byte(rng.Uint32())
 		}
-		tw := newReflowTwins(int(data[0]%44)+1, int(data[1]%14)+1, int(data[2]%60))
-		reflowOps(tw, data[3:], func(d string) { t.Fatalf("input %d %x: %s", i, data, d) })
+		inputs[i] = data
+	}
+	const parts = 8
+	for k := range parts {
+		t.Run(fmt.Sprint(k), func(t *testing.T) {
+			t.Parallel()
+			for i := k; i < n; i += parts {
+				data := inputs[i]
+				tw := newReflowTwins(int(data[0]%44)+1, int(data[1]%14)+1, int(data[2]%60))
+				reflowOps(tw, data[3:], func(d string) { t.Fatalf("input %d %x: %s", i, data, d) })
+			}
+		})
 	}
 }
 
@@ -548,6 +564,7 @@ func logicalLines(s *Session) [][]vt10x.Glyph {
 // scrollback has room for all rows. The first round trip may normalise
 // cells (dropping trailing blanks), so comparisons start after it.
 func TestReflowRoundTripRestoresLogicalLines(t *testing.T) {
+	t.Parallel()
 	rng := rand.New(rand.NewPCG(3, 4))
 	for _, kind := range append(append([]string(nil), reflowKinds...), "random") {
 		// Generated before the parallel subtest starts: rng is shared.
@@ -693,6 +710,7 @@ func gradientImage(cols, rows int) string {
 // screen through narrow and wide widths: every cell still draws its own
 // part of its placement's bitmap, and the bitmaps stay stored.
 func TestReflowKeepsImageReferences(t *testing.T) {
+	t.Parallel()
 	tw := newReflowTwins(30, 8, 2000) // room for every row at width 1
 	var buf bytes.Buffer
 	for i := 0; i < 6; i++ {

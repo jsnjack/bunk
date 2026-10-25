@@ -14,8 +14,10 @@ import (
 )
 
 func TestResizeRedrawUsesNotifiedSize(t *testing.T) {
+	t.Parallel()
 	for _, alternate := range []bool{false, true} {
 		t.Run(fmt.Sprintf("alternate=%t", alternate), func(t *testing.T) {
+			t.Parallel()
 			master, slave, err := pty.Open()
 			if err != nil {
 				t.Fatal(err)

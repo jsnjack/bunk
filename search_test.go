@@ -231,6 +231,7 @@ func TestUpdateSearch_EmptyQueryClearsHL(t *testing.T) {
 // TestUpdateSearch_RaceCondition exercises the async path under concurrent
 // access (the race detector will catch data races if any exist).
 func TestUpdateSearch_RaceCondition(t *testing.T) {
+	t.Parallel()
 	const cols, rows = 40, 10
 	content := "the quick brown fox jumps over the lazy dog\r\n"
 	var sb strings.Builder

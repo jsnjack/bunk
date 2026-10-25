@@ -82,15 +82,23 @@ func TestRegressionWideCharacterWrap(t *testing.T) {
 	}
 }
 
+// TestRegressionKittySurvivesFirstPoll: the first foreground-process poll
+// keeps the kitty keyboard flags of the child that negotiated them and
+// still runs.
 func TestRegressionKittySurvivesFirstPoll(t *testing.T) {
+	t.Parallel()
 	done := make(chan struct{})
-	p, err := NewPane(0, 0, 0, 40, 3, 100, "", []string{"/bin/sh", "-c", "printf '\033[>1u'; sleep 5"}, hostOSCColors{}, make(chan struct{}, 1), make(chan *Pane, 1), done, newOSCBuffer())
+	p, err := startPane(paneSpec{
+		w: 40, h: 3, scrollback: 100, args: []string{"/bin/sh", "-c", "printf '\033[>1u'; sleep 5"},
+		redraw: make(chan struct{}, 1), paneDead: make(chan *Pane, 1), done: done, oscBuf: newOSCBuffer(),
+		timing: fastTiming,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer close(done)
 	defer p.Close()
-	deadline := time.Now().Add(500 * time.Millisecond)
+	deadline := time.Now().Add(10 * time.Second)
 	negotiated := false
 	for time.Now().Before(deadline) {
 		p.Lock()
@@ -104,7 +112,14 @@ func TestRegressionKittySurvivesFirstPoll(t *testing.T) {
 	if !negotiated {
 		t.Fatal("child failed to negotiate kitty mode")
 	}
-	time.Sleep(1200 * time.Millisecond)
+	// Polls run every fastTiming.Poll and the first names the foreground
+	// process. Ten more come after the negotiation.
+	time.Sleep(10 * fastTiming.Poll)
+	for deadline := time.Now().Add(10 * time.Second); p.Status().Process == ""; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no foreground-process poll")
+		}
+	}
 	p.Lock()
 	defer p.Unlock()
 	if len(p.KittyStack) == 0 {
@@ -113,6 +128,7 @@ func TestRegressionKittySurvivesFirstPoll(t *testing.T) {
 }
 
 func TestRegressionRepeatedTransientClear(t *testing.T) {
+	t.Parallel()
 	p := regressionPane(10, 3)
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -120,7 +136,8 @@ func TestRegressionRepeatedTransientClear(t *testing.T) {
 	}
 	p.PTY = r
 	readDone := make(chan struct{})
-	go func() { p.ReadLoop(p.hooks(make(chan struct{}, 1), nil, nil, newOSCBuffer())); close(readDone) }()
+	redraw := make(chan struct{}, 1)
+	go func() { p.ReadLoop(p.hooks(redraw, nil, nil, newOSCBuffer())); close(readDone) }()
 	defer func() {
 		if err := w.Close(); err != nil {
 			t.Error(err)
@@ -131,7 +148,12 @@ func TestRegressionRepeatedTransientClear(t *testing.T) {
 		if _, err := w.Write([]byte("\r   \r")); err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(100 * time.Millisecond)
+		// A clear-only chunk asks for a repaint when its timer expired.
+		select {
+		case <-redraw:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("clear %d: no repaint after its timer", n+1)
+		}
 		p.Lock()
 		held := p.transientLineClear
 		p.Unlock()

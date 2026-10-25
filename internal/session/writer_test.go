@@ -494,6 +494,7 @@ func FuzzPTYWriterOrder(f *testing.F) {
 // the session locked and a front end queuing input at the same time; each
 // event arrives whole, and each side's events in the order it queued them.
 func TestPTYWriterConcurrentOrder(t *testing.T) {
+	t.Parallel()
 	pw, received := slowPipe(t, 3)
 	s := newTestSession(10, 2)
 	s.PTY = pw

@@ -126,6 +126,9 @@ type paneSpec struct {
 	// inputBytes caps the input queued for a child that does not read it
 	// (session.Options.InputBytes); zero is the session's default.
 	inputBytes int
+	// timing sets the session's timer intervals (session.Options.Timing);
+	// zero fields are the session's defaults.
+	timing session.Timing
 }
 
 // startPane starts the pane sp describes.
@@ -142,6 +145,7 @@ func startPane(sp paneSpec) (*Pane, error) {
 		ThemeFG: sp.colors.fg, ThemeBG: sp.colors.bg, ThemeCursor: sp.colors.cursor,
 		CellAspect: sp.cellAspect,
 		InputBytes: sp.inputBytes,
+		Timing:     sp.timing,
 	}
 	token := ""
 	if sp.notify != nil {

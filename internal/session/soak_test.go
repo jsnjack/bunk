@@ -199,12 +199,16 @@ func TestOutputSoak(t *testing.T) {
 	defer close(done)
 	base := leakcheck.Take()
 
+	// The first poll recognises the child as an agent; idle and the other
+	// timers keep their defaults.
+	tm := Timing{Poll: 200 * time.Millisecond}
 	s, err := Start(Options{
 		Cols: 100, Rows: 30, Scrollback: soakScrollback,
 		Args: []string{exe},
 		// A -race binary sleeps a second before exiting unless told not to.
 		Env:    []string{soakHelperEnv + "=" + strconv.FormatInt(total, 10), "GORACE=" + os.Getenv("GORACE") + " atexit_sleep_ms=0"},
 		Agents: []AgentSpec{{Name: "soak", Processes: []string{filepath.Base(exe)}}},
+		Timing: tm,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +334,7 @@ func TestOutputSoak(t *testing.T) {
 	}
 	// Each status event, acknowledgement and process poll may announce one
 	// change; per-chunk announcements would be far more.
-	if limit := want.events + 2*int64(len(samples)) + 2*int64(elapsed/time.Second) + 10; statusCalls.Load() > limit {
+	if limit := want.events + 2*int64(len(samples)) + 2*int64(elapsed/tm.poll()) + 10; statusCalls.Load() > limit {
 		t.Errorf("StatusChanged ran %d times for %d status events (limit %d)", statusCalls.Load(), want.events, limit)
 	}
 	t.Logf("%s in %v (%.1f MiB/s): %d lines, %d unique links, %d images, %d OSC forwarded, %d resizes, %d status calls; "+

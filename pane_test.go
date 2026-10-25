@@ -326,6 +326,7 @@ func TestCaptureAndWrite_OSC10UnknownThemeNoResponse(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReadPTYSingleLock_ClaudeCursorRace(t *testing.T) {
+	t.Parallel()
 	term := vt10x.New(vt10x.WithSize(20, 5))
 	p := &Pane{
 		Session: &session.Session{

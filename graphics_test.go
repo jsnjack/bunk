@@ -147,6 +147,7 @@ func TestGraphicsPaneQueries(t *testing.T) {
 }
 
 func TestGraphicsFramingAbortsMultipart(t *testing.T) {
+	t.Parallel()
 	for _, cancellation := range []string{
 		"\x1b_Gm=0;\x18",
 		"\x1b_Gm=0;" + strings.Repeat("A", graphics.MaxSequenceBytes+1) + "\x1b\\",
