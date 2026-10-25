@@ -130,6 +130,10 @@ type Session struct {
 	ThemeFG     string
 	ThemeBG     string
 	ThemeCursor string
+
+	// backspace is the key the front end sends for Backspace; XTGETTCAP
+	// "kbs" reports its encoding.
+	backspace input.Key
 }
 
 // Options describe a new Session.
@@ -144,6 +148,10 @@ type Options struct {
 	// XParseColor form; "" leaves the colour unknown.
 	ThemeFG, ThemeBG, ThemeCursor string
 	CellAspect                    []float64 // cell height/width for virtual pixels
+	// Backspace is the key the front end sends for the Backspace key, so
+	// XTGETTCAP "kbs" matches it: input.KeyBS (BS, the default, as bunk's
+	// tcell front end sends) or input.KeyBackspace (DEL).
+	Backspace input.Key
 }
 
 // Hooks connect a Session to its front end. Every hook is optional.
@@ -162,6 +170,10 @@ type Hooks struct {
 	Redraw func()
 	// Exited runs once after the child process exits.
 	Exited func()
+	// Closed runs once when ReadLoop returns: the PTY is closed and all of
+	// the child's output has been applied. It can come before or after
+	// Exited, and never comes while another process still holds the PTY.
+	Closed func()
 }
 
 // Start spawns the child process on a new PTY and creates its emulator.
@@ -217,6 +229,7 @@ func Start(o Options) (*Session, error) {
 		ThemeFG:         o.ThemeFG,
 		ThemeBG:         o.ThemeBG,
 		ThemeCursor:     o.ThemeCursor,
+		backspace:       o.Backspace,
 	}
 	s.Term = vt10x.New(vt10x.WithSize(o.Cols, o.Rows), vt10x.WithScrollCallback(s.OnScrollRow),
 		vt10x.WithScrollbackClearCallback(s.OnScrollbackClear), vt10x.WithGraphicsReply(s.WriteInput), vt10x.WithCellPixels(cellWidth, cellHeight))
@@ -347,6 +360,9 @@ func (s *Session) ReadLoop(h Hooks) {
 		}
 	}
 	s.closePTX()
+	if h.Closed != nil {
+		h.Closed()
+	}
 }
 
 // SyncUpdateTimeout releases a synchronized update (DEC 2026) that an
@@ -601,7 +617,7 @@ func (s *Session) replyTerminalQuery(q terminalQuery) {
 			flags = s.KittyStack[len(s.KittyStack)-1]
 		}
 		for _, hexCap := range strings.Split(q.payload, ";") {
-			if resp := xtgettcapResponse(hexCap, flags, s.Term.Mode()); resp != "" {
+			if resp := xtgettcapResponseKey(hexCap, flags, s.Term.Mode(), s.backspace); resp != "" {
 				s.PTY.Write([]byte(resp)) //nolint:errcheck
 			}
 		}
@@ -1427,6 +1443,12 @@ const TermName = "xterm-256color"
 // The response is "found" (DCS 1+r...) for capabilities we implement and
 // "not found" (DCS 0+r...) for everything else.
 func xtgettcapResponse(hexCap string, flags int, mode vt10x.ModeFlag) string {
+	return xtgettcapResponseKey(hexCap, flags, mode, input.KeyBS)
+}
+
+// xtgettcapResponseKey is xtgettcapResponse for a front end whose Backspace
+// key sends backspace (input.KeyBS or input.KeyBackspace).
+func xtgettcapResponseKey(hexCap string, flags int, mode vt10x.ModeFlag, backspace input.Key) string {
 	capBytes, err := hex.DecodeString(hexCap)
 	if err != nil || len(capBytes) == 0 {
 		return ""
@@ -1448,7 +1470,7 @@ func xtgettcapResponse(hexCap string, flags int, mode vt10x.ModeFlag) string {
 	name := string(capBytes)
 	val, ok := caps[name]
 	if !ok {
-		if ev, found := capabilityKey(name); found {
+		if ev, found := capabilityKey(name, backspace); found {
 			val = string(input.EncodeKey(ev, InputModes(flags, mode)))
 			ok = val != ""
 		}
@@ -1462,7 +1484,10 @@ func xtgettcapResponse(hexCap string, flags int, mode vt10x.ModeFlag) string {
 
 // capabilityKey maps terminfo/termcap names to the same events used for input.
 // Replies therefore follow the pane's negotiated modes, not the outer terminal.
-func capabilityKey(name string) (input.Event, bool) {
+func capabilityKey(name string, backspace input.Key) (input.Event, bool) {
+	if backspace != input.KeyBackspace {
+		backspace = input.KeyBS
+	}
 	for _, entry := range []struct {
 		info, cap string
 		key       input.Key
@@ -1472,8 +1497,9 @@ func capabilityKey(name string) (input.Event, bool) {
 		{"khome", "kh", input.KeyHome}, {"kend", "@7", input.KeyEnd},
 		{"kich1", "kI", input.KeyInsert}, {"kdch1", "kD", input.KeyDelete},
 		{"kpp", "kP", input.KeyPgUp}, {"knp", "kN", input.KeyPgDn},
-		// bunk's tcell turns Backspace into BS, so kbs reports BS.
-		{"kbs", "kb", input.KeyBS}, {"kcbt", "kB", input.KeyBacktab},
+		// kbs reports what the front end sends for Backspace: BS from
+		// bunk's tcell, DEL from bunk-gui (Options.Backspace).
+		{"kbs", "kb", backspace}, {"kcbt", "kB", input.KeyBacktab},
 	} {
 		if name == entry.info || name == entry.cap {
 			return input.Event{Key: entry.key}, true

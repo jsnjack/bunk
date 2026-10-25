@@ -54,6 +54,24 @@ static int64_t bg_frame_counter(uintptr_t clock) {
 }
 
 static int64_t bg_monotonic(void) { return g_get_monotonic_time(); }
+
+// Feeds one key to an input method context the way GTK's key controller
+// does (gtk_im_context_filter_key), for -do tests: no GdkEvent is needed.
+// Returns -1 when the current layout has no key for keyval.
+static int bg_im_feed(uintptr_t im, uintptr_t widget, guint keyval, guint state, int press) {
+	GtkWidget* w = (GtkWidget*)widget;
+	GdkDisplay* d = gtk_widget_get_display(w);
+	GdkKeymapKey* keys = NULL;
+	int n = 0;
+	if (!gdk_display_map_keyval(d, keyval, &keys, &n) || n == 0) return -1;
+	guint keycode = keys[0].keycode;
+	int group = keys[0].group, level = keys[0].level;
+	g_free(keys);
+	GdkDevice* kbd = gdk_seat_get_keyboard(gdk_display_get_default_seat(d));
+	GdkSurface* surf = gtk_native_get_surface(gtk_widget_get_native(w));
+	if (level == 1) state |= GDK_SHIFT_MASK;
+	return gtk_im_context_filter_key((GtkIMContext*)im, press, surf, kbd, GDK_CURRENT_TIME, keycode, (GdkModifierType)state, group);
+}
 */
 import "C"
 
@@ -77,6 +95,13 @@ func clockTimings(clock uintptr, counter int64, out *frameTimings) int {
 
 func clockCounter(clock uintptr) int64 { return int64(C.bg_frame_counter(C.uintptr_t(clock))) }
 func glibMonotonicUs() int64           { return int64(C.bg_monotonic()) }
+
+// imFeedC feeds a key press and release to an input method context.
+func imFeedC(im, widget uintptr, keyval uint, state uint) (int, int) {
+	down := int(C.bg_im_feed(C.uintptr_t(im), C.uintptr_t(widget), C.guint(keyval), C.guint(state), 1))
+	up := int(C.bg_im_feed(C.uintptr_t(im), C.uintptr_t(widget), C.guint(keyval), C.guint(state), 0))
+	return down, up
+}
 
 func setFontOptionsC(pangoCtx coreglib.Objector, antialias, hintStyle, hintMetrics int) {
 	C.bg_set_font_options(C.uintptr_t(nativePtr(pangoCtx)), C.int(antialias), C.int(hintStyle), C.int(hintMetrics))

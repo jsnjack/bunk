@@ -24,25 +24,27 @@ func writePNG(path string, rgba []byte, w, h int) error {
 	return png.Encode(f, img)
 }
 
-// verify checks that GSK maps the view's texture 1:1 onto device pixels: the
+// verify checks that GSK maps p's texture 1:1 onto device pixels: the
 // window's own renderer composites the last frame and a 1-px checkerboard
 // offscreen at the surface scale, and the result must equal the texture.
 // The real compositor output is not captured.
-func (a *App) verify() {
-	g := viewGeomC()
+func (a *App) verify(p *Pane) {
+	g := viewGeomC(p.view)
 	fmt.Printf("\n## verify: widget %dx%d logical at surface (%.2f, %.2f), scale %.4f -> device rect (%d, %d) %dx%d\n",
 		g.lw, g.lh, g.ox, g.oy, g.scale, g.x0, g.y0, g.dw, g.dh)
-	tex, _, _ := downloadLastC()
-	fmt.Printf("- last frame through GSK: %s\n", diffSummary(tex, proxyLastC()))
-
-	viewMakeCurrentC()
+	tex, w, h := downloadLastC(p.view)
+	fmt.Printf("- last frame through GSK: %s\n", diffSummary(tex, proxyLastC(p.view, w, h)))
+	if p.r == nil {
+		return
+	}
+	viewMakeCurrentC(p.view)
 	var s viewSlot
 	allocSlot(&s, g.dw, g.dh)
 	gl.BindFramebuffer(gl.FRAMEBUFFER, s.fbo)
-	fw, fh := a.r.fbW, a.r.fbH
-	a.r.fbW, a.r.fbH = g.dw, g.dh
-	err := a.r.DrawChecker()
-	a.r.fbW, a.r.fbH = fw, fh
+	fw, fh := p.r.fbW, p.r.fbH
+	p.r.fbW, p.r.fbH = g.dw, g.dh
+	err := p.r.DrawChecker()
+	p.r.fbW, p.r.fbH = fw, fh
 	s.sync = gl.FenceSync()
 	gl.Flush()
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
@@ -50,9 +52,9 @@ func (a *App) verify() {
 		fmt.Printf("- checkerboard: %v\n", err)
 		return
 	}
-	out, texpix := proxyGLC(s.tex, s.sync, g.dw, g.dh)
+	out, texpix := proxyGLC(p.view, s.tex, s.sync, g.dw, g.dh)
 	fmt.Printf("- 1-px checkerboard through GSK: %s; pixels not pure black/white: %d\n", diffSummary(texpix, out), nonBinary(out))
-	viewMakeCurrentC()
+	viewMakeCurrentC(p.view)
 	gl.DeleteSync(s.sync)
 	gl.DeleteFramebuffer(s.fbo)
 	gl.DeleteTexture(s.tex)

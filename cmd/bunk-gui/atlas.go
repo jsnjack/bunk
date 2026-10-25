@@ -39,7 +39,9 @@ type rasterizer interface {
 
 // Atlas is a grayscale glyph atlas with cell-sized slots. A wide glyph takes
 // two neighbouring slots. Glyphs are rasterized on first use and never
-// evicted; the texture grows by doubling its height.
+// evicted; the texture grows by doubling its height. Slots are handed out in
+// order, so a renderer that shares the atlas uploads only the slots past the
+// last one it saw. All panes at one scale share one atlas.
 type Atlas struct {
 	Font         string
 	Scale        float64 // device pixels per logical pixel
@@ -57,9 +59,6 @@ type Atlas struct {
 	ascii [2][128]uint32
 	other map[clusterKey]uint32
 
-	dirtyLo, dirtyHi int  // slot rows to upload; dirtyHi < dirtyLo when clean
-	grown            bool // the texture must be reallocated and fully uploaded
-
 	raster     rasterizer
 	Rasterized int // glyphs drawn so far
 	Replaced   int // glyphs drawn as U+FFFD (colour emoji)
@@ -72,8 +71,6 @@ func newAtlas(cellW, cellH int, r rasterizer) *Atlas {
 	a.W, a.H = a.SlotsPerRow*cellW, a.slotRows*cellH
 	a.Pixels = make([]byte, a.W*a.H)
 	a.next = 1 // slot 0 means "nothing to draw"
-	a.grown = true
-	a.dirtyLo, a.dirtyHi = 1<<30, -1
 	return a
 }
 
@@ -111,8 +108,6 @@ func (a *Atlas) add(r rune, comb string, bold, wide bool) uint32 {
 		x, y := (slot%a.SlotsPerRow)*a.CellW, (slot/a.SlotsPerRow)*a.CellH
 		a.raster.draw(text, bold, cells, a.Pixels[y*a.W+x:], a.W)
 		a.Rasterized++
-		row := slot / a.SlotsPerRow
-		a.dirtyLo, a.dirtyHi = min(a.dirtyLo, row), max(a.dirtyHi, row)
 		if wide {
 			v |= flagWide
 		}
@@ -145,26 +140,11 @@ func (a *Atlas) alloc(cells int) int {
 		h := a.slotRows * a.CellH
 		px := make([]byte, a.W*h)
 		copy(px, a.Pixels)
-		a.Pixels, a.H, a.grown = px, h, true
+		a.Pixels, a.H = px, h
 	}
 	slot := a.next
 	a.next += cells
 	return slot
-}
-
-// takeDirty reports the pixel rows to upload and clears the dirty state.
-func (a *Atlas) takeDirty() (y0, y1 int, full, any bool) {
-	if a.grown {
-		a.grown = false
-		a.dirtyLo, a.dirtyHi = 1<<30, -1
-		return 0, a.H, true, true
-	}
-	if a.dirtyHi < a.dirtyLo {
-		return 0, 0, false, false
-	}
-	y0, y1 = a.dirtyLo*a.CellH, (a.dirtyHi+1)*a.CellH
-	a.dirtyLo, a.dirtyHi = 1<<30, -1
-	return y0, y1, false, true
 }
 
 // isColorEmoji is a coarse test for glyphs that only exist as colour emoji.

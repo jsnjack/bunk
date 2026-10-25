@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 )
 
@@ -22,9 +23,21 @@ func rgba(rgb uint32) uint32 {
 	return rgb>>16&0xff | rgb&0xff00 | (rgb&0xff)<<16 | 0xff<<24
 }
 
-// termView is the render thread's copy of the terminal: rows copied from
-// vt10x, plus what changed since the last frame. Only the main thread
-// touches it.
+// selState is the session's selection, normalized (start before end).
+type selState struct {
+	active     bool
+	start, end session.SelPos
+}
+
+// preeditCell is one character of IME preedit text and its width in cells.
+type preeditCell struct {
+	r rune
+	w int
+}
+
+// termView is the main thread's copy of what a pane shows: rows copied from
+// vt10x or the scrollback ring, plus what changed since the last frame.
+// Only the main thread touches it.
 type termView struct {
 	cols, rows int
 	lines      []vt10x.Row
@@ -37,6 +50,16 @@ type termView struct {
 	drawnX, drawnY, drawnShape int
 	pending                    int // dirty rows not yet converted
 
+	// Scrollback view: row 0 shows virtual row vBase (scrollback rows come
+	// first, then live rows). sbOff is 0 in the live view.
+	sbOff, sbCount, vBase int
+	sel                   selState
+
+	// IME preedit text, drawn at the cursor. Set by the main thread.
+	preedit       []preeditCell
+	preeditCursor int // cells from the start of the preedit
+	preeditDirty  bool
+
 	colorGen uint64
 	colorsOK bool
 	pal      [256]uint32 // RGBA8, with OSC 4 overrides applied
@@ -48,13 +71,21 @@ type termView struct {
 
 func newTermView() *termView { return &termView{drawnY: -1} }
 
-// pull copies the rows vt10x marked dirty and reports whether anything must
+// pull copies what changed in the session and reports whether anything must
 // be redrawn. The caller holds the session lock; this is the only work done
-// under it. While the application holds a synchronized update open (DEC
-// 2026) it copies nothing: the previous frame stays on screen and the dirty
-// rows wait. It does not allocate unless the terminal size changed.
-func (v *termView) pull(t vt10x.Terminal) bool {
-	if t.Mode()&vt10x.ModeSync != 0 {
+// under it.
+//
+//   - Live view: only the rows vt10x marked dirty are copied.
+//   - Scrollback view: when the offset, the ring or any live row changed,
+//     every visible row is copied from the ring or the screen.
+//   - While the application holds a synchronized update open (DEC 2026) the
+//     live view copies nothing: the previous frame stays on screen.
+//
+// It does not allocate unless the terminal size changed.
+func (v *termView) pull(s *session.Session) bool {
+	t := s.Term
+	off := s.ScrollOffset
+	if off == 0 && t.Mode()&vt10x.ModeSync != 0 {
 		return false
 	}
 	cols, rows := t.Size()
@@ -72,18 +103,40 @@ func (v *termView) pull(t vt10x.Terminal) bool {
 		v.colorGen = gen
 		all = true
 	}
+	count := s.Scrollback.Count
+	if off != v.sbOff || (off > 0 && count != v.sbCount) {
+		all = true
+	}
+	sel := selState{active: s.SelActive}
+	if sel.active {
+		sel.start, sel.end = s.SelNorm()
+	}
+	if sel != v.sel {
+		v.sel = sel
+		all = true
+	}
 	var any bool
 	v.vtDirty, any = t.ConsumeDirtyInto(v.vtDirty)
+	if off > 0 && any {
+		all = true
+	}
+	v.sbOff, v.sbCount, v.vBase = off, count, count-off
 	if any || all {
 		for y := 0; y < rows; y++ {
-			if all || v.vtDirty[y] {
-				t.CopyRow(y, &v.lines[y])
-				v.markDirty(y)
+			if !all && !v.vtDirty[y] {
+				continue
 			}
+			if vRow := v.vBase + y; vRow < count {
+				r := s.Scrollback.Row(vRow)
+				v.lines[y].CopyFrom(r, r.Len())
+			} else {
+				t.CopyRow(vRow-count, &v.lines[y])
+			}
+			v.markDirty(y)
 		}
 	}
 	v.cur = t.Cursor()
-	v.curVisible = t.CursorVisible()
+	v.curVisible = t.CursorVisible() && off == 0
 	// The cursor is drawn into its row's instances, so a moved, hidden or
 	// reshaped cursor dirties the row it was on and the row it is on now.
 	y := -1
@@ -93,6 +146,10 @@ func (v *termView) pull(t vt10x.Terminal) bool {
 	if y != v.drawnY || v.cur.X != v.drawnX || v.cur.Shape != v.drawnShape {
 		v.markDirty(v.drawnY)
 		v.markDirty(y)
+	}
+	if v.preeditDirty {
+		v.preeditDirty = false
+		v.markDirty(v.cur.Y)
 	}
 	return v.pending > 0
 }
@@ -169,10 +226,27 @@ func halfway(a, b uint32) uint32 {
 	return (a>>1)&0x7f7f7f7f + (b>>1)&0x7f7f7f7f | 0xff<<24
 }
 
-// convert rebuilds the instances of every dirty row and draws the cursor.
-// It reads only the main thread's copy, so the session lock is not held.
-// Steady-state calls do not allocate; a glyph seen for the first time is
-// rasterized once.
+// selCols returns the selected column range of visible row y, or c0 > c1.
+func (v *termView) selCols(y, cols int) (c0, c1 int) {
+	s := &v.sel
+	vRow := v.vBase + y
+	if !s.active || vRow < s.start.Row || vRow > s.end.Row {
+		return 1, 0
+	}
+	c0, c1 = 0, cols-1
+	if vRow == s.start.Row {
+		c0 = s.start.Col
+	}
+	if vRow == s.end.Row {
+		c1 = s.end.Col
+	}
+	return c0, c1
+}
+
+// convert rebuilds the instances of every dirty row and draws the cursor and
+// IME preedit. It reads only the main thread's copy, so the session lock is
+// not held. Steady-state calls do not allocate; a glyph seen for the first
+// time is rasterized once.
 func (v *termView) convert(r *Renderer) (rows int) {
 	cols := min(v.cols, r.cols)
 	curRebuilt := false
@@ -219,27 +293,65 @@ func (v *termView) convert(r *Renderer) (rows int) {
 			// the cell, exactly as bunk's renderPane relies on.
 			inst[x] = Instance{Glyph: glyph, FG: fg, BG: bg}
 		}
+		// Stored scrollback rows drop trailing blanks: the rest is default.
 		for x := n; x < cols; x++ {
 			inst[x] = Instance{FG: v.defFG, BG: v.defBG}
+		}
+		if c0, c1 := v.selCols(y, cols); c0 <= c1 {
+			for x := max(0, c0); x <= min(c1, cols-1); x++ {
+				inst[x].FG, inst[x].BG = inst[x].BG, inst[x].FG
+			}
 		}
 	}
 	v.pending = 0
 	v.drawnY, v.drawnX, v.drawnShape = -1, v.cur.X, v.cur.Shape
 	if v.curVisible && v.cur.Y >= 0 && v.cur.Y < min(v.rows, r.rows) && v.cur.X >= 0 && v.cur.X < cols {
 		if curRebuilt {
-			v.drawCursor(r)
+			x := v.cur.X
+			if len(v.preedit) > 0 {
+				x = v.drawPreedit(r, cols)
+			}
+			v.drawCursor(r, x)
 		}
 		v.drawnY = v.cur.Y
 	}
 	return rows
 }
 
-// drawCursor marks the cursor cell. Block cursors invert the cell (cursor
-// colour as background); bar and underline cursors are drawn by the
-// background shader in the cell's foreground colour. DECSCUSR blink states
-// are drawn steady.
-func (v *termView) drawCursor(r *Renderer) {
+// drawPreedit overlays the IME preedit text at the cursor, underlined, and
+// returns the column of the preedit cursor.
+func (v *termView) drawPreedit(r *Renderer, cols int) int {
 	y, x := v.cur.Y, v.cur.X
+	curX := x
+	cells := 0
+	for i, c := range v.preedit {
+		if i == v.preeditCursor {
+			curX = x
+		}
+		if x+c.w > cols {
+			break
+		}
+		wide := c.w == 2
+		inst := &r.inst[y*r.cols+x]
+		*inst = Instance{Glyph: r.atlas.Lookup(c.r, "", false, wide) | flagUnderline, FG: v.defFG, BG: v.defBG}
+		if wide {
+			r.inst[y*r.cols+x+1] = Instance{Glyph: flagUnderline, FG: v.defFG, BG: v.defBG}
+		}
+		x += c.w
+		cells = i + 1
+	}
+	if v.preeditCursor >= cells {
+		curX = x
+	}
+	return min(curX, cols-1)
+}
+
+// drawCursor marks the cursor cell at column x. Block cursors invert the
+// cell (cursor colour as background); bar and underline cursors are drawn
+// by the background shader in the cell's foreground colour. DECSCUSR blink
+// states are drawn steady.
+func (v *termView) drawCursor(r *Renderer, x int) {
+	y := v.cur.Y
 	i := &r.inst[y*r.cols+x]
 	switch v.cur.Shape {
 	case 3, 4:

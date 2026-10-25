@@ -104,6 +104,24 @@ void main() {
 }
 `
 
+// The overlay pass draws one flat rectangle (the scrollbar thumb).
+const rectVertex = `#version 330 core
+uniform vec4  u_rect;     // x, y, w, h in device px
+uniform vec2  u_viewport;
+uniform float u_yflip;
+void main() {
+	vec2 c = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+	vec2 ndc = (u_rect.xy + c * u_rect.zw) / u_viewport * 2.0 - 1.0;
+	gl_Position = vec4(ndc.x, -ndc.y * u_yflip, 0.0, 1.0);
+}
+`
+
+const rectFragment = `#version 330 core
+uniform vec4 u_color; // premultiplied
+out vec4 o_color;
+void main() { o_color = u_color; }
+`
+
 const checkerVertex = `#version 330 core
 void main() {
 	vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
@@ -136,10 +154,15 @@ type Renderer struct {
 	slotsLoc         int32
 	atlasLoc         int32
 	checkerProg      uint32
+	rectProg         uint32
+	rectLoc          struct{ rect, viewport, yflip, color int32 }
 
 	fbW, fbH int
 	yflip    float32
-	clearRGB [3]float32
+	// Atlas upload state: the texture holds slots [1, atlasNext) of an
+	// atlas texH pixels tall.
+	atlasNext, texH int
+	clearRGB        [3]float32
 
 	queries     [8]uint32
 	qHead       int // next query to issue
@@ -165,6 +188,13 @@ func NewRenderer(cols, rows int, atlas *Atlas) (*Renderer, error) {
 			gl.UniformLocation(p, "u_viewport"), gl.UniformLocation(p, "u_yflip")}
 	}
 	r.bgLoc, r.textLoc = locs(r.bgProg), locs(r.textProg)
+	if r.rectProg, err = gl.CompileProgram(rectVertex, rectFragment); err != nil {
+		return nil, err
+	}
+	r.rectLoc.rect = gl.UniformLocation(r.rectProg, "u_rect")
+	r.rectLoc.viewport = gl.UniformLocation(r.rectProg, "u_viewport")
+	r.rectLoc.yflip = gl.UniformLocation(r.rectProg, "u_yflip")
+	r.rectLoc.color = gl.UniformLocation(r.rectProg, "u_color")
 	r.linesLoc = gl.UniformLocation(r.bgProg, "u_lines")
 	r.slotsLoc = gl.UniformLocation(r.textProg, "u_slotsPerRow")
 	r.atlasLoc = gl.UniformLocation(r.textProg, "u_atlas")
@@ -209,26 +239,28 @@ func (r *Renderer) Resize(cols, rows int) {
 // SetAtlas switches to an atlas built for another scale.
 func (r *Renderer) SetAtlas(a *Atlas) {
 	r.atlas = a
-	a.grown = true
+	r.texH = 0
 	r.syncAtlas()
 }
 
 // syncAtlas uploads glyphs rasterized since the last call: the whole texture
-// after growth, otherwise only the touched slot rows.
+// after the atlas grew, otherwise only the slot rows holding new slots.
 func (r *Renderer) syncAtlas() {
 	a := r.atlas
-	y0, y1, full, any := a.takeDirty()
-	if !any {
+	if r.texH == a.H && r.atlasNext == a.next {
 		return
 	}
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, r.tex)
 	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
-	if full {
+	if r.texH != a.H {
 		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.R8, int32(a.W), int32(a.H), gl.RED, gl.UNSIGNED_BYTE, unsafe.Pointer(&a.Pixels[0]))
-		return
+	} else {
+		y0 := r.atlasNext / a.SlotsPerRow * a.CellH
+		y1 := ((a.next-1)/a.SlotsPerRow + 1) * a.CellH
+		gl.TexSubImage2D(gl.TEXTURE_2D, 0, 0, int32(y0), int32(a.W), int32(y1-y0), gl.RED, gl.UNSIGNED_BYTE, unsafe.Pointer(&a.Pixels[y0*a.W]))
 	}
-	gl.TexSubImage2D(gl.TEXTURE_2D, 0, 0, int32(y0), int32(a.W), int32(y1-y0), gl.RED, gl.UNSIGNED_BYTE, unsafe.Pointer(&a.Pixels[y0*a.W]))
+	r.texH, r.atlasNext = a.H, a.next
 }
 
 // Upload sends each contiguous run of changed rows with one glBufferSubData
@@ -289,6 +321,43 @@ func (r *Renderer) Draw() {
 	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 	gl.DrawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n)
 	gl.Disable(gl.BLEND)
+}
+
+// DrawScrollbar draws the scrollback position as a thin thumb at the right
+// edge: one extra draw, only while the view is scrolled back.
+func (r *Renderer) DrawScrollbar(off, count int) {
+	if off <= 0 || count <= 0 {
+		return
+	}
+	h := float32(r.fbH)
+	total := float32(count + r.rows)
+	thumb := max(float32(r.atlas.CellH), h*float32(r.rows)/total)
+	y := (h - thumb) * (1 - float32(off)/float32(count))
+	w := float32(max(3, r.atlas.CellW/3))
+	gl.UseProgram(r.rectProg)
+	gl.Uniform4f(r.rectLoc.rect, float32(r.fbW)-w-2, y, w, thumb)
+	gl.Uniform2f(r.rectLoc.viewport, float32(r.fbW), float32(r.fbH))
+	gl.Uniform1f(r.rectLoc.yflip, r.yflip)
+	gl.Uniform4f(r.rectLoc.color, 0.5, 0.5, 0.5, 0.6) // premultiplied grey
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+	gl.DrawArrays(gl.TRIANGLE_STRIP, 0, 4)
+	gl.Disable(gl.BLEND)
+}
+
+// Delete frees the renderer's GL objects (the view's context is current).
+func (r *Renderer) Delete() {
+	gl.DeleteTexture(r.tex)
+	gl.DeleteBuffer(r.vbo)
+	gl.DeleteVertexArray(r.vao)
+	for _, p := range []uint32{r.bgProg, r.textProg, r.rectProg, r.checkerProg} {
+		if p != 0 {
+			gl.DeleteProgram(p)
+		}
+	}
+	for _, q := range r.queries {
+		gl.DeleteQuery(q)
+	}
 }
 
 // DrawChecker fills the viewport with a 1-px checkerboard (-verify only).

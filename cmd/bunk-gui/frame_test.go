@@ -9,6 +9,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 
 	"bunk/internal/input"
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 )
 
@@ -17,23 +18,29 @@ type fakeRaster struct{ calls int }
 func (f *fakeRaster) draw(string, bool, int, []byte, int) { f.calls++ }
 
 type frameFixture struct {
+	s    *session.Session
 	term vt10x.Terminal
 	tv   *termView
 	r    *Renderer
 	fr   *fakeRaster
 }
 
-// newFixture builds the main-thread frame path without GL: a vt10x terminal,
-// the termView copy and a Renderer that only holds instances.
+// newFixture builds the main-thread frame path without GTK, GL or a PTY: a
+// session around a vt10x terminal (with scrollback), the termView copy and
+// a Renderer that only holds instances.
 func newFixture(cols, rows int) *frameFixture {
 	fr := &fakeRaster{}
 	a := newAtlas(12, 27, fr)
 	r := &Renderer{atlas: a, cols: cols, rows: rows, inst: make([]Instance, cols*rows), rowDirty: make([]bool, rows)}
-	return &frameFixture{term: vt10x.New(vt10x.WithSize(cols, rows)), tv: newTermView(), r: r, fr: fr}
+	s := &session.Session{ScrollbackLines: 1000, Scrollback: session.Ring{MaxLines: 1000}}
+	s.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(s.OnScrollRow))
+	return &frameFixture{s: s, term: s.Term, tv: newTermView(), r: r, fr: fr}
 }
 
 func (f *frameFixture) frame() (bool, int) {
-	ok := f.tv.pull(f.term)
+	f.s.Lock()
+	ok := f.tv.pull(f.s)
+	f.s.Unlock()
 	if !ok {
 		return false, 0
 	}

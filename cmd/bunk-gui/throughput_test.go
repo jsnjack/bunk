@@ -36,7 +36,7 @@ func TestSessionThroughput(t *testing.T) {
 		// One frame per 8 chunks, roughly what the GUI manages during cat.
 		if off/chunk%8 == 0 {
 			s.Lock()
-			tv.pull(s.Term)
+			tv.pull(s)
 			s.Unlock()
 			tv.convert(f.r)
 			frames++

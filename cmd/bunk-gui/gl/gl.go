@@ -97,6 +97,10 @@ GLFN(void*, glFenceSync, (GLenum, GLbitfield))
 GLFN(void, glDeleteSync, (void*))
 GLFN(void, glUniform1f, (GLint, GLfloat))
 GLFN(void, glUniform4f, (GLint, GLfloat, GLfloat, GLfloat, GLfloat))
+GLFN(void, glDeleteBuffers, (GLsizei, const GLuint*))
+GLFN(void, glDeleteVertexArrays, (GLsizei, const GLuint*))
+GLFN(void, glDeleteProgram, (GLuint))
+GLFN(void, glDeleteQueries, (GLsizei, const GLuint*))
 GLFN(void, glTexSubImage2D, (GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void*))
 GLFN(void, glDrawArrays, (GLenum, GLint, GLsizei))
 
@@ -137,6 +141,7 @@ static const char* glgrid_load(void) {
 	LOAD(glCheckFramebufferStatus) LOAD(glDeleteFramebuffers) LOAD(glDeleteTextures)
 	LOAD(glFenceSync) LOAD(glDeleteSync) LOAD(glUniform1f) LOAD(glDrawArrays)
 	LOAD(glUniform4f) LOAD(glTexSubImage2D)
+	LOAD(glDeleteBuffers) LOAD(glDeleteVertexArrays) LOAD(glDeleteProgram) LOAD(glDeleteQueries)
 #undef LOAD
 	return NULL;
 }
@@ -206,6 +211,10 @@ static void w_glDeleteTexture(GLuint t) { p_glDeleteTextures(1, &t); }
 static uintptr_t w_glFenceSync(void) { return (uintptr_t)p_glFenceSync(0x9117, 0); }
 static void w_glDeleteSync(uintptr_t s) { p_glDeleteSync((void*)s); }
 static void w_glUniform1f(GLint l, GLfloat a) { p_glUniform1f(l, a); }
+static void w_glDeleteBuffer(GLuint b) { p_glDeleteBuffers(1, &b); }
+static void w_glDeleteVertexArray(GLuint v) { p_glDeleteVertexArrays(1, &v); }
+static void w_glDeleteProgram(GLuint p) { p_glDeleteProgram(p); }
+static void w_glDeleteQuery(GLuint q) { p_glDeleteQueries(1, &q); }
 static void w_glUniform4f(GLint l, GLfloat a, GLfloat b, GLfloat c, GLfloat d) { p_glUniform4f(l, a, b, c, d); }
 static void w_glTexSubImage2D(GLenum t, GLint l, GLint x, GLint y, GLsizei w, GLsizei h, GLenum f, GLenum ty, const void* d) {
 	p_glTexSubImage2D(t, l, x, y, w, h, f, ty, d);
@@ -430,6 +439,11 @@ func Uniform1f(loc int32, v float32) { C.w_glUniform1f(C.GLint(loc), C.GLfloat(v
 func DrawArrays(mode uint32, first, count int32) {
 	C.w_glDrawArrays(C.GLenum(mode), C.GLint(first), C.GLsizei(count))
 }
+
+func DeleteBuffer(b uint32)      { C.w_glDeleteBuffer(C.GLuint(b)) }
+func DeleteVertexArray(v uint32) { C.w_glDeleteVertexArray(C.GLuint(v)) }
+func DeleteProgram(p uint32)     { C.w_glDeleteProgram(C.GLuint(p)) }
+func DeleteQuery(q uint32)       { C.w_glDeleteQuery(C.GLuint(q)) }
 
 func Uniform4f(loc int32, a, b, c, d float32) {
 	C.w_glUniform4f(C.GLint(loc), C.GLfloat(a), C.GLfloat(b), C.GLfloat(c), C.GLfloat(d))
