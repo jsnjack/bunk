@@ -26,7 +26,8 @@ func closeWriter(t *testing.T, s *Session, w *os.File) {
 // with Feed or CaptureAndWrite, and scrolled rows reach the scrollback.
 func newTestSession(cols, rows int) *Session {
 	s := &Session{Cmd: &exec.Cmd{}, ScrollbackLines: 1000, Scrollback: Ring{MaxLines: 1000}}
-	s.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithScrollbackClearCallback(s.OnScrollbackClear))
+	s.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithScrollbackClearCallback(s.OnScrollbackClear),
+		vt10x.WithLinkReferences(s.MarkLinks))
 	return s
 }
 

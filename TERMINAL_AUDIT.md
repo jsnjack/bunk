@@ -47,7 +47,7 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 0/1/2 | Window title | OK | vt10x handles; bunk supplements with process/cwd |
 | 4 | Set palette color | **FIXED** | vt10x handles indices 0-255 and rejects others without changing state; an index equal to a truecolour value used to recolour those cells. A query (`4;N;?`) answers with N and the override; a colour without an override is unknown and gets no reply |
 | 7 | CWD notification | OK | Forwarded to host |
-| 8 | Hyperlinks | OK | Stored on glyphs and emitted inline with text; hyperlink identities survive reflow. bunk-gui: Ctrl+hover underlines, Ctrl+click opens (http, https, file, mailto, ftp); plain-text http/https/file URLs too |
+| 8 | Hyperlinks | OK | Stored on glyphs and emitted inline with text; hyperlink identities survive reflow. Link IDs no cell refers to are swept and reused, so a pane keeps new links clickable after any number of unique URLs; only live links count against the 65,535-ID and 16 MiB limits. bunk-gui: Ctrl+hover underlines, Ctrl+click opens (http, https, file, mailto, ftp); plain-text http/https/file URLs too |
 | 10/11/12 | Query/set fg/bg/cursor color | OK (host-dependent) | In-stream replies in both screen modes, including SSH/mosh. FG/BG changes repaint existing cells; cursor colour follows the active pane via tcell. Terminal-theme defaults are probed at startup; a genuinely unknown default is not fabricated |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles indices 0-255 |

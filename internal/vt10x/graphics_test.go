@@ -97,13 +97,13 @@ func TestLongOSCHyperlinkBudget(t *testing.T) {
 	term := New(WithSize(5, 2))
 	state := term.(*terminal).State
 	// Simulate an almost-full table without allocating its entire byte budget.
-	state.linkBytes = maxLinkBytes - 8
+	state.links.bytes = maxLinkBytes - 8
 	writeGraphics(t, term, "\x1b]8;;123456789\x1b\\X")
-	if term.Cell(0, 0).Link != 0 || len(state.links) != 0 {
+	if term.Cell(0, 0).Link != 0 || len(state.links.urls) != 0 {
 		t.Fatal("hyperlink exceeded byte budget")
 	}
 	writeGraphics(t, term, "\x1b]8;;12345678\x1b\\Y")
-	if term.Cell(1, 0).Link == 0 || state.linkBytes != maxLinkBytes {
+	if term.Cell(1, 0).Link == 0 || state.links.bytes != maxLinkBytes {
 		t.Fatal("bounded hyperlink was not interned")
 	}
 	writeGraphics(t, term, "\x1b]8;;12345678\x1b\\Z")

@@ -145,11 +145,12 @@ fuzz:
 	done
 
 # Leak and soak tests at full length (SOAK=1): 2000 sessions, 500 MiB of
-# output, 200 TUI cycles, 400 notify sessions, 200 bunk-gui tabs. Not part
+# output, 1,000,000 unique links, 200 TUI cycles, 400 notify sessions, 200
+# bunk-gui tabs. Not part
 # of check or check-all, which run the short versions with -race.
 # SOAKFLAGS=-race adds the race detector (about ten times slower).
 SOAKFLAGS ?=
-SOAK_TESTS := ^Test(SessionLeaks|OutputSoak|TUISoak|NotifySessionLeaks)$$
+SOAK_TESTS := ^Test(SessionLeaks|OutputSoak|LinkSoak|TUISoak|NotifySessionLeaks)$$
 
 soak:
 	SOAK=1 go test $(SOAKFLAGS) -count=1 -timeout 60m -v -run '$(SOAK_TESTS)' . ./internal/session ./internal/notify

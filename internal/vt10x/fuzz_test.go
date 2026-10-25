@@ -25,7 +25,9 @@ const (
 )
 
 // fuzzTerm is a terminal that records every reply and callback, so two
-// terminals can be compared after the same input.
+// terminals can be compared after the same input. Scrolled rows are only
+// hashed, so its link sweeps need to mark nothing outside the screens, and
+// they are due after almost every new URL.
 type fuzzTerm struct {
 	*terminal
 	replies       bytes.Buffer
@@ -44,7 +46,10 @@ func newFuzzTerm(cols, rows int) *fuzzTerm {
 		}),
 		WithBellCallback(func() { f.bells++ }),
 		WithScrollbackClearCallback(func() { f.clears++ }),
+		WithLinkReferences(func(func(uint16)) {}),
 	).(*terminal)
+	l := &f.links
+	l.sweepMin, l.sweepAt, l.sweepMinBytes, l.sweepBytes, l.sweepGap = 2, 2, 64, 64, 1
 	return f
 }
 
@@ -119,7 +124,7 @@ func (f *fuzzTerm) snapshot() termSnapshot {
 		Top: s.top, Bottom: s.bottom, Title: s.title, Tabs: s.tabs,
 		ClusterOpen: s.clusterOpen, ClusterX: s.clusterX, ClusterY: s.clusterY,
 		Dirty: s.dirty, AnyDirty: s.anydirty, AllDirty: s.allDirty, Changed: s.changed,
-		Links: s.links, Colors: s.colorOverride, ColorGen: s.colorGen,
+		Links: s.links.urls, Colors: s.colorOverride, ColorGen: s.colorGen,
 		CSI:      fmt.Sprintf("%q %v %q %v", s.csi.buf, s.csi.args, s.csi.mode, s.csi.priv),
 		Str:      fmt.Sprintf("%q %q %v %v", s.str.typ, s.str.buf, s.str.graphics, s.str.discard),
 		Graphics: s.graphics != nil,
@@ -180,12 +185,23 @@ func checkInvariants(s *State, maxSide int) error {
 			return fmt.Errorf("colour override %#x for %#x is not a truecolour value", v, k)
 		}
 	}
+	for _, c := range []struct {
+		name string
+		link uint16
+	}{{"cursor", s.cur.Attr.Link}, {"saved cursor", s.curSaved.Attr.Link}} {
+		if c.link != 0 && s.Link(c.link) == "" {
+			return fmt.Errorf("%s links to ID %d, which names no URL", c.name, c.link)
+		}
+	}
+	if err := checkLinkTable(&s.links); err != nil {
+		return fmt.Errorf("link table: %w", err)
+	}
 	for _, screen := range []struct {
 		name string
 		rows []*Row
 	}{{"primary", s.lines}, {"alternate", s.altLines}} {
 		for y, r := range screen.rows {
-			if err := checkRow(r, s.cols, len(s.links), maxSide); err != nil {
+			if err := checkRow(r, s.cols, s.Link, maxSide); err != nil {
 				return fmt.Errorf("%s row %d: %w", screen.name, y, err)
 			}
 		}
@@ -195,7 +211,7 @@ func checkInvariants(s *State, maxSide int) error {
 
 // checkRow checks the used/tail invariant from row.go, the side table and
 // the cell widths of one row.
-func checkRow(r *Row, cols, links, maxSide int) error {
+func checkRow(r *Row, cols int, link func(uint16) string, maxSide int) error {
 	if len(r.cells) != cols {
 		return fmt.Errorf("%d cells in a %d-column grid", len(r.cells), cols)
 	}
@@ -221,8 +237,8 @@ func checkRow(r *Row, cols, links, maxSide int) error {
 		if len(g.Text()) > maxCellText {
 			return fmt.Errorf("cell %d holds %d bytes of text", x, len(g.Text()))
 		}
-		if int(g.Link) > links {
-			return fmt.Errorf("cell %d links to %d of %d URLs", x, g.Link, links)
+		if g.Link != 0 && link(g.Link) == "" {
+			return fmt.Errorf("cell %d links to ID %d, which names no URL", x, g.Link)
 		}
 		switch g.Width {
 		case 0, 1:
@@ -246,6 +262,21 @@ func checkRow(r *Row, cols, links, maxSide int) error {
 		default:
 			return fmt.Errorf("cell %d has width %d", x, g.Width)
 		}
+	}
+	return nil
+}
+
+// checkSweptLinks reports an error unless the link table holds exactly the
+// IDs that cells and cursors refer to, as right after a sweep.
+func checkSweptLinks(s *State) error {
+	refs := map[uint16]bool{}
+	s.markLinks(func(id uint16) {
+		if id != 0 {
+			refs[id] = true
+		}
+	})
+	if len(refs) != len(s.links.ids) {
+		return fmt.Errorf("after a sweep the link table holds %d URLs, cells and cursors refer to %d", len(s.links.ids), len(refs))
 	}
 	return nil
 }
@@ -487,6 +518,14 @@ func FuzzParse(f *testing.F) {
 				t.Fatalf("%dx%d: CSI parameters capped at %d differ in %s\ncapped: %q", c, r, maxParam, d, capped)
 			}
 		}
+		// A sweep keeps exactly the IDs that cells and cursors refer to.
+		whole.SweepLinks()
+		if err := checkInvariants(whole.State, sideTableBound(c)); err != nil {
+			t.Fatalf("%dx%d after a link sweep: %v", c, r, err)
+		}
+		if err := checkSweptLinks(whole.State); err != nil {
+			t.Fatalf("%dx%d: %v", c, r, err)
+		}
 	})
 }
 
@@ -572,6 +611,8 @@ func TestCheckInvariantsCatchesBrokenGrids(t *testing.T) {
 		{"lone lead", func(s *State) { s.lines[1].set(2, Glyph{Char: '界', Width: 2}) }, "without a continuation"},
 		{"padding before text", func(s *State) { s.lines[0].set(1, Glyph{Char: ' ', Width: -2}) }, "wrap padding"},
 		{"padding without wrap", func(s *State) { s.lines[0].set(s.cols-1, Glyph{Char: ' ', Width: -2}) }, "does not wrap"},
+		{"free link", func(s *State) { s.lines[1].set(0, Glyph{Char: 'a', Width: 1, Link: 1}) }, "names no URL"},
+		{"link table", func(s *State) { s.links.bytes++ }, "link table"},
 		{"long text", func(s *State) {
 			s.lines[0].set(0, Glyph{Char: 'e', Width: 1, Combining: strings.Repeat("\u0301", 600)})
 		}, "bytes of text"},

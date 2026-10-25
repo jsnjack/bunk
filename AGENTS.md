@@ -46,6 +46,7 @@ internal/vt10x/     Vendored VT100/ANSI emulator (fork of github.com/hinshun/vt1
   parse.go          Parser state machine (put); scan, putText and putCSI handle
                     text runs and CSI sequences in bulk
   vt.go             Terminal / View interfaces, New() constructor
+  links.go          OSC 8 URL table: interning, sweeps, ID reuse
   vt_posix.go       terminal concrete type, Write, Parse (POSIX)
   color.go          Color type, named colour constants
   row.go            16-byte cell storage, Row with per-row side table
@@ -67,6 +68,7 @@ internal/input/     Toolkit-neutral key, mouse, focus and paste encoding
 internal/session/   One terminal session, shared by front ends
   session.go        Session, Start/Run/ReadLoop/Feed, Hooks, query replies, Kitty keys, selection
   scrollback.go     Ring of compact scrollback rows without trailing blanks
+  links.go          Marks the link IDs the scrollback keeps for link sweeps
   reflow.go         Cell-based reflow and scroll anchoring
   ptystream.go      Bounded streaming UTF-8/control framing before parsing
   osc.go            OSC pre-scanner and sanitising (7, 52, 133)
@@ -427,6 +429,18 @@ its default.
   `gtk.UriLauncher` behind `openURL`, Ctrl+Shift+click while the application
   reports the mouse. `launchRefused` keeps the launcher off the test
   compositor; window tests read the links from `-report` (`opened`).
+- **Hyperlink IDs are swept and reused.** A cell's `Glyph.Link` is a uint16
+  ID into its terminal's URL table. A sweep frees the IDs no cell of either
+  screen, cursor attribute or kept row refers to; new URLs reuse them, lowest
+  first. Sweeps run when the table reaches 4,096 URLs or twice what the last
+  sweep kept, and after ED 3 and RIS. A cell never changes its ID, so it keeps
+  its URL. Rows kept outside the terminal must be marked through
+  `WithLinkReferences` (the session marks its scrollback ring); a terminal
+  with a scroll callback but no marker never frees IDs. When live links alone
+  exceed 65,535 IDs or 16 MiB, new links lose their URL until rows holding
+  links leave; the sweep then retries once per 1,024 new URLs. A front end
+  that resolves IDs from rows it copied earlier compares `LinkGen` first, as
+  bunk-gui's Ctrl+click does; the TUI resolves them under the session lock.
 - **Primary-screen reflow uses stored cells.** Soft-wrap markers join physical
   rows into logical lines; explicit line breaks remain separate. Cursor and
   scroll anchors follow their cells. Styles, links, and image samples survive

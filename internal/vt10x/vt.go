@@ -49,8 +49,20 @@ type View interface {
 	Title() string
 
 	// Link returns the OSC 8 hyperlink URL for the given Glyph.Link ID, or
-	// "" if id is 0 (no link). Callers must hold Lock().
+	// "" if id is 0 (no link) or free. Callers must hold Lock().
 	Link(id uint16) string
+
+	// LinkGen changes whenever a sweep frees link IDs. Callers must hold
+	// Lock().
+	LinkGen() uint64
+
+	// LinkStats reports the size of the hyperlink table. Callers must hold
+	// Lock().
+	LinkStats() LinkStats
+
+	// SweepLinks frees the link IDs that no cell refers to. Callers must
+	// hold Lock().
+	SweepLinks()
 
 	// Cell returns the glyph containing the character code, foreground color, and
 	// background color at position (x, y) relative to the top left of the terminal.
@@ -133,6 +145,7 @@ type TerminalInfo struct {
 	cellWidth, cellHeight int
 	graphicsRows          int
 	images                *graphics.Store
+	linkRefs              func(mark func(id uint16))
 }
 
 // WithGraphicsReply routes graphics acknowledgements independently of ordinary
@@ -160,6 +173,15 @@ func WithCellPixels(width, height int) TerminalOption {
 // cells (MarkImages) and any scrollback the caller keeps.
 func WithImageStore(store *graphics.Store) TerminalOption {
 	return func(info *TerminalInfo) { info.images = store }
+}
+
+// WithLinkReferences installs fn, which marks the hyperlink ID of every
+// cell kept outside the terminal: the rows the scroll callback stored and
+// still keeps. A link sweep keeps those IDs; it runs while the terminal is
+// locked, also from inside Write. A terminal with a scroll callback but
+// without fn never frees link IDs, so its table fills up for good.
+func WithLinkReferences(fn func(mark func(id uint16))) TerminalOption {
+	return func(info *TerminalInfo) { info.linkRefs = fn }
 }
 
 // WithGraphicsViewportRows keeps percentage-sized images relative to the pane,

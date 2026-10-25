@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -103,6 +104,93 @@ func TestOSC8LinkAndHover(t *testing.T) {
 	f.frame()
 	if hit, ok := f.tv.linkAt(1, 1, resolve); ok {
 		t.Errorf("a javascript: link opens: %+v", hit)
+	}
+}
+
+// TestOSC8LinkAcrossSweeps: a link that stays on screen while link sweeps
+// free and reuse the IDs around it still resolves. A link in rows copied
+// before a sweep does not resolve until the next frame copies them again,
+// so an ID the sweep gave to another URL never opens that URL.
+func TestOSC8LinkAcrossSweeps(t *testing.T) {
+	f := newFixture(40, 4)
+	f.write("\x1b[?25l\x1b]8;;https://keep.example/doc\x1b\\the keeper\x1b]8;;\x1b\\\r\n")
+	churn := func(from, to int) {
+		var b strings.Builder
+		for i := from; i < to; i++ {
+			fmt.Fprintf(&b, "\r\x1b]8;;https://churn.example/%d\x1b\\churn %d\x1b]8;;\x1b\\\x1b[K", i, i)
+		}
+		f.write(b.String())
+	}
+	resolve := func(id uint16) string { return f.tv.linkURL(f.s, id) }
+	churn(0, 5000)
+	f.frame()
+	if hit, ok := f.tv.linkAt(2, 1, resolve); !ok || hit.url != "https://churn.example/4999" {
+		t.Fatalf("churned link: %+v %v", hit, ok)
+	}
+	sweeps := f.term.LinkStats().Sweeps
+	churn(5000, 15000)
+	if f.term.LinkStats().Sweeps == sweeps {
+		t.Fatal("no link sweep ran")
+	}
+	if id := f.tv.lines[1].Link(2); f.term.Link(id) == "https://churn.example/4999" {
+		t.Fatalf("ID %d of the copied row still names its URL; the test needs it freed", id)
+	}
+	if hit, ok := f.tv.linkAt(2, 1, resolve); ok {
+		t.Errorf("a link of rows copied before the sweep resolved: %+v", hit)
+	}
+	f.frame()
+	for _, c := range []struct {
+		col, row int
+		url      string
+	}{{4, 0, "https://keep.example/doc"}, {2, 1, "https://churn.example/14999"}} {
+		if hit, ok := f.tv.linkAt(c.col, c.row, resolve); !ok || hit.url != c.url {
+			t.Errorf("cell (%d,%d) after the next frame: %+v %v, want %s", c.col, c.row, hit, ok, c.url)
+		}
+	}
+}
+
+// TestOSC8HoverAcrossSweepInSyncUpdate: while an application holds a
+// synchronized update open, the view keeps its last frame and the
+// underline under the pointer. A link of that frame does not resolve once
+// link sweeps ran, since its ID may name another URL by then. The end of
+// the update redraws, clears the underline, and the link resolves again.
+func TestOSC8HoverAcrossSweepInSyncUpdate(t *testing.T) {
+	const keep = "https://keep.example/doc"
+	f := newFixture(40, 4)
+	f.write("\x1b[?25l\x1b]8;;" + keep + "\x1b\\the keeper\x1b]8;;\x1b\\\r\n")
+	f.frame()
+	resolve := func(id uint16) string { return f.tv.linkURL(f.s, id) }
+	hit, ok := f.tv.linkAt(4, 0, resolve)
+	if !ok || hit.url != keep {
+		t.Fatalf("keeper: %+v %v", hit, ok)
+	}
+	f.tv.setHover(hit)
+	f.frame()
+	var b strings.Builder
+	b.WriteString("\x1b[?2026h")
+	for i := range 10000 {
+		fmt.Fprintf(&b, "\r\x1b]8;;https://churn.example/%d\x1b\\churn %d\x1b]8;;\x1b\\\x1b[K", i, i)
+	}
+	f.write(b.String())
+	if f.term.LinkStats().Sweeps == 0 {
+		t.Fatal("no link sweep ran")
+	}
+	if drawn, _ := f.frame(); drawn {
+		t.Error("a frame was drawn during the synchronized update")
+	}
+	if f.tv.links.url != keep {
+		t.Errorf("underline during the update: %q", f.tv.links.url)
+	}
+	if hit, ok := f.tv.linkAt(4, 0, resolve); ok {
+		t.Errorf("a link of the frame before the sweeps resolved: %+v", hit)
+	}
+	f.write("\x1b[?2026l")
+	f.frame()
+	if f.tv.links.url != "" {
+		t.Errorf("underline after the update: %q", f.tv.links.url)
+	}
+	if hit, ok := f.tv.linkAt(4, 0, resolve); !ok || hit.url != keep {
+		t.Errorf("keeper after the update: %+v %v", hit, ok)
 	}
 }
 

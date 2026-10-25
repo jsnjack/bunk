@@ -227,6 +227,7 @@ func (t *State) handleCSI() {
 				t.sbClearCb()
 			}
 			t.sweepImages()
+			t.sweepLinks()
 		default:
 			goto unknown
 		}
