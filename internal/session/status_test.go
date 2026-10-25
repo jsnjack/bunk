@@ -165,8 +165,8 @@ func TestStatusAttentionFlow(t *testing.T) {
 	s.agent = "claude"
 	scan("\x1b]9;Claude needs your permission\x07")
 	expect("notification", "claude", AgentNeedsYou, "Claude needs your permission")
-	if !s.statusDirty {
-		t.Fatal("notification did not mark status for reporting")
+	if !s.agentChangedNow() {
+		t.Fatal("notification is not announced as a change")
 	}
 	s.Acknowledge()
 	expect("acknowledged", "claude", AgentIdle, "")

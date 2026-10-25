@@ -11,30 +11,67 @@ import (
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+
+	"bunk/internal/session"
 )
 
 // runScript schedules -do actions. Each action is "TIME VERB [ARGS]" with
-// TIME measured from startup; actions are separated by ';'. They run on the
-// main thread and call the same handlers as the GTK controllers, so a test
-// can drive scrolling, selection, clipboard, mouse reports, IME commits and
-// tabs without injecting GDK events. Arguments take Go escapes (\n, \x1b).
-// "-do @FILE" reads the actions from a file, one per line.
+// TIME measured from startup, or from keyboard focus with -wait-focus;
+// actions are separated by ';'. They run on the
+// main thread. Most call the same handlers as the GTK controllers; kbd* and
+// ptr* inject real input through the headless test compositor instead.
+// Arguments take Go escapes (\n, \x1b). "-do @FILE" reads the actions from
+// a file, one per line. A failed or unknown action is listed under "errors"
+// in -report.
+//
+// Terminal input, called directly:
 //
 //	scroll N | scroll-reset          scrollback view (N > 0: back in history)
-//	key [MODS+]NAME                  a key press, e.g. key ctrl+shift+c, key Return
+//	key [MODS+]NAME                  a key press (window shortcuts first), e.g. key ctrl+shift+c
 //	type TEXT | preedit TEXT [CUR]   IME commit / preedit
 //	imkeys SPEC...                   keys fed through the input method (compose checks)
 //	press|motion|release COL ROW [BTN] [shift]
-//	click|dclick COL ROW             left click / double click
+//	click|dclick COL ROW [BTN]       click / double click
 //	wheel N                          wheel notches (N > 0: down)
 //	copy | paste | paste-primary | clip TEXT | print-clip | print-primary
-//	new-tab [CMD] | close-tab | next-tab | prev-tab
-//	dump FILE [WxH] | maximize | unmaximize | print-size | print-tabs | quit
+//	typing start DUR | typing stop   write 'x' to the focused pane every DUR (latency)
+//
+// Real input through the compositor (window maximized for ptr*):
+//
+//	kbd SPEC...                      key combinations, e.g. kbd ctrl+shift+t F1 alt+Left
+//	kbd-type TEXT                    text typed key by key
+//	ptr-move X Y                     pointer to window coordinates
+//	ptr-at TARGET [DX DY]            tab N | tabclose N | newtab | options | closewin |
+//	                                 pane ID | cell ID COL ROW | divider r[a|b…] | menu LABEL
+//	ptr-press [BTN] | ptr-release [BTN] | ptr-click [BTN] [N] | ptr-drag DX DY [STEPS] | ptr-scroll N
+//
+// Window and tabs:
+//
+//	new-tab [CMD] | close-tab | next-tab | prev-tab | select-tab N (1-based)
+//	split [container] | close-pane | zoom | focus left|right|up|down
+//	fake-container TYPE ID           pretend the focused pane runs in a container
+//	layout bar|rail | rail open|closed | font +|-|0 | menu open|close | menu-item LABEL
+//	switcher [filter TEXT|enter|close] | jump
+//	status [tab=N|pane=ID] [agent=A] [state=working|needs|idle|failed|none]
+//	       [repo=R] [branch=B] [container=C] [ssh=H] [notice=TEXT...]
+//	                                 override a pane's status (test hook)
+//	status-clear [tab=N|pane=ID]
+//	maximize | unmaximize | quit
+//
+// Records:
+//
+//	snap LABEL                       UI state snapshot in -report
+//	mark NAME                        frame and allocation counters in -report
+//	dump FILE [WxH] | dump-pane ID FILE   a pane's last frame
+//	shot FILE [window|chrome|menu]   a widget rendered offscreen through GSK
+//	print-size | print-tabs | print-status | print-ui
 func (a *App) runScript(script string) {
 	if path, ok := strings.CutPrefix(script, "@"); ok { // -do @FILE
 		b, err := os.ReadFile(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bunk-gui: -do: %v\n", err)
+			a.rep.Errors = append(a.rep.Errors, err.Error())
 			return
 		}
 		script = string(b)
@@ -45,13 +82,13 @@ func (a *App) runScript(script string) {
 	}
 	for _, step := range strings.Split(script, sep) {
 		step = strings.TrimSpace(step)
-		if step == "" {
+		if step == "" || strings.HasPrefix(step, "#") {
 			continue
 		}
 		at, rest, _ := strings.Cut(step, " ")
 		d, err := time.ParseDuration(at)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "bunk-gui: -do %q: %v\n", step, err)
+			a.reportError("-do %q: %v", step, err)
 			continue
 		}
 		rest = strings.TrimSpace(rest)
@@ -69,7 +106,18 @@ func unescape(s string) string {
 	return s
 }
 
+// paneVerbs need a focused pane.
+var paneVerbs = map[string]bool{
+	"scroll": true, "scroll-reset": true, "type": true, "imkeys": true, "preedit": true,
+	"press": true, "motion": true, "release": true, "click": true, "dclick": true, "wheel": true,
+	"copy": true, "paste": true, "paste-primary": true, "new-tab": true, "split": true, "close-pane": true,
+	"zoom": true, "focus": true, "fake-container": true, "dump": true, "print-size": true,
+}
+
 func (a *App) doAction(action string) {
+	if a.finished {
+		return
+	}
 	verb, arg, _ := strings.Cut(action, " ")
 	arg = strings.TrimSpace(arg)
 	args := strings.Fields(arg)
@@ -81,11 +129,25 @@ func (a *App) doAction(action string) {
 		}
 		return def
 	}
-	p := a.activePane()
-	if p == nil && verb != "quit" {
-		return
+	fnum := func(i int) float64 {
+		if i < len(args) {
+			if f, err := strconv.ParseFloat(args[i], 64); err == nil {
+				return f
+			}
+		}
+		return 0
 	}
 	fmt.Printf("do: %s\n", action)
+	p := a.activePane()
+	if p == nil && paneVerbs[verb] {
+		a.reportError("%s: no focused pane", action)
+		return
+	}
+	check := func(err error) {
+		if err != nil {
+			a.reportError("%s: %v", action, err)
+		}
+	}
 	switch verb {
 	case "scroll":
 		p.scrollBy(num(0, 1))
@@ -94,10 +156,12 @@ func (a *App) doAction(action string) {
 	case "key":
 		keyval, state := parseKeySpec(arg)
 		if keyval == 0 {
-			fmt.Printf("do: unknown key %q\n", arg)
+			a.reportError("%s: unknown key", action)
 			return
 		}
-		a.onKey(p, keyval, state)
+		if !a.onShortcut(keyval, state) && p != nil {
+			a.onKey(p, keyval, state)
+		}
 	case "type":
 		p.imCommit(unescape(arg))
 	case "imkeys": // feed keys through the pane's input method, e.g. imkeys ctrl+shift+u e 9 space
@@ -157,41 +221,227 @@ func (a *App) doAction(action string) {
 			text, err := cb.ReadTextFinish(res)
 			fmt.Printf("%s: %q err=%v\n", verb, text, err)
 		})
+	case "typing":
+		if len(args) > 0 && args[0] == "stop" {
+			a.stopTyping()
+			return
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(arg, "start")))
+		if err != nil || d <= 0 {
+			a.reportError("%s: want typing start DURATION", action)
+			return
+		}
+		a.startTyping(d)
+
+	case "kbd", "kbd-type", "ptr-move", "ptr-at", "ptr-press", "ptr-release", "ptr-click", "ptr-drag", "ptr-scroll":
+		if err := injectOpen(); err != nil {
+			a.reportError("%s: %v", action, err)
+			return
+		}
+		check(a.injectAction(verb, arg, args, num, fnum))
+
 	case "new-tab":
 		a.newTab(unescape(arg), p.s.Cwd())
 	case "close-tab":
-		a.closeTab(p)
+		a.closeTab(a.active)
 	case "next-tab":
-		a.tabs.SelectNextPage()
+		a.selectOffset(+1)
 	case "prev-tab":
-		a.tabs.SelectPreviousPage()
+		a.selectOffset(-1)
+	case "select-tab":
+		if i := num(0, 1) - 1; i >= 0 && i < len(a.tabs) {
+			a.selectTab(a.tabs[i])
+		} else {
+			a.reportError("%s: no such tab", action)
+		}
+	case "split":
+		a.splitActive(arg == "container")
+	case "close-pane":
+		a.closePane(p)
+	case "zoom":
+		a.active.toggleZoom(p)
+	case "focus":
+		d, ok := focusDirs[arg]
+		if !ok {
+			a.reportError("%s: want left, right, up or down", action)
+			return
+		}
+		a.active.moveFocus(d[0], d[1])
+	case "fake-container":
+		if len(args) != 2 {
+			a.reportError("%s: want TYPE ID", action)
+			return
+		}
+		p.s.Lock()
+		p.s.ContainerType, p.s.ContainerID = args[0], args[1]
+		p.s.Unlock()
+	case "layout":
+		if arg != "bar" && arg != "rail" {
+			a.reportError("%s: want bar or rail", action)
+			return
+		}
+		a.setLayout(arg, a.railOpen)
+	case "rail":
+		a.setLayout("rail", arg == "open")
+	case "font":
+		dir, ok := map[string]int{"+": 1, "-": -1, "0": 0}[arg]
+		if !ok {
+			a.reportError("%s: want +, - or 0", action)
+			return
+		}
+		a.zoom(dir)
+	case "menu":
+		if arg == "close" {
+			a.optionsBtn.Popdown()
+		} else {
+			a.optionsBtn.Popup()
+		}
+	case "menu-item":
+		b, ok := a.menuButtons[arg]
+		if !ok {
+			a.reportError("%s: no menu item %q", action, arg)
+			return
+		}
+		coreglib.BaseObject(b).Emit("clicked")
+	case "switcher":
+		sub, text, _ := strings.Cut(arg, " ")
+		switch sub {
+		case "":
+			a.openSwitcher()
+		case "filter":
+			if a.switcher != nil {
+				a.switcher.entry.SetText(unescape(text))
+			}
+		case "enter":
+			if a.switcher != nil {
+				a.switcher.pick()
+			}
+		case "close":
+			a.closeSwitcher()
+		default:
+			a.reportError("%s: unknown switcher action", action)
+		}
+	case "jump":
+		a.jumpNeedingYou()
+	case "status", "status-clear":
+		a.scriptStatus(verb == "status-clear", arg)
+	case "maximize":
+		a.win.Maximize()
+	case "unmaximize":
+		a.win.Unmaximize()
+	case "quit":
+		a.finish("script")
+
+	case "snap":
+		if !a.reportOn() {
+			a.reportError("%s: needs -report", action)
+			return
+		}
+		a.snap(arg)
+	case "mark":
+		if !a.reportOn() {
+			a.reportError("%s: needs -report", action)
+			return
+		}
+		a.addMark(arg)
+	case "shot":
+		check(a.shot(args))
 	case "dump":
 		if len(args) > 1 {
 			a.cfg.dumpSize = args[1]
 		}
 		a.writeDump(p, args[0])
-	case "maximize":
-		a.win.Maximize()
-	case "unmaximize":
-		a.win.Unmaximize()
+	case "dump-pane":
+		id := num(0, -1)
+		if id < 0 || id >= len(a.panes) || a.panes[id] == nil || len(args) < 2 {
+			a.reportError("%s: want dump-pane ID FILE", action)
+			return
+		}
+		saved := a.cfg.dumpSize
+		a.cfg.dumpSize = "100000x100000"
+		a.writeDump(a.panes[id], args[1])
+		a.cfg.dumpSize = saved
+	case "print-ui":
+		fmt.Printf("print-ui: active=%v maximized=%v layout=%s rail_open=%v font=%q text=%s switcher=%v keyboard=%s pointer=%.1f,%.1f last_toast=%q\n",
+			a.win.IsActive(), a.win.IsMaximized(), a.layout, a.railOpen, a.fontDesc, a.zoomText(), a.switcher != nil, a.keyboardFocus(), a.ptrX, a.ptrY, a.lastToast)
+	case "print-status":
+		for _, in := range a.tabInfos() {
+			fmt.Printf("print-status: tab %d %s %s %q repo=%q loc=%q needs=%v active=%v panes=%d tooltip=%q\n",
+				in.index+1, in.look.dot, in.agent, in.look.label, in.repo, in.loc, in.needs, in.active, len(in.t.panes()), in.tooltip)
+		}
 	case "print-size":
 		p.s.Lock()
 		cols, rows := p.s.Term.Size()
 		off, count := p.s.ScrollOffset, p.s.Scrollback.Count
 		p.s.Unlock()
-		fmt.Printf("print-size: tab %d grid %dx%d scroll %d/%d\n", p.id, cols, rows, off, count)
+		fmt.Printf("print-size: pane %d grid %dx%d scroll %d/%d\n", p.id, cols, rows, off, count)
 	case "print-tabs":
-		for i := 0; i < a.tabs.NPages(); i++ {
-			q := a.paneOf(a.tabs.NthPage(i))
-			if q != nil {
-				fmt.Printf("print-tabs: %d %q selected=%v cwd=%q\n", i, q.title, q == p, q.s.Cwd())
+		for i, t := range a.tabs {
+			for _, q := range t.panes() {
+				g := viewGeomC(q.view)
+				fmt.Printf("print-tabs: tab %d pane %d %q selected=%v focus=%v dimmed=%v zoom=%v grid %dx%d texture %dx%d cwd=%q\n",
+					i+1, q.id, q.title, t == a.active, q == t.focus, t.dimmed(q), t.zoom == q, q.cols, q.rows, g.dw, g.dh, q.s.Cwd())
 			}
 		}
-	case "quit":
-		a.finish("script")
 	default:
-		fmt.Printf("do: unknown action %q\n", verb)
+		a.reportError("unknown action %q", verb)
 	}
+}
+
+func (a *App) injectAction(verb, arg string, args []string, num func(int, int) int, fnum func(int) float64) error {
+	switch verb {
+	case "kbd":
+		for _, spec := range args {
+			if err := a.injectKeys(spec); err != nil {
+				return err
+			}
+		}
+	case "kbd-type":
+		return a.injectText(unescape(arg))
+	case "ptr-move":
+		return a.pointerTo(fnum(0), fnum(1))
+	case "ptr-at":
+		var x, y float64
+		var err error
+		dx, dy := 0.0, 0.0
+		if len(args) > 0 && args[0] == "menu" {
+			x, y, err = a.menuTarget(strings.TrimSpace(strings.TrimPrefix(arg, "menu")))
+		} else {
+			// Trailing numbers after the target are an offset.
+			targ := args
+			if n := len(args); n >= 3 && isNum(args[n-1]) && isNum(args[n-2]) && (args[0] != "cell" || n != 4) {
+				dx, _ = strconv.ParseFloat(args[n-2], 64)
+				dy, _ = strconv.ParseFloat(args[n-1], 64)
+				targ = args[:n-2]
+			}
+			x, y, err = a.target(targ)
+		}
+		if err != nil {
+			return err
+		}
+		return a.pointerTo(x+dx, y+dy)
+	case "ptr-press", "ptr-release":
+		return a.pointerButton(num(0, 1), verb == "ptr-press")
+	case "ptr-click":
+		for range max(1, num(1, 1)) {
+			if err := a.pointerButton(num(0, 1), true); err != nil {
+				return err
+			}
+			if err := a.pointerButton(num(0, 1), false); err != nil {
+				return err
+			}
+		}
+	case "ptr-drag":
+		return a.pointerDrag(fnum(0), fnum(1), num(2, 10))
+	case "ptr-scroll":
+		return a.pointerScroll(num(0, 1))
+	}
+	return nil
+}
+
+func isNum(s string) bool {
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
 }
 
 // parseKeySpec parses "ctrl+shift+c" or "Return" into a GDK keyval and state.
@@ -222,4 +472,101 @@ func (p *Pane) cellCenter(col, row int) (float64, float64) {
 		return 0, 0
 	}
 	return g.bx + (float64(col)+0.5)*float64(p.atlas.CellW)/g.scale, g.by + (float64(row)+0.5)*float64(p.atlas.CellH)/g.scale
+}
+
+var focusDirs = map[string][2]int{"left": {-1, 0}, "right": {1, 0}, "up": {0, -1}, "down": {0, 1}}
+
+var stateNames = map[string]session.AgentState{
+	"none": session.AgentNone, "working": session.AgentWorking, "idle": session.AgentIdle,
+	"needs": session.AgentNeedsYou, "failed": session.AgentFailed,
+}
+
+// scriptStatus sets or clears a status override on the focused pane of the
+// selected tab (or of tab=N, or pane=ID). The override starts from the
+// pane's real status; the chrome and the needs-you ring show it like a real
+// report.
+func (a *App) scriptStatus(clear bool, arg string) {
+	p := a.activePane()
+	rest, notice, hasNotice := strings.Cut(arg, "notice=")
+	fields := strings.Fields(rest)
+	for _, f := range fields {
+		k, v, _ := strings.Cut(f, "=")
+		n, err := strconv.Atoi(v)
+		switch {
+		case err != nil:
+		case k == "tab" && n >= 1 && n <= len(a.tabs):
+			p = a.tabs[n-1].focus
+		case k == "pane" && n >= 0 && n < len(a.panes) && a.panes[n] != nil:
+			p = a.panes[n]
+		case k == "tab" || k == "pane":
+			a.reportError("status: no %s %d", k, n)
+			return
+		}
+	}
+	if p == nil {
+		a.reportError("status: no pane")
+		return
+	}
+	if clear {
+		p.statusOverride = nil
+	} else {
+		st := p.status()
+		for _, f := range fields {
+			k, v, _ := strings.Cut(f, "=")
+			switch k {
+			case "agent":
+				st.Agent = v
+			case "state":
+				s, ok := stateNames[v]
+				if !ok {
+					a.reportError("status: unknown state %q", v)
+					return
+				}
+				st.State = s
+			case "repo":
+				st.Repo = v
+			case "branch":
+				st.Branch = v
+			case "container":
+				st.Container = strings.ReplaceAll(v, ":", " ")
+			case "ssh":
+				st.SSHHost = v
+			}
+		}
+		if hasNotice {
+			st.Notice = unescape(strings.TrimSpace(notice))
+		}
+		p.statusOverride = &st
+	}
+	p.queueRender()
+	a.refreshChrome()
+}
+
+// shot writes a widget's last drawn contents as a PNG: the whole window
+// (default), the tab chrome, or the options menu.
+func (a *App) shot(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("want shot FILE [window|chrome|menu]")
+	}
+	var w gtk.Widgetter = a.win
+	what := "window"
+	if len(args) > 1 {
+		what = args[1]
+	}
+	switch what {
+	case "window":
+	case "chrome":
+		w = a.chrome
+	case "menu":
+		w = a.optionsBtn.Popover()
+	default:
+		return fmt.Errorf("unknown widget %q", what)
+	}
+	pix, wd, ht := shotC(nativePtr(w))
+	if pix == nil {
+		return fmt.Errorf("%s: nothing drawn", what)
+	}
+	a.savePNG(args[0], pix, wd, wd, ht)
+	fmt.Printf("shot: %s %dx%d -> %s\n", what, wd, ht, args[0])
+	return nil
 }

@@ -1,6 +1,6 @@
 # Bunk Terminal Feature Audit
 
-Date: 2026-03-12 (updated 2026-09-21)
+Date: 2026-03-12 (updated 2026-10-25)
 
 ## Legend
 - **OK** — fully handled
@@ -28,11 +28,11 @@ Date: 2026-03-12 (updated 2026-09-21)
 | 21 | Double underline | OK | Same style as SGR 4:2; does not clear bold/dim |
 | 53 | Overline | OK | Stored through reflow and emitted as SGR 53 by the pinned tcell fork; SGR 55/0 clear it. Host must support overline |
 | 58;5;N | Colored underline (256) | OK | attrHasULColor flag + UL Color field; vtColor mapping; tcell style.Underline(color) |
-| 58;2;R;G;B | Colored underline (RGB) | OK | Same |
+| 58;2;R;G;B | Colored underline (RGB) | **FIXED** | Same; RGB values below 256 were palette indexes (see 38;2) |
 | 30-37, 90-97 | ANSI FG colors | OK | |
 | 40-47, 100-107 | ANSI BG colors | OK | |
 | 38;5;N / 48;5;N | 256 colors | OK | |
-| 38;2;R;G;B / 48;2;R;G;B | True color (24-bit) | OK | |
+| 38;2;R;G;B / 48;2;R;G;B | True color (24-bit) | **FIXED** | Was stored as `r<<16\|g<<8\|b`, so zero red and green with blue below 256 equalled a palette index: `38;2;0;0;255` painted palette 255 (grey) and DECRQSS reported `38;5;255`. Truecolour now carries a flag bit (`vt10x.RGB`); OSC 4/10/11/12 overrides too |
 
 Root cause (resolved): vt10x vendored to `internal/vt10x`; SGR 2/8/9 attr bits added and wired.
 
@@ -74,7 +74,7 @@ be queried accurately for that value. Explicit pane colour overrides remain quer
 | 1049 | Alt screen + save cursor | OK | |
 | 2004 | Bracketed paste | OK | |
 | 2026 | Synchronized updates | OK | Suppresses only the updating pane; a one-second timeout releases abandoned updates |
-| 2027 | Grapheme clustering | OK | Enabled by default; incremental Unicode grapheme assembly with bounded cell storage and legacy per-codepoint mode on reset |
+| 2027 | Grapheme clustering | **FIXED** | Enabled by default; incremental Unicode grapheme assembly with bounded cell storage and legacy per-codepoint mode on reset. In legacy mode VS16 and keycap marks widened their cell to two columns; they now join it without widening, and render paints the base character only |
 
 ---
 
@@ -294,6 +294,25 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
   SGR 14.8 → 146, Unicode 14.6 → 36, TUI redraws 13.3 → 266 MB/s.
   On the Zen 5c CPUs (4–11, 16–23) the same code runs about 35% slower, so
   pin benchmarks before comparing.
+
+### Automated feature scripts (2026-10-25)
+
+- All seven `terminal_features.sh` groups run as Go tests
+  (`terminal_features_test.go`). Each test runs the real script in a bunk
+  pane on a PTY, answers its pauses through bunk's key and paste handling,
+  and checks painted cells, cursor shape and position, printed query
+  replies, and OSC 7/52/133 reaching the host through `app.oscBuf`.
+- Query helpers wait for a DA1 fence instead of sleeping; the query and OSC
+  groups dropped from about 15 s of sleeps to under 0.3 s.
+- Bugs found: truecolour below 256 rendered as a palette colour (SGR row
+  above); DECRST 2027 widened cells for VS16 and keycaps (mode 2027 row).
+- Script bugs fixed: the OSC 8 line and other sequences put ST (`ESC \`)
+  inside printf formats, so `\b` became a backspace and the link text and
+  newline were lost. The bold colour row reset bold after its first block,
+  and the bracketed-paste message toggled 2004 instead of printing it.
+- New script checks: DECRQSS cursor style, margins and negative reply;
+  CSI 14/16/18 t; Kitty push and pop; per-codepoint widths with 2027 reset;
+  OSC 7 and OSC 52; the pasted bytes echoed back with their 200~/201~ markers.
 
 ### Scroll path (2026-10-25)
 

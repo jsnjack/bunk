@@ -240,3 +240,49 @@ func TestRegressionResizePreservesLinkIdentities(t *testing.T) {
 		}
 	}
 }
+
+// TestRegressionLowTruecolorRendersRGB: 38;2;0;0;255 painted palette 255
+// (grey) and 48;2;0;0;1 the theme's red, because vt10x stored the RGB value
+// as a palette index.
+func TestRegressionLowTruecolorRendersRGB(t *testing.T) {
+	p := regressionPane(4, 1)
+	p.CaptureAndWrite([]byte("\x1b[38;2;0;0;255mB\x1b[0;48;2;0;0;1mK"))
+	scr := tcell.NewSimulationScreen("UTF-8")
+	if err := scr.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer scr.Fini()
+	scr.SetSize(5, 1)
+	renderPane(scr, p, testTheme())
+	_, style, _ := scr.Get(0, 0)
+	if fg, _, _ := style.Decompose(); fg != tcell.NewRGBColor(0, 0, 255) {
+		t.Errorf("38;2;0;0;255 painted %v", fg)
+	}
+	_, style, _ = scr.Get(1, 0)
+	if _, bg, _ := style.Decompose(); bg != tcell.NewRGBColor(0, 0, 1) {
+		t.Errorf("48;2;0;0;1 painted %v", bg)
+	}
+}
+
+// TestRegressionLegacyWidthKeepsColumns: with DECRST 2027 a heart with VS16
+// takes one column. bunk painted the whole cluster, which tcell measures as
+// two columns, so the next cell disappeared on the host.
+func TestRegressionLegacyWidthKeepsColumns(t *testing.T) {
+	p := regressionPane(4, 1)
+	p.CaptureAndWrite([]byte("\x1b[?2027l\u2764\ufe0f|"))
+	scr := tcell.NewSimulationScreen("UTF-8")
+	if err := scr.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer scr.Fini()
+	scr.SetSize(5, 1)
+	renderPane(scr, p, testTheme())
+	for x, want := range []string{"\u2764", "|"} {
+		if got, _, width := scr.Get(x, 0); got != want || width != 1 {
+			t.Errorf("column %d = %+q width %d, want %+q width 1", x, got, width, want)
+		}
+	}
+	if got := p.Term.Cell(0, 0).Text(); got != "\u2764\ufe0f" {
+		t.Errorf("cell text for copy = %+q, want the heart with VS16", got)
+	}
+}

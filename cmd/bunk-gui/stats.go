@@ -54,14 +54,12 @@ type runStats struct {
 	gpu                                series // µs, GL_TIME_ELAPSED
 	outOldest, outNewest               series // µs, PTY output applied -> render end
 	keyRender, keyPresent              series // µs, key written to the PTY -> render end / presentation
+	injectWrite                        series // µs, key injected through the compositor -> written to the PTY
 	frames, skipped, clockFrames       int
 	resizeDeferred                     int // size requests made while a reflow ran
 	resizes, resizeNs, resizeMaxNs     atomic.Int64
 	osc52                              int // clipboard writes from applications
 	rows, bytes, uploadCalls           int
-	probeMallocs                       uint64
-	probeFrames                        int
-	probeSkipped                       int // frames that overlapped PTY output, a key write or a new glyph
 }
 
 // noteResize records one Session.Resize; it runs on a resize worker.
@@ -80,13 +78,13 @@ func newRunStats() *runStats {
 	return &runStats{
 		pull: newSeries(), convert: newSeries(), upload: newSeries(), draw: newSeries(), total: newSeries(),
 		gtkFrame: newSeries(), gpu: newSeries(), outOldest: newSeries(), outNewest: newSeries(),
-		keyRender: newSeries(), keyPresent: newSeries(),
+		keyRender: newSeries(), keyPresent: newSeries(), injectWrite: newSeries(),
 	}
 }
 
 func (st *runStats) report(w io.Writer, wall time.Duration) {
-	fmt.Fprintf(w, "| %-40s | %6s | %9s | %9s | %9s | %9s |\n", "metric", "n", "p50", "p99", "max", "mean")
-	fmt.Fprintf(w, "|%s|%s|%s|%s|%s|%s|\n", strings.Repeat("-", 42), strings.Repeat("-", 8),
+	_, _ = fmt.Fprintf(w, "| %-40s | %6s | %9s | %9s | %9s | %9s |\n", "metric", "n", "p50", "p99", "max", "mean")
+	_, _ = fmt.Fprintf(w, "|%s|%s|%s|%s|%s|%s|\n", strings.Repeat("-", 42), strings.Repeat("-", 8),
 		strings.Repeat("-", 11), strings.Repeat("-", 11), strings.Repeat("-", 11), strings.Repeat("-", 11))
 	for _, r := range []struct {
 		name string
@@ -106,28 +104,24 @@ func (st *runStats) report(w io.Writer, wall time.Duration) {
 	} {
 		s := summarize(r.s)
 		if s.n == 0 {
-			fmt.Fprintf(w, "| %-40s | %6d | %9s | %9s | %9s | %9s |\n", r.name, 0, "n/a", "n/a", "n/a", "n/a")
+			_, _ = fmt.Fprintf(w, "| %-40s | %6d | %9s | %9s | %9s | %9s |\n", r.name, 0, "n/a", "n/a", "n/a", "n/a")
 			continue
 		}
-		fmt.Fprintf(w, "| %-40s | %6d | %9.1f | %9.1f | %9.1f | %9.1f |\n", r.name, s.n, s.p50, s.p99, s.max, s.mean)
+		_, _ = fmt.Fprintf(w, "| %-40s | %6d | %9.1f | %9.1f | %9.1f | %9.1f |\n", r.name, s.n, s.p50, s.p99, s.max, s.mean)
 	}
 	secs := wall.Seconds()
-	fmt.Fprintf(w, "\n- frames rendered: %d (%.1f/s over %.2fs); snapshots without changes: %d; frame-clock frames: %d\n",
+	_, _ = fmt.Fprintf(w, "\n- frames rendered: %d (%.1f/s over %.2fs); snapshots without changes: %d; frame-clock frames: %d\n",
 		st.frames, float64(st.frames)/secs, secs, st.skipped, st.clockFrames)
 	if n := st.resizes.Load(); n > 0 || st.osc52 > 0 {
 		mean := 0.0
 		if n > 0 {
 			mean = float64(st.resizeNs.Load()) / float64(n) / 1e6
 		}
-		fmt.Fprintf(w, "- Session.Resize (reflow + PTY size, on a worker): %d, mean %.1f ms, max %.1f ms; requests coalesced during a reflow: %d; OSC 52 clipboard writes: %d\n",
+		_, _ = fmt.Fprintf(w, "- Session.Resize (reflow + PTY size, on a worker): %d, mean %.1f ms, max %.1f ms; requests coalesced during a reflow: %d; OSC 52 clipboard writes: %d\n",
 			n, mean, float64(st.resizeMaxNs.Load())/1e6, st.resizeDeferred, st.osc52)
 	}
 	if st.frames > 0 {
-		fmt.Fprintf(w, "- rows rebuilt per frame: %.1f; bytes uploaded per frame: %.0f; glBufferSubData calls per frame: %.2f\n",
+		_, _ = fmt.Fprintf(w, "- rows rebuilt per frame: %.1f; bytes uploaded per frame: %.0f; glBufferSubData calls per frame: %.2f\n",
 			float64(st.rows)/float64(st.frames), float64(st.bytes)/float64(st.frames), float64(st.uploadCalls)/float64(st.frames))
-	}
-	if st.probeFrames > 0 {
-		fmt.Fprintf(w, "- alloc probe: frame path allocated %d objects over %d frames (%.3f/frame); %d frames not counted (overlapped output or a key write, new glyph, resize)\n",
-			st.probeMallocs, st.probeFrames, float64(st.probeMallocs)/float64(st.probeFrames), st.probeSkipped)
 	}
 }

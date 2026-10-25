@@ -234,9 +234,8 @@ func TestVtColor_TruecolorBoundary(t *testing.T) {
 	rt := testTheme()
 	def := tcell.ColorDefault
 
-	// The highest valid truecolor is 0xffffff = 16777215, which must be
-	// less than vt10x.DefaultFG (1<<24 = 16777216).
-	c := vt10x.Color(0xff_ff_ff)
+	// The highest truecolor value must be less than vt10x.DefaultFG.
+	c := vt10x.RGB(0xff, 0xff, 0xff)
 	if c >= vt10x.DefaultFG {
 		t.Fatalf("0xffffff (%d) >= DefaultFG (%d); test assumption broken", c, vt10x.DefaultFG)
 	}

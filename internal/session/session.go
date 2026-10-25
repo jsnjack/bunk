@@ -117,10 +117,12 @@ type Session struct {
 	notice            string      // text of the latest attention request
 	lastOutput        time.Time   // when the last chunk of output arrived
 	cwd, repo, branch string      // foreground cwd and its git work tree
-	statusDirty       bool        // an attention request or failure arrived; report it
 	agentGone         bool        // the failed agent has exited; keep showing it
 	lastAgent         string      // the agent that most recently left the foreground
 	agentLeft         time.Time   // when lastAgent left
+	report            agentReport // the agent's latest explicit report (Notify)
+	statusHook        func()      // Hooks.StatusChanged, set by Run, for Notify
+	shown             agentView   // the agent state StatusChanged last announced
 
 	// syncDeadline releases an abandoned synchronized update (DEC 2026).
 	// Protected by mu.
@@ -165,6 +167,11 @@ type Options struct {
 	// XTGETTCAP "kbs" matches it: input.KeyBS (BS, the default, as bunk's
 	// tcell front end sends) or input.KeyBackspace (DEL).
 	Backspace input.Key
+	// NotifySocket and NotifySession are exported to the child as
+	// BUNK_GUI_SOCKET and BUNK_GUI_SESSION, so agent hooks can report their
+	// state (internal/notify). Inherited values are always removed; ""
+	// exports nothing.
+	NotifySocket, NotifySession string
 }
 
 // Hooks connect a Session to its front end. Every hook is optional.
@@ -188,8 +195,8 @@ type Hooks struct {
 	// Exited, and never comes while another process still holds the PTY.
 	Closed func()
 	// StatusChanged runs, without the lock, when Status may have changed:
-	// a new agent, directory or branch, output starting or stopping, or an
-	// attention request.
+	// a new agent, directory or branch, output starting or stopping, an
+	// attention request, or an agent's report (Notify). It must not block.
 	StatusChanged func()
 }
 
@@ -215,10 +222,13 @@ func Start(o Options) (*Session, error) {
 	// (Simply appending would not override them on most shells/kernels.)
 	// • TERM=xterm-256color - the emulation profile we advertise.
 	// • COLORTERM=truecolor - tells colour-aware apps 24-bit RGB works.
+	// • BUNK_GUI_SOCKET/BUNK_GUI_SESSION come only from Options, so a
+	//   session never reports to the front end that started its parent.
 	filtered := make([]string, 0, len(os.Environ()))
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "TERM=") && !strings.HasPrefix(e, "COLORTERM=") &&
-			!strings.HasPrefix(e, "VTE_VERSION=") {
+			!strings.HasPrefix(e, "VTE_VERSION=") && !strings.HasPrefix(e, EnvNotifySocket+"=") &&
+			!strings.HasPrefix(e, EnvNotifySession+"=") {
 			filtered = append(filtered, e)
 		}
 	}
@@ -227,6 +237,12 @@ func Start(o Options) (*Session, error) {
 	cmd.Env = append(filtered, "TERM="+TermName, "COLORTERM=truecolor")
 	cmd.Env = append(cmd.Env, o.Env...)
 	cmd.Env = append(cmd.Env, "VTE_VERSION=8203")
+	if o.NotifySocket != "" {
+		cmd.Env = append(cmd.Env, EnvNotifySocket+"="+o.NotifySocket)
+	}
+	if o.NotifySession != "" {
+		cmd.Env = append(cmd.Env, EnvNotifySession+"="+o.NotifySession)
+	}
 
 	cellWidth, cellHeight := VirtualCellPixels(o.CellAspect)
 	ptmx, err := pty.StartWithSize(cmd, Winsize(o.Cols, o.Rows, cellWidth, cellHeight))
@@ -301,6 +317,9 @@ func (s *Session) ContentRows() int {
 // Run starts the goroutines that read output, wait for the child to exit
 // and track its foreground process. Closing done stops them on shutdown.
 func (s *Session) Run(h Hooks, done <-chan struct{}) {
+	s.Lock()
+	s.statusHook = h.StatusChanged
+	s.Unlock()
 	go s.ReadLoop(h)
 	go s.waitForExit(h)
 	go s.trackFgProcess(h, done)
@@ -355,11 +374,9 @@ func (s *Session) ReadLoop(h Hooks) {
 			now := time.Now()
 			s.Lock()
 			s.CaptureAndWrite(chunk)
-			wasQuiet := now.Sub(s.lastOutput) >= IdleAfter
 			s.lastOutput = now
 			watched := s.agent != ""
-			attention := s.statusDirty
-			s.statusDirty = false
+			agentChanged := s.takeAgentChange(now)
 			scrolled := s.ScrollOffset > 0
 			syncing := s.Term.Mode()&vt10x.ModeSync != 0
 			if syncing && s.syncDeadline.IsZero() {
@@ -384,16 +401,20 @@ func (s *Session) ReadLoop(h Hooks) {
 			if h.Output != nil {
 				h.Output(chunk, scrolled, syncing)
 			}
-			// An agent's state follows its output: report when output starts,
-			// and again once it has stopped for IdleAfter.
-			if h.StatusChanged != nil && attention {
-				h.StatusChanged()
-			} else if watched && h.StatusChanged != nil && wasQuiet {
+			// An agent's state follows its output: report output starting,
+			// an attention request or a failure, and idle once output has
+			// stopped for IdleAfter. trackFgProcess reports whatever this
+			// misses, such as an agent that went quiet before it was known.
+			if agentChanged && h.StatusChanged != nil {
 				h.StatusChanged()
 			}
 			if watched && h.StatusChanged != nil {
 				if idleTimer == nil {
-					idleTimer = time.AfterFunc(IdleAfter, h.StatusChanged)
+					idleTimer = time.AfterFunc(IdleAfter, func() {
+						if s.agentChangedNow() {
+							h.StatusChanged()
+						}
+					})
 				} else {
 					idleTimer.Reset(IdleAfter)
 				}

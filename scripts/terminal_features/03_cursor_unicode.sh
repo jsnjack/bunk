@@ -31,11 +31,11 @@ printf "${CSI}0 q"
 ok "Cursor reset to default"
 
 section "Cursor Blink and Colour"
-printf "${CSI}5 q${CSI}?12l${OSC}12;#ff8800${ST}  Steady orange bar "
+printf '%s  Steady orange bar ' "${CSI}5 q${CSI}?12l${OSC}12;#ff8800${ST}"
 pause_for_input "(press Enter)" 0.3
 printf "${CSI}?12h  Blinking orange bar "
 pause_for_input "(press Enter)" 0.3
-printf "${OSC}112${ST}${CSI}0 q"
+printf '%s' "${OSC}112${ST}${CSI}0 q"
 
 section "Unicode Width and Alignment"
 printf "  CJK wide chars:   |中文日本語한국어|\n"
@@ -47,5 +47,12 @@ printf "  Braille spinner:  ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\n"
 printf "  Powerline glyphs: \ue0b0\ue0b1\ue0b2\ue0b3 (needs Nerd Font)\n"
 expect "The closing | markers should line up; CJK and emoji should occupy two columns without shifting later text left or right."
 diagnose "If the trailing markers drift, inspect wide-character width accounting in renderPane or reflow."
+
+section "Per-codepoint Widths (DECRST 2027)"
+printf "${CSI}?2027l"
+printf "  Legacy widths:    |❤️|🇳🇱|👩‍👧|\n"
+printf "${CSI}?2027h"
+expect "With mode 2027 reset, each code point takes its own width: the heart takes 1 column, the flag 4, and the two-person family 4."
+diagnose "If the markers match the clustered line above, inspect DECSET 2027 handling in vt10x."
 
 script_done
