@@ -263,6 +263,9 @@ func (a *App) closeWindowButton(size int) *gtk.Button {
 	b.SetChild(circle)
 	b.SetTooltipText("Close window")
 	b.SetFocusOnClick(false)
+	// The icon expands to centre in the circle; without this the button
+	// inherits that and takes a share of the bar's spare width.
+	b.SetHExpand(false)
 	b.ConnectClicked(func() { a.win.Close() })
 	a.closeWinBtn = b
 	return b
@@ -308,6 +311,7 @@ func (a *App) buildChrome() {
 		bar.AddCSSClass("bunk-bar")
 		a.tabsBox = gtk.NewBox(gtk.OrientationHorizontal, 2)
 		a.tabsBox.SetVAlign(gtk.AlignCenter)
+		a.tabsBox.SetHExpand(false) // tabs keep their own width; the drag area takes the rest
 		plus := iconButton("list-add-symbolic", 16, a.withKeys("New tab", "new_tab"), "chrome")
 		plus.SetVAlign(gtk.AlignCenter)
 		plus.ConnectClicked(func() { a.newTab("", a.cwdForNew()) })

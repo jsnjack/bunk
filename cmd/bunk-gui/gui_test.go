@@ -339,6 +339,7 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 	if bar.Layout != "bar" || len(bar.Tabs) != 2 || bar.Font != "Noto Sans Mono 12" || bar.TextPercent != 100 {
 		t.Errorf("start: layout %q, %d tabs, font %q, %d %%", bar.Layout, len(bar.Tabs), bar.Font, bar.TextPercent)
 	}
+	checkChromeButtons(t, "bar", bar)
 	if bar.Chrome == nil || bar.Chrome.H != 44 || bar.Chrome.W != float64(bar.Window.W) {
 		t.Errorf("bar rect %+v, want the window's width and 44 px", bar.Chrome)
 	} else {
@@ -392,6 +393,7 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 		case c.h != 0 && s.Chrome.H != c.h:
 			t.Errorf("%s: bar height %v, want %v", c.label, s.Chrome.H, c.h)
 		}
+		checkChromeButtons(t, c.label, s)
 		if c.bgSample && s.Chrome != nil {
 			img := loadPNG(t, g.file(c.label+".png"))
 			ch := s.Chrome
@@ -452,6 +454,32 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 	}
 	if s := g.snap("about"); !s.AboutOpen {
 		t.Error("About bunk-gui: no dialog")
+	}
+}
+
+// checkChromeButtons checks that the options and close-window buttons keep
+// their requested size (34 px, 40 in the collapsed rail) and, in the bar,
+// that the tabs keep their own width: the drag area takes the spare width.
+// The close button's centred icon used to widen it to a share of the bar,
+// and the tabs took another share.
+func checkChromeButtons(t *testing.T, label string, s *uiSnapshot) {
+	t.Helper()
+	for _, b := range []struct {
+		name string
+		r    *rectReport
+	}{{"options", s.Options}, {"close window", s.CloseWindow}} {
+		if b.r == nil || b.r.W > 40 {
+			t.Errorf("%s: %s button %+v, want at most 40 px wide", label, b.name, b.r)
+		}
+	}
+	if s.Layout != "bar" {
+		return
+	}
+	// These tabs show only "shell", so they stay at their 132 px minimum.
+	for _, tb := range s.Tabs {
+		if tb.Item == nil || tb.Item.W != 132 {
+			t.Errorf("%s: tab %d %+v, want 132 px wide", label, tb.Index, tb.Item)
+		}
 	}
 }
 
