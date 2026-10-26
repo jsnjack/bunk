@@ -28,9 +28,9 @@ var oscForwardNums = map[int]bool{
 }
 
 // statusOSCNums are the OSC numbers that report attention requests (9:
-// iTerm2/Windows Terminal, 99: kitty, 777: urxvt/VTE notify) and command
-// results (133;D).
-var statusOSCNums = map[int]bool{9: true, 99: true, 133: true, 777: true}
+// iTerm2/Windows Terminal, 99: kitty, 777: urxvt/VTE notify), command
+// results (133;D) and agent reports written in-band (1337 SetUserVar).
+var statusOSCNums = map[int]bool{9: true, 99: true, 133: true, 777: true, inBandOSC: true}
 
 // oscMaxBuf is the maximum bytes we accumulate for a single OSC sequence.
 // OSC 7 (CWD) is typically <300 bytes; OSC 8 (hyperlink) rarely exceeds 2 KB.
@@ -51,8 +51,8 @@ const (
 // from a raw PTY byte stream that may arrive in arbitrary chunk sizes.
 // One instance lives per Session; keep it as a value inside Session (no allocation).
 type oscScanner struct {
-	// status, when set, receives the payload of each OSC 9, 99, 777 and 133
-	// sequence (terminator removed) for agent status, forwarded or not.
+	// status, when set, receives the payload of each OSC 9, 99, 133, 777 and
+	// 1337 sequence (terminator removed) for agent status, forwarded or not.
 	status func(num int, payload []byte)
 
 	state   oscParseState

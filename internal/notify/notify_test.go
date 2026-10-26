@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"bunk/internal/notify/wire"
 	"bunk/internal/session"
 )
 
@@ -26,7 +27,65 @@ func TestMain(m *testing.M) {
 	if os.Getenv(cliHelperEnv) == "1" {
 		os.Exit(RunCLI(os.Args[1:], os.Environ(), os.Stdin))
 	}
+	// The tests never write to a real terminal: the walk up the process
+	// tree would reach the terminal they run in. stubInBand replaces this.
+	openTerminal = func() (io.WriteCloser, error) { return nil, errNoTerminal }
 	os.Exit(m.Run())
+}
+
+// stubWhere is what stubInBand's describeAgent reports.
+var stubWhere = wire.Report{Agent: "claude", Host: "build01", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}
+
+// stubInBand makes reportInBand write to the returned buffer, or find no
+// terminal when tty is false, and describe the agent as stubWhere. Tests
+// that call it must not run in parallel.
+func stubInBand(t *testing.T, tty bool) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prevOpen, prevDescribe := openTerminal, describeAgent
+	t.Cleanup(func() { openTerminal, describeAgent = prevOpen, prevDescribe })
+	openTerminal = func() (io.WriteCloser, error) {
+		if !tty {
+			return nil, errNoTerminal
+		}
+		return nopCloser{&buf}, nil
+	}
+	describeAgent = func() wire.Report { return stubWhere }
+	return &buf
+}
+
+type nopCloser struct{ io.Writer }
+
+func (nopCloser) Close() error { return nil }
+
+// decodeInBand returns the report in the in-band sequences written to buf,
+// unwrapping tmux passthrough; ok is false when buf holds none.
+func decodeInBand(t *testing.T, buf []byte) (wire.Report, bool) {
+	t.Helper()
+	if len(buf) == 0 {
+		return wire.Report{}, false
+	}
+	if inner, ok := bytes.CutPrefix(buf, []byte("\x1bPtmux;")); ok {
+		inner, ok = bytes.CutSuffix(inner, []byte("\x1b\\"))
+		if !ok {
+			t.Fatalf("tmux wrapper not closed: %q", buf)
+		}
+		buf = bytes.ReplaceAll(inner, []byte("\x1b\x1b"), []byte("\x1b"))
+	}
+	payload, ok := bytes.CutPrefix(buf, []byte("\x1b]1337;"))
+	payload, ok2 := bytes.CutSuffix(payload, []byte("\a"))
+	if !ok || !ok2 {
+		t.Fatalf("not one in-band sequence: %q", buf)
+	}
+	line, ok := wire.FromUserVar(payload)
+	if !ok {
+		t.Fatalf("not bunk's user variable: %q", payload)
+	}
+	r, err := wire.Decode(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r, true
 }
 
 // report is one call to a fakeTarget.
@@ -160,7 +219,7 @@ func TestEncodeDecode(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := tc.m
-			want.Text = CleanText(want.Text)
+			want.Text = wire.CleanText(want.Text)
 			if m != want {
 				t.Fatalf("Decode = %+v, want %+v", m, want)
 			}
@@ -175,7 +234,7 @@ func TestEncodeRejects(t *testing.T) {
 		m    Message
 	}{
 		{"no token", Message{Event: session.EventIdle}},
-		{"long token", Message{Session: strings.Repeat("a", maxToken+1), Event: session.EventIdle}},
+		{"long token", Message{Session: strings.Repeat("a", wire.MaxToken+1), Event: session.EventIdle}},
 		{"no event", Message{Session: "tok"}},
 		{"unknown event", Message{Session: "tok", Event: session.Event(99)}},
 	} {
@@ -186,7 +245,7 @@ func TestEncodeRejects(t *testing.T) {
 		})
 	}
 	// The longest text, escaped at twice its size, still fits one line.
-	m := Message{Session: strings.Repeat("f", maxToken), Event: session.EventNeedsYou, Text: strings.Repeat(`"`, 5000)}
+	m := Message{Session: strings.Repeat("f", wire.MaxToken), Event: session.EventNeedsYou, Text: strings.Repeat(`"`, 5000)}
 	line, err := m.Encode()
 	if err != nil || len(line) > MaxLine {
 		t.Fatalf("worst-case text: %d bytes, %v", len(line), err)
@@ -212,7 +271,7 @@ func TestDecodeRejects(t *testing.T) {
 		{"unknown event", `{"v":1,"session":"tok","event":"waiting"}`},
 		{"event as number", `{"v":1,"session":"tok","event":1}`},
 		{"no token", `{"v":1,"event":"working"}`},
-		{"long token", `{"v":1,"session":"` + strings.Repeat("a", maxToken+1) + `","event":"working"}`},
+		{"long token", `{"v":1,"session":"` + strings.Repeat("a", wire.MaxToken+1) + `","event":"working"}`},
 		{"trailing data", `{"v":1,"session":"tok","event":"working"} {}`},
 		{"two lines", "{\"v\":1,\"session\":\"tok\",\"event\":\"working\"}\n{}"},
 		{"too long", pad(MaxLine)},
@@ -229,30 +288,6 @@ func TestDecodeRejects(t *testing.T) {
 	m, err := Decode([]byte(`{"v":1,"session":"tok","event":"done","message":"ok","agent":"future field"}`))
 	if err != nil || m.Text != "ok" {
 		t.Fatalf("unknown fields must be ignored: %+v, %v", m, err)
-	}
-}
-
-func TestCleanText(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("é", MaxText) // 2 bytes each
-	for _, tc := range []struct {
-		name, in, want string
-	}{
-		{"plain", "Allow npm install?", "Allow npm install?"},
-		{"controls", "a\x1b]0;x\x07b\r\nc", "a ]0;x b  c"},
-		{"invalid UTF-8", "a\xffb", "a�b"},
-		{"trimmed", "  \t x \n", "x"},
-		{"cut on a character boundary", "a" + long, "a" + strings.Repeat("é", (MaxText-1)/2)},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := CleanText(tc.in)
-			if got != tc.want {
-				t.Fatalf("CleanText = %.80q, want %.80q", got, tc.want)
-			}
-			if len(got) > MaxText || !utf8.ValidString(got) || CleanText(got) != got {
-				t.Fatalf("CleanText result %d bytes, valid %v, idempotent %v", len(got), utf8.ValidString(got), CleanText(got) == got)
-			}
-		})
 	}
 }
 
@@ -311,7 +346,7 @@ func FuzzDecode(f *testing.F) {
 		if _, ok := session.ParseEvent(m.Event.String()); !ok {
 			t.Fatalf("accepted event %v", m.Event)
 		}
-		if m.Session == "" || len(m.Session) > maxToken || !utf8.ValidString(m.Session) || !utf8.ValidString(m.Text) {
+		if m.Session == "" || len(m.Session) > wire.MaxToken || !utf8.ValidString(m.Session) || !utf8.ValidString(m.Text) {
 			t.Fatalf("accepted %+v", m)
 		}
 		enc, err := m.Encode()
@@ -319,7 +354,7 @@ func FuzzDecode(f *testing.F) {
 			t.Fatalf("re-encode %+v: %v", m, err)
 		}
 		again, err := Decode(enc)
-		want := Message{Session: m.Session, Event: m.Event, Text: CleanText(m.Text)}
+		want := Message{Session: m.Session, Event: m.Event, Text: wire.CleanText(m.Text)}
 		if err != nil || again != want {
 			t.Fatalf("round trip: %+v, %v; want %+v", again, err, want)
 		}

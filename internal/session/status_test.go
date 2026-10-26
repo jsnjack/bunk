@@ -70,9 +70,9 @@ func TestGitHead(t *testing.T) {
 		{root, "", ""},
 		{"", "", ""},
 	} {
-		repo, branch := gitHead(tc.dir)
+		repo, branch := GitHead(tc.dir)
 		if repo != tc.repo || branch != tc.branch {
-			t.Errorf("gitHead(%q) = %q, %q; want %q, %q", tc.dir, repo, branch, tc.repo, tc.branch)
+			t.Errorf("GitHead(%q) = %q, %q; want %q, %q", tc.dir, repo, branch, tc.repo, tc.branch)
 		}
 	}
 }

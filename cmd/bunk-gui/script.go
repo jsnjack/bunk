@@ -70,7 +70,8 @@ import (
 //	layout bar|rail | rail open|closed | font +|-|0 | menu open|close | menu-item LABEL | menu-check
 //	switcher [filter TEXT|enter|close] | jump
 //	status [tab=N|pane=ID] [agent=A] [state=working|needs|idle|failed|done|none]
-//	       [repo=R] [branch=B] [container=C] [process=P] [ssh=H] [notice=TEXT...]
+//	       [repo=R] [branch=B] [container=C] [process=P] [ssh=H] [host=H]
+//	       [notice=TEXT...]
 //	                                 override a pane's status (test hook)
 //	status-clear [tab=N|pane=ID]
 //	alert-click N                    click tab N's desktop notification, as the server would
@@ -689,6 +690,8 @@ func (a *App) scriptStatus(clear bool, arg string) {
 				st.Process = v
 			case "ssh":
 				st.SSHHost = v
+			case "host":
+				st.Host = v
 			}
 		}
 		if hasNotice {

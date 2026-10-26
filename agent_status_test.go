@@ -2,6 +2,7 @@ package main
 
 import (
 	"bunk/internal/notify"
+	"bunk/internal/notify/wire"
 	"bunk/internal/session"
 	"bytes"
 	"errors"
@@ -11,8 +12,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
@@ -640,7 +644,6 @@ func TestBunkNotifyCLI(t *testing.T) {
 	srv.Register("tok", target)
 	bunk := filepath.Join(bunkOnPath(t), "bunk")
 	inside := []string{session.EnvNotifySocket + "=" + srv.Path(), session.EnvNotifySession + "=tok"}
-	gone := []string{session.EnvNotifySocket + "=" + filepath.Join(t.TempDir(), "gone.sock"), session.EnvNotifySession + "=tok"}
 	const claudeNotification = `{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash","notification_type":"permission_prompt"}`
 	for _, tc := range []struct {
 		name   string
@@ -659,7 +662,6 @@ func TestBunkNotifyCLI(t *testing.T) {
 			want: &report{session.EventNeedsYou, "Claude needs your permission to use Bash"}},
 		{name: "words that look like flags", args: []string{"notify", "failed", "--config", "-x"}, env: inside,
 			want: &report{session.EventFailed, "--config -x"}},
-		{name: "front end gone", args: []string{"notify", "done"}, env: gone},
 		{name: "unknown event", args: []string{"notify", "waiting"}, env: inside, code: 1, stderr: `bunk notify: unknown event "waiting"`},
 		{name: "no event", args: []string{"notify"}, code: 1, stderr: "usage: bunk notify"},
 		{name: "help", args: []string{"notify", "--help"}, stdout: "usage: bunk notify"},
@@ -698,6 +700,60 @@ func TestBunkNotifyCLI(t *testing.T) {
 	}
 	if len(target) != 0 {
 		t.Fatalf("unexpected report %+v", <-target)
+	}
+}
+
+// TestBunkNotifyInBand runs "bunk notify" on a terminal of its own, as a
+// hook on a host reached over ssh does: without a reachable socket it
+// writes the report to the terminal, and nothing else.
+func TestBunkNotifyInBand(t *testing.T) {
+	bunk := filepath.Join(bunkOnPath(t), "bunk")
+	gone := filepath.Join(t.TempDir(), "gone.sock")
+	for _, tc := range []struct {
+		name  string
+		env   []string
+		token string
+		host  bool
+	}{
+		{"front end gone", []string{session.EnvNotifySocket + "=" + gone, session.EnvNotifySession + "=tok"}, "tok", false},
+		{"over ssh", []string{"SSH_CONNECTION=10.0.0.2 50000 10.0.0.1 22"}, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(bunk, "notify", "done", "Fixed", "it")
+			cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}, tc.env...)
+			ptmx, err := pty.Start(cmd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := ptmx.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			out, err := io.ReadAll(ptmx)
+			if err != nil && !errors.Is(err, syscall.EIO) {
+				t.Fatal(err)
+			}
+			if err := cmd.Wait(); err != nil {
+				t.Fatalf("bunk notify: %v; output %q", err, out)
+			}
+			payload, ok := bytes.CutPrefix(out, []byte("\x1b]1337;"))
+			payload, ok2 := bytes.CutSuffix(payload, []byte("\a"))
+			if !ok || !ok2 {
+				t.Fatalf("terminal output %q, want one in-band report", out)
+			}
+			line, ok := wire.FromUserVar(payload)
+			if !ok {
+				t.Fatalf("not bunk's user variable: %q", payload)
+			}
+			r, err := wire.Decode(line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.Session != tc.token || r.Event != "done" || r.Message != "Fixed it" || (r.Host != "") != tc.host || r.Cwd == "" {
+				t.Fatalf("report %+v", r)
+			}
+		})
 	}
 }
 

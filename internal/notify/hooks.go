@@ -9,9 +9,10 @@ import (
 )
 
 // Command is how hook snippets run the notify CLI: bunk's when bunk is on
-// PATH, else bunk-gui's. Both binaries run the same CLI (RunCLI) and serve
+// PATH, else bunk-gui's, and nothing when neither is installed, as on a
+// server without bunk. Both binaries run the same CLI (RunCLI) and serve
 // the same protocol, so either reaches the front end of the session.
-const Command = `"$(command -v bunk || echo bunk-gui)" notify`
+const Command = `! b=$(command -v bunk || command -v bunk-gui) || "$b" notify`
 
 // hookTimeout is the timeout snippets give each hook, in seconds. The CLI
 // gives up after clientTimeout plus stdinTimeout.
@@ -103,10 +104,11 @@ func HookAgents() string {
 	return b.String()
 }
 
-// shellCommand runs the notify CLI only inside a bunk session, so the hook
-// succeeds in other terminals even where bunk is not installed.
+// shellCommand runs the notify CLI inside a bunk session and on hosts
+// reached over ssh, where it reports in-band to the bunk pane ssh runs in.
+// Elsewhere the hook succeeds without running anything.
 func shellCommand(args string) string {
-	return `[ -z "$` + EnvSession + `" ] || ` + Command + " " + args
+	return `[ -z "$` + EnvSession + `$` + envSSH + `" ] || ` + Command + " " + args
 }
 
 // field is one key of an ordered JSON object.

@@ -148,6 +148,7 @@ func (app *App) render() {
 
 	rt := app.theme
 	app.forwardAlerts(root, active)
+	app.relayAgents(root, active)
 
 	// Zoomed mode: draw only the zoomed pane, no borders.
 	if zp := app.zoomedPane; zp != nil {

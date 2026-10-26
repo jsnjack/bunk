@@ -14,6 +14,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"bunk/internal/notify/wire"
 	"bunk/internal/session"
 )
 
@@ -67,6 +68,8 @@ func TestCLI(t *testing.T) {
 		stderr     string // substring; "" means no output at all
 		want       *report
 		otherToken bool
+		inBand     *wire.Report // the report written to the terminal
+		noTTY      bool         // no terminal leads to the agent
 	}{
 		{name: "no arguments", code: 1, stderr: "usage: bunk notify <event>"},
 		{name: "help", args: []string{"help"}, stdout: "usage: bunk notify <event>"},
@@ -74,12 +77,24 @@ func TestCLI(t *testing.T) {
 		{name: "unknown event outside bunk", args: []string{"waiting"}, code: 1, stderr: "unknown event"},
 		{name: "outside bunk", args: []string{"needs-you", "-"}, env: []string{"HOME=/home/u"}, stdin: claudeNotification},
 		{name: "socket without session", args: []string{"working"}, env: []string{EnvSocket + "=" + srv.Path()}},
-		{name: "session without socket", args: []string{"working"}, env: []string{EnvSession + "=" + token}},
+		{name: "session without socket", args: []string{"working"}, env: []string{EnvSession + "=" + token},
+			inBand: &wire.Report{V: 1, Session: token, Event: "working", Agent: "claude", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}},
 		{name: "empty values", args: []string{"working"}, env: []string{EnvSocket + "=", EnvSession + "="}},
-		{name: "front end exited", args: []string{"done"}, env: []string{EnvSocket + "=" + gone, EnvSession + "=" + token}},
-		{name: "front end crashed", args: []string{"done"}, env: []string{EnvSocket + "=" + refused, EnvSession + "=" + token}},
+		{name: "front end exited", args: []string{"done"}, env: []string{EnvSocket + "=" + gone, EnvSession + "=" + token},
+			inBand: &wire.Report{V: 1, Session: token, Event: "done", Agent: "claude", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}},
+		{name: "front end crashed", args: []string{"done"}, env: []string{EnvSocket + "=" + refused, EnvSession + "=" + token},
+			inBand: &wire.Report{V: 1, Session: token, Event: "done", Agent: "claude", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}},
+		{name: "over ssh", args: []string{"needs-you", "-"}, env: []string{envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, stdin: claudeNotification,
+			inBand: &wire.Report{V: 1, Event: "needs-you", Message: "Claude needs your permission to use Bash", Agent: "claude",
+				Host: "build01", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}},
+		{name: "over ssh in tmux", args: []string{"clear"}, env: []string{envSSH + "=x", "TMUX=/tmp/tmux-1000/default,1,0"},
+			inBand: &wire.Report{V: 1, Event: "clear", Agent: "claude", Host: "build01", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}},
+		{name: "over ssh with a token", args: []string{"idle"}, env: []string{envSSH + "=x", EnvSession + "=" + token},
+			inBand: &wire.Report{V: 1, Session: token, Event: "idle", Agent: "claude", Host: "build01", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}},
+		{name: "over ssh without a terminal", args: []string{"done"}, env: []string{envSSH + "=x"}, noTTY: true},
+		{name: "unknown event over ssh", args: []string{"waiting"}, env: []string{envSSH + "=x"}, code: 1, stderr: "unknown event"},
 		{name: "socket not writable", args: []string{"done"}, env: []string{EnvSocket + "=" + denied, EnvSession + "=" + token}, code: 1, stderr: "permission denied"},
-		{name: "oversized token", args: []string{"done"}, env: []string{EnvSocket + "=" + srv.Path(), EnvSession + "=" + strings.Repeat("a", maxToken+1)}, code: 1, stderr: "token"},
+		{name: "oversized token", args: []string{"done"}, env: []string{EnvSocket + "=" + srv.Path(), EnvSession + "=" + strings.Repeat("a", wire.MaxToken+1)}, code: 1, stderr: "token"},
 		{name: "working", args: []string{"working"}, env: inside, want: &report{session.EventWorking, ""}},
 		{name: "idle", args: []string{"idle"}, env: inside, want: &report{session.EventIdle, ""}},
 		{name: "clear", args: []string{"clear"}, env: inside, want: &report{session.EventClear, ""}},
@@ -101,6 +116,7 @@ func TestCLI(t *testing.T) {
 		{name: "hooks with two agents", args: []string{"hooks", "claude", "codex"}, code: 1, stderr: "gemini"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			tty := stubInBand(t, !tc.noTTY)
 			var stdout, stderr bytes.Buffer
 			code := runCLI("bunk", tc.args, tc.env, strings.NewReader(tc.stdin), &stdout, &stderr)
 			if code != tc.code {
@@ -117,6 +133,16 @@ func TestCLI(t *testing.T) {
 				if got := next(t, target); got != *tc.want {
 					t.Fatalf("report %+v, want %+v", got, *tc.want)
 				}
+			}
+			got, ok := decodeInBand(t, tty.Bytes())
+			switch {
+			case tc.inBand == nil && ok:
+				t.Fatalf("wrote an in-band report %+v", got)
+			case tc.inBand != nil && got != *tc.inBand:
+				t.Fatalf("in-band report %+v, want %+v", got, *tc.inBand)
+			}
+			if wrapped := bytes.HasPrefix(tty.Bytes(), []byte("\x1bPtmux;")); wrapped != strings.Contains(strings.Join(tc.env, " "), "TMUX=") {
+				t.Fatalf("tmux passthrough %v for %q", wrapped, tty.Bytes())
 			}
 			// Nothing else arrived: the next report is this sentinel.
 			if err := Send(srv.Path(), Message{Session: token, Event: session.EventClear, Text: "sentinel"}); err != nil {
@@ -302,6 +328,9 @@ func TestHookSnippets(t *testing.T) {
 					{"outside bunk with bunk installed", []string{"PATH=" + both}, ""},
 					{"inside bunk", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk notify " + h.args + "\n"},
 					{"inside bunk-gui without bunk", []string{"PATH=" + guiOnly, EnvSession + "=tok"}, "bunk-gui notify " + h.args + "\n"},
+					{"inside bunk without either binary", []string{"PATH=" + empty, EnvSession + "=tok"}, ""},
+					{"over ssh", []string{"PATH=" + both, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, "bunk notify " + h.args + "\n"},
+					{"over ssh without bunk", []string{"PATH=" + empty, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, ""},
 				} {
 					if got := run(t, []string{"/bin/sh", "-c", cmd}, tc.env); got != tc.want {
 						t.Fatalf("%s %s: %q ran %q, want %q", h.event, tc.name, cmd, got, tc.want)
@@ -318,6 +347,8 @@ func TestHookSnippets(t *testing.T) {
 				want string
 			}{
 				{"outside bunk", []string{"PATH=" + empty}, ""},
+				{"over ssh without bunk", []string{"PATH=" + empty, envSSH + "=x"}, ""},
+				{"over ssh", []string{"PATH=" + guiOnly, envSSH + "=x"}, "bunk-gui notify done " + codexNotify + "\n"},
 				{"inside bunk", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk notify done " + codexNotify + "\n"},
 				{"inside bunk-gui without bunk", []string{"PATH=" + guiOnly, EnvSession + "=tok"}, "bunk-gui notify done " + codexNotify + "\n"},
 			} {

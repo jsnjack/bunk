@@ -149,6 +149,7 @@ func startPane(sp paneSpec) (*Pane, error) {
 	}
 	token := ""
 	if sp.notify != nil {
+		opts.KnownToken = sp.notify.Issued
 		if tok, err := notify.NewToken(); err == nil {
 			token, opts.NotifySocket, opts.NotifySession = tok, sp.notify.Path(), tok
 		} else {

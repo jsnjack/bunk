@@ -102,6 +102,10 @@ func TestAlertText(t *testing.T) {
 			"claude on gpu01 needs you", "Allow?\nmodel ⎇ train"},
 		{"unnamed agent on another host", session.Status{State: failed, SSHHost: "gpu01"},
 			"agent on gpu01 failed", "Stopped with an error"},
+		{"remote report", session.Status{Agent: "claude", State: needs, Notice: "Allow rm?", Host: "build01", Repo: "bunk", Branch: "main"},
+			"claude on build01 needs you", "Allow rm?\nbunk ⎇ main"},
+		{"remote report past a jump host", session.Status{Agent: "codex", State: done, SSHHost: "bastion", Host: "build01"},
+			"codex on build01 is done", "Finished its turn"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := alert.For(tc.st)

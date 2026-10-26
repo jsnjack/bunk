@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"bunk/internal/notify/wire"
 	"bunk/internal/session"
 )
 
@@ -43,8 +44,10 @@ Events: working, idle, needs-you, done, failed, clear.
 The message is the notice for needs-you, done and failed. "-" reads it
 from stdin. A hook's JSON input gives its "message",
 "last_assistant_message" or similar field.
-Outside bunk (BUNK_NOTIFY_SOCKET or BUNK_NOTIFY_SESSION unset) it does
-nothing and exits 0.
+Inside bunk it reports over BUNK_NOTIFY_SOCKET. Without a reachable
+socket, with BUNK_NOTIFY_SESSION set or on a host reached over ssh
+(SSH_CONNECTION set), it writes the report to its terminal for the bunk
+pane ssh runs in. Elsewhere it does nothing and exits 0.
 
 "hooks" lists the agents with ready hook snippets; "hooks <agent>"
 prints one.
@@ -93,24 +96,27 @@ func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.
 		return exitError
 	}
 	socket, token := lookupEnv(env, EnvSocket), lookupEnv(env, EnvSession)
-	if socket == "" || token == "" {
-		return 0 // not inside bunk
+	if token == "" && lookupEnv(env, envSSH) == "" {
+		return 0 // not inside bunk, and not on a host reached over ssh
 	}
 	text := strings.Join(args[1:], " ")
 	if text == "-" {
 		text = readStdin(stdin)
 	}
-	err := Send(socket, Message{Session: token, Event: ev, Text: hookText(text)})
-	switch {
-	case err == nil:
-		return 0
-	case serverGone(err):
+	text = hookText(text)
+	if socket != "" && token != "" {
+		err := Send(socket, Message{Session: token, Event: ev, Text: text})
+		switch {
+		case err == nil:
+			return 0
+		case !serverGone(err):
+			write(stderr, prog+" notify: "+err.Error()+"\n")
+			return exitError
+		}
 		// The front end that started this session has exited, as when an
-		// agent outlives it inside tmux.
-		return 0
+		// agent outlives it inside tmux. The terminal may still lead to bunk.
 	}
-	write(stderr, prog+" notify: "+err.Error()+"\n")
-	return exitError
+	return reportInBand(prog, wire.Report{Session: token, Event: ev.String(), Message: text}, env, stderr)
 }
 
 func write(w io.Writer, s string) {

@@ -46,7 +46,8 @@ type Server struct {
 
 	mu      sync.Mutex
 	targets map[string]Target
-	cur     *net.UnixConn // connection being read; Close closes it
+	issued  map[string]bool // every token registered since Listen
+	cur     *net.UnixConn   // connection being read; Close closes it
 }
 
 // Listen creates the socket $XDG_RUNTIME_DIR/bunk/notify-<pid>.sock
@@ -86,7 +87,7 @@ func listen(uid int) (*Server, error) {
 		}
 		return nil, fmt.Errorf("notify: chmod socket: %w", err)
 	}
-	s := &Server{path: path, ln: ln, uid: uid, done: make(chan struct{}), targets: map[string]Target{}}
+	s := &Server{path: path, ln: ln, uid: uid, done: make(chan struct{}), targets: map[string]Target{}, issued: map[string]bool{}}
 	go s.serve()
 	return s, nil
 }
@@ -123,7 +124,17 @@ func (s *Server) Path() string { return s.path }
 func (s *Server) Register(token string, t Target) {
 	s.mu.Lock()
 	s.targets[token] = t
+	s.issued[token] = true
 	s.mu.Unlock()
+}
+
+// Issued reports whether token was registered since Listen, even if it was
+// unregistered since. It is session.Options.KnownToken for in-band reports:
+// an agent in a remote tmux keeps the token of the tab it started from.
+func (s *Server) Issued(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.issued[token]
 }
 
 // Unregister stops routing reports for token; later ones are dropped.

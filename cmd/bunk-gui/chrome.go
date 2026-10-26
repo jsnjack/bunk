@@ -193,6 +193,10 @@ func (a *App) tabInfos() []tabInfo {
 			in.loc, in.locGlyph = "⬡ "+st.Container, "⬡"
 		case st.SSHHost != "":
 			in.loc, in.locGlyph = "⇄ ssh "+st.SSHHost, "⇄"
+		case st.Host != "":
+			// A remote agent reporting in-band through a client bunk does
+			// not recognise as ssh.
+			in.loc, in.locGlyph = "⇄ "+st.Host, "⇄"
 		}
 		parts := []string{in.agent, in.repo}
 		if in.loc != "" {

@@ -54,6 +54,8 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 104 | Reset palette color | OK | vt10x handles indices 0-255 |
 | 110/111/112 | Reset fg/bg/cursor color | OK | Clears dynamic overrides, repaints FG/BG, and restores the pane's cursor-colour baseline (or the host default when unknown) |
 | 133 | Shell integration/prompt marking | OK | Forwarded to host so semantic prompt integration and jump-to-prompt can work when the outer terminal supports it |
+| 9/99/777 | Notifications | OK | Read as an agent's attention request, from a known agent or while ssh/mosh runs in the pane; not forwarded |
+| 1337 SetUserVar=bunk_notify | In-band agent report | OK | Read as an agent status report (docs/remote-agent-status.md); other user variables are ignored; not forwarded |
 
 Host limitation: an outer terminal that does not disclose a default colour cannot
 be queried accurately for that value. Explicit pane colour overrides remain queryable.

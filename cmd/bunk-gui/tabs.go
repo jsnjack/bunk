@@ -160,6 +160,7 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 	}
 	// Agent hooks report through the notify socket with the session's token.
 	if a.notify != nil {
+		opts.KnownToken = a.notify.Issued
 		if tok, err := notify.NewToken(); err == nil {
 			p.token, opts.NotifySocket, opts.NotifySession = tok, a.notify.Path(), tok
 		} else {

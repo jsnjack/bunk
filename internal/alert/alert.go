@@ -175,10 +175,13 @@ func For(st session.Status) Alert {
 	return a
 }
 
-// host is the machine the agent runs on when it is not this one: the SSH
-// host of the pane's foreground process. A host that reports the agent's
-// state itself goes here too.
+// host is the machine the agent runs on when it is not this one: the host
+// a remote agent's in-band report names, else the SSH host of the pane's
+// foreground process. The report names the machine past any jump host.
 func host(st session.Status) string {
+	if st.Host != "" {
+		return st.Host
+	}
 	return st.SSHHost
 }
 

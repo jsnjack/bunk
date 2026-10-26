@@ -16,32 +16,29 @@
 // session and calls session.Session.Notify. It drops lines over MaxLine,
 // malformed lines and unknown tokens. Events: working, idle, needs-you,
 // done, failed, clear.
+//
+// Where no socket is reachable, as on a host reached over ssh, the CLI
+// writes the same line to its terminal instead, inside an OSC 1337 user
+// variable (package wire), and the session parses it from its output.
+// "bunk ssh" (RunSSH) gives the remote shell the pane's token for that
+// path (docs/remote-agent-status.md).
 package notify
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
+	"bunk/internal/notify/wire"
 	"bunk/internal/session"
 )
 
 const (
 	// ProtocolVersion is the "v" field of every message.
-	ProtocolVersion = 1
+	ProtocolVersion = wire.Version
 	// MaxLine caps one message, newline included, in bytes.
-	MaxLine = 4096
-	// MaxText caps the message text a client sends, in bytes. Escaped as
-	// JSON it stays under MaxLine.
-	MaxText = 1024
-	// maxToken caps the session token on the wire, in bytes.
-	maxToken = 64
+	MaxLine = wire.MaxLine
 )
 
 // EnvSocket and EnvSession are the environment variables that carry the
@@ -58,87 +55,44 @@ type Message struct {
 	Text    string        // notice text for needs-you, done and failed
 }
 
-// wire is a Message as JSON.
-type wire struct {
-	V       int    `json:"v"`
-	Session string `json:"session"`
-	Event   string `json:"event"`
-	Message string `json:"message,omitempty"`
-}
-
 var (
-	errTooLong = errors.New("message longer than MaxLine")
-	errVersion = errors.New("unsupported protocol version")
-	errEvent   = errors.New("unknown event")
-	errToken   = errors.New("missing or oversized session token")
+	errEvent = errors.New("unknown event")
+	errToken = errors.New("missing session token")
 )
 
 // Encode returns m as one JSON line ending in a newline. It cleans m.Text
-// first (CleanText).
+// first (wire.CleanText).
 func (m Message) Encode() ([]byte, error) {
-	if m.Session == "" || len(m.Session) > maxToken {
+	if m.Session == "" {
 		return nil, fmt.Errorf("encode: %w", errToken)
 	}
 	if _, ok := session.ParseEvent(m.Event.String()); !ok {
 		return nil, fmt.Errorf("encode: %w: %v", errEvent, m.Event)
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false) // "<" stays one byte, so MaxText fits MaxLine
-	err := enc.Encode(wire{V: ProtocolVersion, Session: m.Session, Event: m.Event.String(), Message: CleanText(m.Text)})
+	line, err := wire.Report{Session: m.Session, Event: m.Event.String(), Message: m.Text}.Encode()
 	if err != nil {
-		return nil, fmt.Errorf("encode: %w", err)
+		return nil, fmt.Errorf("notify: %w", err)
 	}
-	if buf.Len() > MaxLine {
-		return nil, fmt.Errorf("encode: %w", errTooLong)
-	}
-	return buf.Bytes(), nil
+	return line, nil
 }
 
 // Decode parses one line, with or without its newline. It rejects lines
 // over MaxLine, other protocol versions, unknown events and missing tokens.
-// Text is valid UTF-8 but not otherwise cleaned.
+// Text is valid UTF-8 but not otherwise cleaned. Fields for agents on other
+// machines are ignored: they travel in-band only.
 func Decode(line []byte) (Message, error) {
-	line = bytes.TrimSuffix(line, []byte("\n"))
-	if len(line) >= MaxLine {
-		return Message{}, fmt.Errorf("decode: %w", errTooLong)
+	r, err := wire.Decode(line)
+	if err != nil {
+		return Message{}, fmt.Errorf("notify: %w", err)
 	}
-	var w wire
-	if err := json.Unmarshal(line, &w); err != nil {
-		return Message{}, fmt.Errorf("decode: %w", err)
-	}
-	if w.V != ProtocolVersion {
-		return Message{}, fmt.Errorf("decode: %w %d", errVersion, w.V)
-	}
-	ev, ok := session.ParseEvent(w.Event)
+	ev, ok := session.ParseEvent(r.Event)
 	if !ok {
-		return Message{}, fmt.Errorf("decode: %w %q", errEvent, w.Event)
+		return Message{}, fmt.Errorf("decode: %w %q", errEvent, r.Event)
 	}
-	if w.Session == "" || len(w.Session) > maxToken {
+	if r.Session == "" {
 		return Message{}, fmt.Errorf("decode: %w", errToken)
 	}
-	return Message{Session: w.Session, Event: ev, Text: w.Message}, nil
-}
-
-// CleanText makes text safe to send: invalid UTF-8 and control characters
-// become replacement characters and spaces, and the result is trimmed and
-// cut to at most MaxText bytes on a character boundary.
-func CleanText(text string) string {
-	text = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, strings.ToValidUTF8(text, "�"))
-	text = strings.TrimSpace(text)
-	if len(text) > MaxText {
-		cut := MaxText
-		for cut > 0 && !utf8.RuneStart(text[cut]) {
-			cut--
-		}
-		text = strings.TrimSpace(text[:cut])
-	}
-	return text
+	return Message{Session: r.Session, Event: ev, Text: r.Message}, nil
 }
 
 // NewToken returns a random, unguessable session token: 32 hex digits.

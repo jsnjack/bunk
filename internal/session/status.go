@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"bunk/internal/notify/wire"
 )
 
 // AgentState is what a session's agent appears to be doing.
@@ -42,6 +44,10 @@ type Status struct {
 	Branch    string // checked-out branch, or a short commit hash when detached
 	Container string // e.g. "toolbox fedora"; "" outside containers
 	SSHHost   string
+	// Host is the machine a remote agent runs on, from its in-band report;
+	// "" for local agents. With a remote agent, Agent, Cwd, Repo and Branch
+	// come from its report too.
+	Host string
 }
 
 // Status returns the session's current status. It takes the session lock.
@@ -61,6 +67,9 @@ func (s *Session) Status() Status {
 		Branch:   s.branch,
 		SSHHost:  s.SSHHost,
 	}
+	if r := v.remote; r != (remoteAgent{}) {
+		st.Host, st.Cwd, st.Repo, st.Branch = r.host, r.cwd, r.repo, r.branch
+	}
 	if s.ContainerType != "" {
 		st.Container = strings.TrimSpace(s.ContainerType + " " + s.ContainerID)
 	}
@@ -69,7 +78,8 @@ func (s *Session) Status() Status {
 
 // Acknowledge records that the user has seen the session. It clears a
 // pending attention request and the agent's explicit report, so inference
-// shows the session until the agent reports again. It runs no hook itself:
+// shows the session until the agent reports again. It keeps what a remote
+// agent's report said about where it runs. It runs no hook itself:
 // the next output or process tick (at most Timing.Poll later) announces the
 // change through Hooks.StatusChanged, so callers may hold their own locks.
 func (s *Session) Acknowledge() {
@@ -85,6 +95,13 @@ type agentView struct {
 	state    AgentState
 	notice   string
 	reported bool
+	remote   remoteAgent
+}
+
+// remoteAgent is where an agent that reports in-band runs, from its latest
+// report. The zero value means a local agent.
+type remoteAgent struct {
+	agent, host, repo, branch, cwd string
 }
 
 // reportingAgent labels a session whose agent reported its state but was
@@ -114,22 +131,30 @@ func (s *Session) agentChangedNow() bool {
 }
 
 // view requires the session lock. An explicit report takes priority over
-// inference.
+// inference. A remote agent named by its report counts as known, so
+// inference keeps naming it after an acknowledgement.
 func (s *Session) view(now time.Time) agentView {
+	agent := s.agent
+	if agent == "" {
+		agent = s.remote.agent
+	}
 	if s.report.state != AgentNone {
-		agent := s.agent
 		if agent == "" {
 			agent = reportingAgent
 		}
-		return agentView{agent: agent, state: s.report.state, notice: s.report.notice, reported: true}
+		return agentView{agent: agent, state: s.report.state, notice: s.report.notice, reported: true, remote: s.remote}
 	}
-	return agentView{agent: s.agent, state: s.agentState(now), notice: s.notice}
+	if agent == "" && s.remoteClient && s.needsYou {
+		// An OSC 9/99/777 notification from the other end of ssh or mosh.
+		agent = reportingAgent
+	}
+	return agentView{agent: agent, state: s.agentState(now, agent), notice: s.notice, remote: s.remote}
 }
 
-// agentState requires the session lock.
-func (s *Session) agentState(now time.Time) AgentState {
+// agentState requires the session lock; agent is the agent view names.
+func (s *Session) agentState(now time.Time, agent string) AgentState {
 	switch {
-	case s.agent == "":
+	case agent == "":
 		return AgentNone
 	case s.failed:
 		return AgentFailed
@@ -219,6 +244,13 @@ func matchAgent(specs []AgentSpec, name string, argv []string) string {
 	return ""
 }
 
+// AgentOf names the agent in DefaultAgents that runs as process name with
+// argv, or returns "". The notify CLI uses it to name the agent that ran a
+// hook.
+func AgentOf(name string, argv []string) string {
+	return matchAgent(DefaultAgents, name, argv)
+}
+
 // agentFromProcess names the agent running as process name with argv, from
 // the session's specs (DefaultAgents plus Options.Agents), or returns "".
 func (s *Session) agentFromProcess(name string, argv []string) string {
@@ -228,9 +260,10 @@ func (s *Session) agentFromProcess(name string, argv []string) string {
 	return matchAgent(DefaultAgents, name, argv)
 }
 
-// gitHead finds the git work tree holding dir and returns its repository
+// GitHead finds the git work tree holding dir and returns its repository
 // name and checked-out branch, or a short commit hash when HEAD is detached.
-func gitHead(dir string) (repo, branch string) {
+// A linked worktree reports its main repository.
+func GitHead(dir string) (repo, branch string) {
 	if dir == "" {
 		return "", ""
 	}
@@ -382,8 +415,14 @@ const recentlyLeft = 2 * time.Second
 
 // onStatusOSC is the OSC scanner's status callback. It runs on the reader
 // goroutine, without the session lock. ReadLoop announces the change after
-// the chunk.
+// the chunk. An attention request counts from a known agent, and from any
+// program while ssh or mosh runs in the foreground: the agent on the other
+// end is out of sight.
 func (s *Session) onStatusOSC(num int, payload []byte) {
+	if num == inBandOSC {
+		s.onInBand(payload)
+		return
+	}
 	st, ok := parseStatusOSC(num, payload)
 	if !ok {
 		return
@@ -391,7 +430,7 @@ func (s *Session) onStatusOSC(num int, payload []byte) {
 	s.Lock()
 	defer s.Unlock()
 	switch {
-	case st.notice != "" && s.agent != "" && !s.agentGone:
+	case st.notice != "" && (s.agent != "" && !s.agentGone || s.remoteClient):
 		s.needsYou, s.notice = true, st.notice
 	case st.started:
 		if s.agentGone {
@@ -410,7 +449,9 @@ func (s *Session) onStatusOSC(num int, payload []byte) {
 }
 
 // onBell is vt10x's bell callback; it runs inside Write, with the session
-// lock held. A bell from an agent counts as an attention request.
+// lock held. A bell from an agent counts as an attention request. A bell
+// from the other end of ssh or mosh does not: a remote shell rings it on a
+// failed tab completion.
 func (s *Session) onBell() {
 	if s.agent != "" && !s.agentGone {
 		s.needsYou = true
@@ -432,10 +473,16 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 		}
 	}
 	cwd := s.Cwd()
-	repo, branch := gitHead(cwd)
+	repo, branch := GitHead(cwd)
+	remote := isRemoteClient(name)
 
 	s.Lock()
 	defer s.Unlock()
+	if s.remoteClient && (pgidChanged || !remote) && s.agent == "" {
+		// A remote attention request ends with its connection.
+		s.needsYou, s.notice = false, ""
+	}
+	s.remoteClient = remote
 	if pgidChanged {
 		switch {
 		case s.agentGone:
@@ -453,6 +500,11 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 	if pgidChanged && s.report.state != AgentNone && (pgid <= 0 || pgid != s.report.pgid) {
 		// The process group that reported has left the foreground.
 		s.report = agentReport{}
+		changed = true
+	}
+	if pgidChanged && s.remote != (remoteAgent{}) && (pgid <= 0 || pgid != s.remotePGID) {
+		// The ssh or bunk that carried the remote agent's reports has left.
+		s.remote, s.remotePGID = remoteAgent{}, 0
 		changed = true
 	}
 	if agent != s.agent {
@@ -538,27 +590,15 @@ type agentReport struct {
 // Hooks.StatusChanged (as passed to Run) once, without the lock, so callers
 // must not hold a lock that the hook takes.
 func (s *Session) Notify(ev Event, message string) {
-	var r agentReport
-	switch ev {
-	case EventClear:
-	case EventWorking:
-		r.state = AgentWorking
-	case EventIdle:
-		r.state = AgentIdle
-	case EventNeedsYou:
-		r.state, r.notice = AgentNeedsYou, cleanNotice(message, defaultNotice)
-	case EventDone:
-		r.state, r.notice = AgentDone, cleanNotice(message, "")
-	case EventFailed:
-		r.state, r.notice = AgentFailed, cleanNotice(message, "")
-	default:
+	if _, ok := ParseEvent(ev.String()); !ok {
 		return
 	}
-	if r.state != AgentNone {
-		r.pgid = s.fgPGID()
+	pgid := 0
+	if ev != EventClear {
+		pgid = s.fgPGID()
 	}
 	s.Lock()
-	s.report = r
+	s.record(Report{Event: ev, Message: message}, pgid)
 	changed := s.takeAgentChange(time.Now())
 	hook := s.statusHook
 	s.Unlock()
@@ -567,6 +607,110 @@ func (s *Session) Notify(ev Event, message string) {
 		hook()
 	}
 }
+
+// Report is what an agent reports about itself: an event, its message, and
+// for an agent on another machine, where it runs.
+type Report struct {
+	Event   Event
+	Message string
+	// Agent, Host, Repo, Branch and Cwd describe a remote agent; all are ""
+	// in local reports.
+	Agent, Host, Repo, Branch, Cwd string
+}
+
+// record applies r, which arrived while process group pgid was in the
+// foreground. EventClear also forgets where a remote agent runs, and an
+// attention request inferred from the other end of ssh, such as the OSC
+// 777 alert a remote bunk sends beside its report. Other events keep the
+// remote agent's place unless r names a new one. It requires the session
+// lock.
+func (s *Session) record(r Report, pgid int) {
+	var rep agentReport
+	switch r.Event {
+	case EventClear:
+		s.report = agentReport{}
+		s.remote, s.remotePGID = remoteAgent{}, 0
+		if s.remoteClient && s.agent == "" {
+			s.needsYou, s.notice = false, ""
+		}
+		return
+	case EventWorking:
+		rep.state = AgentWorking
+	case EventIdle:
+		rep.state = AgentIdle
+	case EventNeedsYou:
+		rep.state, rep.notice = AgentNeedsYou, cleanNotice(r.Message, defaultNotice)
+	case EventDone:
+		rep.state, rep.notice = AgentDone, cleanNotice(r.Message, "")
+	case EventFailed:
+		rep.state, rep.notice = AgentFailed, cleanNotice(r.Message, "")
+	default:
+		return
+	}
+	rep.pgid = pgid
+	s.report = rep
+	where := remoteAgent{
+		agent: cleanNotice(r.Agent, ""), host: cleanNotice(r.Host, ""), repo: cleanNotice(r.Repo, ""),
+		branch: cleanNotice(r.Branch, ""), cwd: cleanNotice(r.Cwd, ""),
+	}
+	if where != (remoteAgent{}) {
+		s.remote, s.remotePGID = where, pgid
+	}
+}
+
+// inBandOSC carries in-band reports: OSC 1337 SetUserVar=bunk_notify=….
+const inBandOSC = 1337
+
+// parseInBand reads an in-band report from an OSC 1337 payload without its
+// terminator. It returns the report's token, "" when it has none.
+func parseInBand(payload []byte) (token string, r Report, ok bool) {
+	line, ok := wire.FromUserVar(payload)
+	if !ok {
+		return "", Report{}, false
+	}
+	w, err := wire.Decode(line)
+	if err != nil {
+		L().Debug("session: malformed in-band report", "err", err)
+		return "", Report{}, false
+	}
+	ev, ok := ParseEvent(w.Event)
+	if !ok {
+		return "", Report{}, false
+	}
+	return w.Session, Report{Event: ev, Message: w.Message, Agent: w.Agent, Host: w.Host, Repo: w.Repo,
+		Branch: w.Branch, Cwd: w.Cwd}, true
+}
+
+// onInBand records a report that arrived in the session's output
+// (docs/remote-agent-status.md). It accepts a report whose token
+// Options.KnownToken knows, in any session, and any other report while ssh
+// or mosh runs in the foreground. It runs on the reader goroutine, without
+// the session lock; ReadLoop announces the change after the chunk.
+func (s *Session) onInBand(payload []byte) {
+	token, r, ok := parseInBand(payload)
+	if !ok {
+		return
+	}
+	known := token != "" && s.knownToken != nil && s.knownToken(token)
+	pgid := 0
+	if r.Event != EventClear {
+		pgid = s.fgPGID()
+	}
+	s.Lock()
+	defer s.Unlock()
+	if !known && !s.remoteClient {
+		L().Debug("session: dropped an in-band report", "id", s.ID, "event", r.Event.String(), "token", token != "")
+		return
+	}
+	L().Debug("session: in-band report", "id", s.ID, "event", r.Event.String(), "known_token", known, "host", r.Host)
+	s.record(r, pgid)
+}
+
+// remoteClients are the foreground processes whose output comes from
+// another machine.
+var remoteClients = map[string]bool{"ssh": true, "mosh": true, "mosh-client": true}
+
+func isRemoteClient(name string) bool { return remoteClients[name] }
 
 // fgPGID returns the terminal's foreground process group, or 0. It reads
 // /proc, so call it without the session lock.

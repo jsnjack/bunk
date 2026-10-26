@@ -113,6 +113,7 @@ type statusReport struct {
 	Cwd       string `json:"cwd"`
 	Container string `json:"container"`
 	SSHHost   string `json:"ssh_host"`
+	Host      string `json:"host"` // a remote agent's machine, from its in-band report
 }
 
 type tabReport struct {
@@ -360,7 +361,7 @@ var stateName = map[session.AgentState]string{
 func statusOf(st session.Status) statusReport {
 	return statusReport{
 		Reported: st.Reported, Agent: st.Agent, State: stateName[st.State], Process: st.Process, Notice: st.Notice,
-		Repo: st.Repo, Branch: st.Branch, Cwd: st.Cwd, Container: st.Container, SSHHost: st.SSHHost,
+		Repo: st.Repo, Branch: st.Branch, Cwd: st.Cwd, Container: st.Container, SSHHost: st.SSHHost, Host: st.Host,
 	}
 }
 

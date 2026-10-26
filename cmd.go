@@ -165,6 +165,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		paneDead:      make(chan *Pane, 8),
 		done:          make(chan struct{}),
 		oscBuf:        newOSCBuffer(),
+		relay:         newAgentRelay(os.Getenv),
 	}
 	app.alerts.Settings = cfg.Alerts
 
@@ -223,10 +224,16 @@ func run(configPath, themeName string, debug, trace bool) error {
 		"\033]112\007" + // restore outer terminal cursor colour
 		"\033[0m" + // reset all SGR attributes
 		"\033[2J\033[H" // clear screen + cursor home
+	// The outer bunk pane stops showing this bunk's agent.
+	app.mu.Lock()
+	final := app.relay.finish()
+	app.mu.Unlock()
 	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
+		tty.Write(final)         //nolint:errcheck
 		tty.WriteString(vtreset) //nolint:errcheck
 		tty.Close()              //nolint:errcheck // /dev/tty close on shutdown path
 	} else {
+		os.Stdout.Write(final)         //nolint:errcheck
 		os.Stdout.WriteString(vtreset) //nolint:errcheck
 	}
 	exec.Command("stty", "sane").Run() //nolint:errcheck

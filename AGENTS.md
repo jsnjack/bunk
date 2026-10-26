@@ -21,6 +21,7 @@ main.go             Entry point — calls Execute()
 cmd.go              cobra root command, run(), app initialization
 cmd_config.go       "bunk config" subcommand tree
 cmd_notify.go       "bunk notify": the agent hook CLI (notify.RunCLI)
+cmd_ssh.go          "bunk ssh": ssh that exports the pane's token (notify.RunSSH)
 app.go              App struct, event loop, key handling, triggerRedraw()
 input_modes.go      Host focus forwarding
 input_tcell.go      tcell key/mouse events → internal/input (keyToBytesMode, mouseToBytes)
@@ -33,6 +34,8 @@ mouse.go            Mouse events → PTY byte sequences
 status.go           Draws the pane badges (rules in internal/badges) in theme
                     colours; agent-state separator colours
 alerts.go           Agent notifications to the host terminal (OSC 777 notify)
+relay.go            Relays the most urgent pane to the host terminal in-band
+                    when bunk runs inside a bunk front end or over ssh
 search.go           In-pane search UI (matching is session.FindAll)
 config.go           TOML config, the theme in tcell colours, keybinding resolution
 hostcolors.go       Host terminal OSC colour probing
@@ -94,7 +97,10 @@ internal/theme/     Colour themes for both front ends: the built-in themes,
                     colours of badge roles (BadgeInks) and agent states
 
 internal/notify/    Agent hook reports: Unix socket server (token → Session),
-                    client, `notify` CLI (RunCLI), hook snippets per agent
+                    client, `notify` CLI (RunCLI), hook snippets per agent,
+                    the in-band writer without a socket, `ssh` (RunSSH)
+  wire/             The report line, its OSC 1337 in-band form, tmux/screen
+                    wrapping; imported by notify and session alike
 
 internal/alert/     Agent notifications for both front ends: when a state
                     change notifies (Tracker), the text, [notifications]
@@ -113,6 +119,7 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
   main.go           Entry point: calls Execute(); Version
   cmd.go            cobra root command: flags, logging, notify socket, runApp()
   cmd_notify.go     "bunk-gui notify": the agent hook CLI (notify.RunCLI)
+  cmd_ssh.go        "bunk-gui ssh": ssh that exports the tab's token (notify.RunSSH)
   logger.go         slog setup for --debug and --trace; GLib messages arrive through slog
   app.go            App struct, window activation, test-run hooks and statistics
   themes.go         The theme shown: terminal colours, the CSS of the content
@@ -126,7 +133,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
-docs/               agent-hooks.md: hook recipes and the notify protocol
+docs/               agent-hooks.md: hook recipes and the notify protocol;
+                    remote-agent-status.md: agents on hosts reached over ssh
 scripts/            Terminal feature scripts (tested by terminal_features_test.go);
                     headless-gui.sh runs GUI tests; screenshots.sh renders assets/;
                     benchcheck/ runs and compares benchmarks (make bench-check)
@@ -599,6 +607,23 @@ its default.
   record of the last announced state. Without hooks, Claude Code only sends
   OSC notifications to terminals it recognises; set its
   `preferredNotifChannel` to `terminal_bell`.
+- Agents on hosts reached over ssh report in-band
+  (`docs/remote-agent-status.md`). Without a reachable socket, `bunk notify`
+  writes the report line as `OSC 1337 ; SetUserVar=bunk_notify=<base64>` to
+  the agent's terminal (`/dev/tty`, else the nearest parent's), wrapped for
+  tmux or screen. The snippets run when `BUNK_NOTIFY_SESSION` or
+  `SSH_CONNECTION` is set.
+  - The session accepts an in-band report whose token
+    `Options.KnownToken` knows (`notify.Server.Issued`) in any pane, and any
+    other while `ssh`, `mosh` or `mosh-client` is the foreground process.
+  - A report's `agent`, `host`, `repo`, `branch` and `cwd` replace the local
+    ssh process's values in `Status` (`Status.Host` is new) until `clear` or
+    a foreground change; acknowledging keeps them.
+  - While ssh or mosh runs, OSC 9/99/777 mean needs-you without a known
+    agent; bells from there never count.
+  - bunk's TUI relays its most urgent pane (`relay.go`) when it inherited a
+    token or runs over ssh, and sends `clear` on exit. `bunk ssh` exports the
+    pane's token with a remote command.
 - The TUI shows agent status per pane. `renderPane` reads
   `Session.Status` before taking the session lock; the badge and the
   needs-you/done separator colours use that copy (`Pane.agent`).
@@ -614,8 +639,8 @@ its default.
     watched while the window is active and the tab selected; in bunk a pane
     is watched while it is active and the host terminal has the focus
     (DECSET 1004).
-  - The title names the agent and its host ("claude on gpu01 needs you",
-    `SSHHost` for now). The body is the notice, or a default for the state,
+  - The title names the agent and its host ("claude on gpu01 needs you"):
+    `Status.Host` from a remote report, else `SSHHost`. The body is the notice, or a default for the state,
     and "repo ⎇ branch".
   - Watching the source, the state leaving those states, turning
     notifications off and the source going away withdraw the notification.

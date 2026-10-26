@@ -129,8 +129,15 @@ type Session struct {
 	lastAgent         string      // the agent that most recently left the foreground
 	agentLeft         time.Time   // when lastAgent left
 	report            agentReport // the agent's latest explicit report (Notify)
+	remote            remoteAgent // where a remote agent runs, from its in-band report
+	remotePGID        int         // foreground process group when remote was reported
+	remoteClient      bool        // ssh or mosh runs in the foreground
 	statusHook        func()      // Hooks.StatusChanged, set by Run, for Notify
 	shown             agentView   // the agent state StatusChanged last announced
+
+	// knownToken is Options.KnownToken. Set before the session runs; read
+	// without the lock.
+	knownToken func(token string) bool
 
 	// syncDeadline releases an abandoned synchronized update (DEC 2026).
 	// Protected by mu.
@@ -188,6 +195,11 @@ type Options struct {
 	// their state (internal/notify). Inherited values are always removed;
 	// "" exports nothing.
 	NotifySocket, NotifySession string
+	// KnownToken reports whether the front end issued token, for reports
+	// that arrive in the session's output (OSC 1337 SetUserVar=bunk_notify).
+	// A known token is accepted in any session; other reports only while
+	// ssh or mosh runs in the foreground. nil knows no token.
+	KnownToken func(token string) bool
 	// ImageBytes keeps the bitmaps of image placements, up to this many
 	// bytes, so the front end can draw them at full resolution (Images).
 	// Zero keeps only the cells' colour samples, as bunk's TUI draws them.
@@ -300,6 +312,7 @@ func Start(o Options) (*Session, error) {
 		ThemeCursor:     o.ThemeCursor,
 		backspace:       o.Backspace,
 		agents:          o.Agents,
+		knownToken:      o.KnownToken,
 		exited:          make(chan struct{}),
 		timing:          o.Timing,
 	}

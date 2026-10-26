@@ -5,6 +5,8 @@ you, done or failed. bunk's terminal UI shows it on the pane's badge and
 borders; bunk-gui shows it on its tabs. Without hooks, both infer the state
 from output, bells and OSC 9/99/777 notifications. With the hooks below, the
 agent reports its own state, and the report takes priority over inference.
+The same hooks work for agents on hosts you reach over ssh; see
+[Agents on other hosts](#agents-on-other-hosts).
 
 Run `bunk notify hooks <agent>` (or `bunk-gui notify hooks <agent>`) to print
 a snippet. The snippets on this page are that output; a test keeps them in
@@ -50,6 +52,10 @@ the same colour, over the focused pane's colour.
   malformed lines are dropped.
 - The server reads one connection at a time. Reports arrive in the order the
   hooks connected, so `done` from Stop comes before `clear` from SessionEnd.
+- Where no socket is reachable, as on a host reached over ssh, the CLI writes
+  the line to its terminal. It travels as an OSC 1337 user variable. The
+  session reads it from the pane's output. The section
+  [Agents on other hosts](#agents-on-other-hosts) describes this path.
 
 ## Wire format
 
@@ -66,6 +72,11 @@ newline. Unknown fields are ignored.
 | `session` | string | Token from `BUNK_NOTIFY_SESSION`, at most 64 bytes |
 | `event` | string | One of the events below |
 | `message` | string | Optional notice text; the CLI cleans it and cuts it to 1024 bytes |
+| `agent`, `host`, `repo`, `branch`, `cwd` | string | Optional, in in-band reports only: where a remote agent runs, each cut to 128 bytes |
+
+In-band, a report travels as `ESC ] 1337 ; SetUserVar=bunk_notify=<base64 of
+the line> BEL`, and `session` may be missing. iTerm2 and WezTerm store such a
+sequence as a user variable; other terminals ignore it.
 
 | Event | `Status.State` | Notice |
 | :- | :- | :- |
@@ -112,18 +123,23 @@ bunk notify hooks [agent]
 
 | Exit status | When |
 | :- | :- |
-| 0 | Report sent |
-| 0 | `BUNK_NOTIFY_SOCKET` or `BUNK_NOTIFY_SESSION` unset: not inside bunk |
-| 0 | Socket missing or refusing connections: that front end has exited |
+| 0 | Report sent, over the socket or to the terminal |
+| 0 | `BUNK_NOTIFY_SESSION` and `SSH_CONNECTION` unset: not inside bunk and not over ssh |
+| 0 | No socket reachable and no terminal found for the in-band report |
 | 1 | Unknown event, bad arguments, or any other send error (message on stderr) |
+
+A missing or refusing socket means that its front end has exited. The CLI
+then writes the report to its terminal, which may still lead to a bunk pane.
 
 The CLI never exits with 2. Claude Code, Codex and Gemini CLI read 2 as
 "block this action", which would cancel a prompt or a stop.
 
-Each snippet wraps the command in `[ -z "$BUNK_NOTIFY_SESSION" ] || …`. In
-other terminals the hook then succeeds without running bunk, even where it is
-not installed. Inside bunk, `"$(command -v bunk || echo bunk-gui)"` picks
-`bunk` when it is on PATH and `bunk-gui` otherwise.
+Each snippet wraps the command in
+`[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || …`. It runs inside bunk and
+on hosts reached over ssh. In other terminals the hook succeeds without
+running bunk. `! b=$(command -v bunk || command -v bunk-gui) || "$b" notify`
+picks `bunk` when it is on PATH and `bunk-gui` otherwise. When neither is
+installed, as on a server without bunk, the hook does nothing and succeeds.
 
 ## Claude Code
 
@@ -137,7 +153,7 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify working",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify working",
             "timeout": 5
           }
         ]
@@ -149,7 +165,7 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify needs-you -",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify needs-you -",
             "timeout": 5
           }
         ]
@@ -160,7 +176,7 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify done -",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify done -",
             "timeout": 5
           }
         ]
@@ -171,7 +187,7 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify failed -",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify failed -",
             "timeout": 5
           }
         ]
@@ -182,7 +198,7 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify clear",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify clear",
             "timeout": 5
           }
         ]
@@ -220,36 +236,36 @@ hooks:
 # bunk agent status. Run /hooks in Codex once to trust these hooks.
 # Codex without hooks: use the notify program instead, as a top-level
 # key above the first [table]:
-# notify = ["sh", "-c", "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify done \"$1\"", "sh"]
+# notify = ["sh", "-c", "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify done \"$1\"", "sh"]
 
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION" ] || "$(command -v bunk || echo bunk-gui)" notify working'
+command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk || command -v bunk-gui) || "$b" notify working'
 timeout = 5
 
 [[hooks.PermissionRequest]]
 [[hooks.PermissionRequest.hooks]]
 type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION" ] || "$(command -v bunk || echo bunk-gui)" notify needs-you Approval requested'
+command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk || command -v bunk-gui) || "$b" notify needs-you Approval requested'
 timeout = 5
 
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION" ] || "$(command -v bunk || echo bunk-gui)" notify done -'
+command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk || command -v bunk-gui) || "$b" notify done -'
 timeout = 5
 
 [[hooks.Interrupt]]
 [[hooks.Interrupt.hooks]]
 type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION" ] || "$(command -v bunk || echo bunk-gui)" notify idle'
+command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk || command -v bunk-gui) || "$b" notify idle'
 timeout = 5
 
 [[hooks.SessionEnd]]
 [[hooks.SessionEnd.hooks]]
 type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION" ] || "$(command -v bunk || echo bunk-gui)" notify clear'
+command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk || command -v bunk-gui) || "$b" notify clear'
 timeout = 5
 ```
 
@@ -286,7 +302,7 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
     "userPromptSubmitted": [
       {
         "type": "command",
-        "bash": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify working",
+        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify working",
         "timeoutSec": 5
       }
     ],
@@ -294,21 +310,21 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
       {
         "type": "command",
         "matcher": "permission_prompt|elicitation_dialog",
-        "bash": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify needs-you -",
+        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify needs-you -",
         "timeoutSec": 5
       }
     ],
     "agentStop": [
       {
         "type": "command",
-        "bash": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify done",
+        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify done",
         "timeoutSec": 5
       }
     ],
     "sessionEnd": [
       {
         "type": "command",
-        "bash": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify clear",
+        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify clear",
         "timeoutSec": 5
       }
     ]
@@ -347,7 +363,7 @@ Merge into `~/.gemini/settings.json`:
           {
             "name": "bunk-working",
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify working",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify working",
             "timeout": 5000
           }
         ]
@@ -359,7 +375,7 @@ Merge into `~/.gemini/settings.json`:
           {
             "name": "bunk-needs-you",
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify needs-you -",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify needs-you -",
             "timeout": 5000
           }
         ]
@@ -371,7 +387,7 @@ Merge into `~/.gemini/settings.json`:
           {
             "name": "bunk-done",
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify done -",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify done -",
             "timeout": 5000
           }
         ]
@@ -383,7 +399,7 @@ Merge into `~/.gemini/settings.json`:
           {
             "name": "bunk-clear",
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION\" ] || \"$(command -v bunk || echo bunk-gui)\" notify clear",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk || command -v bunk-gui) || \"$b\" notify clear",
             "timeout": 5000
           }
         ]
@@ -412,9 +428,60 @@ Gemini CLI documents hooks at <https://geminicli.com/docs/hooks/reference/>
 (configuration). Its environment redaction is in
 [environmentSanitization.ts](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/services/environmentSanitization.ts).
 
+## Agents on other hosts
+
+An agent on a server you reach over ssh reports to the local pane or tab
+that runs ssh. [remote-agent-status.md](remote-agent-status.md) explains the
+design.
+
+Set up the server once:
+
+- Install bunk there, so the hooks can run `bunk notify`.
+- Add the same hook snippets as on your own machine.
+- Inside tmux on the server, add `set -g allow-passthrough all` to
+  `~/.tmux.conf`. tmux drops the reports without it, and with `on` it passes
+  them only from the visible window.
+
+Then connect in either of these ways.
+
+| Command | What the remote shell gets | When the report counts |
+| :- | :- | :- |
+| `ssh build01` | nothing; the hooks run because sshd sets `SSH_CONNECTION` | while ssh or mosh runs in the pane |
+| `bunk ssh build01` | the pane's `BUNK_NOTIFY_SESSION`, through a remote command | also when ssh hides behind another program, such as a wrapper script |
+
+- The hook's CLI finds no socket and writes the report to the agent's
+  terminal. Agents may start hooks without a controlling terminal. The CLI then uses
+  the terminal of the nearest parent process that has one.
+- ssh, jump hosts and `exec -t` in podman, docker or kubectl pass the report
+  unchanged. GNU screen passes it wrapped in its own passthrough. mosh drops
+  it, because mosh sends screen updates instead of the byte stream.
+- The report names the agent, found among the hook's parent processes. It
+  also names the host and the repo and branch of the hook's directory. The tab and the pane
+  badge show them instead of the local `ssh` process's directory.
+  `Status.Host` holds the host, and desktop notifications say "claude on
+  build01 needs you".
+- Any program can print the sequence. A report without a known token
+  therefore counts only while ssh or mosh runs in the pane. A report with a
+  token that this front end issued counts in any pane.
+- `bunk ssh [ssh options] destination` adds `-t` and a remote command that
+  exports the token. The command is
+  `env BUNK_NOTIFY_SESSION=<token> sh -c 'exec "${SHELL:-/bin/sh}" -l'`.
+  With a remote command, the server may skip its message of the day. ssh runs unchanged with a command of your own, or with `-N`, `-W`, `-T`,
+  `-f` or `-s`. A `RemoteCommand` or `SessionType` in your ssh config does
+  the same. `bunk-gui ssh` is
+  the same command.
+- bunk's TUI on the server, or inside a bunk-gui tab, relays its most urgent
+  pane to the pane around it. The order is needs you, done, failed, working,
+  then idle. When no pane has an agent and when it exits, it sends `clear`.
+- Focusing the local tab or pane acknowledges the local copy only. A remote
+  bunk TUI keeps its own state until you focus its pane.
+
 ## Other agents
 
 - Agents without hooks are still covered by inference from output timing,
   BEL, OSC 9/99/777 and OSC 133;D.
+- While ssh or mosh runs in a pane, OSC 9/99/777 from the other end mean
+  needs you, labelled `agent`. Bells from there do not count, because a
+  remote shell rings one on a failed tab completion.
 - Any program can report its state by running `bunk notify <event>` from a
   wrapper script or a plugin.

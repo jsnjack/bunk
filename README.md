@@ -272,13 +272,14 @@ Both front ends infer each agent's state from these sources:
 - The foreground process names the agent. Both recognise 15 agent CLIs, such as claude, codex, copilot and gemini, and bunk-gui's `[[agents]]` adds more.
 - Output in the last 2 s means working, and silence means idle.
 - OSC 9/99/777 notifications and BEL from an agent mean needs you.
+- While ssh or mosh runs in a pane, OSC 9/99/777 from the other end mean needs you too. Bells from there do not count, because a remote shell rings one on a failed tab completion.
 - A failed command reported through OSC 133;D means failed.
 
 Focusing the pane or typing into it acknowledges the state and clears needs you and done.
 
 When an agent you are not looking at needs you, is done or failed, both front ends notify you:
 
-- bunk-gui shows a desktop notification per tab, such as "claude needs you" with the notice and repo ⎇ branch. A newer state replaces it, and it goes away when you look at the tab. Clicking it raises the window and selects the tab.
+- bunk-gui shows a desktop notification per tab, such as "claude needs you" or "claude on build01 needs you" with the notice and repo ⎇ branch. A newer state replaces it, and it goes away when you look at the tab. Clicking it raises the window and selects the tab.
 - bunk sends an OSC 777 notification to the host terminal for a pane that is not active, or for any pane while the host terminal is not focused. foot, WezTerm, Ghostty and urxvt show it. GNOME Terminal and Ptyxis with VTE 0.84 do not.
 - The same state notifies again only 10 s after the last notification, so an agent that flaps between states does not flood the desktop.
 - `[notifications]` in either config.toml turns notifications off or picks the states, and bunk-gui's preferences window edits it.
@@ -293,6 +294,16 @@ bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
 - `bunk notify` and `bunk-gui notify` take the same arguments, and the snippets call whichever is installed.
 - Each pane gets `BUNK_NOTIFY_SOCKET` and `BUNK_NOTIFY_SESSION` in its environment. Sockets live under `$XDG_RUNTIME_DIR/bunk/`.
 - [docs/agent-hooks.md](docs/agent-hooks.md) has snippets for Claude Code, Codex, Copilot CLI and Gemini CLI, the wire format and exit codes.
+
+Agents on hosts you reach over ssh report to the pane or tab that runs ssh:
+
+- Install bunk on the server and add the same hook snippets there.
+- Plain `ssh` works. Without a socket, the hooks write their reports to the terminal, and bunk accepts them while ssh or mosh runs in the pane.
+- `bunk ssh host` (or `bunk-gui ssh host`) also gives the remote shell the pane's token, so its reports count even when ssh runs behind another program.
+- The tab shows the remote agent's name, repo and branch.
+- bunk's TUI on the server, or inside a bunk-gui tab, shows its most urgent pane on the tab or pane around it.
+- Inside tmux on the server, set `allow-passthrough all`. mosh drops the reports.
+- [docs/remote-agent-status.md](docs/remote-agent-status.md) describes the design.
 
 ## Packages
 
@@ -324,7 +335,8 @@ bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
 | `internal/session/` | One terminal session: PTY, emulator, scrollback, reflow, search, selection, query replies, agent status |
 | `internal/vt10x/` | VT/xterm emulator, a fork of hinshun/vt10x: parser, 16-byte cells, graphemes, rewrap |
 | `internal/input/` | Key, mouse, focus and paste encoding: legacy, application modes, Kitty CSI u |
-| `internal/notify/` | Agent hook reports: Unix socket server, the `notify` CLI both binaries run, hook snippets per agent |
+| `internal/notify/` | Agent hook reports: Unix socket server, the `notify` and `ssh` commands both binaries run, hook snippets per agent, reports written to the terminal where no socket is reachable |
+| `internal/notify/wire/` | The report format: one JSON line, over the socket or as an OSC 1337 user variable in the terminal |
 | `internal/alert/` | Agent notifications: when a state change notifies, the text, and the OSC 777 sequence bunk sends |
 | `internal/graphics/` | Bounded SIXEL, Kitty and iTerm2 image decoders; the bitmap store behind full-resolution drawing |
 | `internal/theme/` | Colour themes of both front ends: built-in and custom themes, `[ui]` overrides, badge colours |

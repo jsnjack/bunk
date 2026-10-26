@@ -138,6 +138,10 @@ type App struct {
 	// the panes' sessions. nil when the socket could not be created.
 	notify *notify.Server
 
+	// relay reports the most urgent pane to the host terminal when that is
+	// a bunk front end or the far end of ssh; nil otherwise. Used under mu.
+	relay *agentRelay
+
 	// timing sets the intervals of new panes' session timers. bunk leaves
 	// it zero, the defaults; tests shorten it.
 	timing session.Timing
