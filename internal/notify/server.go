@@ -50,7 +50,8 @@ type Server struct {
 }
 
 // Listen creates the socket $XDG_RUNTIME_DIR/bunk/notify-<pid>.sock
-// (directory 0700, socket 0600) and starts serving it.
+// (directory 0700, socket 0600) and starts serving it. The front end logs
+// the path, as only it knows where its log lines may go.
 func Listen() (*Server, error) {
 	return listen(os.Getuid())
 }
@@ -87,7 +88,6 @@ func listen(uid int) (*Server, error) {
 	}
 	s := &Server{path: path, ln: ln, uid: uid, done: make(chan struct{}), targets: map[string]Target{}}
 	go s.serve()
-	slog.Info("notify: Listening on " + path)
 	return s, nil
 }
 

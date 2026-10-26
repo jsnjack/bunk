@@ -10,7 +10,7 @@ import (
 )
 
 // TestSessionThroughput feeds a file through the session core without a
-// window or PTY, as a baseline for `bunk-gui -e 'cat FILE'`. It runs only
+// window or PTY, as a baseline for `bunk-gui --command 'cat FILE'`. It runs only
 // when BUNKGUI_THROUGHPUT_FILE names a file.
 func TestSessionThroughput(t *testing.T) {
 	path := os.Getenv("BUNKGUI_THROUGHPUT_FILE")

@@ -49,7 +49,7 @@ var linkSchemes = map[string]bool{"http": true, "https": true, "file": true, "ma
 var textSchemes = []string{"https://", "http://", "file://"}
 
 // openURL opens a link the user clicked. Tests replace it. It records the
-// link in -report and launches it only off the test compositor.
+// link in --report and launches it only off the test compositor.
 var openURL = func(a *App, uri string) {
 	a.rep.Opened = append(a.rep.Opened, uri)
 	fmt.Printf("open: %s\n", uri)

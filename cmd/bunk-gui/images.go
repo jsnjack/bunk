@@ -25,6 +25,7 @@ package main
 
 import (
 	"cmp"
+	"fmt"
 	"image"
 	"image/color"
 	"slices"
@@ -139,7 +140,7 @@ func (l *imageLayer) init() error {
 	}
 	p, err := gl.CompileProgram(imageVertex, imageFragment)
 	if err != nil {
-		return err
+		return fmt.Errorf("image program: %w", err)
 	}
 	l.prog = p
 	for name, dst := range map[string]*int32{

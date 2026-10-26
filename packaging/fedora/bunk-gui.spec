@@ -68,7 +68,7 @@ install -Dpm0644 internal/vt10x/LICENSE \
 %build
 %{goenv}
 cd cmd/bunk-gui
-go build -ldflags "-linkmode=external -extldflags '%{build_ldflags}'" \
+go build -ldflags "-X main.Version=%{version} -linkmode=external -extldflags '%{build_ldflags}'" \
     -o %{name} .
 
 %install

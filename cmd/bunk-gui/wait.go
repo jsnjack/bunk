@@ -138,7 +138,7 @@ func splitQuoted(s string) ([]string, error) {
 func parseWait(arg string) ([]*waitCond, time.Duration, error) {
 	toks, err := splitQuoted(arg)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("wait: %w", err)
 	}
 	timeout := waitDefault
 	var conds []*waitCond
@@ -154,7 +154,7 @@ func parseWait(arg string) ([]*waitCond, time.Duration, error) {
 		switch {
 		case strings.HasPrefix(tok, "timeout="):
 			if timeout, err = time.ParseDuration(strings.TrimPrefix(tok, "timeout=")); err != nil {
-				return nil, 0, err
+				return nil, 0, fmt.Errorf("wait %s: %w", tok, err)
 			}
 		case tok == "frames":
 			v, err := next()
@@ -173,7 +173,7 @@ func parseWait(arg string) ([]*waitCond, time.Duration, error) {
 			}
 			d, err := time.ParseDuration(v)
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, fmt.Errorf("wait idle: %w", err)
 			}
 			conds = append(conds, &waitCond{src: "idle " + v, kind: condIdle, d: d})
 		case tok == "input":

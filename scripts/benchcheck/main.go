@@ -70,7 +70,7 @@ func runCmd(args []string, stderr io.Writer) error {
 	fs.StringVar(&cfg.Out, "o", "", "output file (required)")
 	only := fs.String("suites", "", "comma-separated suite names; empty runs all")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("run: %w", err)
 	}
 	if cfg.Out == "" || fs.NArg() > 0 {
 		return errors.New("run: want -o FILE and no arguments")
@@ -80,7 +80,7 @@ func runCmd(args []string, stderr io.Writer) error {
 	}
 	suites, err := selectSuites(DefaultSuites, *only)
 	if err != nil {
-		return err
+		return fmt.Errorf("run -suites: %w", err)
 	}
 	cfg.Suites, cfg.All = suites, DefaultSuites
 	if cfg.CPU != "" {
@@ -128,7 +128,7 @@ func compareCmd(args []string, stdout, stderr io.Writer) (int, error) {
 	fs.Float64Var(&opt.MinShare, "min-share", opt.MinShare, "warn when a run got less of its core than this")
 	fs.Float64Var(&opt.MaxClock, "max-clock", opt.MaxClock, "warn when the core clocks differ by more than this percentage")
 	if err := fs.Parse(args); err != nil {
-		return exitError, err
+		return exitError, fmt.Errorf("compare: %w", err)
 	}
 	if fs.NArg() != 2 {
 		return exitError, errors.New("compare: want BASELINE and CURRENT files")
@@ -141,18 +141,18 @@ func compareCmd(args []string, stdout, stderr io.Writer) (int, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			err = fmt.Errorf("%w (record one with make bench-baseline)", err)
 		}
-		return exitError, err
+		return exitError, fmt.Errorf("compare: baseline: %w", err)
 	}
 	cur, err := parseFile(fs.Arg(1))
 	if err != nil {
-		return exitError, err
+		return exitError, fmt.Errorf("compare: current: %w", err)
 	}
 	if len(base.Order) == 0 || len(cur.Order) == 0 {
 		return exitError, errors.New("compare: a file holds no benchmark results")
 	}
 	rep := Compare(base, cur, opt)
 	if err := rep.Write(stdout, fs.Arg(0)); err != nil {
-		return exitError, err
+		return exitError, fmt.Errorf("compare: %w", err)
 	}
 	if rep.Regressions > 0 {
 		return exitRegression, nil
@@ -163,10 +163,12 @@ func compareCmd(args []string, stdout, stderr io.Writer) (int, error) {
 func parseFile(path string) (*File, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open results: %w", err)
 	}
-	defer f.Close() //nolint:errcheck
 	file, err := Parse(f)
+	if cerr := f.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}

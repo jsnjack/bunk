@@ -6,8 +6,11 @@ package main
 // the user's comments and order stay; the reload applies it.
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -171,8 +174,17 @@ func fileAgents(path string) []session.AgentSpec {
 	var f struct {
 		Agents []session.AgentSpec `toml:"agents"`
 	}
-	if data, err := os.ReadFile(path); err == nil {
-		_, _ = toml.Decode(string(data), &f)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			slog.Log(context.Background(), LevelTrace, "preferences: read agents", "err", err)
+		}
+		return nil
+	}
+	// A malformed file still gives the entries before the error; the
+	// settings toast already reports it.
+	if _, err := toml.Decode(string(data), &f); err != nil {
+		slog.Log(context.Background(), LevelTrace, "preferences: decode agents", "path", path, "err", err)
 	}
 	return f.Agents
 }
@@ -301,10 +313,13 @@ func (a *App) editConfig(edit func(string) string) error {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return fmt.Errorf("read settings: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return fmt.Errorf("create settings directory: %w", err)
 	}
-	return os.WriteFile(path, []byte(edit(string(data))), 0o644)
+	if err := os.WriteFile(path, []byte(edit(string(data))), 0o644); err != nil {
+		return fmt.Errorf("write settings: %w", err)
+	}
+	return nil
 }

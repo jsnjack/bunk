@@ -10,6 +10,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -112,7 +113,9 @@ func sshHostFromCmdline(args []string) string {
 	return ""
 }
 
-// whose image matches imageName.  Returns the first container ID found, or "".
+// FindContainerByAncestor asks containerType (podman when empty) for running
+// containers whose image matches imageName.  Returns the first container ID
+// found, or "".
 // Used as a fallback when process-tree walking cannot find the container.
 func FindContainerByAncestor(imageName, containerType string) string {
 	ct := containerType
@@ -151,7 +154,11 @@ func FindRunningContainerFromPID(pid int) string {
 			return ""
 		}
 		for _, s := range strings.Fields(string(data)) {
-			child, _ := strconv.Atoi(s)
+			child, err := strconv.Atoi(s)
+			if err != nil {
+				L().Log(context.Background(), LevelTrace, "process: bad child pid", "pid", pid, "child", s, "err", err)
+				continue
+			}
 			if child > 1 {
 				if id := walk(child, depth+1); id != "" {
 					return id
@@ -163,6 +170,7 @@ func FindRunningContainerFromPID(pid int) string {
 	return walk(pid, 0)
 }
 
+// FindLXCAncestorCmdline walks up the process tree from pid looking for
 // an lxc/incus exec ancestor.  Returns the full argv of that process, which
 // includes the container name and the command that was used to enter it
 // (e.g. ["lxc", "exec", "xx", "--", "su", "--login", "jsn"]).
@@ -197,7 +205,9 @@ func FindLXCAncestorCmdline(pid int) []string {
 		ppid := 0
 		for _, line := range strings.Split(string(statusData), "\n") {
 			if strings.HasPrefix(line, "PPid:") {
-				fmt.Sscanf(strings.TrimPrefix(line, "PPid:"), "%d", &ppid) //nolint:errcheck // best-effort parse; ppid<=1 check below catches failure
+				if _, err := fmt.Sscanf(strings.TrimPrefix(line, "PPid:"), "%d", &ppid); err != nil {
+					L().Log(context.Background(), LevelTrace, "process: bad PPid", "pid", current, "line", line, "err", err)
+				}
 				break
 			}
 		}

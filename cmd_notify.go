@@ -23,9 +23,12 @@ and gemini. Outside bunk it does nothing and exits 0. It never exits 2,
 which agents read as "block this action".`,
 	// Messages, "-" and Codex's JSON payload pass through untouched.
 	DisableFlagParsing: true,
-	Run: func(cmd *cobra.Command, args []string) {
+	// RunCLI prints its own errors, on stderr.
+	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if code := notify.RunCLI(args, os.Environ(), os.Stdin); code != 0 {
-			os.Exit(code)
+			return exitStatus(code)
 		}
+		return nil
 	},
 }

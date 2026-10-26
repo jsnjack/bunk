@@ -683,7 +683,7 @@ func (app *App) newPane(x, y, w, h int, dir string, args []string) (*Pane, error
 		oscBuf: app.oscBuf, cellAspect: []float64{app.cellAspect}, notify: app.notify, timing: app.timing,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pane %d: %w", app.nextID, err)
 	}
 	app.nextID++
 	return p, nil

@@ -46,7 +46,7 @@ func summarize(s series) summary {
 	return summary{n: len(c), p50: rank(0.50), p99: rank(0.99), max: c[len(c)-1], mean: sum / float64(len(c))}
 }
 
-// runStats collects per-frame measurements for -stats. Only the main thread
+// runStats collects per-frame measurements for --stats. Only the main thread
 // touches it; recording never allocates.
 type runStats struct {
 	pull, convert, upload, draw, total series // µs, main thread
@@ -82,9 +82,11 @@ func newRunStats() *runStats {
 	}
 }
 
-func (st *runStats) report(w io.Writer, wall time.Duration) {
-	_, _ = fmt.Fprintf(w, "| %-40s | %6s | %9s | %9s | %9s | %9s |\n", "metric", "n", "p50", "p99", "max", "mean")
-	_, _ = fmt.Fprintf(w, "|%s|%s|%s|%s|%s|%s|\n", strings.Repeat("-", 42), strings.Repeat("-", 8),
+// report writes the --stats table and totals to w.
+func (st *runStats) report(w io.Writer, wall time.Duration) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "| %-40s | %6s | %9s | %9s | %9s | %9s |\n", "metric", "n", "p50", "p99", "max", "mean")
+	fmt.Fprintf(&b, "|%s|%s|%s|%s|%s|%s|\n", strings.Repeat("-", 42), strings.Repeat("-", 8),
 		strings.Repeat("-", 11), strings.Repeat("-", 11), strings.Repeat("-", 11), strings.Repeat("-", 11))
 	for _, r := range []struct {
 		name string
@@ -104,24 +106,28 @@ func (st *runStats) report(w io.Writer, wall time.Duration) {
 	} {
 		s := summarize(r.s)
 		if s.n == 0 {
-			_, _ = fmt.Fprintf(w, "| %-40s | %6d | %9s | %9s | %9s | %9s |\n", r.name, 0, "n/a", "n/a", "n/a", "n/a")
+			fmt.Fprintf(&b, "| %-40s | %6d | %9s | %9s | %9s | %9s |\n", r.name, 0, "n/a", "n/a", "n/a", "n/a")
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "| %-40s | %6d | %9.1f | %9.1f | %9.1f | %9.1f |\n", r.name, s.n, s.p50, s.p99, s.max, s.mean)
+		fmt.Fprintf(&b, "| %-40s | %6d | %9.1f | %9.1f | %9.1f | %9.1f |\n", r.name, s.n, s.p50, s.p99, s.max, s.mean)
 	}
 	secs := wall.Seconds()
-	_, _ = fmt.Fprintf(w, "\n- frames rendered: %d (%.1f/s over %.2fs); snapshots without changes: %d; frame-clock frames: %d\n",
+	fmt.Fprintf(&b, "\n- frames rendered: %d (%.1f/s over %.2fs); snapshots without changes: %d; frame-clock frames: %d\n",
 		st.frames, float64(st.frames)/secs, secs, st.skipped, st.clockFrames)
 	if n := st.resizes.Load(); n > 0 || st.osc52 > 0 {
 		mean := 0.0
 		if n > 0 {
 			mean = float64(st.resizeNs.Load()) / float64(n) / 1e6
 		}
-		_, _ = fmt.Fprintf(w, "- Session.Resize (reflow + PTY size, on a worker): %d, mean %.1f ms, max %.1f ms; requests coalesced during a reflow: %d; OSC 52 clipboard writes: %d\n",
+		fmt.Fprintf(&b, "- Session.Resize (reflow + PTY size, on a worker): %d, mean %.1f ms, max %.1f ms; requests coalesced during a reflow: %d; OSC 52 clipboard writes: %d\n",
 			n, mean, float64(st.resizeMaxNs.Load())/1e6, st.resizeDeferred, st.osc52)
 	}
 	if st.frames > 0 {
-		_, _ = fmt.Fprintf(w, "- rows rebuilt per frame: %.1f; bytes uploaded per frame: %.0f; glBufferSubData calls per frame: %.2f\n",
+		fmt.Fprintf(&b, "- rows rebuilt per frame: %.1f; bytes uploaded per frame: %.0f; glBufferSubData calls per frame: %.2f\n",
 			float64(st.rows)/float64(st.frames), float64(st.bytes)/float64(st.frames), float64(st.uploadCalls)/float64(st.frames))
 	}
+	if _, err := io.WriteString(w, b.String()); err != nil {
+		return fmt.Errorf("write statistics: %w", err)
+	}
+	return nil
 }

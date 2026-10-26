@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"sort"
@@ -149,7 +151,10 @@ type tabInfo struct {
 }
 
 func (a *App) tabInfos() []tabInfo {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		slog.Log(context.Background(), LevelTrace, "tab labels keep full paths", "err", err)
+	}
 	out := make([]tabInfo, 0, len(a.tabs))
 	for i, t := range a.tabs {
 		p := t.agentPane()

@@ -534,4 +534,5 @@ func (p *Pane) inputRefused(err error) {
 	})
 }
 
+// String names the pane by its ID, for messages.
 func (p *Pane) String() string { return fmt.Sprintf("pane %d", p.id) }

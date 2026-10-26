@@ -19,7 +19,7 @@ const refusedToast = "Input not sent: the program is not reading its input"
 
 // TestGUINeverReadingPane: pane 0 runs a raw-mode child that floods 30000
 // queries and never reads its input. The user types into it and pastes
-// more than its input cap (-input-bytes), then types into the shell beside
+// more than its input cap (--input-bytes), then types into the shell beside
 // it and into a second tab. The window keeps drawing frames and running
 // the script on time, key echo latency in the other panes stays normal,
 // and the refused paste shows a toast.
@@ -34,8 +34,8 @@ func TestGUINeverReadingPane(t *testing.T) {
 	}
 	g := runGUI(t, scenario{
 		cost: 3,
-		args: []string{"-size", "100x30", "-input-bytes", strconv.Itoa(inputCap),
-			"-e", "exec env " + strings.Join(child, " ") + " " + shellQuote(self), "-tab", ""},
+		args: []string{"--size", "100x30", "--input-bytes", strconv.Itoa(inputCap),
+			"--command", "exec env " + strings.Join(child, " ") + " " + shellQuote(self), "--tab", ""},
 		script: []string{
 			"split",
 			"wait tab.1.panes.#=2 focused.settled=true",

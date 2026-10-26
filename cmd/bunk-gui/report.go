@@ -1,7 +1,7 @@
 package main
 
-// -report FILE writes a JSON record of a run for the automated tests
-// (gui_test.go): renderer names, -verify results, frame and allocation
+// --report FILE writes a JSON record of a run for the automated tests
+// (gui_test.go): renderer names, --verify results, frame and allocation
 // counters at named marks, latency percentiles, and snapshots of the UI
 // state taken by the "snap" script action. Geometry is given in logical
 // window coordinates and in device pixels of a "shot FILE window" image, so
@@ -34,7 +34,7 @@ type runReport struct {
 	GLVersion   string               `json:"gl_version"`
 	GSKRenderer string               `json:"gsk_renderer"`
 	Race        bool                 `json:"race"`
-	ActiveMs    int64                `json:"active_ms"` // launch to the start of -do (after -wait-focus)
+	ActiveMs    int64                `json:"active_ms"` // launch to the start of --do (after --wait-focus)
 	Verify      *verifyReport        `json:"verify,omitempty"`
 	Frames      int                  `json:"frames"`
 	ClockFrames int                  `json:"clock_frames"`
@@ -67,8 +67,8 @@ type markReport struct {
 	TMs           int64  `json:"t_ms"`
 	Frames        int    `json:"frames"`
 	ClockFrames   int    `json:"clock_frames"`
-	RenderMallocs int64  `json:"render_mallocs"` // objects allocated under (*Pane).render; -1 without -alloc-probe
-	BadgeMallocs  int64  `json:"badge_mallocs"`  // objects allocated by badge syncs (badge.go); -1 without -alloc-probe
+	RenderMallocs int64  `json:"render_mallocs"` // objects allocated under (*Pane).render; -1 without --alloc-probe
+	BadgeMallocs  int64  `json:"badge_mallocs"`  // objects allocated by badge syncs (badge.go); -1 without --alloc-probe
 	Mallocs       uint64 `json:"mallocs"`        // whole process
 	KeyRenders    int    `json:"key_renders"`    // key writes drawn so far
 	// Resources held, for leak tests (leak_test.go).
@@ -731,7 +731,7 @@ func (a *App) snapNow(label string, done func()) {
 }
 
 // renderMallocs counts objects allocated under (*Pane).render so far. It
-// needs runtime.MemProfileRate = 1 (-alloc-probe).
+// needs runtime.MemProfileRate = 1 (--alloc-probe).
 func renderMallocs() int64 { return mallocsUnder("(*Pane).render") }
 
 // pkgPrefix starts this package's function names: "main." in bunk-gui,
@@ -843,6 +843,6 @@ func (a *App) writeReport(reason string) {
 		err = os.WriteFile(a.cfg.report, data, 0o644)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "bunk-gui: -report:", err)
+		fmt.Fprintln(os.Stderr, "bunk-gui: --report:", err)
 	}
 }

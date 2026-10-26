@@ -227,6 +227,7 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"unsafe"
 )
 
@@ -300,54 +301,114 @@ func LoaderName() string {
 	return "dlopen(libOpenGL.so.0) + dlsym"
 }
 
+// GetString returns glGetString(name).
 func GetString(name uint32) string {
 	return C.GoString(C.w_glGetString(C.GLenum(name)))
 }
 
+// GetIntegerv calls glGetIntegerv, filling out.
 func GetIntegerv(name uint32, out []int32) {
 	C.w_glGetIntegerv(C.GLenum(name), (*C.GLint)(unsafe.Pointer(&out[0])))
 }
 
-func GetError() uint32                 { return uint32(C.w_glGetError()) }
-func Viewport(x, y, w, h int32)        { C.w_glViewport(C.GLint(x), C.GLint(y), C.GLsizei(w), C.GLsizei(h)) }
-func Clear(mask uint32)                { C.w_glClear(C.GLbitfield(mask)) }
-func Enable(cap uint32)                { C.w_glEnable(C.GLenum(cap)) }
-func Disable(cap uint32)               { C.w_glDisable(C.GLenum(cap)) }
-func BlendFunc(src, dst uint32)        { C.w_glBlendFunc(C.GLenum(src), C.GLenum(dst)) }
-func Flush()                           { C.w_glFlush() }
-func Finish()                          { C.w_glFinish() }
-func GenVertexArray() uint32           { return uint32(C.w_glGenVertexArray()) }
-func BindVertexArray(v uint32)         { C.w_glBindVertexArray(C.GLuint(v)) }
-func GenBuffer() uint32                { return uint32(C.w_glGenBuffer()) }
-func BindBuffer(target, b uint32)      { C.w_glBindBuffer(C.GLenum(target), C.GLuint(b)) }
+// GetError returns glGetError().
+func GetError() uint32 { return uint32(C.w_glGetError()) }
+
+// Viewport calls glViewport.
+func Viewport(x, y, w, h int32) { C.w_glViewport(C.GLint(x), C.GLint(y), C.GLsizei(w), C.GLsizei(h)) }
+
+// Clear calls glClear.
+func Clear(mask uint32) { C.w_glClear(C.GLbitfield(mask)) }
+
+// Enable calls glEnable.
+func Enable(cap uint32) { C.w_glEnable(C.GLenum(cap)) }
+
+// Disable calls glDisable.
+func Disable(cap uint32) { C.w_glDisable(C.GLenum(cap)) }
+
+// BlendFunc calls glBlendFunc.
+func BlendFunc(src, dst uint32) { C.w_glBlendFunc(C.GLenum(src), C.GLenum(dst)) }
+
+// Flush calls glFlush.
+func Flush() { C.w_glFlush() }
+
+// Finish calls glFinish.
+func Finish() { C.w_glFinish() }
+
+// GenVertexArray creates one vertex array object (glGenVertexArrays).
+func GenVertexArray() uint32 { return uint32(C.w_glGenVertexArray()) }
+
+// BindVertexArray calls glBindVertexArray.
+func BindVertexArray(v uint32) { C.w_glBindVertexArray(C.GLuint(v)) }
+
+// GenBuffer creates one buffer object (glGenBuffers).
+func GenBuffer() uint32 { return uint32(C.w_glGenBuffer()) }
+
+// BindBuffer calls glBindBuffer.
+func BindBuffer(target, b uint32) { C.w_glBindBuffer(C.GLenum(target), C.GLuint(b)) }
+
+// EnableVertexAttribArray calls glEnableVertexAttribArray.
 func EnableVertexAttribArray(i uint32) { C.w_glEnableVertexAttribArray(C.GLuint(i)) }
-func VertexAttribDivisor(i, d uint32)  { C.w_glVertexAttribDivisor(C.GLuint(i), C.GLuint(d)) }
-func UseProgram(p uint32)              { C.w_glUseProgram(C.GLuint(p)) }
-func Uniform1i(loc, a int32)           { C.w_glUniform1i(C.GLint(loc), C.GLint(a)) }
-func Uniform2i(loc, a, b int32)        { C.w_glUniform2i(C.GLint(loc), C.GLint(a), C.GLint(b)) }
+
+// VertexAttribDivisor calls glVertexAttribDivisor.
+func VertexAttribDivisor(i, d uint32) { C.w_glVertexAttribDivisor(C.GLuint(i), C.GLuint(d)) }
+
+// UseProgram calls glUseProgram.
+func UseProgram(p uint32) { C.w_glUseProgram(C.GLuint(p)) }
+
+// Uniform1i calls glUniform1i.
+func Uniform1i(loc, a int32) { C.w_glUniform1i(C.GLint(loc), C.GLint(a)) }
+
+// Uniform2i calls glUniform2i.
+func Uniform2i(loc, a, b int32) { C.w_glUniform2i(C.GLint(loc), C.GLint(a), C.GLint(b)) }
+
+// Uniform2f calls glUniform2f.
 func Uniform2f(loc int32, a, b float32) {
 	C.w_glUniform2f(C.GLint(loc), C.GLfloat(a), C.GLfloat(b))
 }
-func GenTexture() uint32           { return uint32(C.w_glGenTexture()) }
+
+// GenTexture creates one texture (glGenTextures).
+func GenTexture() uint32 { return uint32(C.w_glGenTexture()) }
+
+// BindTexture calls glBindTexture.
 func BindTexture(target, t uint32) { C.w_glBindTexture(C.GLenum(target), C.GLuint(t)) }
-func ActiveTexture(t uint32)       { C.w_glActiveTexture(C.GLenum(t)) }
+
+// ActiveTexture calls glActiveTexture.
+func ActiveTexture(t uint32) { C.w_glActiveTexture(C.GLenum(t)) }
+
+// TexParameteri calls glTexParameteri.
 func TexParameteri(target, p uint32, v int32) {
 	C.w_glTexParameteri(C.GLenum(target), C.GLenum(p), C.GLint(v))
 }
+
+// PixelStorei calls glPixelStorei.
 func PixelStorei(p uint32, v int32) { C.w_glPixelStorei(C.GLenum(p), C.GLint(v)) }
+
+// DrawArraysInstanced calls glDrawArraysInstanced.
 func DrawArraysInstanced(mode uint32, first, count, instances int32) {
 	C.w_glDrawArraysInstanced(C.GLenum(mode), C.GLint(first), C.GLsizei(count), C.GLsizei(instances))
 }
-func GenQuery() uint32            { return uint32(C.w_glGenQuery()) }
+
+// GenQuery creates one query object (glGenQueries).
+func GenQuery() uint32 { return uint32(C.w_glGenQuery()) }
+
+// BeginQuery calls glBeginQuery.
 func BeginQuery(target, q uint32) { C.w_glBeginQuery(C.GLenum(target), C.GLuint(q)) }
-func EndQuery(target uint32)      { C.w_glEndQuery(C.GLenum(target)) }
+
+// EndQuery calls glEndQuery.
+func EndQuery(target uint32) { C.w_glEndQuery(C.GLenum(target)) }
+
+// GetQueryObjecti returns glGetQueryObjectiv(q, p).
 func GetQueryObjecti(q, p uint32) int32 {
 	return int32(C.w_glGetQueryObjectiv(C.GLuint(q), C.GLenum(p)))
 }
+
+// GetQueryObjectui64 returns glGetQueryObjectui64v(q, p).
 func GetQueryObjectui64(q, p uint32) uint64 {
 	return uint64(C.w_glGetQueryObjectui64v(C.GLuint(q), C.GLenum(p)))
 }
 
+// ClearColor calls glClearColor.
 func ClearColor(r, g, b, a float32) {
 	C.w_glClearColor(C.GLfloat(r), C.GLfloat(g), C.GLfloat(b), C.GLfloat(a))
 }
@@ -363,6 +424,7 @@ func BufferSubData(target uint32, offset, size int, data unsafe.Pointer) {
 	C.w_glBufferSubData(C.GLenum(target), C.GLintptr(offset), C.GLsizeiptr(size), data)
 }
 
+// VertexAttribPointer calls glVertexAttribPointer.
 func VertexAttribPointer(i uint32, n int32, typ uint32, normalized bool, stride int32, offset uintptr) {
 	norm := C.GLboolean(FALSE)
 	if normalized {
@@ -371,6 +433,7 @@ func VertexAttribPointer(i uint32, n int32, typ uint32, normalized bool, stride 
 	C.w_glVertexAttribPointer(C.GLuint(i), C.GLint(n), C.GLenum(typ), norm, C.GLsizei(stride), C.uintptr_t(offset))
 }
 
+// VertexAttribIPointer calls glVertexAttribIPointer.
 func VertexAttribIPointer(i uint32, n int32, typ uint32, stride int32, offset uintptr) {
 	C.w_glVertexAttribIPointer(C.GLuint(i), C.GLint(n), C.GLenum(typ), C.GLsizei(stride), C.uintptr_t(offset))
 }
@@ -385,11 +448,11 @@ func TexImage2D(target uint32, level, internalFormat, w, h int32, format, typ ui
 func CompileProgram(vertexSrc, fragmentSrc string) (uint32, error) {
 	vs, err := compileShader(VERTEX_SHADER, vertexSrc)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("vertex shader: %w", err)
 	}
 	fs, err := compileShader(FRAGMENT_SHADER, fragmentSrc)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("fragment shader: %w", err)
 	}
 	p := C.w_glCreateProgram()
 	C.w_glAttachShader(p, vs)
@@ -423,31 +486,56 @@ func compileShader(kind uint32, src string) (C.GLuint, error) {
 	return s, nil
 }
 
-func GenFramebuffer() uint32            { return uint32(C.w_glGenFramebuffer()) }
+// GenFramebuffer creates one framebuffer (glGenFramebuffers).
+func GenFramebuffer() uint32 { return uint32(C.w_glGenFramebuffer()) }
+
+// BindFramebuffer calls glBindFramebuffer.
 func BindFramebuffer(target, fb uint32) { C.w_glBindFramebuffer(C.GLenum(target), C.GLuint(fb)) }
+
+// FramebufferTexture2D calls glFramebufferTexture2D.
 func FramebufferTexture2D(target, attachment, texTarget, tex uint32, level int32) {
 	C.w_glFramebufferTexture2D(C.GLenum(target), C.GLenum(attachment), C.GLenum(texTarget), C.GLuint(tex), C.GLint(level))
 }
+
+// CheckFramebufferStatus returns glCheckFramebufferStatus(target).
 func CheckFramebufferStatus(target uint32) uint32 {
 	return uint32(C.w_glCheckFramebufferStatus(C.GLenum(target)))
 }
+
+// DeleteFramebuffer deletes one framebuffer (glDeleteFramebuffers).
 func DeleteFramebuffer(fb uint32) { C.w_glDeleteFramebuffer(C.GLuint(fb)) }
-func DeleteTexture(t uint32)      { C.w_glDeleteTexture(C.GLuint(t)) }
+
+// DeleteTexture deletes one texture (glDeleteTextures).
+func DeleteTexture(t uint32) { C.w_glDeleteTexture(C.GLuint(t)) }
 
 // FenceSync inserts a GL_SYNC_GPU_COMMANDS_COMPLETE fence and returns the
 // GLsync handle as an integer (it is an opaque driver pointer).
-func FenceSync() uintptr             { return uintptr(C.w_glFenceSync()) }
-func DeleteSync(s uintptr)           { C.w_glDeleteSync(C.uintptr_t(s)) }
+func FenceSync() uintptr { return uintptr(C.w_glFenceSync()) }
+
+// DeleteSync deletes a fence from FenceSync (glDeleteSync).
+func DeleteSync(s uintptr) { C.w_glDeleteSync(C.uintptr_t(s)) }
+
+// Uniform1f calls glUniform1f.
 func Uniform1f(loc int32, v float32) { C.w_glUniform1f(C.GLint(loc), C.GLfloat(v)) }
+
+// DrawArrays calls glDrawArrays.
 func DrawArrays(mode uint32, first, count int32) {
 	C.w_glDrawArrays(C.GLenum(mode), C.GLint(first), C.GLsizei(count))
 }
 
-func DeleteBuffer(b uint32)      { C.w_glDeleteBuffer(C.GLuint(b)) }
-func DeleteVertexArray(v uint32) { C.w_glDeleteVertexArray(C.GLuint(v)) }
-func DeleteProgram(p uint32)     { C.w_glDeleteProgram(C.GLuint(p)) }
-func DeleteQuery(q uint32)       { C.w_glDeleteQuery(C.GLuint(q)) }
+// DeleteBuffer deletes one buffer object (glDeleteBuffers).
+func DeleteBuffer(b uint32) { C.w_glDeleteBuffer(C.GLuint(b)) }
 
+// DeleteVertexArray deletes one vertex array object (glDeleteVertexArrays).
+func DeleteVertexArray(v uint32) { C.w_glDeleteVertexArray(C.GLuint(v)) }
+
+// DeleteProgram calls glDeleteProgram.
+func DeleteProgram(p uint32) { C.w_glDeleteProgram(C.GLuint(p)) }
+
+// DeleteQuery deletes one query object (glDeleteQueries).
+func DeleteQuery(q uint32) { C.w_glDeleteQuery(C.GLuint(q)) }
+
+// Uniform4f calls glUniform4f.
 func Uniform4f(loc int32, a, b, c, d float32) {
 	C.w_glUniform4f(C.GLint(loc), C.GLfloat(a), C.GLfloat(b), C.GLfloat(c), C.GLfloat(d))
 }

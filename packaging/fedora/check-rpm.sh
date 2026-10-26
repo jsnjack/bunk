@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # check-rpm.sh RPM SOURCE_TARBALL - check a built bunk-gui RPM.
 #
-# Checks the license tag and files, the installed files, hardening flags and
-# dependencies, then runs the packaged binary on the headless compositor and
-# requires pixel-exact output. "make rpm" runs it after rpmbuild.
+# Checks the license tag and files, the installed files, hardening flags,
+# dependencies and the stamped version, then runs the packaged binary on the
+# headless compositor and requires pixel-exact output. "make rpm" runs it
+# after rpmbuild.
 set -euo pipefail
 
 rpm=$(realpath "${1:?usage: check-rpm.sh RPM SOURCE_TARBALL}")
@@ -59,7 +60,11 @@ for r in 'libgtk-4.so.1()(64bit)' 'libadwaita-1.so.0()(64bit)' libglvnd-egl libg
 	grep -qxF "$r" <<<"$requires" && pass "Requires $r" || fail "missing Requires $r"
 done
 
-out=$("$top/scripts/headless-gui.sh" "$bin" -verify -e 'exec sleep 30' -do '1s quit' 2>&1) ||
+version=$(rpm -qp --qf '%{VERSION}' "$rpm")
+[[ $("$bin" --version) == "bunk-gui version $version" ]] && pass "--version prints $version" ||
+	fail "--version: $("$bin" --version 2>&1)"
+
+out=$("$top/scripts/headless-gui.sh" "$bin" --verify --command 'exec sleep 30' --do '1s quit' 2>&1) ||
 	fail "packaged binary exited with an error"
 n=$(grep -c ' 0 of [0-9]* pixels differ' <<<"$out" || true)
 [[ $n -eq 2 ]] && pass "packaged binary renders pixel-exact at 133%" ||

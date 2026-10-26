@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"unsafe"
 
 	"bunk/cmd/bunk-gui/gl"
@@ -132,7 +133,7 @@ void main() {
 }
 `
 
-// checkerFragment draws a 1-px black/white checkerboard (-verify only).
+// checkerFragment draws a 1-px black/white checkerboard (--verify only).
 const checkerFragment = `#version 330 core
 out vec4 o_color;
 void main() {
@@ -183,14 +184,17 @@ type Renderer struct {
 
 type uniformLocs struct{ grid, cell, viewport, yflip int32 }
 
+// NewRenderer compiles the programs and creates the buffers and textures
+// for a grid of cols x rows cells drawn from atlas. The view's GL context
+// must be current.
 func NewRenderer(cols, rows int, atlas *Atlas) (*Renderer, error) {
 	r := &Renderer{atlas: atlas, yflip: -1}
 	var err error
 	if r.bgProg, err = gl.CompileProgram(bgVertex, bgFragment); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("background program: %w", err)
 	}
 	if r.textProg, err = gl.CompileProgram(textVertex, textFragment); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("text program: %w", err)
 	}
 	locs := func(p uint32) uniformLocs {
 		return uniformLocs{gl.UniformLocation(p, "u_grid"), gl.UniformLocation(p, "u_cell"),
@@ -198,7 +202,7 @@ func NewRenderer(cols, rows int, atlas *Atlas) (*Renderer, error) {
 	}
 	r.bgLoc, r.textLoc = locs(r.bgProg), locs(r.textProg)
 	if r.rectProg, err = gl.CompileProgram(rectVertex, rectFragment); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rectangle program: %w", err)
 	}
 	r.rectLoc.rect = gl.UniformLocation(r.rectProg, "u_rect")
 	r.rectLoc.viewport = gl.UniformLocation(r.rectProg, "u_viewport")
@@ -230,7 +234,7 @@ func NewRenderer(cols, rows int, atlas *Atlas) (*Renderer, error) {
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
 	r.syncAtlas()
 	if err := r.img.init(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image layer: %w", err)
 	}
 
 	for i := range r.queries {
@@ -365,6 +369,8 @@ func (r *Renderer) DrawRing() {
 	}
 }
 
+// DrawScrollbar draws the scrollbar thumb for a view scrolled off rows up
+// into count rows of scrollback; nothing when either is zero.
 func (r *Renderer) DrawScrollbar(off, count int) {
 	if off <= 0 || count <= 0 {
 		return
@@ -401,12 +407,12 @@ func (r *Renderer) Delete() {
 	}
 }
 
-// DrawChecker fills the viewport with a 1-px checkerboard (-verify only).
+// DrawChecker fills the viewport with a 1-px checkerboard (--verify only).
 func (r *Renderer) DrawChecker() error {
 	if r.checkerProg == 0 {
 		p, err := gl.CompileProgram(checkerVertex, checkerFragment)
 		if err != nil {
-			return err
+			return fmt.Errorf("checkerboard program: %w", err)
 		}
 		r.checkerProg = p
 	}
@@ -427,6 +433,7 @@ func (r *Renderer) BeginTimer() bool {
 	return true
 }
 
+// EndTimer ends the query BeginTimer started.
 func (r *Renderer) EndTimer() {
 	gl.EndQuery(gl.TIME_ELAPSED)
 	r.qHead++

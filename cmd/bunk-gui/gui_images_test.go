@@ -256,7 +256,7 @@ func TestGUIImages(t *testing.T) {
 	)
 	g := runGUI(t, scenario{
 		cost:   7,
-		args:   []string{"-alloc-probe", "-size", "100x30"},
+		args:   []string{"--alloc-probe", "--size", "100x30"},
 		files:  map[string]string{"all.bin": all, "edge.bin": edge},
 		script: script,
 		limit:  20e9,
@@ -354,7 +354,7 @@ func TestGUIImageReflow(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
 		cost:  2,
-		args:  []string{"-size", "40x12"},
+		args:  []string{"--size", "40x12"},
 		files: map[string]string{"reflow.bin": "\x1b[H\x1b[2J" + strings.Repeat("x", 50) + kittyPic.kitty(",C=1") + "\x1b[6;1H"},
 		script: []string{
 			"wait focused.line=$",
@@ -409,7 +409,7 @@ func TestGUIImageReflow(t *testing.T) {
 func TestGUIImageEviction(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
-		args: []string{"-size", "100x30", "-image-bytes", "20000"}, // one 60x60 bitmap is 14400 bytes
+		args: []string{"--size", "100x30", "--image-bytes", "20000"}, // one 60x60 bitmap is 14400 bytes
 		files: map[string]string{
 			"a.bin": "\x1b[H\x1b[2J\x1b[2;2H" + sixelPic.kitty(",C=1") + "\x1b[8;1H",
 			"b.bin": "\x1b[2;20H" + kittyPic.kitty(",C=1") + "\x1b[10;1H",
@@ -478,7 +478,7 @@ func TestGUIImageEviction(t *testing.T) {
 func TestGUIImageTextures(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
-		args: []string{"-size", "100x30", "-image-gpu-bytes", "20000"}, // room for one 14400-byte texture
+		args: []string{"--size", "100x30", "--image-gpu-bytes", "20000"}, // room for one 14400-byte texture
 		files: map[string]string{
 			"c.bin": "\x1b[H\x1b[2J\x1b[2;2H" + sixelPic.kitty(",C=1") + "\x1b[8;1H",
 			"d.bin": "\x1b[2;30H" + kittyPic.kitty(",C=1") + "\x1b[8;1H",
@@ -541,7 +541,7 @@ termios.tcsetattr(0, termios.TCSADRAIN, saved)
 `
 	g := runGUI(t, scenario{
 		cost:  3,
-		args:  []string{"-size", "100x30"},
+		args:  []string{"--size", "100x30"},
 		files: map[string]string{"links.txt": links, "mouse.py": mouse},
 		script: []string{
 			"maximize",

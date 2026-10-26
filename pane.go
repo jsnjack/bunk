@@ -157,7 +157,7 @@ func startPane(sp paneSpec) (*Pane, error) {
 	}
 	s, err := session.Start(opts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("start session: %w", err)
 	}
 	p := &Pane{Session: s, x: sp.x, y: sp.y, w: sp.w, h: sp.h, token: token}
 	L.Debug("pane spawned", "id", p.ID, "x", sp.x, "y", sp.y, "w", sp.w, "h", sp.h)

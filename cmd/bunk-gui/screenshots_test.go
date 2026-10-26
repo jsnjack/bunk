@@ -40,9 +40,9 @@ func TestGUIScreenshots(t *testing.T) {
 		cost:    10,
 		prepare: func() { writeDemo(t, demo) },
 		config:  "tabs = \"rail\"\nrail_open = true\nfont = \"Noto Sans Mono\"\nfont_size = 11\n",
-		args: []string{"-size", "120x32",
-			"-e", `cd "$DEMO/src/api" && exec claude`,
-			"-tab", "", "-tab", "", "-tab", `exec sh "$DEMO/done.sh"`, "-tab", ""},
+		args: []string{"--size", "120x32",
+			"--command", `cd "$DEMO/src/api" && exec claude`,
+			"--tab", "", "--tab", "", "--tab", `exec sh "$DEMO/done.sh"`, "--tab", ""},
 		env: []string{
 			"PATH=" + filepath.Join(demo, "bin") + ":" + bin + ":" + os.Getenv("PATH"),
 			"DEMO=" + demo, "ENV=" + filepath.Join(demo, "shrc"),

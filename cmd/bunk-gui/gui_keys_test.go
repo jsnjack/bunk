@@ -64,7 +64,7 @@ func TestGUIKeysConfig(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
 		config: "# test config\n[keys]\nnew_tab = \"ctrl+alt+n\"   # rebound\nswitcher = \"none\"\nnext_needs_you = [\"ctrl+shift+j\", \"f9\"]\n",
-		args:   []string{"-size", "100x30", "-e", "python3 keylog.py"},
+		args:   []string{"--size", "100x30", "--command", "python3 keylog.py"},
 		files: map[string]string{
 			"keylog.py": keylog,
 			"next.toml": "tabs = \"bar\"\nfont_size = 12\n\n[keys]\nswitcher = \"ctrl+alt+s\"\nzoom = \"none\"\n",
@@ -145,7 +145,7 @@ func TestGUIKeysConfig(t *testing.T) {
 func TestGUIPassthrough(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
-		args:  []string{"-size", "100x30", "-e", "python3 keylog.py", "-tab", ""},
+		args:  []string{"--size", "100x30", "--command", "python3 keylog.py", "--tab", ""},
 		files: map[string]string{"keylog.py": keylog},
 		script: append(append([]string{
 			"wait pane.0.text~\"keylog ready\"",
@@ -239,7 +239,7 @@ processes = ["aider"]
 	g := runGUI(t, scenario{
 		cost:   2,
 		config: cfg,
-		args:   []string{"-size", "100x30"},
+		args:   []string{"--size", "100x30"},
 		script: []string{
 			"maximize",
 			"wait window.maximized=true window.w>1800",
@@ -366,7 +366,7 @@ processes = ["aider"]
 func TestGUIQuitIdle(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
-		args:   []string{"-size", "80x24", "-tab", ""},
+		args:   []string{"--size", "80x24", "--tab", ""},
 		script: []string{"kbd ctrl+shift+q", "sleep 1500ms", "snap still-running"},
 	})
 	if g.Reason != "quit" || len(g.Snapshots) != 0 {
@@ -384,7 +384,7 @@ func TestGUIQuitBusy(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
 		cost: 2,
-		args: []string{"-size", "80x24", "-tab", ""},
+		args: []string{"--size", "80x24", "--tab", ""},
 		script: []string{
 			"maximize",
 			"wait window.maximized=true window.w>1800 focused.line=$",
@@ -428,7 +428,7 @@ func TestGUINotify(t *testing.T) {
 	bin := guiBinary(t)
 	g := runGUI(t, scenario{
 		cost: 2.5,
-		args: []string{"-size", "100x30", "-tab", ""},
+		args: []string{"--size", "100x30", "--tab", ""},
 		env:  []string{"PATH=" + filepath.Dir(bin) + ":" + os.Getenv("PATH")},
 		files: map[string]string{"agent.sh": `bunk-gui notify needs-you "Allow npm install?"
 read answer

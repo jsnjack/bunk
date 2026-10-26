@@ -101,6 +101,11 @@ third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patch
                     (local go.mod replacement; see BUNK_PATCHES.md)
 
 cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make check)
+  main.go           Entry point: calls Execute(); Version
+  cmd.go            cobra root command: flags, logging, notify socket, runApp()
+  cmd_notify.go     "bunk-gui notify": the agent hook CLI (notify.RunCLI)
+  logger.go         slog setup for --debug and --trace; GLib messages arrive through slog
+  app.go            App struct, window activation, test-run hooks and statistics
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
@@ -111,22 +116,25 @@ scripts/            Terminal feature scripts (tested by terminal_features_test.g
 testdata/           bench-baseline.txt: the timings bench-check compares with
 ```
 
-Key local extensions to vendored vt10x:
-- SGR 2/8/9/21/53/58 and 4:N underline styles
-- `Cursor.Shape` (DECSCUSR)
-- `ModeSetPaste` (DECSET 2004), `ModeSync` (DECSET 2026)
-- `QueryPrivateMode(n)` — returns DECRQM status byte for any tracked private mode
-- Private-parameter SGR guard (`\x1b[?4m` no longer misfires as SGR 4)
-- Display-cell widths and wide-glyph continuations; `ReplaceScreen` preserves
-  terminal modes, attributes, callbacks, and hyperlink identities during reflow
-- DEC 12 cursor blink; DEC 2027 grapheme widths (enabled by default).
-  `Glyph.Combining` stores an immutable grapheme suffix, bounded to 1 KiB/cell.
-  With DECRST 2027 a zero-width code point (VS16, keycap) joins a cell
+The vendored vt10x has these local extensions:
+- It supports SGR 2/8/9/21/53/58 and 4:N underline styles.
+- `Cursor.Shape` stores the shape set by DECSCUSR.
+- `ModeSetPaste` tracks DECSET 2004, and `ModeSync` tracks DECSET 2026.
+- `QueryPrivateMode(n)` returns the DECRQM status byte for any tracked
+  private mode.
+- A private-parameter SGR guard stops `\x1b[?4m` from misfiring as SGR 4.
+- Cells use display-cell widths and wide-glyph continuations. `ReplaceScreen`
+  preserves terminal modes, attributes, callbacks, and hyperlink identities
+  during reflow.
+- It supports DEC 12 cursor blink and DEC 2027 grapheme widths (enabled by
+  default). `Glyph.Combining` stores an immutable grapheme suffix, bounded
+  to 1 KiB/cell.
+  With DECRST 2027, a zero-width code point (VS16, keycap) joins a cell
   without widening it; `renderPane` then paints only the base character.
-- `Color`: 0-255 are palette indexes. Truecolour comes from `vt10x.RGB` and
-  carries bit 24, so `38;2;0;0;255` never equals palette 255. Decode with
-  `c < 256` (palette), then `c < DefaultFG` (RGB in the low 24 bits).
-  The `Default*` values start at `1<<25`.
+- In `Color`, values 0-255 are palette indexes. Truecolour comes from
+  `vt10x.RGB` and carries bit 24, so `38;2;0;0;255` never equals palette 255.
+  Decode with `c < 256` (palette), then `c < DefaultFG` (RGB in the low 24
+  bits). The `Default*` values start at `1<<25`.
 - DECRQSS reports SGR, scroll margins, and cursor style; unsupported settings
   return a negative response. Unknown DECRQM modes return status 0, not 4.
 - CSI parameters are unsigned decimal numbers capped at 65535, as in xterm
@@ -158,27 +166,29 @@ Key local extensions to vendored vt10x:
 
 ## Key Flows
 
-1. **Startup** — `main()` → `Execute()` → `run()` loads config, initialises
+1. At startup, `main()` → `Execute()` → `run()` loads config, initialises
    slog, queries cell aspect, probes host OSC colours, initialises tcell,
    spawns the first `Pane` and enters `App.eventLoop()`.
-2. **Pane I/O** — `Session.Run` starts three goroutines per pane:
-   `ReadLoop` (PTY → vt10x), `waitForExit`, `trackFgProcess`. bunk attaches
-   through `session.Hooks`: `Applied` runs under the session lock after each
-   chunk, `Output` after it (repaint pacing). One shared `renderLoop` drains
-   `app.redraw` (buffered 1). Replies and input reach the PTY through the
-   session's writer (`writer.go`); its goroutine runs while bytes are queued.
-3. **Resize / reflow** — `App.handleResize()` coalesces host resizes and
-   updates the BSP tree. Emulator reflow finishes before the PTY receives its
-   new size and SIGWINCH; both are deferred together during resize bursts.
-   `Session.ResizeAndReflow()` joins soft-wrapped rows from scrollback and the live
-   grid, repacks their cells at the new width, and preserves terminal state.
-4. **OSC passthrough** — bounded `ptyStream` framing precedes `osc.go` scanning.
-   OSC 7/52/133 reach the host through `app.oscBuf`; OSC 8 links are stored on
-   glyphs and emitted with their rendered text.
+2. For pane I/O, `Session.Run` starts three goroutines per pane: `ReadLoop`
+   (PTY → vt10x), `waitForExit` and `trackFgProcess`. bunk attaches through
+   `session.Hooks`: `Applied` runs under the session lock after each chunk,
+   and `Output` runs after it to pace repaints. One shared `renderLoop`
+   drains `app.redraw` (buffered 1). Replies and input reach the PTY through
+   the session's writer (`writer.go`); its goroutine runs while bytes are
+   queued.
+3. On resize, `App.handleResize()` coalesces host resizes and updates the
+   BSP tree. Emulator reflow finishes before the PTY receives its new size
+   and SIGWINCH; both are deferred together during resize bursts.
+   `Session.ResizeAndReflow()` joins soft-wrapped rows from scrollback and
+   the live grid, repacks their cells at the new width, and preserves
+   terminal state.
+4. For OSC passthrough, bounded `ptyStream` framing runs before `osc.go`
+   scanning. OSC 7/52/133 reach the host through `app.oscBuf`; OSC 8 links
+   are stored on glyphs and emitted with their rendered text.
 
-**Lock ordering:** always `app.mu` before the session lock (`p.Lock()`, the
-mutex embedded in `session.Session`). Never acquire `app.mu` while holding a
-session lock.
+Locks are taken in a fixed order: `app.mu` before the session lock
+(`p.Lock()`, the mutex embedded in `session.Session`). Never acquire
+`app.mu` while holding a session lock.
 
 ---
 
@@ -200,13 +210,17 @@ make bench-check    # key benchmarks pinned to one core; fails on a >10% slowdow
 make bench-baseline # records testdata/bench-baseline.txt for bench-check
 ```
 
+Every binary target stamps `main.Version` through `-ldflags` with the
+version monova reports, or 0.0.0 without monova; `--version` prints it. The
+RPM spec stamps the package version the same way.
+
 Leak and soak tests check that sessions, panes and the notify socket release
 everything they take. Each takes a `leakcheck.Snapshot`, runs a workload and
 calls `leakcheck.Check`, which waits for the counts to settle and lists new
 descriptors and child processes and the goroutine stacks on failure.
 `TestCheckCatchesLeaks` injects each kind of leak to prove the detectors.
 bunk-gui's `mark` action records the same counts plus live panes and their
-GL textures in `-report`.
+GL textures in `--report`.
 
 | Test | Short run (`make test`) | `make soak` |
 |------|-------------------------|-------------|
@@ -221,48 +235,51 @@ it. Session kinds cover shells that exit, busy output closed mid-stream
 (`yes`, `/dev/urandom`), children that ignore SIGHUP and children that leave
 a process holding the PTY. A raw-mode child that never reads is closed with
 its PTY writer blocked; TestTUISoak and TestGUITabLeaks run such panes too.
-A helper child that is the test binary itself
-sets `GORACE=atexit_sleep_ms=0`, or a -race build sleeps 1 s at exit.
+A helper child that is the test binary itself sets
+`GORACE=atexit_sleep_ms=0`; otherwise a -race build sleeps 1 s at exit.
 
-**Run `make bench-check` before merging a performance-sensitive change.**
-It compares the key benchmarks with `testdata/bench-baseline.txt`. Neither
+Run `make bench-check` before merging a performance-sensitive change. It
+compares the key benchmarks with `testdata/bench-baseline.txt`. Neither
 bench target is part of `check` or `check-all`, because timings depend on load.
-- **What runs:** `scripts/benchcheck` builds each test binary once. It runs
-  every vt10x benchmark, session `BenchmarkOutput` and `BenchmarkReflow`, and
-  bunk-gui `BenchmarkFullScreenFrame`. Write and Output include the
-  `termcorpus` streams. About 4 minutes at the default count.
-- **Interleaved rounds:** each of `BENCH_COUNT` rounds (10) runs every suite
-  once. A burst of load then hits all benchmarks alike.
-- **Pinning:** every run uses `taskset -c $(BENCH_CPU)` (CPU 0, a fast Zen 5
+- `scripts/benchcheck` builds each test binary once. It runs every vt10x
+  benchmark, session `BenchmarkOutput` and `BenchmarkReflow`, and bunk-gui
+  `BenchmarkFullScreenFrame`. Write and Output include the `termcorpus`
+  streams. A run takes about 4 minutes at the default count.
+- Rounds are interleaved: each of the `BENCH_COUNT` rounds (10) runs every
+  suite once, so a burst of load hits all benchmarks alike.
+- Every run is pinned with `taskset -c $(BENCH_CPU)` (CPU 0, a fast Zen 5
   core) and `GOMAXPROCS=1`. The benchmarked paths are single-threaded, so
   garbage collection runs on the measured core.
-- **Disturbed runs:** a run is repeated up to twice, and the least disturbed
-  attempt kept, on any of three signs. CPU time under 90% of wall time means a
-  shared core. A clock under 80% of the top clock means a power limit or heavy
-  load. An SMT sibling (CPU 12) over 50% busy shares the core's caches.
-- **Verdict:** medians of `cpu-ns/op` where both files have it (reflow), else
-  `ns/op`. A benchmark fails on two conditions together. A Mann-Whitney U
-  test gives p < 0.05, and the median grew by over `BENCH_THRESHOLD` percent (10).
-- **Not failures:** new or missing benchmarks, faster results, and warnings.
-- **Warnings:** a load average above `BENCH_MAX_LOAD` (4; the benchmark adds 1).
-  Disturbed runs that were kept. A different Go version, CPU, kernel, power
-  profile or core clock. Changed suite settings. An allocation-free benchmark
-  that now allocates.
-- **Load on other cores:** it lowers the pinned core's clock from 5.1 GHz.
-  Load 10 gives about 4.6 GHz, load 50 about 3.7 GHz. Compute-bound times grow
+- A disturbed run is repeated up to twice, and the least disturbed attempt
+  is kept. Any of three signs marks a run as disturbed. CPU time under 90%
+  of wall time means a shared core. A clock under 80% of the top clock means
+  a power limit or heavy load. An SMT sibling (CPU 12) over 50% busy shares
+  the core's caches.
+- The verdict compares medians of `cpu-ns/op` where both files have it
+  (reflow), and of `ns/op` otherwise. A benchmark fails only when two
+  conditions hold together: a Mann-Whitney U test gives p < 0.05, and the
+  median grew by over `BENCH_THRESHOLD` percent (10).
+- New or missing benchmarks, faster results and warnings are not failures.
+- These conditions give a warning: a load average above `BENCH_MAX_LOAD`
+  (4; the benchmark adds 1); disturbed runs that were kept; a different Go
+  version, CPU, kernel, power profile or core clock; changed suite settings;
+  and an allocation-free benchmark that now allocates.
+- Load on other cores lowers the pinned core's clock from 5.1 GHz: load 10
+  gives about 4.6 GHz, and load 50 about 3.7 GHz. Compute-bound times grow
   by as much. Same-code runs under different load differ by up to about 10%.
   Rerun a failure that comes with a clock or load warning.
-- **Partial runs:** `BENCH_SUITES=vt10x,session-output` runs a subset; the
-  rest show as missing. `BENCH_TIME` overrides every suite's benchtime, which
-  changes results: compare only runs with equal settings.
-- **GUI frame benchmark:** it runs with `-test.short`, without a display, into
-  a fake rasterizer. When bunk-gui does not build, it is skipped with a note.
+- `BENCH_SUITES=vt10x,session-output` runs a subset of the suites, and the
+  rest show as missing. `BENCH_TIME` overrides every suite's benchtime,
+  which changes results, so compare only runs with equal settings.
+- The GUI frame benchmark runs with `-test.short`, without a display, into a
+  fake rasterizer. When bunk-gui does not build, it is skipped with a note.
   Its TestMain sets `runtime.MemProfileRate = 1`, which slows allocating code.
-- **New baseline:** after an intended speed change, run `make bench-baseline`
-  on a quiet machine. Commit `testdata/bench-baseline.txt` with the change.
-  Its header records Go, CPU, kernel, power settings, commit, date and load.
-- **Exit codes:** `go run ./scripts/benchcheck compare BASE CUR` exits 1 on a
-  regression and 2 on an error. `bin/bench-current.txt` keeps the last run.
+- After an intended speed change, run `make bench-baseline` on a quiet
+  machine to record a new baseline. Commit `testdata/bench-baseline.txt`
+  with the change. Its header records Go, CPU, kernel, power settings,
+  commit, date and load.
+- `go run ./scripts/benchcheck compare BASE CUR` exits 1 on a regression and
+  2 on an error. `bin/bench-current.txt` keeps the last run.
 
 Fuzz targets cover every parser of program output and user input:
 `internal/vt10x` (FuzzParse, FuzzResize), `internal/session` (FuzzPTYStream,
@@ -281,41 +298,43 @@ virtual monitor at 133% on the GPU, with its own D-Bus and clipboard. Every
 GUI check, including pixel, idle-frame, allocation and latency checks, lives
 in the test suite; turn a manual check into a test before relying on it.
 `go test -short` skips the window tests (the RPM's %check uses it).
-Scenarios drive bunk-gui with `-do` steps that run in sequence. A `wait`
+Scenarios drive bunk-gui with `--do` steps that run in sequence. A `wait`
 step holds until the UI reaches a state (`cmd/bunk-gui/wait.go`): a field of
-the `-report` snapshot, frames drawn, no frames for a while, or injected
+the `--report` snapshot, frames drawn, no frames for a while, or injected
 input received. Use `sleep` only where a check measures time (idle frames,
 typing latency, CSS fades in screenshots). At most `BUNK_GUI_PARALLEL`
 scenarios run at once (default 8); those with a higher `cost` start first.
 
-**Run `make check-all` before reporting any work as done.** Work is not done
-until the full suite is green; report its result, including failures.
-Run `make check-all FRESH=1` before a merge or commit: the plain form reuses
-Go's test cache for unchanged packages and runs goimports only on files
-changed since HEAD (gofmt still sees every file).
+Run `make check-all` before reporting any work as done. Work is done only
+when the full suite is green; report its result, including failures.
+Run `make check-all FRESH=1` before a merge or commit, because the plain form
+reuses Go's test cache for unchanged packages and runs goimports only on
+files changed since HEAD (gofmt still sees every file).
 
-**Iterate with package tests, not the gate.** While working, run the package
-you change (`go test -race ./internal/session -run TestX`); run check-all
-once when done. Several agents running check-all at once slow everything
-by ~2x, so run at most three in parallel.
+While working, iterate with the tests of the package you change
+(`go test -race ./internal/session -run TestX`) rather than the gate, and
+run check-all once when done. Several agents running check-all at once slow
+everything by ~2x, so run at most three in parallel.
 
 Tests run with `-race` and are required to pass before any binary is built.
 `make test` includes the locally patched tcell module and its terminfo tests.
 Targets are serialized even with `make -j`; check-all runs the two test
 suites as background jobs itself and builds only after both pass.
 
-Terminal feature scripts (`terminal_features.sh`, `scripts/terminal_features/`):
-- **All seven groups are automated.** `terminal_features_test.go` has one
-  `TestTerminalFeatures*` test per group; `make test` runs them (under 1 s).
-- **Each test runs the real script** with bash on a PTY in a bunk pane
+The terminal feature scripts are `terminal_features.sh` and the files in
+`scripts/terminal_features/`.
+- All seven groups are automated. `terminal_features_test.go` has one
+  `TestTerminalFeatures*` test per group, and `make test` runs them in under
+  1 s.
+- Each test runs the real script with bash on a PTY in a bunk pane
   (`features_harness_test.go`). It uses bunk's hooks, key handling, paste
   and render path, answers each pause, and checks the simulation screen,
   cursor, printed replies and host output (`App.hostOut`).
-- **Change a script and its test together.** The tests read 06's assertion
+- Change a script and its test together. The tests read 06's assertion
   names and 05's "Bunk typically reports" lines from the scripts.
-- **Run a group by hand only to judge the host terminal:** fonts, emoji
-  shaping, visible underline styles, clicking links, the real clipboard.
-  `TERMINAL_FEATURES_AUTO=1` skips the pauses; 04 writes the clipboard.
+- Run a group by hand only to judge the host terminal: fonts, emoji shaping,
+  visible underline styles, clicking links and the real clipboard.
+  `TERMINAL_FEATURES_AUTO=1` skips the pauses, and 04 writes the clipboard.
 
 | Group | Script | Test |
 |-------|--------|------|
@@ -335,23 +354,26 @@ reply, so they need no fixed sleep. `TERMINAL_FEATURES_QUERY_TIMEOUT`
 
 ## Configuration
 
-Config file: `~/.config/bunk/config.toml` (override with `--config`). Generate
-a documented default with `bunk config init`.
+bunk reads `~/.config/bunk/config.toml`; `--config` overrides the path.
+Generate a documented default with `bunk config init`.
 Malformed/unreadable files and missing explicit `--config` paths fail at startup;
 a missing default file uses built-in defaults.
 
-Key fields agents may need to know about:
-- `theme` — built-in name (`terminal`, `default`, `solarized-dark`, `dracula`, `nord`) or custom palette
-- `scrollback` — per-pane scrollback line cap (default 10 000)
-- `log_file` — destination for `--debug` / `--trace` output (default `/tmp/bunk.log`)
-- `cell_aspect` — fallback height/width ratio when the host terminal doesn't answer the pixel-size query
-- `[keys]` — overrides for split / zoom / quit / search / copy / paste /
-  next_needs_you; "none" disables an action and sends its key to the pane
-- `[ui]` — hex colour overrides for borders and scrollbar
+These are the key fields agents may need to know about:
+- `theme` is a built-in name (`terminal`, `default`, `solarized-dark`,
+  `dracula`, `nord`) or a custom palette.
+- `scrollback` is the per-pane scrollback line cap (default 10 000).
+- `log_file` is the destination for `--debug` / `--trace` output (default
+  `/tmp/bunk.log`).
+- `cell_aspect` is the fallback height/width ratio when the host terminal
+  doesn't answer the pixel-size query.
+- `[keys]` overrides split / zoom / quit / search / copy / paste /
+  next_needs_you; "none" disables an action and sends its key to the pane.
+- `[ui]` holds hex colour overrides for borders and scrollbar.
 
 `config.go` is the authoritative reference for every field and its default.
 
-bunk-gui reads `~/.config/bunk-gui/config.toml` (`-config`): `tabs`,
+bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
 `rail_open`, `font`, `font_size`, `text_zoom`, `[[agents]]` and `[keys]`. `[keys]` uses
 bunk's action names and key syntax where they overlap; "none" sends the key
 to the terminal. The file is watched and reloads live, and a bad value shows
@@ -364,34 +386,35 @@ its default.
 
 ## Design Decisions
 
-- **Keyboard passthrough is per pane.** Ctrl+F12 (`[keys].passthrough`) toggles
+- Keyboard passthrough is per pane. Ctrl+F12 (`[keys].passthrough`) toggles
   forwarding of all other keys through the normal terminal encoder. The toggle
   remains reserved and exits bunk search. Mouse handling is unchanged. The PASS
   badge shares the status layout, takes highest priority, and invalidates the
   render overlay when toggled.
 
-- **Pane badges come from `internal/badges`, for both front ends.**
-  - **Rules:** `badges.Layout` decides which badges show, their order, text
-    and fitting from plain pane state. Each badge has a `Role`.
-  - **Front ends only paint:** the TUI maps roles to theme colours
-    (`badgeStyle`, status.go). bunk-gui maps them to its palette
+- Pane badges come from `internal/badges`, for both front ends.
+  - `badges.Layout` decides which badges show, their order, text and fitting
+    from plain pane state. Each badge has a `Role`.
+  - The front ends only paint. The TUI maps roles to theme colours
+    (`badgeStyle`, status.go), and bunk-gui maps them to its palette
     (`badgeLook`, cmd/bunk-gui/badge.go) the same way.
-  - **Add a badge in `internal/badges`, never in one front end.** Add a case
+  - Add a badge in `internal/badges`, never in one front end, and add a case
     to `badgetest.Cases`. `TestBadgeParityTUI` and `TestBadgeParityGUI` both
     draw every case, so the front ends cannot drift apart.
-  - **bunk-gui draws them as GtkInscriptions** in the terminal font, over the
-    pane's texture. A badge change draws no pane frame. The row syncs after
-    each frame and on status, passthrough, zoom, find and flash events.
-  - **The find bar keeps the top right;** the badges sit right below it while
-    it is open. A badge that appears while a query is typed never moves the bar.
+  - bunk-gui draws the badges as GtkInscriptions in the terminal font, over
+    the pane's texture. A badge change draws no pane frame. The row syncs
+    after each frame and on status, passthrough, zoom, find and flash events.
+  - The find bar keeps the top right, and the badges sit right below it while
+    it is open. A badge that appears while a query is typed never moves the
+    bar.
 
-- **PTY is one column narrower than the pane.** The rightmost column
+- The PTY is one column narrower than the pane. The rightmost column
   (`p.x + p.w - 1`) is reserved for the scrollbar; the PTY never writes there.
-- **Cursor shape and cell content must be read under the same lock.** Both
-  live inside `p.term`; `render()` must read them within the same `p.mu`
-  acquisition so `readPTY` can't sneak in a write between the two. Guarded by
-  `TestReadPTYSingleLock_ClaudeCursorRace`.
-- **vt10x coordinates are display cells.** Wide characters occupy a lead cell
+- Cursor shape and cell content must be read under the same lock. Both live
+  inside `p.term`; `render()` must read them within the same `p.mu`
+  acquisition so that `readPTY` cannot write between the two reads.
+  `TestReadPTYSingleLock_ClaudeCursorRace` guards this.
+- vt10x coordinates are display cells. Wide characters occupy a lead cell
   (`Glyph.Width == 2`) and a continuation (`-1`); `-2` marks padding before a
   wide-character wrap. Padding is only ever the last cell of a wrapped row;
   `repairWideRow` turns padding that a shift or resize moves into a blank.
@@ -399,35 +422,38 @@ its default.
   Combining marks, variation selectors, and multi-codepoint emoji stay together
   in the lead cell through render, copy, search, and reflow. Mode 2027 can switch
   back to per-codepoint widths for legacy applications.
-- **Query replies belong to the pane.** They are generated in stream order in
+- Query replies belong to the pane. They are generated in stream order in
   both primary and alternate screens, including SSH/mosh panes; they are never
   delegated to the outer terminal. Unknown host colour defaults remain unknown.
   XTGETTCAP key replies use the normal input encoder with the current pane modes
   and Kitty flags; its terminal-name reply matches the TERM exported to panes.
-- **No PTY write blocks a front end or holds the session lock.** Every write
+- No PTY write blocks a front end or holds the session lock. Every write
   to a session's PTY goes through its writer (`internal/session/writer.go`).
   That covers query replies, graphics replies, keys, pastes, mouse and focus.
-  - **Queue:** one FIFO per session. A goroutine starts when bytes are queued
-    and exits when the queue is empty. `go` on a bound func allocates nothing.
-  - **Order:** bytes leave in the order they were queued. Each reply and each
-    input event is queued whole, so no reply lands inside a key or a paste.
-  - **No lock:** `CaptureAndWrite` queues replies under the session lock. The
-    writer goroutine writes them without it. `WriteInput` returns at once.
-  - **Reply cap:** `ReplyBytes` (64 KiB) of unwritten replies. A reply that
-    would pass it is dropped whole and counted in `WriteStats`.
-  - **Input cap:** `Options.InputBytes`, default `DefaultInputBytes` (16 MiB).
-    An event that would pass it is refused whole with `ErrInputFull`.
-  - **Refusals:** bunk flashes "input not sent" on the pane. bunk-gui shows a
-    toast, at most one per pane every 3 s; `-input-bytes` sets its cap.
-  - **Memory:** a drained queue keeps at most 4 KiB. A paste's buffer is freed.
-  - **Close and exit:** closing the PTY drops the queue and ends a blocked
-    write. Close does it, and ReadLoop does it when the child exits.
-  - **Host pastes in the TUI:** tcell delivers them as key events. bunk
-    collects them between the paste markers and queues one event. A paste
-    without an end marker is sent after `pasteTimeout` (1 s).
-  - **Tests:** `WriteStats` reports queued, dropped and refused bytes.
+  - Each session has one FIFO queue. A goroutine starts when bytes are
+    queued and exits when the queue is empty. `go` on a bound func
+    allocates nothing.
+  - Bytes leave in the order they were queued. Each reply and each input
+    event is queued whole, so no reply lands inside a key or a paste.
+  - `CaptureAndWrite` queues replies under the session lock, and the writer
+    goroutine writes them without it. `WriteInput` returns at once.
+  - Unwritten replies are capped at `ReplyBytes` (64 KiB). A reply that
+    would pass the cap is dropped whole and counted in `WriteStats`.
+  - Queued input is capped at `Options.InputBytes`, which defaults to
+    `DefaultInputBytes` (16 MiB). An event that would pass the cap is
+    refused whole with `ErrInputFull`.
+  - When input is refused, bunk flashes "input not sent" on the pane.
+    bunk-gui shows a toast, at most one per pane every 3 s; `--input-bytes`
+    sets its cap.
+  - A drained queue keeps at most 4 KiB, and a paste's buffer is freed.
+  - Closing the PTY drops the queue and ends a blocked write. Close does
+    this, and ReadLoop does it when the child exits.
+  - In the TUI, tcell delivers host pastes as key events. bunk collects
+    them between the paste markers and queues one event. A paste without an
+    end marker is sent after `pasteTimeout` (1 s).
+  - For tests, `WriteStats` reports queued, dropped and refused bytes, and
     `WaitWritten` waits for an empty queue before a test reads the PTY.
-- **Graphics are ordinary cells.** Static SIXEL, Kitty, and iTerm2 images become
+- Graphics are ordinary cells. Static SIXEL, Kitty, and iTerm2 images become
   half-block glyphs with immutable `Glyph.Image` samples. They clip, erase, scroll,
   and reflow with the grid; source bitmaps are not retained by scrollback. No image
   escape is forwarded to the host. Kitty file/shared-memory access is rejected.
@@ -437,8 +463,8 @@ its default.
   Transfers are capped at 8 MiB, decoded images at 4 million pixels / 4096 per
   axis, and Kitty caches at 32 MiB / 32 images. Reflow retains cell samples
   without replaying image transfers.
-- **Image bitmaps live in a per-session store; cells name them by ID.**
-  `Options.ImageBytes` (bunk-gui: 64 MiB per pane, `-image-bytes`) creates a
+- Image bitmaps live in a per-session store, and cells name them by ID.
+  `Options.ImageBytes` (bunk-gui: 64 MiB per pane, `--image-bytes`) creates a
   `graphics.Store`; bunk's TUI keeps none. A cell's `ImageCell` holds
   `Placement.Bitmap` (store ID) and its own `Col`/`Row` in the placement, in
   the side table, so references survive scrolling, scrollback and reflow.
@@ -447,16 +473,17 @@ its default.
   ED 3, RIS, reflow, every 64 additions and before evicting, then evicts the
   least recently drawn. Cells without a bitmap draw their samples.
   `reflow_test.go` checks every image cell's reference after each reflow.
-- **bunk-gui draws image cells as textured quads** (`cmd/bunk-gui/images.go`):
-  a texture per placement, uploaded on first draw; texelFetch when the cell
-  size matches the placement's, linear filtering otherwise. Textures of
-  dropped placements are freed; textures not on screen are freed oldest
-  first past `-image-gpu-bytes` (256 MiB per pane). Links (`links.go`):
-  Ctrl+hover underlines OSC 8 links and plain URLs, Ctrl+click opens through
-  `gtk.UriLauncher` behind `openURL`, Ctrl+Shift+click while the application
-  reports the mouse. `launchRefused` keeps the launcher off the test
-  compositor; window tests read the links from `-report` (`opened`).
-- **Hyperlink IDs are swept and reused.** A cell's `Glyph.Link` is a uint16
+- bunk-gui draws image cells as textured quads (`cmd/bunk-gui/images.go`).
+  Each placement gets a texture, uploaded on first draw. Drawing uses
+  texelFetch when the cell size matches the placement's and linear
+  filtering otherwise. Textures of dropped placements are freed; textures
+  not on screen are freed oldest first past `--image-gpu-bytes` (256 MiB per
+  pane). Links are handled in `links.go`. Ctrl+hover underlines OSC 8 links
+  and plain URLs, and Ctrl+click opens them through `gtk.UriLauncher` behind
+  `openURL`; Ctrl+Shift+click does the same while the application reports
+  the mouse. `launchRefused` keeps the launcher off the test compositor;
+  window tests read the links from `--report` (`opened`).
+- Hyperlink IDs are swept and reused. A cell's `Glyph.Link` is a uint16
   ID into its terminal's URL table. A sweep frees the IDs no cell of either
   screen, cursor attribute or kept row refers to; new URLs reuse them, lowest
   first. Sweeps run when the table reaches 4,096 URLs or twice what the last
@@ -468,7 +495,7 @@ its default.
   links leave; the sweep then retries once per 1,024 new URLs. A front end
   that resolves IDs from rows it copied earlier compares `LinkGen` first, as
   bunk-gui's Ctrl+click does; the TUI resolves them under the session lock.
-- **Primary-screen reflow uses stored cells.** Soft-wrap markers join physical
+- Primary-screen reflow uses stored cells. Soft-wrap markers join physical
   rows into logical lines; explicit line breaks remain separate. Cursor and
   scroll anchors follow their cells. Styles, links, and image samples survive
   reflow, and output storage is bounded by scrollback capacity plus pane height.
@@ -479,16 +506,16 @@ its default.
   `internal/session/reflow_test.go` green: they compare against the
   pre-rewrite implementation in `reflow_oracle_test.go`. Track speed with
   `go test ./internal/session -run '^$' -bench BenchmarkReflow`.
-- **Cursor colour follows the active pane.** OSC 12 overrides and OSC 112 resets
+- Cursor colour follows the active pane. OSC 12 overrides and OSC 112 resets
   are emitted through tcell; shutdown restores the host cursor colour.
-- **Synchronized updates are per pane.** Other panes continue repainting;
+- Synchronized updates are per pane. Other panes continue repainting;
   an abandoned update is released after one second.
-- **Kitty keyboard state belongs to its negotiating foreground process group.**
+- Kitty keyboard state belongs to its negotiating foreground process group.
   Polling clears it only after that owner leaves the foreground.
-- **Terminal cleanup runs synchronously in `main` after the event loop.**
-  Background goroutines can't be relied on to finish their cleanup before
-  the process exits.
-- **Agent status is inferred unless the agent reports it.** `session.Status`
+- Terminal cleanup runs synchronously in `main` after the event loop,
+  because background goroutines can't be relied on to finish their cleanup
+  before the process exits.
+- Agent status is inferred unless the agent reports it. `session.Status`
   names the foreground agent from `DefaultAgents` (add a CLI there, or via
   `Options.Agents`), counts output in the last 2 s as working, and treats
   OSC 9/99/777 notifications and BEL from an agent as "needs you". VTE's
@@ -500,27 +527,27 @@ its default.
   record of the last announced state. Without hooks, Claude Code only sends
   OSC notifications to terminals it recognises; set its
   `preferredNotifChannel` to `terminal_bell`.
-- **The TUI shows agent status per pane.** `renderPane` reads
+- The TUI shows agent status per pane. `renderPane` reads
   `Session.Status` before taking the session lock; the badge and the
   needs-you/done separator colours use that copy (`Pane.agent`).
   `Hooks.StatusChanged` only wakes the render loop. Focus or typing calls
   `Acknowledge`; `next_needs_you` (Alt+A) jumps. bunk serves the notify
   socket like bunk-gui, and `bunk notify` runs the same CLI.
-- **Session timers are set per session.** `Options.Timing` holds the
+- Session timers are set per session. `Options.Timing` holds the
   foreground poll (`ProcessPoll`, 1 s), idle (`IdleAfter`, 2 s), hang-up
   grace (`HangupGrace`, 1 s), recently-left (2 s) and sync-release
   (`SyncUpdateTimeout`, 1 s) intervals. A zero field takes the default;
   both front ends leave it zero. Tests shorten it per session, never
   through package variables, so parallel tests cannot race on it.
-- **Nested sessions are refused.** `BUNK=1` is exported into every pane's
+- Nested sessions are refused. `BUNK=1` is exported into every pane's
   environment; the binary exits at startup if it sees it set.
-- **Closing a session ends it, whatever its child does.** `Session.Close`
+- Closing a session ends it, whatever its child does. `Session.Close`
   closes the PTY master and sends SIGHUP; a child still running after
   `HangupGrace` (1 s) is killed with its process group. On Linux the master
   is re-wrapped as a pollable file (`ptyfd_linux.go`), so Close ends
   ReadLoop even while a process the child left behind (`server &`) holds
   the PTY. Both front ends close a pane's session when its child exits
-  (TUI: `removePane`). Resize the PTY with `session.Setsize`, not
+  (the TUI in `removePane`). Resize the PTY with `session.Setsize`, not
   `pty.Setsize`: the latter reads the descriptor with `Fd`, which races
   with ReadLoop's Close and can hit a reused descriptor number
   (`TestResizeWhileOutputCloses`).
@@ -529,9 +556,21 @@ its default.
 
 ## Gotchas
 
-- TUI owns stderr — do not write logs there. All diagnostic output goes
+- The TUI owns stderr, so do not write logs there. All diagnostic output goes
   through `slog` to the trace file (`/tmp/bunk.log`). Errors that the user
   needs to see surface through the UI.
+- bunk-gui logs through `slog` as well. Warnings and errors go to stderr;
+  `-d`/`--debug` adds debug detail there, and `--trace` writes every record
+  to `/tmp/bunk-gui.log`, truncated on start. gotk4 forwards GLib and GTK
+  messages to `slog.Default`, so they follow the same levels, and the window
+  tests fail on any `level=WARN` or `level=ERROR` line on stderr.
+- Both front ends log the notify socket as `Listening on <path>` whatever
+  the log level: bunk-gui on stderr and in its trace log, bunk's TUI only in
+  its log file.
+- Only `-d` and `-c` have short forms (plus cobra's `-h`); every other flag
+  is long-form. bunk-gui's test flags (`--do`, `--report`, `--verify`,
+  `--wait-focus`, `--alloc-probe`, `--dump`, `--dump-size`,
+  `--maximize-after`) are hidden from `--help`.
 - Vendored vt10x has local patches. Prefer fixing bugs there over working
   around them in the main code.
 - `TERMINAL_AUDIT.md` is the authoritative reference for which terminal
@@ -543,7 +582,7 @@ its default.
 
 ## Test recipes
 
-**Minimal Pane (no PTY):**
+Build a minimal Pane without a PTY like this:
 ```go
 term := vt10x.New(vt10x.WithSize(cols, rows))
 p := &Pane{
@@ -557,7 +596,7 @@ p := &Pane{
 }
 ```
 
-**Simulation screen:**
+Set up a simulation screen like this:
 ```go
 scr := tcell.NewSimulationScreen("UTF-8")
 scr.Init()
@@ -566,7 +605,7 @@ scr.SetSize(w, h)
 // scr.GetContent(x, y) → (mainc rune, combc []rune, style, width)
 ```
 
-**Minimal App for calling render():**
+Build a minimal App for calling render() like this:
 ```go
 app := &App{
     screen:  scr,
@@ -578,25 +617,25 @@ app := &App{
 }
 ```
 
-**Short timers:** session tests pass `fastTiming` (`helpers_test.go`) in
-`Options.Timing`; bunk's tests set `App.timing` or `paneSpec.timing`.
-- **Defaults stay covered.** A timer test loops over `timings(fast)`. That
-  gives a `short` subtest, plus a `default` one unless `-short`, run in
-  parallel. `TestStatusTiming` checks Idle and RecentlyLeft against their
-  defaults without waiting.
-- **Wait for a state, not a time.** Poll `Status()`, a hook or the PTY
+For short timers, session tests pass `fastTiming` (`helpers_test.go`) in
+`Options.Timing`, and bunk's tests set `App.timing` or `paneSpec.timing`.
+- A timer test loops over `timings(fast)` so that the defaults stay
+  covered. That gives a `short` subtest, plus a `default` one unless
+  `-short`, run in parallel. `TestStatusTiming` checks Idle and RecentlyLeft
+  against their defaults without waiting.
+- Wait for a state rather than a time. Poll `Status()`, a hook or the PTY
   until the state arrives, with a deadline of seconds.
-- **Parallel tests:** independent slow tests call `t.Parallel()`. They
-  start after every serial test of the package ends.
-- **Keep these serial:** tests that count process-wide descriptors,
-  goroutines, children or heap (`leakcheck`, `runtime.GC`), use
-  `testing.AllocsPerRun`, bound a latency, swap a package variable, or
-  call `t.Setenv`.
+- Independent slow tests call `t.Parallel()`. They start after every serial
+  test of the package ends.
+- Keep a test serial if it counts process-wide descriptors, goroutines,
+  children or heap (`leakcheck`, `runtime.GC`), uses `testing.AllocsPerRun`,
+  bounds a latency, swaps a package variable, or calls `t.Setenv`.
 
-**Clipboard:** `TestMain` (`main_test.go`) replaces `writeNativeClipboard`,
-so no test writes the desktop clipboard. `clipboardHas(text)` reports what
-bunk tried to copy.
+`TestMain` (`main_test.go`) replaces `writeNativeClipboard`, so no test
+writes the desktop clipboard. `clipboardHas(text)` reports what bunk tried
+to copy.
 
-**A script in a real pane:** `runFeatureScript(t, "03_cursor_unicode.sh",
-cols, rows)` returns a `scriptPane`. Use `waitPrompt`, `pressEnter`,
-`paste`, `resizeHost`, `finish`, `render`, then `find`, `row` and `rows`.
+To run a script in a real pane, call
+`runFeatureScript(t, "03_cursor_unicode.sh", cols, rows)`, which returns a
+`scriptPane`. Use `waitPrompt`, `pressEnter`, `paste`, `resizeHost`,
+`finish`, `render`, then `find`, `row` and `rows`.

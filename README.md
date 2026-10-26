@@ -2,7 +2,7 @@
 
 # bunk
 
-**bunk** adds split panes to any terminal. **bunk-gui** is a native GTK4 terminal for running coding agents side by side.
+bunk adds split panes to any terminal. bunk-gui is a native GTK4 terminal for running coding agents side by side.
 
 ![bunk-gui with five agent tabs in the rail: working, needs you, idle, done and failed; the selected tab splits an agent and a shell](assets/gui-hero.png)
 
@@ -14,11 +14,11 @@
 
 A coding agent spends minutes on a task, then waits for an answer. With several agents running, you lose time checking each terminal.
 
-- **Agent workspaces.** bunk-gui gives each agent a tab with its repo, branch, container or SSH host, and state.
-- **Five states.** Each tab shows working, idle, needs you, done or failed.
-- **Status in the TUI too.** bunk shows the same states on a badge in each pane.
-- **Next needing you.** One key jumps to the next agent that waits for you: Ctrl+Shift+J in bunk-gui, Alt+A in bunk.
-- **Real PTYs.** Every pane is a real PTY. Agents, vim, btop and shells behave as in any terminal.
+- bunk-gui gives each agent a tab with its repo, branch, container or SSH host, and state.
+- Each tab shows one of five states: working, idle, needs you, done or failed.
+- bunk shows the same states on a badge in each pane.
+- One key jumps to the next agent that waits for you: Ctrl+Shift+J in bunk-gui and Alt+A in bunk.
+- Every pane is a real PTY, so agents, vim, btop and shells behave as they do in any terminal.
 
 Both front ends run on one Go core. `internal/session` owns the PTY, the emulator, scrollback, reflow, search and agent status. Each front end adds input and drawing.
 
@@ -29,13 +29,13 @@ Both front ends run on one Go core. `internal/session` owns the PTY, the emulato
 | Organises work as | Split panes, with agent status per pane | Tabs of split panes, with agent status per tab |
 | Use it for | Splits wherever a terminal runs | Several agents side by side on a desktop |
 
-- **Why the TUI.** bunk runs inside any terminal emulator, so it works over SSH and on servers.
-- **Why the GUI.** Only a native window gets real pixels, every key event and the GPU.
-- **Pixel-exact text.** bunk-gui draws each pane into a texture at the widget's device-pixel size. Text stays on the pixel grid at 133% and other fractional scales.
+bunk runs inside any terminal emulator, so it works over SSH and on servers. bunk-gui has its own window because only a native window gets real pixels, every key event and the GPU.
+
+bunk-gui draws each pane into a texture at the widget's device-pixel size, so text stays on the pixel grid at 133% and other fractional scales.
 
 ## In progress
 
-- **New window.** Deferred: Ctrl+Shift+N shows "not built yet".
+Opening a new window is deferred, and Ctrl+Shift+N shows "not built yet".
 
 ## bunk-gui
 
@@ -84,9 +84,9 @@ Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. b
 
 ![A load-test chart from kitten icat, drawn 1:1 in a shell pane next to the agent tabs](assets/gui-image.png)
 
-- **Image memory.** Each pane keeps up to 64 MiB of bitmaps (`-image-bytes`). Images drawn least recently fall back to half-block cells.
-- **A program that stops reading.** The window and other panes keep working. Its pane queues up to 16 MiB of input (`-input-bytes`); more is refused with a toast.
-- **Links while a program reads the mouse.** Ctrl+Shift+click opens the link instead.
+- Each pane keeps up to 64 MiB of image bitmaps (`--image-bytes`), and the images drawn least recently fall back to half-block cells.
+- When a program stops reading its input, the window and other panes keep working. Its pane queues up to 16 MiB of input (`--input-bytes`) and refuses more with a toast.
+- When a program reads the mouse, Ctrl+Shift+click opens a link instead of Ctrl+click.
 
 ## bunk
 
@@ -112,7 +112,7 @@ Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. b
 
 Alt+F1 supports Podman, Docker, LXD/LXC, Incus, Toolbox, Distrobox, SSH and sudo/su.
 
-Badges in the top-right corner of each pane:
+Each pane shows these badges in its top-right corner:
 
 | Badge | Meaning |
 | :- | :- |
@@ -132,14 +132,14 @@ The separators around a pane that needs you or is done take the badge's colour.
 
 Both front ends share the emulator, so they support the same sequences.
 
-- **Colour and text.** Truecolour, SGR underline styles and colours, overline, dim, strike-through.
-- **Integration.** OSC 8 links, OSC 52 clipboard, OSC 133 command status, bracketed paste, focus reports.
-- **Host passthrough.** bunk forwards OSC 7, OSC 8 links and OSC 133 to the host terminal.
-- **Input.** Kitty keyboard protocol, application cursor and keypad modes, SGR mouse reports.
-- **Unicode.** Wide characters, combining marks and emoji sequences stay together through copy, search and reflow.
-- **Images.** SIXEL, Kitty and iTerm2 static images. bunk-gui draws them at full resolution; bunk draws half-block cells.
-- **Queries.** Each pane answers DA, DECRQM, DECRQSS and XTGETTCAP itself, also over SSH.
-- **Throughput.** A session parses agent transcripts at about 180 MB/s and plain text at 400 MB/s on one core.
+- Text can use truecolour, SGR underline styles and colours, overline, dim and strike-through.
+- Programs can use OSC 8 links, the OSC 52 clipboard, OSC 133 command status, bracketed paste and focus reports.
+- bunk forwards OSC 7, OSC 8 links and OSC 133 to the host terminal.
+- Input supports the Kitty keyboard protocol, application cursor and keypad modes, and SGR mouse reports.
+- Wide characters, combining marks and emoji sequences stay together through copy, search and reflow.
+- Both front ends show SIXEL, Kitty and iTerm2 static images. bunk-gui draws them at full resolution, and bunk draws them as half-block cells.
+- Each pane answers DA, DECRQM, DECRQSS and XTGETTCAP itself, also over SSH.
+- On one core, a session parses agent transcripts at about 180 MB/s and plain text at 400 MB/s.
 
 [TERMINAL_AUDIT.md](TERMINAL_AUDIT.md) lists every feature with its status and limits.
 
@@ -151,7 +151,7 @@ Both front ends share the emulator, so they support the same sequences.
 grm install jsnjack/bunk
 ```
 
-Or download a binary from [Releases](https://github.com/jsnjack/bunk/releases) (Linux and macOS, amd64 and arm64).
+You can also download a binary from [Releases](https://github.com/jsnjack/bunk/releases) (Linux and macOS, amd64 and arm64).
 
 To start bunk in every new terminal, add this to `~/.bashrc` or `~/.zshrc`:
 
@@ -165,7 +165,7 @@ bunk sets `BUNK=1` in every pane and refuses to start inside itself.
 
 ### bunk-gui
 
-bunk-gui runs on Linux and needs Go 1.26, gcc, GTK 4, libadwaita and OpenGL 3.3. On Fedora:
+bunk-gui runs on Linux and needs Go 1.26, gcc, GTK 4, libadwaita and OpenGL 3.3. On Fedora, install and build it like this:
 
 ```bash
 sudo dnf install golang gcc gtk4-devel libadwaita-devel
@@ -177,12 +177,15 @@ bin/bunk-gui
 
 | Flag | Effect |
 | :- | :- |
-| `-e CMD` | Run `CMD` with `sh -c` in the first tab; quit when it exits |
-| `-tab CMD` | Open another tab running `CMD`; repeatable |
-| `-layout rail\|bar` | Tab layout for this run |
-| `-font "Noto Sans Mono 11"` | Font family and size for this run |
-| `-size 120x36` | Initial size in cells |
-| `-config FILE` | Settings file instead of `~/.config/bunk-gui/config.toml` |
+| `--command CMD` | Run `CMD` with `sh -c` in the first tab; quit when it exits |
+| `--tab CMD` | Open another tab running `CMD`; repeatable |
+| `--layout rail\|bar` | Tab layout for this run |
+| `--font "Noto Sans Mono 11"` | Font family and size for this run |
+| `--size 120x36` | Initial size in cells |
+| `-c`, `--config FILE` | Settings file instead of `~/.config/bunk-gui/config.toml` |
+| `-d`, `--debug` | Log debug detail to stderr |
+| `--trace` | Log everything to `/tmp/bunk-gui.log`, which is truncated on every start |
+| `--version` | Print the version and exit |
 
 ## Configuration
 
@@ -208,7 +211,7 @@ search         = "ctrl+f"
 quit           = "ctrl+q"
 ```
 
-Flags: `--config FILE`, `--theme NAME`, `--debug`, `--trace` (logs raw PTY bytes to `/tmp/bunk.log`).
+bunk takes these flags: `-c`/`--config FILE`, `--theme NAME`, `-d`/`--debug`, `--trace` (logs raw PTY bytes to `/tmp/bunk.log`) and `--version`.
 
 ### bunk-gui
 
@@ -232,22 +235,23 @@ processes = ["myagent"]
 scripts = ["@me/myagent"]  # for agents that run under node, python, bun, deno or ruby
 ```
 
-- **Live reload.** bunk-gui watches the file and applies edits to the running window.
-- **Bad values.** A bad value shows a toast, and the setting keeps its default.
-- **Shared names.** `[keys]` uses bunk's action names and key syntax where both have the action.
-- **"none".** `"none"` or `""` turns an action off, so its keys reach the terminal.
-- **Passthrough.** Ctrl+F12 or the menu's "Send all keys to terminal" works per pane.
-- **Shortcuts and preferences.** Both windows write to this file and rewrite only the lines they change.
+- bunk-gui watches the file and applies edits to the running window.
+- A bad value shows a toast, and the setting keeps its default.
+- `[keys]` uses bunk's action names and key syntax where both have the action.
+- `"none"` or `""` turns an action off, so its keys reach the terminal.
+- Keyboard passthrough works per pane, through Ctrl+F12 or the menu's "Send all keys to terminal".
+- The shortcuts and preferences windows write to this file and rewrite only the lines they change.
 
 ## Agent status and hooks
 
 Both front ends infer each agent's state from these sources:
 
-- **Foreground process.** Both recognise 15 agent CLIs, such as claude, codex, copilot and gemini. bunk-gui's `[[agents]]` adds more.
-- **Output.** Output in the last 2 s means working; silence means idle.
-- **Notifications.** OSC 9/99/777 and BEL from an agent mean needs you.
-- **Exit codes.** A failed command reported through OSC 133;D means failed.
-- **Acknowledge.** Focusing the pane or typing into it clears needs you and done.
+- The foreground process names the agent. Both recognise 15 agent CLIs, such as claude, codex, copilot and gemini, and bunk-gui's `[[agents]]` adds more.
+- Output in the last 2 s means working, and silence means idle.
+- OSC 9/99/777 notifications and BEL from an agent mean needs you.
+- A failed command reported through OSC 133;D means failed.
+
+Focusing the pane or typing into it acknowledges the state and clears needs you and done.
 
 With hooks, the agent reports its own state, and the report takes priority over inference:
 
@@ -256,9 +260,9 @@ bunk notify hooks claude        # print the hook snippet for Claude Code
 bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
 ```
 
-- **One CLI.** `bunk notify` and `bunk-gui notify` take the same arguments. The snippets call whichever is installed.
-- **Environment.** Each pane gets `BUNK_NOTIFY_SOCKET` and `BUNK_NOTIFY_SESSION`. Sockets live under `$XDG_RUNTIME_DIR/bunk/`.
-- **Details.** [docs/agent-hooks.md](docs/agent-hooks.md) has snippets for Claude Code, Codex, Copilot CLI and Gemini CLI, the wire format and exit codes.
+- `bunk notify` and `bunk-gui notify` take the same arguments, and the snippets call whichever is installed.
+- Each pane gets `BUNK_NOTIFY_SOCKET` and `BUNK_NOTIFY_SESSION` in its environment. Sockets live under `$XDG_RUNTIME_DIR/bunk/`.
+- [docs/agent-hooks.md](docs/agent-hooks.md) has snippets for Claude Code, Codex, Copilot CLI and Gemini CLI, the wire format and exit codes.
 
 ## Packages
 
@@ -285,7 +289,7 @@ bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
 | Path | What it does |
 | :- | :- |
 | `/` (package main) | bunk TUI: tcell screen, BSP layout, borders, badges with agent status, search bar, config, `bunk notify` |
-| `cmd/bunk-gui/` | bunk-gui: window, tabs, rail and bar, OpenGL pane view, images, links, find, shortcuts, preferences. A separate Go module with cgo. |
+| `cmd/bunk-gui/` | bunk-gui: window, tabs, rail and bar, OpenGL pane view, images, links, find, shortcuts, preferences. It is a separate Go module with cgo. |
 | `cmd/bunk-gui/gl/` | OpenGL 3.3 binding, loaded at run time through EGL |
 | `internal/session/` | One terminal session: PTY, emulator, scrollback, reflow, search, selection, query replies, agent status |
 | `internal/vt10x/` | VT/xterm emulator, a fork of hinshun/vt10x: parser, 16-byte cells, graphemes, rewrap |
@@ -311,15 +315,15 @@ make screenshots   # render the README screenshots into assets/
 make run           # build bunk and open it with --trace in a new terminal
 ```
 
-- **No windows on the desktop.** GUI tests run on a private mutter from `scripts/headless-gui.sh`.
-- **Private session.** The compositor has one 2560x1600 monitor at 133%, its own D-Bus and its own clipboard.
-- **Checks in tests.** Pixel, idle-frame, allocation and latency checks are Go tests. Turn a manual check into a test.
-- **Leak checks.** check-all counts fds, goroutines, child processes and heap around session, TUI and GUI cycles.
-- **Package builds.** `go test -short` skips window tests; the RPM's `%check` uses it.
-- **Waits, not timelines.** Scenario steps wait for UI states. `BUNK_GUI_PARALLEL` (default 8) sets how many scenarios run at once.
-- **Tools.** Window tests need mutter, gdctl and dbus-run-session. Packaging checks need desktop-file-validate and appstreamcli.
-- **Screenshots.** `TestGUIScreenshots` renders the README scenario in every `make gui-test`.
-- **Saving shots.** `make screenshots` copies the PNGs to `assets/` and shrinks them with pngquant, oxipng, optipng or ImageMagick.
+- GUI tests run on a private mutter from `scripts/headless-gui.sh`, so no windows open on the desktop.
+- The compositor has one 2560x1600 monitor at 133%, its own D-Bus and its own clipboard.
+- Pixel, idle-frame, allocation and latency checks are Go tests. Turn a manual check into a test.
+- check-all counts fds, goroutines, child processes and heap around session, TUI and GUI cycles to find leaks.
+- `go test -short` skips window tests, and the RPM's `%check` uses it for package builds.
+- Scenario steps wait for UI states rather than fixed times. `BUNK_GUI_PARALLEL` (default 8) sets how many scenarios run at once.
+- Window tests need mutter, gdctl and dbus-run-session. Packaging checks need desktop-file-validate and appstreamcli.
+- `TestGUIScreenshots` renders the README scenario in every `make gui-test`.
+- `make screenshots` copies the PNGs to `assets/` and shrinks them with pngquant, oxipng, optipng or ImageMagick.
 
 To debug a bunk that auto-starts from `.bashrc`, run the local build from a terminal without it:
 

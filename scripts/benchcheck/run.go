@@ -146,9 +146,13 @@ func Run(cfg RunConfig) error {
 
 	tmp, err := os.MkdirTemp("", "benchcheck-")
 	if err != nil {
-		return err
+		return fmt.Errorf("create build directory: %w", err)
 	}
-	defer os.RemoveAll(tmp) //nolint:errcheck
+	defer func() {
+		if err := os.RemoveAll(tmp); err != nil {
+			cfg.logf("warning: remove %s: %v\n", tmp, err)
+		}
+	}()
 
 	type binary struct{ path, dir string }
 	bins := map[string]binary{}
@@ -299,7 +303,7 @@ func Run(cfg RunConfig) error {
 	out.WriteByte('\n')
 	out.Write(body.Bytes())
 	if err := writeAtomic(cfg.Out, out.Bytes()); err != nil {
-		return err
+		return fmt.Errorf("write results: %w", err)
 	}
 	cfg.logf("benchcheck: wrote %s: %d runs, %d repeated, load average %.2f to %.2f, least core share %.2f\n",
 		cfg.Out, runs, retried, startLoad, maxLoad, minShare)
@@ -401,7 +405,7 @@ func listBenchmarks(s Suite, dir, bin string) ([]string, error) {
 	cmd.Env = benchEnv(s.Procs)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list benchmarks of %s: %w", s.Name, err)
 	}
 	var names []string
 	for _, f := range strings.Fields(string(out)) {
@@ -642,23 +646,23 @@ func tail(b []byte) string {
 // leaves the previous file whole.
 func writeAtomic(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return fmt.Errorf("create directory: %w", err)
 	}
 	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
-		return err
+		return fmt.Errorf("create temporary file: %w", err)
 	}
 	if _, err := f.Write(data); err != nil {
-		f.Close()           //nolint:errcheck
-		os.Remove(f.Name()) //nolint:errcheck
-		return err
+		return errors.Join(fmt.Errorf("write %s: %w", f.Name(), err), f.Close(), os.Remove(f.Name()))
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(f.Name()) //nolint:errcheck
-		return err
+		return errors.Join(fmt.Errorf("close %s: %w", f.Name(), err), os.Remove(f.Name()))
 	}
 	if err := os.Chmod(f.Name(), 0o644); err != nil {
-		return err
+		return errors.Join(fmt.Errorf("chmod %s: %w", f.Name(), err), os.Remove(f.Name()))
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return errors.Join(fmt.Errorf("rename to %s: %w", path, err), os.Remove(f.Name()))
+	}
+	return nil
 }

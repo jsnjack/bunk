@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// TestGUITabLeaks opens and closes tabs and splits through -do, then
+// TestGUITabLeaks opens and closes tabs and splits through --do, then
 // compares the resource counters of two marks: descriptors, goroutines,
 // child processes and zombies, panes not yet freed and their GL textures
 // must be back where they were with only the first tab open. 20 tabs here,
@@ -47,7 +47,7 @@ func TestGUITabLeaks(t *testing.T) {
 	script = append(script,
 		"wait res.panes=@start.panes res.children<=@start.children res.zombies=0 res.fds<=@start.fds+2 res.goroutines<=@start.goroutines+2 timeout=20s",
 		"mark end", "snap end", "quit")
-	g := runGUI(t, scenario{cost: 3, args: []string{"-size", "100x30"}, script: script,
+	g := runGUI(t, scenario{cost: 3, args: []string{"--size", "100x30"}, script: script,
 		limit: 30*time.Second + time.Duration(tabs)*time.Second})
 
 	start, end := g.mark("start"), g.mark("end")

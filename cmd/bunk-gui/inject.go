@@ -159,7 +159,7 @@ var evdevButton = map[int]C.int{1: 0x110, 2: 0x112, 3: 0x111}
 
 func injectOpen() error {
 	if err := headlessOnly(); err != nil {
-		return err
+		return fmt.Errorf("open input injection: %w", err)
 	}
 	if C.inj_open() == 0 {
 		return errors.New("RemoteDesktop: " + C.GoString(C.inj_error()))
@@ -252,7 +252,7 @@ func (a *App) injectKeys(spec string) error {
 	}
 	for _, m := range mods {
 		if err := injectOK(a.sent(C.inj_keycode(C.uint(m), 1))); err != nil {
-			return err
+			return fmt.Errorf("key %s: %w", name, err)
 		}
 	}
 	err := injectOK(a.sent(C.inj_keycode(C.uint(code), 1)))
@@ -264,7 +264,10 @@ func (a *App) injectKeys(spec string) error {
 			err = e
 		}
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("key %s: %w", name, err)
+	}
+	return nil
 }
 
 // injectKeyState presses or releases one key without the other half:
@@ -300,7 +303,7 @@ func (a *App) addDevices() error {
 		func() C.int { return C.inj_motion(-1, -1) },
 	} {
 		if err := injectOK(rc()); err != nil {
-			return err
+			return fmt.Errorf("add input devices: %w", err)
 		}
 	}
 	return nil
@@ -321,10 +324,10 @@ func (a *App) injectText(text string) error {
 			key = gdk.UnicodeToKeyval(uint32(r))
 		}
 		if err := injectOK(a.sent(C.inj_keysym(C.uint(key), 1))); err != nil {
-			return err
+			return fmt.Errorf("type %q: %w", r, err)
 		}
 		if err := injectOK(a.sent(C.inj_keysym(C.uint(key), 0))); err != nil {
-			return err
+			return fmt.Errorf("type %q: %w", r, err)
 		}
 	}
 	return nil
@@ -341,9 +344,12 @@ func (a *App) pointerTo(x, y float64) error {
 		return errors.New("pointer injection needs the window maximized (action maximize)")
 	}
 	if err := injectOK(C.inj_motion(-1e5, -1e5)); err != nil {
-		return err
+		return fmt.Errorf("pointer to the corner: %w", err)
 	}
-	return injectOK(C.inj_motion(C.double(x), C.double(y)))
+	if err := injectOK(C.inj_motion(C.double(x), C.double(y))); err != nil {
+		return fmt.Errorf("pointer to %.1f,%.1f: %w", x, y, err)
+	}
+	return nil
 }
 
 func (a *App) pointerButton(btn int, pressed bool) error {
@@ -455,13 +461,18 @@ func (a *App) ptrTarget(arg string, args []string) (float64, float64, error) {
 	}
 	dx, dy := 0.0, 0.0
 	targ := args
-	if n := len(args); n >= 3 && isNum(args[n-1]) && isNum(args[n-2]) && (args[0] != "cell" || n != 4) {
-		dx, _ = strconv.ParseFloat(args[n-2], 64)
-		dy, _ = strconv.ParseFloat(args[n-1], 64)
-		targ = args[:n-2]
+	if n := len(args); n >= 3 && (args[0] != "cell" || n != 4) {
+		ox, errX := strconv.ParseFloat(args[n-2], 64)
+		oy, errY := strconv.ParseFloat(args[n-1], 64)
+		if errX == nil && errY == nil {
+			dx, dy, targ = ox, oy, args[:n-2]
+		}
 	}
 	x, y, err := a.target(targ)
-	return x + dx, y + dy, err
+	if err != nil {
+		return 0, 0, fmt.Errorf("pointer target %q: %w", arg, err)
+	}
+	return x + dx, y + dy, nil
 }
 
 func (a *App) pointerScroll(steps int) error { return injectOK(C.inj_scroll(C.int(steps))) }
@@ -503,12 +514,16 @@ func (a *App) menuTarget(label string) (float64, float64, error) {
 //	tab N | tabclose N | newtab | options | closewin
 //	pane ID | cell ID COL ROW | divider PATH (r, ra, rb, rab, … from the selected tab's root)
 func (a *App) target(args []string) (float64, float64, error) {
+	var numErr error
 	num := func(i int) int {
-		if i < len(args) {
-			n, _ := strconv.Atoi(args[i])
-			return n
+		if i >= len(args) {
+			return 0
 		}
-		return 0
+		n, err := strconv.Atoi(args[i])
+		if err != nil && numErr == nil {
+			numErr = fmt.Errorf("%q: %w", strings.Join(args, " "), err)
+		}
+		return n
 	}
 	centre := func(w gtk.Widgetter) (float64, float64, error) {
 		x, y, wd, ht, ok := a.boundsIn(w)
@@ -523,6 +538,9 @@ func (a *App) target(args []string) (float64, float64, error) {
 	switch args[0] {
 	case "tab", "tabclose":
 		i := num(1) - 1
+		if numErr != nil {
+			return 0, 0, numErr
+		}
 		if i < 0 || i >= len(a.tabItems) {
 			return 0, 0, errors.New("no tab item " + strings.Join(args, " "))
 		}
@@ -538,6 +556,9 @@ func (a *App) target(args []string) (float64, float64, error) {
 		return centre(a.closeWinBtn)
 	case "pane", "cell":
 		id := num(1)
+		if numErr != nil {
+			return 0, 0, numErr
+		}
 		if id < 0 || id >= len(a.panes) || a.panes[id] == nil {
 			return 0, 0, errors.New("no pane " + strings.Join(args, " "))
 		}
@@ -546,6 +567,9 @@ func (a *App) target(args []string) (float64, float64, error) {
 			return centre(p.widget)
 		}
 		cx, cy := p.cellCenter(num(2), num(3))
+		if numErr != nil {
+			return 0, 0, numErr
+		}
 		x, y, _, _, ok := a.boundsIn(p.widget)
 		if !ok {
 			return 0, 0, errors.New("pane not shown")

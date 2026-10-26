@@ -20,6 +20,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -396,7 +397,9 @@ func (app *App) emitTitle(active *Pane) {
 	}
 	app.lastEmittedTitle = title
 	// OSC 0 sets both icon name and window title; BEL-terminated.
-	app.host().Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
+	if _, err := app.host().Write([]byte("\x1b]0;" + title + "\x07")); err != nil {
+		L.Log(context.Background(), LevelTrace, "write window title", "err", err)
+	}
 }
 
 // sanitizeTitle keeps only printable runes (no C0/C1 controls), validates

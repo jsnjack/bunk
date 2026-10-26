@@ -35,7 +35,7 @@ scripts = ["goose/cli.py"]
 	g := runGUI(t, scenario{
 		cost:   2,
 		config: cfg,
-		args:   []string{"-size", "80x24"},
+		args:   []string{"--size", "80x24"},
 		script: []string{
 			"maximize",
 			"wait window.maximized=true window.w>1800",

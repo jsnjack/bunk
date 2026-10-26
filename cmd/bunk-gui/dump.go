@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/png"
+	"log/slog"
 	"os"
 
 	"bunk/cmd/bunk-gui/gl"
@@ -18,14 +20,19 @@ func writePNG(path string, rgba []byte, w, h int) error {
 	}
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("create PNG: %w", err)
 	}
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
 	if err := enc.Encode(f, img); err != nil {
-		_ = f.Close()
-		return err
+		if cerr := f.Close(); cerr != nil {
+			slog.Log(context.Background(), LevelTrace, "close PNG", "path", path, "err", cerr)
+		}
+		return fmt.Errorf("encode PNG: %w", err)
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close PNG: %w", err)
+	}
+	return nil
 }
 
 // savePNG converts and writes the top-left cw x ch pixels of a BGRA image

@@ -2,6 +2,7 @@
 package session
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 // AgentState is what a session's agent appears to be doing.
 type AgentState uint8
 
+// The agent states.
 const (
 	AgentNone     AgentState = iota // no known agent runs in the foreground
 	AgentWorking                    // output arrived within IdleAfter
@@ -335,7 +337,10 @@ func parseStatusOSC(num int, p []byte) (statusOSC, bool) {
 			return statusOSC{started: true}, true
 		case "D":
 			code, _, _ := strings.Cut(rest, ";")
-			n, _ := strconv.Atoi(code)
+			n, err := strconv.Atoi(code)
+			if err != nil && code != "" {
+				L().Log(context.Background(), LevelTrace, "OSC 133;D: exit code is not a number", "code", code, "err", err)
+			}
 			return statusOSC{finished: true, exitCode: n}, true
 		}
 	}
@@ -468,6 +473,7 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 // internal/notify, instead of bunk inferring it.
 type Event uint8
 
+// The events an agent can report.
 const (
 	EventWorking  Event = iota + 1 // the agent started a turn
 	EventIdle                      // the agent waits for a prompt

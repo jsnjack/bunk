@@ -25,7 +25,7 @@ func TestGUILinksAfterSweeps(t *testing.T) {
 	b.WriteString("\x1b[2;1Hfresh: \x1b]8;;https://fresh.example/new\x1b\\the fresh one\x1b]8;;\x1b\\\x1b[5;1H")
 	g := runGUI(t, scenario{
 		cost:  3,
-		args:  []string{"-size", "100x30"},
+		args:  []string{"--size", "100x30"},
 		files: map[string]string{"sweep.txt": b.String()},
 		script: []string{
 			"maximize",

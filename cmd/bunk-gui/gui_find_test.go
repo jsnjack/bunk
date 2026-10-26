@@ -28,7 +28,7 @@ func TestGUICellPixels(t *testing.T) {
 	self, err := os.Executable()
 	must(t, err)
 	g := runGUI(t, scenario{
-		args: []string{"-size", "80x24", "-e", "BUNK_GUI_HELPER=pixels exec " + self},
+		args: []string{"--size", "80x24", "--command", "BUNK_GUI_HELPER=pixels exec " + self},
 		script: []string{
 			// A resize would report again ("winch") after 100 ms.
 			"wait focused.text~\"start: winsize\" focused.settled=true idle 300ms",
@@ -69,7 +69,7 @@ func TestGUIFind(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
 		cost: 2,
-		args: []string{"-alloc-probe", "-size", "80x24", "-e", "sh fill.sh"},
+		args: []string{"--alloc-probe", "--size", "80x24", "--command", "sh fill.sh"},
 		files: map[string]string{"fill.sh": `i=1
 while [ $i -le 300 ]; do
   if [ $((i % 10)) -eq 0 ]; then echo "row $i Needle here"; else echo "row $i"; fi

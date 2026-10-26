@@ -56,7 +56,7 @@ static int64_t bg_frame_counter(uintptr_t clock) {
 static int64_t bg_monotonic(void) { return g_get_monotonic_time(); }
 
 // Feeds one key to an input method context the way GTK's key controller
-// does (gtk_im_context_filter_key), for -do tests: no GdkEvent is needed.
+// does (gtk_im_context_filter_key), for --do tests: no GdkEvent is needed.
 // Returns -1 when the current layout has no key for keyval.
 static int bg_im_feed(uintptr_t im, uintptr_t widget, guint keyval, guint state, int press) {
 	GtkWidget* w = (GtkWidget*)widget;

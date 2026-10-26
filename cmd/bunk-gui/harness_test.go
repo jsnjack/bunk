@@ -8,7 +8,7 @@ package main
 //   - Window tests skip with -short (package builds have no compositor) and
 //     fail when BUNK_HEADLESS is unset.
 //   - bunk-gui is built once per test run (with -race when the tests are),
-//     driven by a -do script per scenario, and checked through its -report
+//     driven by a --do script per scenario, and checked through its --report
 //     JSON and pixels of its PNG dumps.
 //   - Every scenario gets a compositor of its own (the wrapper again, nested),
 //     so scenarios that call t.Parallel run side by side without sharing
@@ -109,7 +109,7 @@ func guiBinary(t *testing.T) string {
 
 // scenario is one bunk-gui launch.
 type scenario struct {
-	args   []string          // flags besides -do, -report and -config
+	args   []string          // flags besides --do, --report and --config
 	config string            // config.toml contents
 	script []string          // "TIME ACTION" lines
 	env    []string          // extra environment
@@ -125,8 +125,9 @@ type scenario struct {
 
 type guiRun struct {
 	*runReport
-	t   *testing.T
-	dir string
+	t      *testing.T
+	dir    string
+	stderr string
 }
 
 // guiSlots limits how many scenarios run at once (BUNK_GUI_PARALLEL).
@@ -231,7 +232,7 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	if limit == 0 {
 		limit = 30 * time.Second
 	}
-	args := append([]string{"-wait-focus", "-do", "@" + do, "-report", rep, "-config", cfg, "-timeout", limit.String()}, sc.args...)
+	args := append([]string{"--wait-focus", "--do", "@" + do, "--report", rep, "--config", cfg, "--timeout", limit.String()}, sc.args...)
 	cmd := exec.Command(w, append([]string{bin}, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // a timeout kills the compositor too
 	cmd.Dir = dir
@@ -282,9 +283,11 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	}
 	// GLib warnings and criticals (forwarded to slog as WARN/ERROR) mean a
 	// misuse of GTK even when the scenario's checks pass.
-	errlog, _ := os.ReadFile(filepath.Join(dir, "stderr.txt"))
-	for _, line := range strings.Split(string(errlog), "\n") {
-		if strings.Contains(line, " WARN ") || strings.Contains(line, " ERROR ") || strings.Contains(line, "CRITICAL") ||
+	errlog, err := os.ReadFile(filepath.Join(dir, "stderr.txt"))
+	must(t, err)
+	g.stderr = string(errlog)
+	for _, line := range strings.Split(g.stderr, "\n") {
+		if strings.Contains(line, "level=WARN") || strings.Contains(line, "level=ERROR") || strings.Contains(line, "CRITICAL") ||
 			strings.Contains(line, "DATA RACE") {
 			t.Errorf("bunk-gui logged: %s", line)
 		}

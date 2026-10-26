@@ -17,18 +17,18 @@ import (
 	"bunk/internal/session"
 )
 
-// runScript runs -do actions in order, one step at a time. A step is
+// runScript runs --do actions in order, one step at a time. A step is
 // "[TIME] VERB [ARGS]": with TIME (a Go duration) it starts no earlier than
 // TIME after the script started (startup, or keyboard focus with
-// -wait-focus); without, right after the previous step finished. Steps are
-// separated by ';', or one per line in "-do @FILE". Waits ("wait", see
+// --wait-focus); without, right after the previous step finished. Steps are
+// separated by ';', or one per line in "--do @FILE". Waits ("wait", see
 // wait.go) hold the script until the UI reaches a state, so scenarios need
 // no guessed timelines; "sleep DUR" holds it for a fixed time where the
 // time itself is measured. Actions run on the main thread. Most call the
 // same handlers as the GTK controllers; kbd* and ptr* inject real input
 // through the headless test compositor instead. Arguments take Go escapes
 // (\n, \x1b). A failed or unknown action is listed under "errors" in
-// -report.
+// --report.
 //
 // Script control:
 //
@@ -81,17 +81,17 @@ import (
 //
 // Records (snap, dump and shot finish before the next step starts):
 //
-//	snap LABEL                       UI state snapshot in -report, clipboard texts read
-//	mark NAME                        frame and allocation counters in -report
+//	snap LABEL                       UI state snapshot in --report, clipboard texts read
+//	mark NAME                        frame and allocation counters in --report
 //	dump FILE [WxH] | dump-pane ID FILE   a pane's frame, drawn after the step started
 //	shot FILE [window|chrome|menu]   a widget rendered offscreen through GSK, after the
 //	                                 next frame (panes drawn afresh)
 //	print-size | print-tabs | print-status | print-ui
 func (a *App) runScript(script string) {
-	if path, ok := strings.CutPrefix(script, "@"); ok { // -do @FILE
+	if path, ok := strings.CutPrefix(script, "@"); ok { // --do @FILE
 		b, err := os.ReadFile(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "bunk-gui: -do: %v\n", err)
+			fmt.Fprintf(os.Stderr, "bunk-gui: --do: %v\n", err)
 			a.rep.Errors = append(a.rep.Errors, err.Error())
 			return
 		}
@@ -113,7 +113,7 @@ func (a *App) runScript(script string) {
 			if d, err := time.ParseDuration(first); err == nil {
 				st.at, st.action = d, strings.TrimSpace(rest)
 			} else if first[0] >= '0' && first[0] <= '9' {
-				a.reportError("-do %q: %v", line, err)
+				a.reportError("--do %q: %v", line, err)
 				continue
 			}
 		}
@@ -124,7 +124,7 @@ func (a *App) runScript(script string) {
 	a.nextStep()
 }
 
-// scriptStep is one -do action; at < 0 means right after the previous step.
+// scriptStep is one --do action; at < 0 means right after the previous step.
 type scriptStep struct {
 	at     time.Duration
 	action string
@@ -482,14 +482,14 @@ func (a *App) doAction(action string, done func()) {
 		}
 	case "snap":
 		if !a.reportOn() {
-			a.reportError("%s: needs -report", action)
+			a.reportError("%s: needs --report", action)
 			return
 		}
 		async = true
 		a.snap(arg, done)
 	case "mark":
 		if !a.reportOn() {
-			a.reportError("%s: needs -report", action)
+			a.reportError("%s: needs --report", action)
 			return
 		}
 		a.addMark(arg)
@@ -502,12 +502,16 @@ func (a *App) doAction(action string, done func()) {
 			a.reportError("%s: want dump FILE [WxH]", action)
 			return
 		}
-		size := a.cfg.dumpSize
+		w, h := a.dumpW, a.dumpH
 		if len(args) > 1 {
-			size = args[1]
+			var err error
+			if w, h, err = parseDims(args[1]); err != nil {
+				a.reportError("%s: %v", action, err)
+				return
+			}
 		}
 		async = true
-		a.dumpFresh(p, args[0], size, done)
+		a.dumpFresh(p, args[0], w, h, done)
 	case "dump-pane":
 		id := num(0, -1)
 		if id < 0 || id >= len(a.panes) || a.panes[id] == nil || len(args) < 2 {
@@ -515,7 +519,7 @@ func (a *App) doAction(action string, done func()) {
 			return
 		}
 		async = true
-		a.dumpFresh(a.panes[id], args[1], "100000x100000", done)
+		a.dumpFresh(a.panes[id], args[1], 100000, 100000, done)
 	case "print-ui":
 		sx, sy := pointerSeen()
 		fmt.Printf("print-ui: active=%v maximized=%v layout=%s rail_open=%v font=%q text=%s switcher=%v keyboard=%s pointer=%.1f,%.1f seen=%.1f,%.1f last_toast=%q\n",
@@ -577,11 +581,6 @@ func (a *App) injectAction(verb, arg string, args []string, num func(int, int) i
 		return a.pointerScroll(num(0, 1))
 	}
 	return nil
-}
-
-func isNum(s string) bool {
-	_, err := strconv.ParseFloat(s, 64)
-	return err == nil
 }
 
 // parseKeySpec parses "ctrl+shift+c" or "Return" into a GDK keyval and state.
@@ -757,11 +756,11 @@ func (a *App) shot(args []string, done func()) error {
 	return nil
 }
 
-// dumpFresh writes p's frame like -dump, cropped to size (WxH), once the
+// dumpFresh writes p's frame like --dump, cropped to w x h, once the
 // pane has drawn a frame after this call, so the dump shows everything
 // the pane held when the step started. A pane that is not shown draws
 // nothing: its last frame is written after a second.
-func (a *App) dumpFresh(p *Pane, path, size string, done func()) {
+func (a *App) dumpFresh(p *Pane, path string, w, h int, done func()) {
 	p.queueRender()
 	n0 := viewGeomC(p.view).snapshots
 	start := time.Now()
@@ -772,10 +771,7 @@ func (a *App) dumpFresh(p *Pane, path, size string, done func()) {
 			return
 		}
 		if !a.finished {
-			saved := a.cfg.dumpSize
-			a.cfg.dumpSize = size
-			a.writeDump(p, path)
-			a.cfg.dumpSize = saved
+			a.writeDump(p, path, w, h)
 		}
 		if done != nil {
 			done()

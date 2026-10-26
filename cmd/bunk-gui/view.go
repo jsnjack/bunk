@@ -22,7 +22,7 @@ package main
 // is first resampled to bounds-size pixels at scale 1 in an offscreen, then
 // drawn at 1.333: two resamples. A plain GskTextureNode is drawn straight into
 // the window's pass; with a 1:1 texel:pixel mapping its linear filter samples
-// texel centres (verified pixel-identical with -verify).
+// texel centres (verified pixel-identical with --verify).
 //
 // Each view has its own GL context, render slots and statistics; Go finds
 // its state by the view's id. A view that is not mapped (a hidden tab) gets
@@ -269,7 +269,7 @@ static void tv_gl_version(TermView* v, int* major, int* minor) {
 	if (v->ctx) gdk_gl_context_get_version(v->ctx, major, minor);
 }
 
-// ---- -dump and -verify helpers (never on the frame path) ----
+// ---- --dump and --verify helpers (never on the frame path) ----
 
 // Downloads a texture as B8G8R8A8 premultiplied (GDK_MEMORY_DEFAULT), w*4 stride.
 static guchar* tv_download(GdkTexture* t) {

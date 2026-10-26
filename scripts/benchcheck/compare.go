@@ -93,7 +93,10 @@ func Parse(r io.Reader) (*File, error) {
 			b.Values[fields[i+1]] = append(b.Values[fields[i+1]], v)
 		}
 	}
-	return f, sc.Err()
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("read results: %w", err)
+	}
+	return f, nil
 }
 
 // median returns the median of xs, or NaN for no samples.
@@ -506,8 +509,10 @@ func (r Report) Write(w io.Writer, baseName string) error {
 	} else {
 		fmt.Fprintf(&b, "ok: no benchmark slower by more than %g%%\n", r.Opt.Threshold)
 	}
-	_, err := w.Write(b.Bytes())
-	return err
+	if _, err := w.Write(b.Bytes()); err != nil {
+		return fmt.Errorf("write report: %w", err)
+	}
+	return nil
 }
 
 // writeTable writes rows as left-aligned columns two spaces apart.

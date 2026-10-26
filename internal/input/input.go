@@ -11,6 +11,7 @@ import (
 // Mod is a set of modifier keys.
 type Mod uint8
 
+// The modifiers, one bit each.
 const (
 	ModShift Mod = 1 << iota
 	ModCtrl
@@ -22,6 +23,7 @@ const (
 // Key identifies a key. KeyRune means the event's Rune holds the character.
 type Key uint8
 
+// The keys that are not characters. KeyNone is no key.
 const (
 	KeyNone Key = iota
 	KeyRune
@@ -281,6 +283,7 @@ func keypadCode(ev Event) (int, byte, bool) {
 // Button is a mouse button or wheel direction.
 type Button uint8
 
+// The mouse buttons and wheel directions.
 const (
 	ButtonNone Button = iota // no button: a release or pure motion
 	ButtonLeft

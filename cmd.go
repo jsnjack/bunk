@@ -6,6 +6,7 @@ package main
 
 import (
 	"bunk/internal/notify"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,6 +44,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug-level logging")
 	rootCmd.PersistentFlags().BoolVar(&flagTrace, "trace", false, "enable trace-level logging (logs raw PTY byte chunks)")
+	// Declared here so cobra does not add its -v shorthand.
+	rootCmd.Flags().Bool("version", false, "print the version and exit")
 
 	// Override help to load the config first so effective (user-overridden)
 	// keybindings are shown rather than built-in defaults.
@@ -71,11 +74,24 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// Execute is called by main.  It runs the cobra command tree.
+// exitStatus is the error of a command that has already printed why it
+// failed; Execute exits with it and prints nothing more.
+type exitStatus int
+
+func (s exitStatus) Error() string { return fmt.Sprintf("exit status %d", int(s)) }
+
+// Execute is called by main.  It runs the cobra command tree and exits
+// with a failing command's status.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+	err := rootCmd.Execute()
+	if err == nil {
+		return
 	}
+	var status exitStatus
+	if errors.As(err, &status) {
+		os.Exit(int(status))
+	}
+	os.Exit(1)
 }
 
 // run initialises the screen, spawns the first pane, and blocks until the
@@ -152,6 +168,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		L.Warn("notify: running without agent hook reports", "err", err)
 	} else {
 		app.notify = srv
+		logAlways("Listening on " + srv.Path())
 		defer func() {
 			if err := srv.Close(); err != nil {
 				L.Warn("notify: close", "err", err)

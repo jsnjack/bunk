@@ -571,6 +571,14 @@ func (s *Session) CaptureAndWrite(chunk []byte) {
 
 // writeTerminalChunk feeds chunk into vt10x while preserving
 // scrollback, alt-screen hygiene, and kitty-keyboard handling.
+// termWrite parses b into the emulator, whose Write never fails; an error
+// would show in the trace log.
+func (s *Session) termWrite(b []byte) {
+	if _, err := s.Term.Write(b); err != nil {
+		L().Log(context.Background(), LevelTrace, "emulator write", "pane", s.ID, "err", err)
+	}
+}
+
 func (s *Session) writeTerminalChunk(chunk []byte) {
 	altScreen := s.Term.Mode()&vt10x.ModeAltScreen != 0
 	if L().Enabled(context.Background(), LevelTrace) {
@@ -612,17 +620,17 @@ func (s *Session) writeTerminalChunk(chunk []byte) {
 				// sequences arrive in one chunk, the pre-entry cursor moves
 				// are missed and we save y=0 instead of the actual prompt row.
 				if i > 0 {
-					s.Term.Write(chunk[:i]) //nolint:errcheck
+					s.termWrite(chunk[:i])
 				}
 				cur := s.Term.Cursor()
 				s.altEntryCursorX, s.altEntryCursorY = cur.X, cur.Y
 				L().Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen entry", "pane", s.ID, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
 
 				end := i + len(b)
-				s.Term.Write(chunk[i:end])            //nolint:errcheck
-				s.Term.Write([]byte("\x1b[2J\x1b[H")) //nolint:errcheck
+				s.termWrite(chunk[i:end])
+				s.termWrite([]byte("\x1b[2J\x1b[H"))
 				if end < len(chunk) {
-					s.Term.Write(chunk[end:]) //nolint:errcheck
+					s.termWrite(chunk[end:])
 				}
 				wrote = true
 				break
@@ -643,17 +651,17 @@ func (s *Session) writeTerminalChunk(chunk []byte) {
 			if i := bytes.Index(chunk, b); i >= 0 {
 				end := i + len(b)
 				exitSplitAt = end
-				s.Term.Write(chunk[:end])       //nolint:errcheck
-				s.Term.Write([]byte("\x1b[0m")) //nolint:errcheck
+				s.termWrite(chunk[:end])
+				s.termWrite([]byte("\x1b[0m"))
 				// Restore primary cursor here — before any trailing output
 				// in this chunk (e.g. prompt text) — so the prompt text
 				// advances the cursor naturally to the correct position.
 				L().Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit", "pane", s.ID, "cursor_x", s.altEntryCursorX, "cursor_y", s.altEntryCursorY)
 				curRestore := fmt.Sprintf("\x1b[%d;%dH", s.altEntryCursorY+1, s.altEntryCursorX+1)
 				L().Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore", "pane", s.ID, "seq", curRestore)
-				s.Term.Write([]byte(curRestore)) //nolint:errcheck
+				s.termWrite([]byte(curRestore))
 				if end < len(chunk) {
-					s.Term.Write(chunk[end:]) //nolint:errcheck
+					s.termWrite(chunk[end:])
 				}
 				wrote = true
 				break
@@ -661,7 +669,7 @@ func (s *Session) writeTerminalChunk(chunk []byte) {
 		}
 	}
 	if !wrote {
-		s.Term.Write(chunk) //nolint:errcheck
+		s.termWrite(chunk)
 	}
 
 	if altScreen && s.Term.Mode()&vt10x.ModeAltScreen == 0 {
@@ -673,11 +681,11 @@ func (s *Session) writeTerminalChunk(chunk []byte) {
 
 		const sgrReset = "\x1b[0m"
 		if exitSplitAt == 0 {
-			s.Term.Write([]byte(sgrReset)) //nolint:errcheck
+			s.termWrite([]byte(sgrReset))
 			L().Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit (fallback)", "pane", s.ID, "cursor_x", s.altEntryCursorX, "cursor_y", s.altEntryCursorY)
 			curRestore := fmt.Sprintf("\x1b[%d;%dH", s.altEntryCursorY+1, s.altEntryCursorX+1)
 			L().Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore (fallback)", "pane", s.ID, "seq", curRestore)
-			s.Term.Write([]byte(curRestore)) //nolint:errcheck
+			s.termWrite([]byte(curRestore))
 		}
 
 		// Signal the render loop to do a full Sync() repaint so any residual
@@ -973,8 +981,8 @@ func dcsSequenceEnd(data []byte, start int) int {
 // waitForExit blocks until the shell process exits, then marks the session
 // dead and tells the front end.
 func (s *Session) waitForExit(h Hooks) {
-	s.Cmd.Wait() //nolint:errcheck
-	L().Debug("pane process exited", "id", s.ID)
+	err := s.Cmd.Wait()
+	L().Debug("pane process exited", "id", s.ID, "status", err)
 	s.Lock()
 	s.Dead = true
 	s.Unlock()
@@ -1057,7 +1065,7 @@ func (s *Session) ResizeAndReflow(newCols, newRows int) (reflowed bool) {
 		// with default colours instead of the TUI app's current style.
 		// Without this, exiting the alt-screen app after a resize leaks
 		// its background colour into the normal screen's expanded area.
-		s.Term.Write([]byte("\x1b[0m")) //nolint:errcheck
+		s.termWrite([]byte("\x1b[0m"))
 		s.Term.Resize(newCols, newRows)
 		return false
 	}
@@ -1289,7 +1297,9 @@ func (s *Session) Close() {
 	L().Debug("pane close", "pane", s.ID)
 	s.closePTX()
 	if s.Cmd.Process != nil {
-		s.Cmd.Process.Signal(syscall.SIGHUP) //nolint:errcheck
+		if err := s.Cmd.Process.Signal(syscall.SIGHUP); err != nil {
+			L().Log(context.Background(), LevelTrace, "pane close: SIGHUP", "pane", s.ID, "err", err)
+		}
 		s.killOnce.Do(func() {
 			// The timer holds only what it needs, not the session with its
 			// emulator and scrollback.
@@ -1351,7 +1361,11 @@ func (s *Session) Cwd() string {
 // once the master is closed.
 func (s *Session) closePTX() {
 	s.out.close()
-	s.ptmxOnce.Do(func() { s.PTY.Close() }) //nolint:errcheck // PTY master close on shutdown
+	s.ptmxOnce.Do(func() {
+		if err := s.PTY.Close(); err != nil {
+			L().Log(context.Background(), LevelTrace, "pane close: PTY master", "pane", s.ID, "err", err)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1540,10 +1554,14 @@ func (s *Session) handleKittyKeyboard(chunk []byte) []byte {
 			}
 			if k < len(chunk) && chunk[k] == 'u' {
 				flags := 0
-				fmt.Sscanf(string(chunk[j+1:k]), "%d", &flags) //nolint:errcheck // best-effort parse of the first param; flags defaults to 0
+				if _, err := fmt.Sscanf(string(chunk[j+1:k]), "%d", &flags); err != nil {
+					L().Log(context.Background(), LevelTrace, "kitty keys: flags default to 0", "pane", s.ID, "err", err)
+				}
 				mode := 1
 				if sep := bytes.IndexByte(chunk[j+1:k], ';'); sep >= 0 {
-					fmt.Sscanf(string(chunk[j+2+sep:k]), "%d", &mode) //nolint:errcheck // omitted mode defaults to replacement
+					if _, err := fmt.Sscanf(string(chunk[j+2+sep:k]), "%d", &mode); err != nil {
+						L().Log(context.Background(), LevelTrace, "kitty keys: mode defaults to replace", "pane", s.ID, "err", err)
+					}
 				}
 				if intro == '=' && len(s.KittyStack) == 0 {
 					s.KittyStack = append(s.KittyStack, 0)
@@ -1578,7 +1596,9 @@ func (s *Session) handleKittyKeyboard(chunk []byte) []byte {
 			}
 			if k < len(chunk) && chunk[k] == 'u' {
 				count := 1
-				fmt.Sscanf(string(chunk[j+1:k]), "%d", &count) //nolint:errcheck // best-effort parse; count defaults to 1
+				if _, err := fmt.Sscanf(string(chunk[j+1:k]), "%d", &count); err != nil {
+					L().Log(context.Background(), LevelTrace, "kitty keys: pop count defaults to 1", "pane", s.ID, "err", err)
+				}
 				if count < 1 {
 					count = 1
 				}
@@ -1627,6 +1647,8 @@ func XParseColor(rrggbb string) string {
 		rrggbb[4:6], rrggbb[4:6])
 }
 
+// TermName is the TERM exported to panes, and the terminal name XTGETTCAP
+// reports.
 const TermName = "xterm-256color"
 
 // xtgettcapResponse builds the DCS response for a single XTGETTCAP capability

@@ -275,7 +275,7 @@ func (a *App) removePane(p *Pane) {
 // paneDone runs when p's child is finished (Hooks.Closed, or Exited without
 // Closed). The pane closes; a tab closes with its last pane; the last pane
 // of the last tab draws one more frame, so the final output is on screen
-// (and in -dump), then the app quits.
+// (and in --dump), then the app quits.
 func (a *App) paneDone(p *Pane) {
 	if p.removeOnce || a.exitArmed {
 		return

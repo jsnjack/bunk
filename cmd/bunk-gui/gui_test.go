@@ -1,7 +1,7 @@
 package main
 
 // Window scenarios: one bunk-gui launch each, on the headless compositor
-// (see harness_test.go). Checks read the -report JSON and sample pixels of
+// (see harness_test.go). Checks read the --report JSON and sample pixels of
 // window shots and pane dumps at coordinates the report gives; nothing is
 // compared against a stored image, so font or driver updates do not break
 // them.
@@ -44,7 +44,7 @@ var (
 // while typing and scrolling, and key echo latency stays low.
 func TestGUIFrame(t *testing.T) {
 	g := runGUI(t, scenario{
-		args:   []string{"-alloc-probe", "-verify", "-size", "100x30"},
+		args:   []string{"--alloc-probe", "--verify", "--size", "100x30"},
 		script: frameScript(),
 	})
 
@@ -55,7 +55,7 @@ func TestGUIFrame(t *testing.T) {
 		t.Errorf("GL renderer %q: want a GPU, not llvmpipe", g.GLRenderer)
 	}
 	if v := g.Verify; v == nil {
-		t.Error("no -verify result")
+		t.Error("no --verify result")
 	} else {
 		t.Logf("verify: frame %d of %d pixels differ; checkerboard %d of %d differ, %d not black/white",
 			v.FrameDiffer, v.FramePixels, v.CheckerDiffer, v.CheckerPixels, v.CheckerNonBinary)
@@ -142,7 +142,7 @@ func frameScript() []string {
 func TestGUIClipboard(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
-		args: []string{"-size", "80x24"},
+		args: []string{"--size", "80x24"},
 		script: []string{
 			"wait focused.line=$",
 			"type echo alpha hello-clip omega\\r",
@@ -211,7 +211,7 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
 		config: "tabs = \"bar\"\nfont = \"Noto Sans Mono\"\nfont_size = 12\n",
-		args:   []string{"-size", "100x30", "-tab", ""},
+		args:   []string{"--size", "100x30", "--tab", ""},
 		script: []string{
 			"wait chrome.h=44 tabs.#=2 focused.settled=true",
 			"snap bar",
@@ -462,7 +462,7 @@ func TestGUIConfigErrors(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			g := runGUI(t, scenario{config: c.config, args: []string{"-size", "60x20"},
+			g := runGUI(t, scenario{config: c.config, args: []string{"--size", "60x20"},
 				script: []string{"wait last_toast~\"Settings: \"", "snap start", "quit"}})
 			s := g.snap("start")
 			if s.Layout != "rail" || s.RailOpen || s.Font != "Noto Sans Mono 11" {
@@ -490,7 +490,7 @@ func TestGUITabsAndStatus(t *testing.T) {
 	g := runGUI(t, scenario{
 		cost:   2.5,
 		config: "tabs = \"rail\"\nrail_open = true\n",
-		args:   []string{"-size", "100x30", "-tab", "", "-tab", "", "-tab", ""},
+		args:   []string{"--size", "100x30", "--tab", "", "--tab", "", "--tab", ""},
 		script: []string{
 			"wait tabs.#=4 tab.1.agent=sh",
 			"status tab=2 agent=codex state=needs repo=surfly branch=fix-login notice=Approve edit?",
@@ -687,7 +687,7 @@ exit 3
 	g := runGUI(t, scenario{
 		cost:   4,
 		config: "rail_open = true\n\n[[agents]]\nname = \"aider\"\nprocesses = [\"aider\"]\n",
-		args:   []string{"-size", "100x30", "-tab", ""},
+		args:   []string{"--size", "100x30", "--tab", ""},
 		env:    []string{"PATH=" + bin + ":" + os.Getenv("PATH")},
 		script: []string{
 			"kbd ctrl+2",
@@ -784,7 +784,7 @@ exec "$@"
 `), 0o755))
 	g := runGUI(t, scenario{
 		cost: 2.5,
-		args: []string{"-size", "100x30"},
+		args: []string{"--size", "100x30"},
 		env:  []string{"PATH=" + bin + ":" + os.Getenv("PATH")},
 		script: []string{
 			"maximize",

@@ -80,7 +80,7 @@ func loadSettings(path string) (Settings, error) {
 		return st, nil
 	}
 	if err != nil {
-		return st, err
+		return st, fmt.Errorf("read settings: %w", err)
 	}
 	var f Settings
 	md, err := toml.Decode(string(data), &f)

@@ -95,3 +95,68 @@ fi
 		})
 	}
 }
+
+// TestMakeStampsVersion checks that every binary target passes monova's
+// version, or 0.0.0 without monova, to go build as main.Version.
+func TestMakeStampsVersion(t *testing.T) {
+	makefile, err := filepath.Abs("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// go logs its build arguments and creates the -o file; monova prints
+	// a version.
+	goScript := `#!/bin/sh
+if [ "$1" = env ]; then printf '%s\n' "$BUNK_TEST_TOOLS"; exit; fi
+if [ "$1" = build ]; then
+  printf '%s\n' "$*" >> "$BUNK_TEST_LOG"
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = -o ]; then shift; mkdir -p "$(dirname "$1")"; touch "$1"; break; fi
+    shift
+  done
+fi
+`
+	for _, tc := range []struct {
+		name, target, monova, want string
+	}{
+		{"gui with monova", "gui", "1", "-X main.Version=9.8.7"},
+		{"bin/bunk-gui with monova", "bin/bunk-gui", "1", "-X main.Version=9.8.7"},
+		{"bunk with monova", "bin/bunk_linux_amd64", "1", "-X main.Version=9.8.7"},
+		{"gui without monova", "gui", "", "-X main.Version=0.0.0"},
+		{"bunk without monova", "bin/bunk_linux_amd64", "", "-X main.Version=0.0.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			logPath := filepath.Join(dir, "builds")
+			for name, body := range map[string]string{
+				"go":                 goScript,
+				"monova":             "#!/bin/sh\necho 9.8.7\n",
+				"cmd/bunk-gui/.keep": "",
+			} {
+				path := filepath.Join(dir, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command("make", "--no-print-directory", "-f", makefile, tc.target,
+				"MONOVA="+tc.monova, "TEST_GATE=", "GUI_TEST_GATE=")
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "MAKEFLAGS=", "MFLAGS=", "MAKELEVEL=", "FRESH=",
+				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"BUNK_TEST_TOOLS="+dir, "BUNK_TEST_LOG="+logPath)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("make %s: %v\n%s", tc.target, err, output)
+			}
+			data, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			builds := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if len(builds) != 1 || !strings.Contains(builds[0], "-ldflags=") || !strings.Contains(builds[0], tc.want) {
+				t.Fatalf("go build calls %q, want one with -ldflags=%s", builds, tc.want)
+			}
+		})
+	}
+}

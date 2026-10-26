@@ -110,11 +110,11 @@ RPM_TOP := $(PWD)/bin/rpmbuild
 APP_ID  := io.github.jsnjack.BunkGui
 
 # bin/bunk-gui waits for the window tests; make gui builds it without them.
-bin/bunk-gui: $(GUI_TEST_GATE)
-	cd $(GUI_DIR) && go build -o ../../bin/bunk-gui .
+bin/bunk-gui: $(GUI_TEST_GATE) version
+	cd $(GUI_DIR) && go build $(LDFLAGS) -o ../../bin/bunk-gui .
 
-gui:
-	cd $(GUI_DIR) && go build -o ../../bin/bunk-gui .
+gui: version
+	cd $(GUI_DIR) && go build $(LDFLAGS) -o ../../bin/bunk-gui .
 
 # Window tests run on a private headless compositor, never on the desktop.
 gui-test:
