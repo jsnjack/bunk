@@ -717,6 +717,17 @@ func (t *State) eraseWideAt(x, y int) {
 	}
 }
 
+// eraseSplitWide erases the wide character that a boundary between columns
+// x-1 and x cuts in two, as xterm does before ICH and DCH shift cells.
+// Without it a shift could pair one character's lead with another's
+// continuation, which carries that other character's colours and link.
+func (t *State) eraseSplitWide(x, y int) {
+	if x > 0 && x < t.cols && t.lines[y].cells[x].width() == -1 {
+		t.eraseCell(x-1, y)
+		t.eraseCell(x, y)
+	}
+}
+
 // repairWideRow erases halves of wide characters that shifting or resizing
 // row y split, and turns wrap padding that is no longer the last cell of a
 // wrapped row into a blank.
@@ -1323,6 +1334,9 @@ func (t *State) insertBlanks(n int) {
 	if dst >= t.cols {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
+		// The insert point and the column where cells fall off the end.
+		t.eraseSplitWide(src, t.cur.Y)
+		t.eraseSplitWide(t.cols-n, t.cur.Y)
 		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
 		t.lines[t.cur.Y].touchAll()
 		for x := src; x < dst; x++ {
@@ -1357,6 +1371,9 @@ func (t *State) deleteChars(n int) {
 	if src >= t.cols {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
+		// Both edges of the deleted range.
+		t.eraseSplitWide(dst, t.cur.Y)
+		t.eraseSplitWide(src, t.cur.Y)
 		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
 		t.lines[t.cur.Y].touchAll()
 		for x := t.cols - n; x < t.cols; x++ {

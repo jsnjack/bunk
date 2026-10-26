@@ -361,3 +361,13 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
 - `BenchmarkOutput` pinned to a Zen 5 core, 200x50, before → after: ASCII
   144–157 → 338–344 MB/s, Go source (about 33-byte lines) 54 → 117–127,
   SGR-heavy 56 → 77–78, full-width lines 360–364 → 406–408.
+
+### Wide characters under ICH and DCH (2026-10-26)
+
+- ICH and DCH erase a wide character that an edge of the shifted range cuts
+  in two, as xterm does. Before, DCH 2 on the second half of one wide
+  character left its lead next to the next character's continuation,
+  which carried that character's colours and link.
+- The fuzz invariants now require a continuation to match its lead's
+  colours, attributes, underline colour and link. Every ICH and DCH count
+  at every column of mixed wide/narrow rows is tested.

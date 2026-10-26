@@ -167,9 +167,7 @@ func linkGlyph(n int) rune { return rune(0x4E00 + n%20000) }
 func linkURL(n int) string { return "https://w.example/" + strconv.Itoa(n) }
 
 // checkLinkCells checks every cell of both screens and of the kept rows:
-// a linked ideograph names its own URL and a continuation one of the
-// workload's URLs. A continuation is not checked against its lead: DCH
-// and ICH can pair a lead with another character's continuation.
+// a linked ideograph names its own URL and a continuation its lead's.
 func checkLinkCells(term *terminal, kept *keptRows) error {
 	check := func(where string, r Row) error {
 		for x := 0; x < r.Len(); x++ {
@@ -178,10 +176,13 @@ func checkLinkCells(term *terminal, kept *keptRows) error {
 				continue
 			}
 			url := term.Link(g.Link)
-			n, err := strconv.Atoi(strings.TrimPrefix(url, "https://w.example/"))
-			if g.Width == -1 && err == nil {
+			if g.Width == -1 {
+				if x == 0 || r.Glyph(x-1).Link != g.Link {
+					return fmt.Errorf("%s cell %d: continuation links to ID %d, not its lead's", where, x, g.Link)
+				}
 				continue
 			}
+			n, err := strconv.Atoi(strings.TrimPrefix(url, "https://w.example/"))
 			if err != nil || linkGlyph(n) != g.Char {
 				return fmt.Errorf("%s cell %d: %q links to ID %d, %q", where, x, g.Char, g.Link, url)
 			}

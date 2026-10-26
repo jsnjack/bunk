@@ -246,6 +246,13 @@ func checkRow(r *Row, cols int, link func(uint16) string, maxSide int) error {
 			if x+1 == cols || r.cells[x+1].width() != -1 {
 				return fmt.Errorf("wide lead at %d without a continuation", x)
 			}
+			// A continuation is written with its lead's attributes; a
+			// different set means it belongs to another character.
+			c := r.Glyph(x + 1)
+			if c.FG != g.FG || c.BG != g.BG || c.UL != g.UL || c.Link != g.Link ||
+				c.Mode&^attrWrap != g.Mode&^attrWrap {
+				return fmt.Errorf("wide lead at %d paired with another character's continuation", x)
+			}
 		case -1:
 			if x == 0 || r.cells[x-1].width() != 2 {
 				return fmt.Errorf("continuation at %d without a wide lead", x)
@@ -609,6 +616,10 @@ func TestCheckInvariantsCatchesBrokenGrids(t *testing.T) {
 		{"used", func(s *State) { s.lines[0].cells[3].Char = 'x'; s.lines[0].used = 2 }, "differs from the tail"},
 		{"orphan continuation", func(s *State) { s.lines[1].set(2, Glyph{Width: -1}) }, "without a wide lead"},
 		{"lone lead", func(s *State) { s.lines[1].set(2, Glyph{Char: '界', Width: 2}) }, "without a continuation"},
+		{"foreign continuation", func(s *State) {
+			s.lines[1].set(2, Glyph{Char: '界', Width: 2, FG: 1})
+			s.lines[1].set(3, Glyph{Width: -1, FG: 2})
+		}, "another character's continuation"},
 		{"padding before text", func(s *State) { s.lines[0].set(1, Glyph{Char: ' ', Width: -2}) }, "wrap padding"},
 		{"padding without wrap", func(s *State) { s.lines[0].set(s.cols-1, Glyph{Char: ' ', Width: -2}) }, "does not wrap"},
 		{"free link", func(s *State) { s.lines[1].set(0, Glyph{Char: 'a', Width: 1, Link: 1}) }, "names no URL"},
