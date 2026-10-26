@@ -6,11 +6,12 @@ import (
 	"unicode/utf8"
 )
 
-// The longest title and body OSC777 writes, in bytes. Host terminals
-// accept OSC strings far longer; these keep a notification short.
+// The longest title and body OSC777 and DesktopText give, in bytes.
+// Host terminals and notification servers accept far longer text; these
+// keep a notification short.
 const (
-	oscTitleBytes = 120
-	oscBodyBytes  = 360
+	titleBytes = 120
+	bodyBytes  = 360
 )
 
 // OSC777 encodes a as an urxvt notify sequence for a host terminal:
@@ -27,28 +28,45 @@ func OSC777(a Alert) []byte {
 	}
 	var b strings.Builder
 	b.WriteString("\x1b]777;notify;")
-	b.WriteString(oscText(a.Title, oscTitleBytes))
+	b.WriteString(cleanText(a.Title, titleBytes, true))
 	b.WriteByte(';')
-	b.WriteString(oscText(body, oscBodyBytes))
+	b.WriteString(cleanText(body, bodyBytes, true))
 	b.WriteString("\x1b\\")
 	return []byte(b.String())
 }
 
-// oscText makes untrusted text safe inside an OSC string and cuts it to
-// limit bytes at a character boundary, ending with "…" when cut.
-func oscText(s string, limit int) string {
+// DesktopText returns a's title and body for a desktop notification
+// server: one line of title, and the notice and where the agent runs on
+// two lines. Control and bidirectional formatting characters go, both are
+// cut to fit, and the body is escaped for servers that read it as markup,
+// as GNOME Shell does.
+func DesktopText(a Alert) (title, body string) {
+	body = cleanText(a.Notice, bodyBytes, false)
+	if where := cleanText(a.Where, titleBytes, false); where != "" {
+		body += "\n" + where
+	}
+	return cleanText(a.Title, titleBytes, false), markupEscaper.Replace(body)
+}
+
+var markupEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// cleanText makes untrusted text one line of valid UTF-8 without control
+// or bidirectional formatting characters, with runs of blanks as one
+// space, and cuts it to limit bytes at a character boundary, ending with
+// "…" when cut. With noSemicolons, a ';' becomes ','.
+func cleanText(s string, limit int, noSemicolons bool) string {
 	var b strings.Builder
 	space := false
 	for i, r := range s {
 		switch {
-		case r == utf8.RuneError && !strings.HasPrefix(s[i:], "�"):
+		case r == utf8.RuneError && !strings.HasPrefix(s[i:], "\uFFFD"):
 			continue // a byte that is not UTF-8
 		case unicode.IsControl(r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) || r == ' ':
 			space = b.Len() > 0
 			continue
 		case bidiControl(r):
 			continue
-		case r == ';':
+		case r == ';' && noSemicolons:
 			r = ','
 		}
 		if space {

@@ -377,3 +377,36 @@ func FuzzOSC777(f *testing.F) {
 		checkOSC777(t, alert.OSC777(alert.Alert{Title: title, Notice: notice, Where: where}))
 	})
 }
+
+// TestDesktopText: a notification server gets one line of title and the
+// notice and place on two lines, without control or bidi characters,
+// escaped as markup and cut to fit; ';' stays.
+func TestDesktopText(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		a           alert.Alert
+		title, body string
+	}{
+		{"plain", alert.Alert{Title: "claude needs you", Notice: "Allow npm install; now?", Where: "bunk ⎇ main"},
+			"claude needs you", "Allow npm install; now?\nbunk ⎇ main"},
+		{"no place", alert.Alert{Title: "codex is done", Notice: "Finished its turn"},
+			"codex is done", "Finished its turn"},
+		{"markup", alert.Alert{Title: "co<de>x & co failed", Notice: "a < b && c > d", Where: "r<1> ⎇ <b>"},
+			"co<de>x & co failed", "a &lt; b &amp;&amp; c &gt; d\nr&lt;1&gt; ⎇ &lt;b&gt;"},
+		{"controls, bidi and bad UTF-8", alert.Alert{Title: "claude\u202e\x1b[31m needs\nyou\x00", Notice: "ok\xff\r\nfine", Where: "r\x07 ⎇ b"},
+			"claude [31m needs you", "ok fine\nr ⎇ b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			title, body := alert.DesktopText(tc.a)
+			if title != tc.title || body != tc.body {
+				t.Errorf("DesktopText = %q, %q\nwant          %q, %q", title, body, tc.title, tc.body)
+			}
+		})
+	}
+	t.Run("long text is cut", func(t *testing.T) {
+		title, body := alert.DesktopText(alert.Alert{Title: strings.Repeat("é", 300), Notice: strings.Repeat("🙂", 300), Where: "w"})
+		if len(title) > 120 || !strings.HasSuffix(title, "…") || !strings.HasSuffix(body, "…\nw") || len(body) > 360+2 {
+			t.Errorf("title %d bytes, body %d bytes", len(title), len(body))
+		}
+	})
+}

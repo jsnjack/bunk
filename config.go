@@ -33,8 +33,8 @@ type fileConfig struct {
 	UI         theme.UI             `toml:"ui"`
 	Themes     map[string]theme.Def `toml:"themes"` // custom themes, [themes.NAME]
 	Keys       map[string]string    `toml:"keys"`   // action → key string, e.g. "split" → "f1"
-	// Notifications: OSC 777 notifications to the host terminal when an
-	// agent in a pane the user is not looking at needs them.
+	// Notifications: desktop or host terminal notifications when an agent
+	// in a pane the user is not looking at needs them (alerts.go).
 	Notifications alert.Config `toml:"notifications"`
 }
 
@@ -425,9 +425,10 @@ log_level = "info"  # trace | debug | info | warn | error
 # consume more rows per line of output due to wrapping.
 # scrollback = 10000
 
-# Desktop notifications through the host terminal (OSC 777 notify) when an
-# agent in a pane you are not looking at needs you, is done or failed.
-# foot, WezTerm, Ghostty and urxvt show them.
+# Desktop notifications when an agent in a pane you are not looking at
+# needs you, is done or failed: through D-Bus (gdbus) on your desktop's
+# machine, else as OSC 777 to the host terminal, which foot, WezTerm,
+# Ghostty and urxvt show.
 [notifications]
 enabled = true
 states  = ["needs-you", "done", "failed"]

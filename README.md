@@ -106,7 +106,7 @@ Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. b
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program |
 | Agent status | | A badge per pane: working, idle, needs you (amber), done (green) or failed, with the agent's notice |
 | Next needing you | Alt+A | Focuses the next pane whose agent needs you, else one that is done |
-| Notifications | | Asks the host terminal to show a desktop notification (OSC 777) when an agent in a pane you are not looking at needs you, is done or failed |
+| Notifications | | A desktop notification when an agent in a pane you are not looking at needs you, is done or failed; over SSH, OSC 777 to the host terminal |
 | Re-initialise host terminal | Alt+R | Recovers after binary output corrupts the host |
 | Quit | Ctrl+Q | Ctrl+D or `exit` closes one pane |
 | Mouse | | Click focuses, drag selects, double click selects a word; Shift overrides program mouse mode |
@@ -205,7 +205,7 @@ theme = "default"      # terminal, default, solarized-dark, dracula, nord, or a 
 [ui]                   # "#RRGGBB" overrides; empty uses the theme
 active_border = ""
 
-[notifications]        # OSC 777 to the host terminal for panes you are not looking at
+[notifications]        # for panes you are not looking at
 enabled = true
 states  = ["needs-you", "done", "failed"]
 
@@ -280,7 +280,9 @@ Focusing the pane or typing into it acknowledges the state and clears needs you 
 When an agent you are not looking at needs you, is done or failed, both front ends notify you:
 
 - bunk-gui shows a desktop notification per tab, such as "claude needs you" or "claude on build01 needs you" with the notice and repo ⎇ branch. A newer state replaces it, and it goes away when you look at the tab. Clicking it raises the window and selects the tab.
-- bunk sends an OSC 777 notification to the host terminal for a pane that is not active, or for any pane while the host terminal is not focused. foot, WezTerm, Ghostty and urxvt show it. GNOME Terminal and Ptyxis with VTE 0.84 do not.
+- bunk notifies for a pane that is not active, or for any pane while the host terminal is not focused.
+- On your desktop's machine, bunk shows desktop notifications through D-Bus with `gdbus`, which GLib installs. They follow the same rules as bunk-gui's, without the click: bunk cannot raise its terminal's window.
+- Over SSH, without a session bus or without `gdbus`, bunk sends an OSC 777 notification to the host terminal instead. foot, WezTerm, Ghostty and urxvt show it. GNOME Terminal and Ptyxis with VTE 0.84 do not.
 - The same state notifies again only 10 s after the last notification, so an agent that flaps between states does not flood the desktop.
 - `[notifications]` in either config.toml turns notifications off or picks the states, and bunk-gui's preferences window edits it.
 
@@ -338,6 +340,7 @@ Agents on hosts you reach over ssh report to the pane or tab that runs ssh:
 | `internal/notify/` | Agent hook reports: Unix socket server, the `notify` and `ssh` commands both binaries run, hook snippets per agent, reports written to the terminal where no socket is reachable |
 | `internal/notify/wire/` | The report format: one JSON line, over the socket or as an OSC 1337 user variable in the terminal |
 | `internal/alert/` | Agent notifications: when a state change notifies, the text, and the OSC 777 sequence bunk sends |
+| `internal/desktop/` | bunk's desktop notifications through `gdbus`: one per pane, replaced and withdrawn off the render loop |
 | `internal/graphics/` | Bounded SIXEL, Kitty and iTerm2 image decoders; the bitmap store behind full-resolution drawing |
 | `internal/theme/` | Colour themes of both front ends: built-in and custom themes, `[ui]` overrides, badge colours |
 | `third_party/tcell/` | tcell v2.13.9 with overline, keypad and keycap-width patches |

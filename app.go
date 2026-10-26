@@ -4,6 +4,7 @@ package main
 import (
 	"bunk/internal/alert"
 	"bunk/internal/badges"
+	"bunk/internal/desktop"
 	"bunk/internal/notify"
 	"bunk/internal/session"
 	"fmt"
@@ -153,6 +154,10 @@ type App struct {
 	alerts      alert.Tracker
 	hostBlurred bool
 	alertWake   time.Time
+	// desktop shows the alerts as desktop notifications through D-Bus
+	// when bunk runs on the user's desktop; nil sends them to the host
+	// terminal (alerts.go).
+	desktop *desktop.Notifier
 }
 
 // shutdown is safe to call multiple times.  It closes every pane (sending
@@ -977,7 +982,9 @@ func (app *App) removePane(p *Pane) {
 	}
 
 	app.root = removeFromTree(app.root, p)
-	app.alerts.Remove(p.ID)
+	if app.alerts.Remove(p.ID) == alert.Withdraw {
+		app.withdrawAlert(p.ID)
+	}
 	if app.notify != nil && p.token != "" {
 		app.notify.Unregister(p.token)
 	}

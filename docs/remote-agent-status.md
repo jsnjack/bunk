@@ -197,7 +197,8 @@ unwrapped, so the number does not change compatibility.
   a failed tab completion.
 - The request ends when ssh exits, and with a `clear` report. A remote bunk
   TUI sends an OSC 777 alert next to its relayed report, and the `clear`
-  drops both.
+  drops both. Over ssh the TUI never uses D-Bus, whose session bus there
+  belongs to the remote machine.
 
 ### Remote bunk TUI
 

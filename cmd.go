@@ -168,6 +168,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		relay:         newAgentRelay(os.Getenv),
 	}
 	app.alerts.Settings = cfg.Alerts
+	app.startDesktopAlerts(os.Getenv)
 
 	// Agent hooks in the panes report through this socket ("bunk notify").
 	// Without it bunk still infers each agent's state.
@@ -208,6 +209,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 	go app.renderLoop()
 
 	app.eventLoop()
+	app.closeDesktopAlerts()
 
 	// Terminal cleanup runs HERE, synchronously in the main goroutine, AFTER
 	// Fini() has already been called.  This is the only safe place: when the

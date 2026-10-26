@@ -166,6 +166,7 @@ type fakeServer struct {
 	in   []*gio.DBusMessage // calls waiting for an answer
 	next uint32
 	log  []string
+	sigs []string // the argument types of each call
 }
 
 func newFakeServer(t *testing.T, addr string) *fakeServer {
@@ -199,6 +200,7 @@ func (s *fakeServer) serve(t *testing.T) bool {
 	s.mu.Unlock()
 	for _, m := range in {
 		body := m.Body()
+		s.sigs = append(s.sigs, body.TypeString())
 		reply := m.NewMethodReply()
 		switch m.Member() {
 		case "Notify":
@@ -275,7 +277,7 @@ func TestDeskNotifier(t *testing.T) {
 	hints := "{'desktop-entry': <'" + appID + "'>, 'urgency': <byte 0x01>}"
 	want := []string{
 		"notify | bunk-gui | 0 | " + appID + " | claude needs you | Allow npm install?\nbunk ⎇ main | default,Show tab | " + hints,
-		"notify | bunk-gui | 0 | " + appID + " | co<de>x is done | a &lt; b &amp;&amp; c &gt; d\nr�x ⎇ br | default,Show tab | " + hints,
+		"notify | bunk-gui | 0 | " + appID + " | co<de>x is done | a &lt; b &amp;&amp; c &gt; d\nrx ⎇ b r | default,Show tab | " + hints,
 		"notify | bunk-gui | 42 | " + appID + " | claude is done | Finished its turn\nbunk ⎇ main | default,Show tab | " + hints,
 		"notify | bunk-gui | 42 | " + appID + " | claude failed | Stopped with an error\nbunk ⎇ main | default,Show tab | " + hints,
 	}

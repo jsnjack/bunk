@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"strings"
 
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
@@ -164,8 +163,8 @@ func (d *deskNotifier) onSignal(_ *gio.DBusConnection, _, _, _, signal string, p
 }
 
 // notifyArgs are the arguments of a Notify call that shows al, replacing
-// the server's notification replaces (0 for a new one). GNOME Shell and
-// most servers read the body as markup, so its text is escaped.
+// the server's notification replaces (0 for a new one). The text is
+// cleaned and its body escaped as markup (alert.DesktopText).
 func notifyArgs(replaces uint32, al alert.Alert) *glib.Variant {
 	hint := func(key string, v *glib.Variant) *glib.Variant {
 		return glib.NewVariantDictEntry(glib.NewVariantString(key), glib.NewVariantVariant(v))
@@ -174,22 +173,15 @@ func notifyArgs(replaces uint32, al alert.Alert) *glib.Variant {
 		hint("desktop-entry", glib.NewVariantString(appID)),
 		hint("urgency", glib.NewVariantByte(1)), // normal
 	})
+	title, body := alert.DesktopText(al)
 	return glib.NewVariantTuple([]*glib.Variant{
 		glib.NewVariantString(defaultTitle),
 		glib.NewVariantUint32(replaces),
 		glib.NewVariantString(appID),
-		glib.NewVariantString(deskText(al.Title)),
-		glib.NewVariantString(markupEscaper.Replace(deskText(al.Body()))),
+		glib.NewVariantString(title),
+		glib.NewVariantString(body),
 		glib.NewVariantStrv([]string{fdoDefault, "Show tab"}),
 		hints,
 		glib.NewVariantInt32(-1),
 	})
-}
-
-var markupEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
-
-// deskText makes s a valid D-Bus string: UTF-8 without NUL. Agent, repo
-// and branch names come from programs and the file system.
-func deskText(s string) string {
-	return strings.ReplaceAll(strings.ToValidUTF8(s, "�"), "\x00", "")
 }

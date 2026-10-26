@@ -2,6 +2,8 @@ package main
 
 import (
 	"bunk/internal/alert"
+	"bunk/internal/desktop"
+	"bunk/internal/desktop/desktoptest"
 	"bunk/internal/session"
 	"bunk/internal/vt10x"
 	"bytes"
@@ -11,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 
 	"github.com/gdamore/tcell/v2"
@@ -186,5 +189,116 @@ func TestLoadConfigNotifications(t *testing.T) {
 				t.Errorf("alerts %+v, want enabled %v states %q", cfg.Alerts, tc.enabled, tc.states)
 			}
 		})
+	}
+}
+
+// TestDesktopAlertsChoice: bunk on the desktop's machine, with a session
+// bus and gdbus, sends desktop notifications; over SSH, without a bus or
+// without gdbus it writes OSC 777 to the host terminal.
+func TestDesktopAlertsChoice(t *testing.T) {
+	f := desktoptest.New(t)
+	const bus = "unix:path=/nonexistent/test-bus"
+	withFake := f.Dir + string(os.PathListSeparator) + os.Getenv("PATH")
+	for _, tc := range []struct {
+		name    string
+		env     map[string]string
+		path    string
+		desktop bool
+	}{
+		{"local session bus", map[string]string{"DBUS_SESSION_BUS_ADDRESS": bus}, withFake, true},
+		{"over SSH", map[string]string{"DBUS_SESSION_BUS_ADDRESS": bus, "SSH_CONNECTION": "10.0.0.2 5 10.0.0.9 22"}, withFake, false},
+		{"no session bus", map[string]string{"XDG_RUNTIME_DIR": t.TempDir()}, withFake, false},
+		{"no gdbus", map[string]string{"DBUS_SESSION_BUS_ADDRESS": bus}, t.TempDir(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PATH", tc.path)
+			app := &App{}
+			app.startDesktopAlerts(func(k string) string { return tc.env[k] })
+			if (app.desktop != nil) != tc.desktop {
+				t.Fatalf("desktop notifier %+v, want one: %v", app.desktop, tc.desktop)
+			}
+			if d := app.desktop; d != nil && (d.Gdbus != f.Path || d.Address != bus || d.AppName != "bunk") {
+				t.Errorf("notifier gdbus %q, bus %q, app %q", d.Gdbus, d.Address, d.AppName)
+			}
+		})
+	}
+}
+
+// TestAlertsToDesktop: with a desktop notifier, an inactive pane's agent
+// alert becomes one desktop notification, not OSC 777; a newer state
+// replaces it; looking at the pane withdraws it, and so do closing the
+// pane and quitting. When gdbus fails, that alert reaches the host
+// terminal as OSC 777 instead, once. With the host terminal unfocused,
+// the active pane notifies too. Nothing is written to stderr.
+func TestAlertsToDesktop(t *testing.T) {
+	f := desktoptest.New(t)
+	const bus = "unix:path=/nonexistent/test-bus"
+	app, a, b, host := alertApp(t)
+	app.desktop = &desktop.Notifier{Gdbus: f.Path, Address: bus, AppName: desktopAppName, Icon: desktopIcon,
+		Fallback: app.alertToHostLater}
+	needs := desktoptest.NotifyCall(bus, 0, "'agent needs you'", `'Allow npm install?'`)
+	stderr := stderrDuring(t, func() {
+		b.Notify(session.EventNeedsYou, "Allow npm install?")
+		app.render()
+		f.WaitCalls(t, 1)
+		b.Notify(session.EventDone, "Finished")
+		app.render()
+		f.WaitCalls(t, 2)
+		app.focusPane(b) // acknowledges done, and b is watched
+		app.render()
+		f.WaitCalls(t, 3)
+		if got := notifications(host); len(got) != 0 {
+			t.Errorf("OSC 777 next to desktop notifications: %q", got)
+		}
+
+		f.SetMode(t, "fail")
+		a.Notify(session.EventFailed, "tests failed")
+		app.render()
+		f.WaitCalls(t, 4)
+		var got []string
+		select {
+		case <-app.redraw: // the fallback asks for a frame
+		case <-time.After(10 * time.Second):
+			t.Fatal("the fallback asked for no frame")
+		}
+		app.render()
+		got = append(got, notifications(host)...)
+		if !slices.Equal(got, []string{"\x1b]777;notify;agent failed;tests failed\x1b\\"}) {
+			t.Errorf("gdbus failed: host got %q, want the alert as OSC 777 once", got)
+		}
+
+		f.SetMode(t, "ok")
+		a.Notify(session.EventWorking, "")
+		app.render()
+		a.Notify(session.EventNeedsYou, "Allow npm install?")
+		app.render()
+		f.WaitCalls(t, 5)
+		app.removePane(a)
+		f.WaitCalls(t, 6)
+
+		app.handleFocus(false) // the active pane is not watched now
+		b.Notify(session.EventNeedsYou, "Run the tests?")
+		app.render()
+		f.WaitCalls(t, 7)
+		app.closeDesktopAlerts()
+	})
+	want := []string{
+		needs,
+		desktoptest.NotifyCall(bus, 1, "'agent is done'", "'Finished'"),
+		desktoptest.CloseCall(bus, 1),
+		desktoptest.NotifyCall(bus, 0, "'agent failed'", "'tests failed'"),
+		desktoptest.NotifyCall(bus, 0, "'agent needs you'", `'Allow npm install?'`),
+		desktoptest.CloseCall(bus, 2),
+		desktoptest.NotifyCall(bus, 0, "'agent needs you'", `'Run the tests?'`),
+		desktoptest.CloseCall(bus, 3),
+	}
+	if got := f.Calls(); !slices.Equal(got, want) {
+		t.Errorf("gdbus calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if got := notifications(host); len(got) != 0 {
+		t.Errorf("OSC 777 at the end: %q", got)
+	}
+	if stderr != "" {
+		t.Errorf("stderr: %q", stderr)
 	}
 }

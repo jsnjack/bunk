@@ -33,7 +33,9 @@ osc.go              Host passthrough buffer for OSC 7/52/133
 mouse.go            Mouse events → PTY byte sequences
 status.go           Draws the pane badges (rules in internal/badges) in theme
                     colours; agent-state separator colours
-alerts.go           Agent notifications to the host terminal (OSC 777 notify)
+alerts.go           Agent notifications: desktop ones through D-Bus on the
+                    user's desktop (internal/desktop), else OSC 777 to the
+                    host terminal
 relay.go            Relays the most urgent pane to the host terminal in-band
                     when bunk runs inside a bunk front end or over ssh
 search.go           In-pane search UI (matching is session.FindAll)
@@ -104,7 +106,12 @@ internal/notify/    Agent hook reports: Unix socket server (token → Session),
 
 internal/alert/     Agent notifications for both front ends: when a state
                     change notifies (Tracker), the text, [notifications]
-                    settings, and the sanitised OSC 777 sequence
+                    settings, the sanitised OSC 777 sequence and desktop text
+
+internal/desktop/   Desktop notifications for bunk's TUI through the gdbus
+                    command: session bus choice (SessionBus), one per pane,
+                    replace and withdraw off the render loop (Notifier);
+                    desktoptest holds the fake gdbus tests use
 
 internal/leakcheck/ Test helper: fds, goroutines, child processes and live heap
                     of the process, compared with a baseline after a settle wait
@@ -411,10 +418,9 @@ These are the key fields agents may need to know about:
   next_needs_you; "none" disables an action and sends its key to the pane.
 - `[ui]` holds hex colour overrides for borders and scrollbar. An invalid
   value is logged, and the theme's colour stays.
-- `[notifications]` turns the host terminal notifications on or off
-  (`enabled`) and picks the agent states that send one (`states`, default
-  needs-you, done and failed). A state name bunk does not know fails at
-  startup.
+- `[notifications]` turns notifications on or off (`enabled`) and picks
+  the agent states that send one (`states`, default needs-you, done and
+  failed). A state name bunk does not know fails at startup.
 
 `config.go` is the authoritative reference for every field and its default.
 
@@ -659,11 +665,30 @@ its default.
   - The window is not marked as needing attention. GTK 4 has no urgency
     hint, and on Wayland a present without a token makes GNOME Shell post a
     second "bunk-gui is ready" notification.
-  - bunk writes `alert.OSC777` to the host from the render pass, which reads
-    every pane's status under `app.mu`. Control and bidi characters go, ';'
-    becomes ',', and the title and body are cut to 120 and 360 bytes. foot,
+  - bunk decides in the render pass, which reads every pane's status under
+    `app.mu`, and each alert takes one of two ways, never both.
+  - On the user's desktop, bunk keeps one desktop notification per pane on
+    org.freedesktop.Notifications, with the same replace and withdraw rules
+    as bunk-gui. It uses them when the session bus is reachable
+    (`DBUS_SESSION_BUS_ADDRESS`, else the socket `$XDG_RUNTIME_DIR/bus`),
+    `SSH_CONNECTION` is unset and `gdbus` is on PATH (`desktop.SessionBus`,
+    `startDesktopAlerts`). `desktop.Notifier` runs `gdbus call` with typed
+    GVariant text, on one goroutine at a time, with at most one waiting
+    request per pane; gdbus's output goes to buffers, never the terminal.
+    Quitting withdraws the notifications, waiting up to 2 s.
+  - The desktop notifications have no actions. Receiving a click would need
+    a process listening on the bus for as long as the notification lives,
+    and bunk cannot raise its host terminal's window anyway.
+  - A failed Notify call logs at debug level and sends that alert as OSC 777
+    through `app.oscBuf` with the next frame. A call that gets no answer in
+    3 s does not fall back, because the server may have shown it.
+  - Otherwise, over SSH or without a bus or gdbus, bunk writes
+    `alert.OSC777` to the host. Control and bidi characters go, ';' becomes
+    ',', and the title and body are cut to 120 and 360 bytes. foot,
     WezTerm, Ghostty and urxvt show it; VTE 0.84 (GNOME Terminal, Ptyxis on
     Fedora 44) reads OSC 777 notify only as "Command completed".
+  - Both front ends clean desktop text with `alert.DesktopText`: the same
+    character rules and limits, the body escaped as markup for GNOME Shell.
 - Session timers are set per session. `Options.Timing` holds the
   foreground poll (`ProcessPoll`, 1 s), idle (`IdleAfter`, 2 s), hang-up
   grace (`HangupGrace`, 1 s), recently-left (2 s) and sync-release
@@ -764,7 +789,12 @@ For short timers, session tests pass `fastTiming` (`helpers_test.go`) in
 
 `TestMain` (`main_test.go`) replaces `writeNativeClipboard`, so no test
 writes the desktop clipboard. `clipboardHas(text)` reports what bunk tried
-to copy.
+to copy. `TestMain` also points `DBUS_SESSION_BUS_ADDRESS` at a socket that
+does not exist and puts a `gdbus` that only fails first on PATH, so no test
+reaches the session bus. Tests of desktop notifications use
+`desktoptest.New`, a fake gdbus that records its calls; bunk-gui's
+`TestTUIDesktopNotifierWithGdbus` runs the real gdbus against a fake server
+on a private bus.
 
 To run a script in a real pane, call
 `runFeatureScript(t, "03_cursor_unicode.sh", cols, rows)`, which returns a
