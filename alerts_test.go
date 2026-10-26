@@ -255,11 +255,18 @@ func TestAlertsToDesktop(t *testing.T) {
 		a.Notify(session.EventFailed, "tests failed")
 		app.render()
 		f.WaitCalls(t, 4)
+		// The failure comes back from gdbus asynchronously and the fallback
+		// goes out on a later frame; app.redraw may still hold an older
+		// wake-up, so render until it arrives, then once more to see it
+		// is not sent twice.
 		var got []string
-		select {
-		case <-app.redraw: // the fallback asks for a frame
-		case <-time.After(10 * time.Second):
-			t.Fatal("the fallback asked for no frame")
+		for deadline := time.Now().Add(10 * time.Second); len(got) == 0 && time.Now().Before(deadline); {
+			select {
+			case <-app.redraw:
+			case <-time.After(20 * time.Millisecond):
+			}
+			app.render()
+			got = append(got, notifications(host)...)
 		}
 		app.render()
 		got = append(got, notifications(host)...)
