@@ -343,8 +343,8 @@ scenarios run at once (default 8); those with a higher `cost` start first.
 Desktop notifications are recorded in `--report` (`notifications`) and
 never reach a notification server on the test compositor. `decoy open`
 gives the keyboard focus to a second window, so the main window is
-inactive, and `alert-click N` clicks tab N's notification as the server
-would. `make gui-test` builds with `-race -gcflags=all=-d=checkptr=0`,
+inactive, and `alert-click ID` clicks the notification of the pane with
+that ID as the server would. `make gui-test` builds with `-race -gcflags=all=-d=checkptr=0`,
 as the window tests' bunk-gui does, because gotk4's GLib callbacks trip
 checkptr.
 
@@ -668,10 +668,10 @@ its default; Design Decisions says where the defaults come from.
   after every `Hooks.StatusChanged`, so inferred states, hook reports and
   any other source of a status change notify alike.
   - A source alerts when its agent enters a `[notifications]` state, or
-    its notice changes there, while it is not watched. In bunk-gui a tab is
-    watched while the window is active and the tab selected; in bunk a pane
-    is watched while it is active and the host terminal has the focus
-    (DECSET 1004).
+    its notice changes there, while it is not watched. In bunk-gui a pane
+    is watched while the window is active and the pane is the focused pane
+    of the selected tab; in bunk a pane is watched while it is active and
+    the host terminal has the focus (DECSET 1004).
   - The title names the agent and its host ("claude on gpu01 needs you"):
     `Status.Host` from a remote report, else `SSHHost`. The body is the notice, or a default for the state,
     and "repo ⎇ branch".

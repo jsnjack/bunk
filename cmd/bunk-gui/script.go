@@ -74,7 +74,7 @@ import (
 //	       [notice=TEXT...]
 //	                                 override a pane's status (test hook)
 //	status-clear [tab=N|pane=ID]
-//	alert-click N                    click tab N's desktop notification, as the server would
+//	alert-click ID                   click pane ID's desktop notification, as the server would
 //	decoy open|close                 a second window takes the keyboard focus (inactive window)
 //	run CMD                          a shell command, e.g. to edit config.toml
 //	shortcut-scroll ACTION           scroll the shortcuts window to a row
