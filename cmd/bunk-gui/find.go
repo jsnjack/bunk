@@ -24,6 +24,7 @@ var (
 type finder struct {
 	p       *Pane
 	bar     *gtk.Box
+	height  int // logical pixels from the pane's top to the bar's bottom
 	entry   *gtk.Entry
 	count   *gtk.Label
 	query   string
@@ -71,6 +72,9 @@ func (a *App) openFind() {
 	p.frame.AddOverlay(f.bar)
 	a.find = f
 	f.entry.GrabFocus()
+	// The badges move below the bar while it is open.
+	_, f.height, _, _ = f.bar.Measure(gtk.OrientationVertical, -1)
+	p.syncBadges()
 }
 
 // closeFind removes the bar and the highlights. Like the TUI it leaves the
@@ -82,6 +86,7 @@ func (a *App) closeFind() {
 	}
 	a.find = nil
 	f.p.frame.RemoveOverlay(f.bar)
+	f.p.syncBadges()
 	f.p.tv.setFind(nil, -1)
 	f.p.queueRender()
 	if a.activePane() == f.p && !f.p.removeOnce {

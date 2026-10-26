@@ -69,8 +69,8 @@ import (
 //	fake-container TYPE ID           pretend the focused pane runs in a container
 //	layout bar|rail | rail open|closed | font +|-|0 | menu open|close | menu-item LABEL | menu-check
 //	switcher [filter TEXT|enter|close] | jump
-//	status [tab=N|pane=ID] [agent=A] [state=working|needs|idle|failed|none]
-//	       [repo=R] [branch=B] [container=C] [ssh=H] [notice=TEXT...]
+//	status [tab=N|pane=ID] [agent=A] [state=working|needs|idle|failed|done|none]
+//	       [repo=R] [branch=B] [container=C] [process=P] [ssh=H] [notice=TEXT...]
 //	                                 override a pane's status (test hook)
 //	status-clear [tab=N|pane=ID]
 //	run CMD                          a shell command, e.g. to edit config.toml
@@ -385,6 +385,7 @@ func (a *App) doAction(action string, done func()) {
 		p.s.Lock()
 		p.s.ContainerType, p.s.ContainerID = args[0], args[1]
 		p.s.Unlock()
+		p.setStatus(p.s.Status())
 	case "layout":
 		if arg != "bar" && arg != "rail" {
 			a.reportError("%s: want bar or rail", action)
@@ -617,7 +618,7 @@ var focusDirs = map[string][2]int{"left": {-1, 0}, "right": {1, 0}, "up": {0, -1
 
 var stateNames = map[string]session.AgentState{
 	"none": session.AgentNone, "working": session.AgentWorking, "idle": session.AgentIdle,
-	"needs": session.AgentNeedsYou, "failed": session.AgentFailed,
+	"needs": session.AgentNeedsYou, "failed": session.AgentFailed, "done": session.AgentDone,
 }
 
 // scriptStatus sets or clears a status override on the focused pane of the
@@ -668,6 +669,8 @@ func (a *App) scriptStatus(clear bool, arg string) {
 				st.Branch = v
 			case "container":
 				st.Container = strings.ReplaceAll(v, ":", " ")
+			case "process":
+				st.Process = v
 			case "ssh":
 				st.SSHHost = v
 			}
@@ -679,6 +682,7 @@ func (a *App) scriptStatus(clear bool, arg string) {
 	}
 	p.queueRender()
 	a.refreshChrome()
+	p.syncBadges()
 }
 
 // shot writes a widget's contents as a PNG: the whole window (default),

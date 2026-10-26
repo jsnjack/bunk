@@ -11,6 +11,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 
+	"bunk/internal/badges"
 	"bunk/internal/input"
 	"bunk/internal/session"
 	"bunk/internal/vt10x"
@@ -30,10 +31,12 @@ func (p *Pane) selectionText() string {
 	return p.s.SelText()
 }
 
-// copySelection puts the selection on the clipboard (Ctrl+Shift+C).
+// copySelection puts the selection on the clipboard (Ctrl+Shift+C) and
+// flashes the Copied badge, as bunk's TUI does.
 func (a *App) copySelection(p *Pane) {
 	if text := p.selectionText(); text != "" {
 		clipboard(false).SetText(text)
+		p.showFlash(badges.Copied)
 	}
 }
 

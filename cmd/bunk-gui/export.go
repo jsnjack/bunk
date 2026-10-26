@@ -17,7 +17,10 @@ func paneByID(id C.int) *Pane {
 func goBeforePaint() { theApp.beforePaint() }
 
 //export goAfterPaint
-func goAfterPaint() { theApp.afterPaint() }
+func goAfterPaint() {
+	theApp.afterPaint()
+	theApp.syncBadges()
+}
 
 //export goViewRender
 func goViewRender(id, dw, dh C.int, scale C.double) C.int {

@@ -30,8 +30,8 @@ graphics.go         Image colour blending
 layout.go           BSP tree: Node, split/remove/resize math
 osc.go              Host passthrough buffer for OSC 7/52/133
 mouse.go            Mouse events → PTY byte sequences
-status.go           Status badges (agent state, scroll count, container, SSH,
-                    flash messages); agent-state separator colours
+status.go           Draws the pane badges (rules in internal/badges) in theme
+                    colours; agent-state separator colours
 search.go           In-pane search UI (matching is session.FindAll)
 config.go           TOML config, theme registry, keybinding resolution
 hostcolors.go       Host terminal OSC colour probing
@@ -83,6 +83,10 @@ internal/session/   One terminal session, shared by front ends
   ptyfd_linux.go    Pollable PTY master, so Close ends ReadLoop
   writer.go         PTY writer: one queue for query replies and input,
                     written by one goroutine; caps, drops and refusals
+
+internal/badges/    Pane status badges for both front ends: which show, their
+                    order, text and fitting (Layout); badgetest holds the cases
+                    both front ends' parity tests draw
 
 internal/notify/    Agent hook reports: Unix socket server (token → Session),
                     client, `notify` CLI (RunCLI), hook snippets per agent
@@ -365,6 +369,21 @@ its default.
   remains reserved and exits bunk search. Mouse handling is unchanged. The PASS
   badge shares the status layout, takes highest priority, and invalidates the
   render overlay when toggled.
+
+- **Pane badges come from `internal/badges`, for both front ends.**
+  - **Rules:** `badges.Layout` decides which badges show, their order, text
+    and fitting from plain pane state. Each badge has a `Role`.
+  - **Front ends only paint:** the TUI maps roles to theme colours
+    (`badgeStyle`, status.go). bunk-gui maps them to its palette
+    (`badgeLook`, cmd/bunk-gui/badge.go) the same way.
+  - **Add a badge in `internal/badges`, never in one front end.** Add a case
+    to `badgetest.Cases`. `TestBadgeParityTUI` and `TestBadgeParityGUI` both
+    draw every case, so the front ends cannot drift apart.
+  - **bunk-gui draws them as GtkInscriptions** in the terminal font, over the
+    pane's texture. A badge change draws no pane frame. The row syncs after
+    each frame and on status, passthrough, zoom, find and flash events.
+  - **The find bar keeps the top right;** the badges sit right below it while
+    it is open. A badge that appears while a query is typed never moves the bar.
 
 - **PTY is one column narrower than the pane.** The rightmost column
   (`p.x + p.w - 1`) is reserved for the scrollbar; the PTY never writes there.

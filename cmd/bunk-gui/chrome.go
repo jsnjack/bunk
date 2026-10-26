@@ -12,6 +12,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
 
+	"bunk/internal/badges"
 	"bunk/internal/session"
 )
 
@@ -50,8 +51,7 @@ button.tabclose:hover { background: alpha(#ffffff, 0.08); }
 .findbar { background: #1b1c20; border: 1px solid #2f3238; border-radius: 8px; padding: 4px 4px 4px 8px; margin: 6px 14px 0 0; }
 entry.findentry { min-height: 30px; background: #131416; color: #e6e8eb; }
 .findcount { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; min-width: 48px; }
-.passbadge { background: #e6e8eb; color: #131416; font-weight: 700; font-size: 11px; padding: 1px 6px; border-radius: 4px;
-	margin: 0 14px 6px 0; }
+.badge { padding: 0; margin: 0; min-height: 0; border-radius: 0; }
 .passtag { background: #e6e8eb; color: #131416; font-weight: 700; font-size: 9px; padding: 0 4px; border-radius: 3px; }
 .agent { font-weight: 600; font-size: 13px; }
 .repo { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
@@ -108,27 +108,31 @@ func loadCSS() {
 	// popovers, toasts and tooltips follow.
 	adw.StyleManagerGetDefault().SetColorScheme(adw.ColorSchemeForceDark)
 	css := gtk.NewCSSProvider()
-	css.LoadFromString(chromeCSS)
+	css.LoadFromString(chromeCSS + badgeCSS()) // badge colours follow the palette (badge.go)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }
 
 // look is how a state is shown: dot glyph, label and colour class.
 type look struct{ dot, label, cls string }
 
+// lookOf takes the dot and label of the pane's agent badge
+// (internal/badges).
 func lookOf(state session.AgentState) look {
+	dot, label, _, ok := badges.AgentLook(state)
 	switch state {
 	case session.AgentWorking:
-		return look{"●", "working", "working"}
+		return look{dot, label, "working"}
 	case session.AgentNeedsYou:
-		return look{"◐", "needs you", "needs-fg"}
+		return look{dot, label, "needs-fg"}
 	case session.AgentFailed:
-		return look{"✕", "failed", "failed"}
-	case session.AgentIdle:
-		return look{"○", "idle", "idle"}
+		return look{dot, label, "failed"}
 	case session.AgentDone:
-		return look{"✓", "done", "done"}
+		return look{dot, label, "done"}
 	}
-	return look{"○", "", "idle"} // a plain shell
+	if !ok {
+		dot = "○" // a plain shell
+	}
+	return look{dot, label, "idle"}
 }
 
 // tabInfo is the label data of one tab, from its agent pane's status.

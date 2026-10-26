@@ -130,15 +130,10 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 	ptr, cv := viewNewC(p.id)
 	p.view = cv
 	p.widget = wrapWidget(ptr)
-	// The pane sits in an overlay for its PASS badge.
+	// The pane sits in an overlay for its badges and find bar.
 	p.frame = gtk.NewOverlay()
 	p.frame.SetChild(p.widget)
-	p.passBadge = label("PASS", "passbadge")
-	p.passBadge.SetHAlign(gtk.AlignEnd)
-	p.passBadge.SetVAlign(gtk.AlignEnd) // the find bar takes the top
-	p.passBadge.SetCanTarget(false)
-	p.passBadge.SetVisible(false)
-	p.frame.AddOverlay(p.passBadge)
+	p.newBadgeRow()
 	atlas, err := a.atlasFor(a.monScale)
 	if err != nil {
 		a.fatal("%v", err)
@@ -440,9 +435,11 @@ func (t *Tab) toggleZoom(p *Pane) {
 		sib.widget().(interface{ SetVisible(bool) }).SetVisible(false)
 	}
 	t.restyle()
+	p.syncBadges()
 }
 
 func (t *Tab) unzoom() {
+	was := t.zoom
 	t.zoom = nil
 	var walk func(n *node)
 	walk = func(n *node) {
@@ -455,6 +452,9 @@ func (t *Tab) unzoom() {
 	}
 	walk(t.root)
 	t.restyle()
+	if was != nil {
+		was.syncBadges()
+	}
 }
 
 // restyle redraws panes whose dimming changed: with more than one visible
@@ -578,7 +578,7 @@ func (a *App) jumpNeedingYou() {
 // every key but the passthrough binding then goes to the terminal.
 func (a *App) setPassthrough(p *Pane, on bool) {
 	p.passthrough = on
-	p.passBadge.SetVisible(on)
+	p.syncBadges()
 	a.refreshChrome()
 	a.syncPassCheck()
 }

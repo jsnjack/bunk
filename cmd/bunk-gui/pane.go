@@ -31,11 +31,10 @@ type Pane struct {
 	tab    *Tab
 	s      *session.Session
 	widget *gtk.Widget  // the TermView
-	frame  *gtk.Overlay // widget plus the PASS badge; what splits hold
+	frame  *gtk.Overlay // widget plus its badge row and find bar; what splits hold
 	token  string       // notify session token; "" without the socket
 
 	passthrough bool // every key but the passthrough binding goes to the terminal
-	passBadge   *gtk.Label
 	view        cview
 	im          *gtk.IMMulticontext
 	imPtr       uintptr
@@ -46,6 +45,13 @@ type Pane struct {
 	st             session.Status
 	statusOverride *session.Status
 	statusQueued   atomic.Bool
+
+	// Status badges at the top right (badge.go).
+	badgeRow    *gtk.Box
+	badgeLabels []badgeLabel // badgeLabels[i] shows Row.Badges[i]: right to left
+	badgeKey    badgeKey     // what the row shows
+	flash       string       // flash badge text (Copied) until its timer clears it
+	flashGen    int          // bumped by each flash, so an older timer leaves it alone
 
 	r     *Renderer // nil until the view is realized
 	atlas *Atlas
@@ -140,6 +146,7 @@ func (p *Pane) setStatus(st session.Status) {
 			p.queueRender()
 		}
 		p.app.refreshChrome()
+		p.syncBadges()
 	}
 }
 
@@ -158,6 +165,7 @@ func (p *Pane) acknowledge() {
 		o.State, o.Notice = session.AgentIdle, ""
 		p.queueRender()
 		p.app.refreshChrome()
+		p.syncBadges()
 	}
 	if (p.st.State != session.AgentNeedsYou && p.st.State != session.AgentDone) || p.s == nil {
 		return

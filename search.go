@@ -26,6 +26,7 @@
 package main
 
 import (
+	"bunk/internal/badges"
 	"bunk/internal/session"
 	"strings"
 	"time"
@@ -284,10 +285,10 @@ func (app *App) copySelectionToClipboard() {
 		return
 	}
 	app.copyToClipboard(text)
-	active.SetStatus("COPIED", 3*time.Second)
+	active.SetStatus(badges.Copied, badges.FlashFor)
 	app.triggerRedraw()
 	go func() {
-		time.Sleep(3 * time.Second)
+		time.Sleep(badges.FlashFor)
 		app.triggerRedraw()
 	}()
 }

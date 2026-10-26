@@ -23,6 +23,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
+	"bunk/internal/badges"
 	"bunk/internal/leakcheck"
 	"bunk/internal/session"
 )
@@ -67,6 +68,7 @@ type markReport struct {
 	Frames        int    `json:"frames"`
 	ClockFrames   int    `json:"clock_frames"`
 	RenderMallocs int64  `json:"render_mallocs"` // objects allocated under (*Pane).render; -1 without -alloc-probe
+	BadgeMallocs  int64  `json:"badge_mallocs"`  // objects allocated by badge syncs (badge.go); -1 without -alloc-probe
 	Mallocs       uint64 `json:"mallocs"`        // whole process
 	KeyRenders    int    `json:"key_renders"`    // key writes drawn so far
 	// Resources held, for leak tests (leak_test.go).
@@ -134,27 +136,32 @@ type tabReport struct {
 }
 
 type paneReport struct {
-	ID       int          `json:"id"`
-	Tab      int          `json:"tab"`
-	Rect     *rectReport  `json:"rect,omitempty"` // nil when not shown
-	Texture  [4]int       `json:"texture"`        // device rect of the texture in a window shot
-	Cols     int          `json:"cols"`
-	Rows     int          `json:"rows"`
-	Cell     [2]int       `json:"cell"`      // device pixels of a cell, as the session reports them
-	Focused  bool         `json:"focused"`   // the tab's focused pane
-	HasFocus bool         `json:"has_focus"` // GTK keyboard focus
-	Dimmed   bool         `json:"dimmed"`
-	Zoomed   bool         `json:"zoomed"`
-	Ring     bool         `json:"ring"`
-	Visible  bool         `json:"visible"`
-	Override bool         `json:"override"`
-	Pass     bool         `json:"passthrough"`
-	Badge    *rectReport  `json:"badge,omitempty"` // the PASS badge, when shown
-	Status   statusReport `json:"status"`
-	Title    string       `json:"title"`
-	Scroll   int          `json:"scroll"`
-	Text     []string     `json:"text"` // live grid rows, trailing blanks trimmed
-	Line     string       `json:"line"` // the text cursor's row of Text: "$" at an idle sh prompt
+	ID       int         `json:"id"`
+	Tab      int         `json:"tab"`
+	Rect     *rectReport `json:"rect,omitempty"` // nil when not shown
+	Texture  [4]int      `json:"texture"`        // device rect of the texture in a window shot
+	Cols     int         `json:"cols"`
+	Rows     int         `json:"rows"`
+	Cell     [2]int      `json:"cell"`      // device pixels of a cell, as the session reports them
+	Focused  bool        `json:"focused"`   // the tab's focused pane
+	HasFocus bool        `json:"has_focus"` // GTK keyboard focus
+	Dimmed   bool        `json:"dimmed"`
+	Zoomed   bool        `json:"zoomed"`
+	Ring     bool        `json:"ring"`
+	Visible  bool        `json:"visible"`
+	Override bool        `json:"override"`
+	Pass     bool        `json:"passthrough"`
+	// Status badges as shown: right to left, Badges[0] at the right edge,
+	// and BadgeRow, their texts left to right as on screen. BadgeInput is
+	// the state they were laid out from (internal/badges).
+	Badges     []badgeReport    `json:"badges"`
+	BadgeRow   string           `json:"badge_row"`
+	BadgeInput badgeInputReport `json:"badge_input"`
+	Status     statusReport     `json:"status"`
+	Title      string           `json:"title"`
+	Scroll     int              `json:"scroll"`
+	Text       []string         `json:"text"` // live grid rows, trailing blanks trimmed
+	Line       string           `json:"line"` // the text cursor's row of Text: "$" at an idle sh prompt
 	// Settled: the pane's last frame was drawn at its current size and
 	// font, no frame or reflow is pending, and the grid fits the frame.
 	Settled bool         `json:"settled"`
@@ -164,6 +171,29 @@ type paneReport struct {
 	Images  imageReport  `json:"images"`
 	Writer  writerReport `json:"writer"`
 	Links   linkReport   `json:"links"`
+}
+
+// badgeReport is one label of a pane's badge row.
+type badgeReport struct {
+	Text string      `json:"text"`
+	Role string      `json:"role"` // badges.Role, e.g. "scroll" or "agent-needs"
+	Rect *rectReport `json:"rect,omitempty"`
+}
+
+// badgeInputReport is a badges.Input.
+type badgeInputReport struct {
+	Passthrough   bool   `json:"passthrough"`
+	Scroll        int    `json:"scroll"`
+	Agent         string `json:"agent"`
+	State         string `json:"state"`
+	Notice        string `json:"notice"`
+	Process       string `json:"process"`
+	ContainerType string `json:"container_type"`
+	ContainerID   string `json:"container_id"`
+	SSHHost       string `json:"ssh_host"`
+	Zoomed        bool   `json:"zoomed"`
+	Flash         string `json:"flash"`
+	Width         int    `json:"width"`
 }
 
 // writerReport is what the session's PTY writer holds for a child that
@@ -534,8 +564,26 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		Override: p.statusOverride != nil, Status: statusOf(p.status()), Title: p.title,
 		Pass: p.passthrough,
 	}
-	if p.passthrough {
-		r.Badge = a.widgetRect(g, p.passBadge)
+	in := p.badgeKey.in
+	r.BadgeInput = badgeInputReport{Passthrough: in.Passthrough, Scroll: in.ScrollOffset, Agent: in.Agent,
+		State: stateName[in.State], Notice: in.Notice, Process: in.Process, ContainerType: in.ContainerType,
+		ContainerID: in.ContainerID, SSHHost: in.SSHHost, Zoomed: in.Zoomed, Flash: in.Flash, Width: in.Width}
+	r.Badges = []badgeReport{}
+	for _, b := range p.badgeLabels {
+		if !b.l.IsVisible() || !p.badgeRow.IsVisible() {
+			continue
+		}
+		// The role as the label's CSS classes give it: a stale class shows
+		// as a second role.
+		var roles []string
+		for _, role := range badges.Roles {
+			if b.l.HasCSSClass(badgeClass(role)) {
+				roles = append(roles, role.String())
+			}
+		}
+		text := b.l.Text()
+		r.Badges = append(r.Badges, badgeReport{Text: text, Role: strings.Join(roles, " "), Rect: a.widgetRect(g, b.l)})
+		r.BadgeRow = text + r.BadgeRow
 	}
 	if p.atlas != nil {
 		r.Cell = [2]int{p.atlas.CellW, p.atlas.CellH}
@@ -730,9 +778,10 @@ func mallocsUnder(funcs ...string) int64 {
 
 func (a *App) addMark(name string) markReport {
 	m := markReport{Name: name, TMs: time.Since(a.started).Milliseconds(), Frames: a.st.frames,
-		ClockFrames: a.st.clockFrames, RenderMallocs: -1, KeyRenders: len(a.st.keyRender)}
+		ClockFrames: a.st.clockFrames, RenderMallocs: -1, BadgeMallocs: -1, KeyRenders: len(a.st.keyRender)}
 	if a.cfg.allocProbe {
 		m.RenderMallocs = renderMallocs()
+		m.BadgeMallocs = mallocsUnder("(*App).syncBadges", "(*Pane).syncBadges")
 	}
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)

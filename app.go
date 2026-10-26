@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bunk/internal/badges"
 	"bunk/internal/notify"
 	"bunk/internal/session"
 	"fmt"
@@ -357,12 +358,12 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 			active.Unlock()
 			if text != "" {
 				app.copyToClipboard(text)
-				active.SetStatus("COPIED", 3*time.Second)
+				active.SetStatus(badges.Copied, badges.FlashFor)
 				app.triggerRedraw()
 				// Schedule a redraw after the badge expires so it clears
 				// even if the terminal is idle.
 				go func() {
-					time.Sleep(3 * time.Second)
+					time.Sleep(badges.FlashFor)
 					app.triggerRedraw()
 				}()
 				return true

@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"bunk/internal/badges"
 )
 
 // keylog prints, in hex, every chunk the terminal sends to its stdin: the
@@ -174,18 +176,22 @@ func TestGUIPassthrough(t *testing.T) {
 	})
 	on := g.snap("on")
 	p := on.pane(t, 0)
-	if !p.Pass || p.Badge == nil || !on.tab(t, 1).Pass || on.tab(t, 2).Pass || !on.MenuPassCheck {
+	if !p.Pass || len(p.Badges) == 0 || p.Badges[0].Role != "pass" || p.Badges[0].Rect == nil ||
+		!on.tab(t, 1).Pass || on.tab(t, 2).Pass || !on.MenuPassCheck {
 		t.Fatalf("passthrough on: pane %+v, tab 1 pass %v, tab 2 pass %v, menu check %v", p, on.tab(t, 1).Pass, on.tab(t, 2).Pass, on.MenuPassCheck)
 	}
-	badge := hex(0xe6e8eb)
+	// The PASS badge is the first of the pane's badge row (badge.go).
+	_, bg, _ := badgeLook(badges.RolePass)
+	badge := hex(bg)
 	img := loadPNG(t, g.file("on.png"))
-	x, y, w, h := inner(p.Badge, 2)
+	x, y, w, h := inner(p.Badges[0].Rect, 1)
 	if n := count(img, x, y, w, h, badge, 2); n < w*h/3 {
 		t.Errorf("PASS badge on the pane: %d of %d pixels %v", n, w*h, badge)
 	}
+	tag := hex(0xe6e8eb)
 	it := on.tab(t, 1).Item
-	if n := count(img, it.DX, it.DY, it.DW, it.DH, badge, 2); n < 20 {
-		t.Errorf("PASS tag on the tab: %d pixels %v", n, badge)
+	if n := count(img, it.DX, it.DY, it.DW, it.DH, tag, 2); n < 20 {
+		t.Errorf("PASS tag on the tab: %d pixels %v", n, tag)
 	}
 	if n := count(loadPNG(t, g.file("off.png")), x, y, w, h, badge, 2); n != 0 {
 		t.Errorf("badge after passthrough off: %d pixels %v", n, badge)
