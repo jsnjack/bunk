@@ -166,6 +166,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 		done:          make(chan struct{}),
 		oscBuf:        newOSCBuffer(),
 	}
+	app.alerts.Settings = cfg.Alerts
 
 	// Agent hooks in the panes report through this socket ("bunk notify").
 	// Without it bunk still infers each agent's state.

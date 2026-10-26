@@ -26,6 +26,9 @@ type Tab struct {
 	root   *node
 	focus  *Pane // the pane that has (or last had) keyboard focus
 	zoom   *Pane // the zoomed pane, nil when none
+	// id names the tab in desktop notifications: the ID of the pane it
+	// opened with, which no other tab can have.
+	id int
 }
 
 // node is a BSP tree node: a pane (leaf) or a split of two subtrees.
@@ -106,6 +109,7 @@ func (a *App) newTab(cmd, dir string) *Tab {
 	if p == nil {
 		return nil
 	}
+	t.id = p.id
 	t.root = &node{pane: p}
 	t.focus = p
 	t.holder.Append(p.frame)

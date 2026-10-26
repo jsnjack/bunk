@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bunk/internal/alert"
 	"bunk/internal/badges"
 	"bunk/internal/notify"
 	"bunk/internal/session"
@@ -140,6 +141,14 @@ type App struct {
 	// timing sets the intervals of new panes' session timers. bunk leaves
 	// it zero, the defaults; tests shorten it.
 	timing session.Timing
+
+	// alerts decides when a pane's agent state reaches the host terminal
+	// as a notification (alerts.go). hostBlurred is set while the host
+	// terminal reports that it lost the focus, and alertWake is when a
+	// held alert is due. Protected by mu.
+	alerts      alert.Tracker
+	hostBlurred bool
+	alertWake   time.Time
 }
 
 // shutdown is safe to call multiple times.  It closes every pane (sending
@@ -964,6 +973,7 @@ func (app *App) removePane(p *Pane) {
 	}
 
 	app.root = removeFromTree(app.root, p)
+	app.alerts.Remove(p.ID)
 	if app.notify != nil && p.token != "" {
 		app.notify.Unregister(p.token)
 	}

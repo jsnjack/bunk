@@ -131,7 +131,8 @@ type App struct {
 		mallocs             uint64
 	}
 	exitArmed, finished bool
-	pendingClip         string // OSC 52 text waiting for the window to be active
+	pendingClip         string     // OSC 52 text waiting for the window to be active
+	alerts              alertState // desktop notifications (alerts.go)
 	configErr           error
 	fatalErr            error // why the application quit early (fatal)
 }
@@ -185,6 +186,7 @@ func (a *App) activate() {
 	}
 	a.win.SetDefaultSize(w, h)
 	a.win.NotifyProperty("is-active", a.onActive)
+	a.initAlerts()
 	a.win.ConnectCloseRequest(a.onCloseRequest)
 	a.installShortcuts()
 	a.watchConfig()

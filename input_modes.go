@@ -7,6 +7,7 @@ import (
 func (app *App) handleFocus(focused bool) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
+	app.hostBlurred = !focused
 	if p := app.active; p != nil {
 		p.Lock()
 		enabled := !p.Dead && p.Term.Mode()&vt10x.ModeFocus != 0

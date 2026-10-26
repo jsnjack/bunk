@@ -51,6 +51,7 @@ func (a *App) reloadSettings() {
 	if t, err := a.selectTheme(); err == nil {
 		a.applyTheme(t)
 	}
+	a.settings.Notifications, a.settings.alerts = st.Notifications, st.alerts
 	if (st.Font != old.Font || st.FontSize != old.FontSize || st.TextZoom != old.TextZoom) && a.cfg.font == "" {
 		a.settings.Font, a.settings.FontSize, a.settings.TextZoom = st.Font, st.FontSize, st.TextZoom
 		a.fontSize = st.startSize()
