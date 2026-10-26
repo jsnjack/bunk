@@ -746,10 +746,17 @@ func (a *App) snap(label string, done func()) {
 	// and position.
 	a.win.QueueDraw()
 	a.onNextPaint(func() {
-		if !a.finished {
+		switch {
+		case a.finished:
+			if done != nil {
+				done()
+			}
+		case a.chromeGen != a.paintedGen:
+			// A status change rebuilt the tab items after the frame,
+			// before this idle callback: they get their size next frame.
+			a.snap(label, done)
+		default:
 			a.snapNow(label, done)
-		} else if done != nil {
-			done()
 		}
 	})
 }

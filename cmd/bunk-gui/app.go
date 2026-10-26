@@ -57,6 +57,8 @@ type App struct {
 	switcher   *switcher
 	ratio      *splitRatio // the label on a held divider (splitratio.go)
 	tabDrag    *tabDrag    // a tab being dragged (tabdrag.go)
+	chromeGen  uint64      // tab item rebuilds; paintedGen: those the last frame laid out
+	paintedGen uint64
 	lastToast  string
 	// Chrome widgets the report and the pointer-injection targets name.
 	tabItems    []tabItem
@@ -368,6 +370,7 @@ func (a *App) afterPaint() {
 		a.st.gtkFrame.Add(float64(now-a.beforePnt) / 1e3)
 	}
 	a.rendered = false
+	a.paintedGen = a.chromeGen
 	a.pollPresentation()
 	a.paintDone()
 	if a.exitArmed {

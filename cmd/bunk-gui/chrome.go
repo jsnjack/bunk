@@ -488,6 +488,7 @@ func (a *App) refreshChrome() {
 		return
 	}
 	a.chromeKey = key.String()
+	a.chromeGen++
 	for c := a.tabsBox.FirstChild(); c != nil; c = a.tabsBox.FirstChild() {
 		a.tabsBox.Remove(c)
 	}
