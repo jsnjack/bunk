@@ -165,9 +165,10 @@ type paneReport struct {
 	// Settled: the pane's last frame was drawn at its current size and
 	// font, no frame or reflow is pending, and the grid fits the frame.
 	Settled bool         `json:"settled"`
-	Busy    string       `json:"busy"`   // the foreground process when not an idle shell (quit asks)
-	Cursor  string       `json:"cursor"` // pointer cursor over the view: text or pointer
-	Hover   string       `json:"hover"`  // link underlined under the pointer (Ctrl held)
+	Renders int          `json:"renders"` // frames the pane's view has drawn
+	Busy    string       `json:"busy"`    // the foreground process when not an idle shell (quit asks)
+	Cursor  string       `json:"cursor"`  // pointer cursor over the view: text or pointer
+	Hover   string       `json:"hover"`   // link underlined under the pointer (Ctrl held)
 	Images  imageReport  `json:"images"`
 	Writer  writerReport `json:"writer"`
 	Links   linkReport   `json:"links"`
@@ -272,6 +273,7 @@ type uiSnapshot struct {
 	Find          *findReport         `json:"find,omitempty"`
 	TextZoom      float64             `json:"text_zoom"` // the default, from the config
 	Agents        []session.AgentSpec `json:"agents"`    // extra agents in force
+	Theme         string              `json:"theme"`     // the theme shown
 	Prefs         *prefsReport        `json:"prefs,omitempty"`
 }
 
@@ -282,6 +284,8 @@ type prefsReport struct {
 	Font     string                 `json:"font"`
 	FontSize float64                `json:"font_size"`
 	TextZoom float64                `json:"text_zoom"`
+	Theme    string                 `json:"theme"`  // the theme chosen
+	Themes   []string               `json:"themes"` // the themes offered, in order
 	Agents   [][3]string            `json:"agents"` // name, processes, scripts as the rows show them
 	Controls map[string]*rectReport `json:"controls"`
 }
@@ -497,11 +501,14 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	if a.quitDialog != nil {
 		s.Quit = &quitReport{Body: a.quitBody}
 	}
-	s.TextZoom, s.Agents = a.settings.TextZoom, a.settings.Agents
+	s.TextZoom, s.Agents, s.Theme = a.settings.TextZoom, a.settings.Agents, a.theme.Name
 	if w := a.prefsWin; w != nil {
 		pr := &prefsReport{Message: w.message.Text(), Tabs: map[bool]string{true: "bar", false: "rail"}[w.tabsBar.Active()],
 			RailOpen: w.railOpen.Active(), Font: w.font.Text(), FontSize: w.fontSize.Value(), TextZoom: w.zoom.Value(),
-			Agents: [][3]string{}, Controls: map[string]*rectReport{}}
+			Theme: w.chosenTheme(), Themes: []string{}, Agents: [][3]string{}, Controls: map[string]*rectReport{}}
+		for _, c := range w.themes {
+			pr.Themes = append(pr.Themes, c.name)
+		}
 		for _, r := range w.rows {
 			pr.Agents = append(pr.Agents, [3]string{r.name.Text(), r.processes.Text(), r.scripts.Text()})
 		}
@@ -605,6 +612,7 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		r.Rect = a.widgetRect(g, p.widget)
 		vg := viewGeomC(p.view)
 		r.Texture = [4]int{vg.x0 - ox, vg.y0 - oy, vg.dw, vg.dh}
+		r.Renders = vg.renders
 		r.Settled = p.atlas != nil && p.r != nil && vg.dw > 0 && p.atlas.Font == a.fontDesc &&
 			math.Abs(p.atlas.Scale-vg.scale) < 1e-6 && !p.renderQueued.Load() && !p.resizing.Load() &&
 			p.cols == max(2, vg.dw/p.atlas.CellW) && p.rows == max(1, vg.dh/p.atlas.CellH)
@@ -826,7 +834,7 @@ func (a *App) writeReport(reason string) {
 	r.Toasts = a.toastLog
 	r.Settings = map[string]any{
 		"tabs": a.settings.Tabs, "rail_open": a.settings.RailOpen, "font": a.settings.Font,
-		"font_size": a.settings.FontSize, "agents": a.settings.Agents,
+		"font_size": a.settings.FontSize, "agents": a.settings.Agents, "theme": a.settings.Theme,
 	}
 	if a.configErr != nil {
 		r.ConfigError = a.configErr.Error()

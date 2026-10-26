@@ -18,6 +18,7 @@ import (
 	"bunk/internal/badges"
 	"bunk/internal/badges/badgetest"
 	"bunk/internal/session"
+	"bunk/internal/theme"
 )
 
 // TestBadgeParityGUI gives a pane each shared case's state (badgetest) as
@@ -29,7 +30,7 @@ func TestBadgeParityGUI(t *testing.T) {
 	for _, c := range badgetest.Cases {
 		t.Run(c.Name, func(t *testing.T) {
 			in := c.In
-			p := &Pane{app: &App{}, tab: &Tab{}, tv: newTermView(), passthrough: in.Passthrough, flash: in.Flash}
+			p := &Pane{app: &App{}, tab: &Tab{}, tv: newTermView(&testTheme), passthrough: in.Passthrough, flash: in.Flash}
 			p.st = session.Status{Agent: in.Agent, State: in.State, Notice: in.Notice, Process: in.Process,
 				Container: strings.TrimSpace(in.ContainerType + " " + in.ContainerID), SSHHost: in.SSHHost}
 			p.tv.sbOff, p.tv.cols = in.ScrollOffset, in.Width
@@ -51,10 +52,10 @@ func TestBadgeParityGUI(t *testing.T) {
 // TestBadgeLooksGUI: each role has the colours bunk's TUI gives it under
 // the "default" theme (badgetest.DefaultLooks), and the CSS sets them.
 func TestBadgeLooksGUI(t *testing.T) {
-	css := badgeCSS()
+	css := badgeCSS(&testTheme)
 	for _, role := range badges.Roles {
 		t.Run(role.String(), func(t *testing.T) {
-			fg, bg, bold := badgeLook(role)
+			fg, bg, bold := badgeLook(&testTheme, role)
 			got := badgetest.Look{FG: fg, BG: bg, Bold: bold}
 			if want := badgetest.DefaultLooks[role]; got != want {
 				t.Errorf("look %+v, want %+v", got, want)
@@ -143,8 +144,15 @@ func badgeCells(text string) int {
 }
 
 // checkBadgePixels checks a window shot: the badge's background fills its
-// rect, less the glyphs drawn on it in its text colour.
+// rect, less the glyphs drawn on it in its text colour, in the default
+// theme.
 func checkBadgePixels(t *testing.T, img image.Image, label string, b badgeReport) {
+	t.Helper()
+	checkThemeBadgePixels(t, img, label, b, &testTheme)
+}
+
+// checkThemeBadgePixels checks a badge as checkBadgePixels does, in theme th.
+func checkThemeBadgePixels(t *testing.T, img image.Image, label string, b badgeReport, th *theme.Theme) {
 	t.Helper()
 	var role badges.Role
 	for _, r := range badges.Roles {
@@ -152,7 +160,7 @@ func checkBadgePixels(t *testing.T, img image.Image, label string, b badgeReport
 			role = r
 		}
 	}
-	fg, bg, _ := badgeLook(role)
+	fg, bg, _ := badgeLook(th, role)
 	x, y, w, h := inner(b.Rect, 1)
 	nbg := count(img, x, y, w, h, hex(bg), 3)
 	nfg := blendCount(img, x, y, w, h, hex(fg), hex(bg))

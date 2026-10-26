@@ -9,6 +9,7 @@ package main
 import (
 	"bunk/internal/badges"
 	"bunk/internal/session"
+	"bunk/internal/theme"
 	"fmt"
 	"time"
 
@@ -48,43 +49,29 @@ func statusOverlayKeyLocked(p *Pane, now time.Time) string {
 	)
 }
 
-// Agent state colours, shared with bunk-gui's chrome so a state looks the
-// same in both front ends. They do not follow the theme.
+// Agent state colours (internal/theme), the same in both front ends. They
+// do not follow the theme.
 var (
-	colorAgentBadge   = tcell.NewRGBColor(0x24, 0x26, 0x2b) // badge background for quiet states
-	colorAgentInk     = tcell.NewRGBColor(0x13, 0x14, 0x16) // text on the needs-you and done badges
-	colorAgentWorking = tcell.NewRGBColor(0x5a, 0xa9, 0xff)
-	colorAgentNeeds   = tcell.NewRGBColor(0xff, 0xb4, 0x54)
-	colorAgentIdle    = tcell.NewRGBColor(0x9a, 0xa0, 0xa8)
-	colorAgentFailed  = tcell.NewRGBColor(0xff, 0x8a, 0x8a)
-	colorAgentDone    = tcell.NewRGBColor(0x7e, 0xe2, 0xa8)
+	colorAgentBadge   = tcellColor(theme.AgentBadge) // badge background for quiet states
+	colorAgentInk     = tcellColor(theme.AgentInk)   // text on the needs-you and done badges
+	colorAgentWorking = tcellColor(theme.AgentWorking)
+	colorAgentNeeds   = tcellColor(theme.AgentNeeds)
+	colorAgentIdle    = tcellColor(theme.AgentIdle)
+	colorAgentFailed  = tcellColor(theme.AgentFailed)
+	colorAgentDone    = tcellColor(theme.AgentDone)
 )
 
-// agentLook is how a pane shows its agent's state: the badge colours, and
-// for states that want the user, the colour of the separators around the
-// pane. The badge's glyph and label come from badges.AgentLook.
-type agentLook struct {
-	style  tcell.Style
-	border tcell.Color // tcell.ColorDefault keeps the normal separator colour
-}
-
-// agentLookOf returns the look of state; false for a pane without an agent.
-func agentLookOf(state session.AgentState) (agentLook, bool) {
-	quiet := tcell.StyleDefault.Background(colorAgentBadge)
-	loud := tcell.StyleDefault.Foreground(colorAgentInk).Bold(true)
+// agentBorder is the colour of the separators around a pane whose agent
+// is in state: the badge's colour for states that want the user,
+// tcell.ColorDefault (the normal separator colour) otherwise.
+func agentBorder(state session.AgentState) tcell.Color {
 	switch state {
-	case session.AgentWorking:
-		return agentLook{quiet.Foreground(colorAgentWorking), tcell.ColorDefault}, true
-	case session.AgentIdle:
-		return agentLook{quiet.Foreground(colorAgentIdle), tcell.ColorDefault}, true
 	case session.AgentNeedsYou:
-		return agentLook{loud.Background(colorAgentNeeds), colorAgentNeeds}, true
+		return colorAgentNeeds
 	case session.AgentDone:
-		return agentLook{loud.Background(colorAgentDone), colorAgentDone}, true
-	case session.AgentFailed:
-		return agentLook{quiet.Foreground(colorAgentFailed).Bold(true), tcell.ColorDefault}, true
+		return colorAgentDone
 	}
-	return agentLook{}, false
+	return tcell.ColorDefault
 }
 
 // paintAgentBorders colours the separators around every pane whose agent
@@ -97,8 +84,7 @@ func paintAgentBorders(scr tcell.Screen, root *Node, rt resolvedTheme) {
 	}
 	leaves := root.leaves()
 	for _, want := range []session.AgentState{session.AgentDone, session.AgentNeedsYou} {
-		look, _ := agentLookOf(want)
-		style := tcell.StyleDefault.Foreground(look.border).Background(rt.bg)
+		style := tcell.StyleDefault.Foreground(agentBorder(want)).Background(rt.bg)
 		for _, leaf := range leaves {
 			p := leaf.pane
 			p.Lock()
@@ -168,38 +154,30 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 	}
 }
 
-// badgeStyle is how the TUI paints a badge of role. Colours come from the
-// theme palette (the palette index table in config.go), so they adapt to
-// any theme; most backgrounds are blended 40% toward the theme background
-// to soften them. The agent badge keeps its fixed state colours.
+// badgeStyle is how the TUI paints a badge of role, with the colours
+// internal/theme gives the role (theme.BadgeInks): palette colours, most
+// backgrounds blended theme.BadgeDim percent toward the theme background,
+// and fixed agent colours.
 func badgeStyle(role badges.Role, rt resolvedTheme) tcell.Style {
-	dim := func(c tcell.Color) tcell.Color {
-		r1, g1, b1 := c.RGB()
-		r2, g2, b2 := rt.bg.RGB()
-		mix := func(a, b int32) int32 { return (a*60 + b*40) / 100 }
-		return tcell.NewRGBColor(mix(r1, r2), mix(g1, g2), mix(b1, b2))
+	fg, bg, bold := theme.BadgeInks(role)
+	return tcell.StyleDefault.Foreground(rt.ink(fg)).Background(rt.ink(bg)).Bold(bold)
+}
+
+// ink resolves a badge colour in the theme's tcell colours. A colour the
+// theme leaves to the host blends as tcell's RGB of it, -1 per channel,
+// as the TUI always did.
+func (rt resolvedTheme) ink(i theme.Ink) tcell.Color {
+	c := tcellColor(i.Fixed)
+	if i.ANSI >= 0 {
+		c = rt.palette[i.ANSI]
 	}
-	text := tcell.StyleDefault.Foreground(rt.palette[7]).Bold(true)   // white text
-	yellow := tcell.StyleDefault.Foreground(rt.palette[3]).Bold(true) // not dimmed
-	switch role {
-	case badges.RolePass, badges.RoleContainer:
-		return text.Background(dim(rt.palette[6]))
-	case badges.RoleScroll, badges.RoleZoom:
-		return yellow.Background(rt.palette[0])
-	case badges.RoleSudo:
-		return text.Background(dim(rt.palette[1]))
-	case badges.RoleSSH:
-		return text.Background(dim(rt.palette[4]))
-	case badges.RoleMosh:
-		return text.Background(rt.palette[0])
-	case badges.RoleFlash:
-		return text.Background(dim(rt.palette[2]))
+	if !i.Dim {
+		return c
 	}
-	if state, ok := role.AgentState(); ok {
-		look, _ := agentLookOf(state)
-		return look.style
-	}
-	return tcell.StyleDefault
+	r1, g1, b1 := c.RGB()
+	r2, g2, b2 := rt.bg.RGB()
+	mix := func(a, b int32) int32 { return (a*(100-theme.BadgeDim) + b*theme.BadgeDim) / 100 }
+	return tcell.NewRGBColor(mix(r1, r2), mix(g1, g2), mix(b1, b2))
 }
 
 // drawCells draws s from column x on row y, one grapheme per cell or two.

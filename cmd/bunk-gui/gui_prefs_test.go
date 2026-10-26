@@ -54,6 +54,7 @@ scripts = ["goose/cli.py"]
 			"ptr-at pref text-zoom -30 0", "ptr-click", "kbd ctrl+a", "kbd-type 120\\r",
 			"wait text_zoom=120 text_percent=120",
 			"snap text",
+			"pref-scroll agent-0-processes",
 			"ptr-at pref agent-0-processes", "ptr-click", "kbd ctrl+a", "kbd-type aider, aider-chat\\r",
 			"wait agents.0.processes.#=2",
 			"ptr-at pref agent-1-remove", "ptr-click",

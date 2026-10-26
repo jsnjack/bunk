@@ -125,10 +125,11 @@ func argsFor(cmd string) []string {
 
 // newPane starts a session for tab t and its TermView.
 func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
-	p := &Pane{id: len(a.panes), app: a, tab: t, tv: newTermView()}
+	p := &Pane{id: len(a.panes), app: a, tab: t, tv: newTermView(&a.theme)}
 	a.panes = append(a.panes, p)
 	ptr, cv := viewNewC(p.id)
 	p.view = cv
+	viewSetBGC(cv, a.theme.Background.Hex())
 	p.widget = wrapWidget(ptr)
 	// The pane sits in an overlay for its badges and find bar.
 	p.frame = gtk.NewOverlay()
@@ -142,10 +143,9 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 	p.atlas = atlas
 	p.attachInput()
 
-	hex := func(rgb uint32) string { return session.XParseColor(fmt.Sprintf("%06x", rgb)) }
 	opts := session.Options{
 		ID: p.id, Cols: max(2, cols), Rows: max(1, rows), Scrollback: session.DefaultScrollbackLines, Dir: dir, Args: args,
-		ThemeFG: hex(theme.fg), ThemeBG: hex(theme.bg), ThemeCursor: hex(theme.fg),
+		ThemeFG: xparse(a.theme.Foreground), ThemeBG: xparse(a.theme.Background), ThemeCursor: xparse(a.theme.Cursor),
 		CellAspect: []float64{float64(atlas.CellH) / float64(atlas.CellW)},
 		// Real device pixels, so applications size images 1:1.
 		CellPixels: [2]int{atlas.CellW, atlas.CellH},

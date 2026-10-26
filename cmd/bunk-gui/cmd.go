@@ -16,6 +16,7 @@ import (
 	"bunk/internal/graphics"
 	"bunk/internal/notify"
 	"bunk/internal/session"
+	"bunk/internal/theme"
 )
 
 // config holds the command-line options of a run.
@@ -26,6 +27,7 @@ type config struct {
 	size       string
 	configFile string
 	layout     string
+	theme      string
 	dump       string
 	dumpSize   string
 	stats      bool
@@ -69,6 +71,7 @@ func init() {
 	f.StringVar(&opts.font, "font", "", "Pango font description, e.g. \"Noto Sans Mono 11\" (default: config file)")
 	f.StringVar(&opts.size, "size", "120x36", "initial size in cells, `COLSxROWS`")
 	f.StringVar(&opts.layout, "layout", "", "tab layout, `rail|bar` (default: config file)")
+	f.StringVar(&opts.theme, "theme", "", "theme `NAME`: "+strings.Join(theme.BuiltinNames(), ", ")+", or a [themes.NAME] table of the config (default: config file)")
 	f.StringVar(&opts.gsk, "gsk", "gl", "GSK renderer to request when GSK_RENDERER is unset: gl, vulkan, or default")
 	f.IntVar(&opts.imageBytes, "image-bytes", graphics.DefaultStoreBytes, "per pane, keep image bitmaps up to `N` bytes; older ones draw as half blocks")
 	f.IntVar(&opts.imageGPUBytes, "image-gpu-bytes", DefaultImageGPUBytes, "per pane, keep image textures not on screen up to `N` bytes")
@@ -182,6 +185,7 @@ func runApp(cfg config, debug, trace bool) error {
 	}
 	a.layout, a.railOpen, a.fontSize = a.settings.Tabs, a.settings.RailOpen, a.settings.startSize()
 	a.fontDesc = a.font()
+	a.theme, a.themeErr = a.selectTheme()
 	if cfg.stats || cfg.report != "" || cfg.allocProbe {
 		a.st = newRunStats()
 	}

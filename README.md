@@ -77,7 +77,8 @@ Opening a new window is deferred, and Ctrl+Shift+N shows "not built yet".
 | Links | Ctrl+click | Opens OSC 8 links and plain http, https and file URLs; Ctrl+hover underlines them |
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
 | Shortcuts window | Ctrl+Shift+? | Rebind or turn off any action; ⚠ marks keys terminal programs may use |
-| Preferences | Ctrl+, | Layout, rail, font, text zoom and extra agent CLIs |
+| Preferences | Ctrl+, | Layout, rail, font, text zoom, theme and extra agent CLIs |
+| Themes | | bunk's themes; picking one in Preferences repaints the panes at once |
 | Quit | Ctrl+Shift+Q | Asks first while a pane runs more than an idle shell |
 
 Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. bunk-gui draws their images 1:1:
@@ -108,7 +109,7 @@ Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. b
 | Quit | Ctrl+Q | Ctrl+D or `exit` closes one pane |
 | Mouse | | Click focuses, drag selects, double click selects a word; Shift overrides program mouse mode |
 | Reflow | | Text rewraps at the new width on every split and resize |
-| Themes | | `terminal` (host colours), `default`, `solarized-dark`, `dracula`, `nord` |
+| Themes | | `terminal` (host colours), `default`, `solarized-dark`, `dracula`, `nord`, or your own `[themes.NAME]` |
 
 Alt+F1 supports Podman, Docker, LXD/LXC, Incus, Toolbox, Distrobox, SSH and sudo/su.
 
@@ -181,6 +182,7 @@ bin/bunk-gui
 | `--tab CMD` | Open another tab running `CMD`; repeatable |
 | `--layout rail\|bar` | Tab layout for this run |
 | `--font "Noto Sans Mono 11"` | Font family and size for this run |
+| `--theme NAME` | Theme for this run |
 | `--size 120x36` | Initial size in cells |
 | `-c`, `--config FILE` | Settings file instead of `~/.config/bunk-gui/config.toml` |
 | `-d`, `--debug` | Log debug detail to stderr |
@@ -194,12 +196,19 @@ bin/bunk-gui
 `bunk config init` writes a documented `~/.config/bunk/config.toml`. Every key is optional.
 
 ```toml
-theme = "default"      # terminal, default, solarized-dark, dracula, nord
+theme = "default"      # terminal, default, solarized-dark, dracula, nord, or a [themes.NAME] below
 # scrollback = 10000   # lines per pane
 # cell_aspect = 2.25   # cell height / width when the host does not report pixels
 
 [ui]                   # "#RRGGBB" overrides; empty uses the theme
 active_border = ""
+
+[themes.paper]         # a theme of your own: background, foreground and 16 palette colours
+background = "#FDF6E3"
+foreground = "#586E75"
+palette = ["#073642", "#DC322F", "#859900", "#B58900", "#268BD2", "#D33682", "#2AA198", "#EEE8D5",
+           "#002B36", "#CB4B16", "#586E75", "#657B83", "#839496", "#6C71C4", "#93A1A1", "#FDF6E3"]
+# cursor, active_border, inactive_border, scrollbar_thumb and scrollbar_track are optional
 
 [keys]                 # empty keeps the default; "none" sends the key to the pane
 split          = "f1"
@@ -223,6 +232,7 @@ rail_open = false          # start with the rail expanded
 font = "Noto Sans Mono"
 font_size = 11             # points
 text_zoom = 100            # % of font_size at start and after Ctrl+0
+theme = "default"          # as in bunk, with [themes.NAME] tables of your own
 
 [keys]                     # one key or a list; actions in cmd/bunk-gui/bindings.go
 switcher = "ctrl+shift+space"
@@ -236,7 +246,10 @@ scripts = ["@me/myagent"]  # for agents that run under node, python, bun, deno o
 ```
 
 - bunk-gui watches the file and applies edits to the running window.
-- A bad value shows a toast, and the setting keeps its default.
+- A bad value shows a toast, and the setting keeps its default. An unknown theme or an invalid `[themes.NAME]` table gives the default theme.
+- The theme sets the terminal colours, the badges, the background behind the panes and the dividers between them. The rail, the bar and the dialogs keep their dark style.
+- bunk-gui has no host terminal, so the `terminal` theme shows the colours of `default`.
+- Colours a program sets with OSC 4, 10, 11 or 12 stay in front of the theme.
 - `[keys]` uses bunk's action names and key syntax where both have the action.
 - `"none"` or `""` turns an action off, so its keys reach the terminal.
 - Keyboard passthrough works per pane, through Ctrl+F12 or the menu's "Send all keys to terminal".
@@ -296,6 +309,7 @@ bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
 | `internal/input/` | Key, mouse, focus and paste encoding: legacy, application modes, Kitty CSI u |
 | `internal/notify/` | Agent hook reports: Unix socket server, the `notify` CLI both binaries run, hook snippets per agent |
 | `internal/graphics/` | Bounded SIXEL, Kitty and iTerm2 image decoders; the bitmap store behind full-resolution drawing |
+| `internal/theme/` | Colour themes of both front ends: built-in and custom themes, `[ui]` overrides, badge colours |
 | `third_party/tcell/` | tcell v2.13.9 with overline, keypad and keycap-width patches |
 | `scripts/` | `headless-gui.sh`, `screenshots.sh`, terminal feature scripts |
 | `packaging/` | Desktop entry, icon, AppStream metainfo; `fedora/` holds the RPM spec |

@@ -20,6 +20,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
 	"bunk/internal/notify"
+	"bunk/internal/theme"
 )
 
 const appID = "io.github.jsnjack.BunkGui"
@@ -77,8 +78,11 @@ type App struct {
 	chromeKey    string // what the tab items show, to skip identical rebuilds
 	layout       string // "bar" or "rail"
 	railOpen     bool
-	fontSize     float64 // points; settings.FontSize is 100 %
-	fontDesc     string  // Pango description at fontSize; atlases are keyed by it
+	fontSize     float64          // points; settings.FontSize is 100 %
+	fontDesc     string           // Pango description at fontSize; atlases are keyed by it
+	theme        theme.Theme      // the theme shown, every colour set (themes.go)
+	themeCSS     *gtk.CSSProvider // the colours that follow the theme
+	themeErr     error            // what was wrong with --theme, shown at start
 
 	tabs               []*Tab
 	active             *Tab
@@ -151,6 +155,7 @@ func (a *App) activate() {
 		return
 	}
 	loadCSS()
+	a.loadThemeCSS()
 
 	a.win = adw.NewApplicationWindow(&a.app.Application)
 	a.win.SetTitle(defaultTitle)
@@ -202,6 +207,10 @@ func (a *App) activate() {
 	if a.configErr != nil {
 		a.toast("Settings: " + a.configErr.Error())
 		fmt.Fprintln(os.Stderr, "bunk-gui:", a.configErr)
+	}
+	if a.themeErr != nil {
+		a.toast(a.themeErr.Error())
+		fmt.Fprintln(os.Stderr, "bunk-gui:", a.themeErr)
 	}
 
 	a.mainCPU0, a.procCPU0 = threadCPUNs(), procCPUNs()

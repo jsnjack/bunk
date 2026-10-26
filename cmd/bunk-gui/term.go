@@ -2,26 +2,17 @@ package main
 
 import (
 	"bunk/internal/session"
+	"bunk/internal/theme"
 	"bunk/internal/vt10x"
 )
-
-// theme is bunk's "default" palette (config.go), so the GUI and the TUI look
-// the same.
-var theme = struct {
-	fg, bg  uint32
-	palette [16]uint32
-}{
-	fg: 0xFFFFFF, bg: 0x1C1C1F,
-	palette: [16]uint32{
-		0x241F31, 0xC01C28, 0x2EC27E, 0xF5C211, 0x1E78E4, 0x9841BB, 0x0AB9DC, 0xC0BFBC,
-		0x5E5C64, 0xED333B, 0x57E389, 0xF8E45C, 0x51A1FF, 0xC061CB, 0x4FD2FD, 0xF6F5F4,
-	},
-}
 
 // rgba packs 0xRRGGBB as RGBA8 with R in the low byte (GL_UNSIGNED_BYTE x4).
 func rgba(rgb uint32) uint32 {
 	return rgb>>16&0xff | rgb&0xff00 | (rgb&0xff)<<16 | 0xff<<24
 }
+
+// unrgba returns an RGBA8 colour as 0xRRGGBB.
+func unrgba(c uint32) uint32 { return c&0xff<<16 | c&0xff00 | c>>16&0xff }
 
 // selState is the session's selection, normalized (start before end).
 type selState struct {
@@ -62,8 +53,9 @@ type termView struct {
 	preeditCursor int // cells from the start of the preedit
 	preeditDirty  bool
 
+	colors   *theme.Theme // the theme in force (App.theme), every colour set
 	colorGen uint64
-	colorsOK bool
+	colorsOK bool        // false after a theme change: loadColors runs again
 	pal      [256]uint32 // RGBA8, with OSC 4 overrides applied
 	defFG    uint32
 	defBG    uint32
@@ -74,7 +66,8 @@ type termView struct {
 	linkGen uint64    // the session's LinkGen when lines last matched the screen
 }
 
-func newTermView() *termView { return &termView{drawnY: -1} }
+// newTermView returns an empty view that draws in the colours of t.
+func newTermView(t *theme.Theme) *termView { return &termView{drawnY: -1, colors: t} }
 
 // pull copies what changed in the session and reports whether anything must
 // be redrawn. The caller holds the session lock; this is the only work done
@@ -206,34 +199,41 @@ func (v *termView) markDirty(y int) {
 	}
 }
 
-// loadColors resolves the palette and default colours, including dynamic
-// overrides (OSC 4/10/11/12). It runs only when ColorGen changes.
+// loadColors resolves the palette and default colours of the theme,
+// with the dynamic overrides (OSC 4/10/11/12) over them. It runs only when
+// ColorGen or the theme changes.
 func (v *termView) loadColors(t vt10x.Terminal) {
+	th := v.colors
 	for i := 0; i < 256; i++ {
-		v.pal[i] = rgba(paletteRGB(i))
+		v.pal[i] = rgba(paletteRGB(th, i))
 		if o, ok := t.ColorOverride(vt10x.Color(i)); ok && o < vt10x.DefaultFG {
 			v.pal[i] = rgba(uint32(o))
 		}
 	}
-	v.defFG, v.defBG = rgba(theme.fg), rgba(theme.bg)
+	v.defFG, v.defBG = rgba(th.Foreground.Hex()), rgba(th.Background.Hex())
 	if o, ok := t.ColorOverride(vt10x.DefaultFG); ok && o < vt10x.DefaultFG {
 		v.defFG = rgba(uint32(o))
 	}
 	if o, ok := t.ColorOverride(vt10x.DefaultBG); ok && o < vt10x.DefaultFG {
 		v.defBG = rgba(uint32(o))
 	}
+	// A block cursor inverts its cell, unless the theme has a cursor
+	// colour of its own or OSC 12 set one.
 	v.defCur, v.curSet = 0, false
+	if th.Cursor != th.Foreground {
+		v.defCur, v.curSet = rgba(th.Cursor.Hex()), true
+	}
 	if o, ok := t.ColorOverride(vt10x.DefaultCursor); ok && o < vt10x.DefaultFG {
 		v.defCur, v.curSet = rgba(uint32(o)), true
 	}
 	v.colorsOK = true
 }
 
-// paletteRGB returns the theme colour for 0-15 and the xterm colour cube and
-// grey ramp for 16-255.
-func paletteRGB(i int) uint32 {
+// paletteRGB returns the colour of palette index i (0xRRGGBB): the
+// theme's colour for 0-15, the xterm colour cube and grey ramp for 16-255.
+func paletteRGB(th *theme.Theme, i int) uint32 {
 	if i < 16 {
-		return theme.palette[i]
+		return th.ANSI[i].Hex()
 	}
 	if i < 232 {
 		n := i - 16

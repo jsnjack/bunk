@@ -52,10 +52,13 @@ func defaultOSCColors(theme resolvedTheme, host hostOSCColors) (fg, bg, cursor s
 		bg = host.bg
 	}
 
-	// bunk's built-in themes do not model a dedicated cursor colour, so the
-	// existing fallback is the theme foreground. In terminal-inherit mode the
-	// foreground is unknown, so only use a host-probed cursor colour.
-	cursor = tcellColorToXParse(theme.fg)
+	// A theme without a cursor colour uses its foreground. In
+	// terminal-inherit mode both are unknown, so only use a host-probed
+	// cursor colour.
+	cursor = tcellColorToXParse(theme.cursor)
+	if cursor == "" {
+		cursor = tcellColorToXParse(theme.fg)
+	}
 	if cursor == "" {
 		cursor = host.cursor
 	}

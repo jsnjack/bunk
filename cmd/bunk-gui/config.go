@@ -13,6 +13,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"bunk/internal/session"
+	"bunk/internal/theme"
 )
 
 // Settings are bunk-gui's user settings, read from an optional TOML file
@@ -23,6 +24,12 @@ import (
 //	font = "Noto Sans Mono"  # terminal font family
 //	font_size = 11           # points
 //	text_zoom = 100          # text size at start and after Ctrl+0, % of font_size
+//	theme = "default"        # a built-in theme or a [themes.NAME] table (internal/theme)
+//
+//	[themes.paper]           # a custom theme, as in bunk's config (theme.Def)
+//	background = "#FDF6E3"
+//	foreground = "#586E75"
+//	palette = ["#073642", …] # 16 colours
 //
 //	[keys]                   # key bindings (see bindings.go for the actions)
 //	switcher = "ctrl+shift+space"
@@ -36,16 +43,19 @@ import (
 //
 // The file is watched: edits apply to the running window.
 type Settings struct {
-	Tabs     string              `toml:"tabs"`
-	RailOpen bool                `toml:"rail_open"`
-	Font     string              `toml:"font"`
-	FontSize float64             `toml:"font_size"`
-	TextZoom float64             `toml:"text_zoom"`
-	Agents   []session.AgentSpec `toml:"agents"`
-	Keys     map[string]any      `toml:"keys"`
+	Tabs     string               `toml:"tabs"`
+	RailOpen bool                 `toml:"rail_open"`
+	Font     string               `toml:"font"`
+	FontSize float64              `toml:"font_size"`
+	TextZoom float64              `toml:"text_zoom"`
+	Theme    string               `toml:"theme"`
+	Themes   map[string]theme.Def `toml:"themes"`
+	Agents   []session.AgentSpec  `toml:"agents"`
+	Keys     map[string]any       `toml:"keys"`
 
 	keymap keymap              // Keys applied to the defaults
 	was    map[string][]string // bindings of disabled actions, from "# was" comments
+	themes *theme.Registry     // the built-in themes and the valid ones of Themes
 }
 
 // startSize is the text size at start and after Ctrl+0: font_size at
@@ -56,7 +66,8 @@ func (st Settings) startSize() float64 {
 
 func defaultSettings() Settings {
 	km, _ := resolveKeys(nil)
-	return Settings{Tabs: "rail", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, keymap: km, was: map[string][]string{}}
+	return Settings{Tabs: "rail", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
+		keymap: km, was: map[string][]string{}}
 }
 
 // configPath is $XDG_CONFIG_HOME/bunk-gui/config.toml.
@@ -121,6 +132,18 @@ func loadSettings(path string) (Settings, error) {
 			st.TextZoom = f.TextZoom
 		} else {
 			problems = append(problems, fmt.Sprintf("text_zoom = %v (want 50-200)", f.TextZoom))
+		}
+	}
+	reg, err := theme.NewRegistry(f.Themes)
+	if err != nil {
+		problems = append(problems, err.Error())
+	}
+	st.Themes, st.themes = f.Themes, reg
+	if md.IsDefined("theme") {
+		if _, ok := reg.Lookup(f.Theme); ok {
+			st.Theme = f.Theme
+		} else {
+			problems = append(problems, fmt.Sprintf("theme = %q (want one of %s)", f.Theme, strings.Join(reg.Names(), ", ")))
 		}
 	}
 	km, keyProblems := resolveKeys(f.Keys)

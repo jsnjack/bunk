@@ -33,7 +33,7 @@ mouse.go            Mouse events → PTY byte sequences
 status.go           Draws the pane badges (rules in internal/badges) in theme
                     colours; agent-state separator colours
 search.go           In-pane search UI (matching is session.FindAll)
-config.go           TOML config, theme registry, keybinding resolution
+config.go           TOML config, the theme in tcell colours, keybinding resolution
 hostcolors.go       Host terminal OSC colour probing
 clipboard.go        OSC 52 clipboard passthrough
 logger.go           Structured logging (slog)
@@ -88,6 +88,10 @@ internal/badges/    Pane status badges for both front ends: which show, their
                     order, text and fitting (Layout); badgetest holds the cases
                     both front ends' parity tests draw
 
+internal/theme/     Colour themes for both front ends: the built-in themes,
+                    custom [themes.NAME] tables, [ui] overrides, and the
+                    colours of badge roles (BadgeInks) and agent states
+
 internal/notify/    Agent hook reports: Unix socket server (token → Session),
                     client, `notify` CLI (RunCLI), hook snippets per agent
 
@@ -106,6 +110,10 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
   cmd_notify.go     "bunk-gui notify": the agent hook CLI (notify.RunCLI)
   logger.go         slog setup for --debug and --trace; GLib messages arrive through slog
   app.go            App struct, window activation, test-run hooks and statistics
+  themes.go         The theme shown: terminal colours, the CSS of the content
+                    background, dividers and badges; repaints on a change
+  prefs_theme.go    The Theme section of Preferences: a choice per theme with
+                    a preview of its colours
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
@@ -361,7 +369,11 @@ a missing default file uses built-in defaults.
 
 These are the key fields agents may need to know about:
 - `theme` is a built-in name (`terminal`, `default`, `solarized-dark`,
-  `dracula`, `nord`) or a custom palette.
+  `dracula`, `nord`) or the name of a custom theme. A `[themes.NAME]` table
+  defines one with `background`, `foreground` and 16 `palette` colours;
+  `cursor` and the border and scrollbar colours are optional
+  (`internal/theme`, `Def`). An unknown name or an invalid table is logged
+  at startup, and bunk uses the default theme.
 - `scrollback` is the per-pane scrollback line cap (default 10 000).
 - `log_file` is the destination for `--debug` / `--trace` output (default
   `/tmp/bunk.log`).
@@ -369,12 +381,15 @@ These are the key fields agents may need to know about:
   doesn't answer the pixel-size query.
 - `[keys]` overrides split / zoom / quit / search / copy / paste /
   next_needs_you; "none" disables an action and sends its key to the pane.
-- `[ui]` holds hex colour overrides for borders and scrollbar.
+- `[ui]` holds hex colour overrides for borders and scrollbar. An invalid
+  value is logged, and the theme's colour stays.
 
 `config.go` is the authoritative reference for every field and its default.
 
 bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
-`rail_open`, `font`, `font_size`, `text_zoom`, `[[agents]]` and `[keys]`. `[keys]` uses
+`rail_open`, `font`, `font_size`, `text_zoom`, `theme`, `[themes.NAME]`,
+`[[agents]]` and `[keys]`. `theme` and `[themes.NAME]` work as in bunk's
+config, and `--theme` overrides `theme` for one run. `[keys]` uses
 bunk's action names and key syntax where they overlap; "none" sends the key
 to the terminal. The file is watched and reloads live, and a bad value shows
 a toast and keeps the default. The shortcuts window (Ctrl+Shift+?) and the
@@ -395,9 +410,11 @@ its default.
 - Pane badges come from `internal/badges`, for both front ends.
   - `badges.Layout` decides which badges show, their order, text and fitting
     from plain pane state. Each badge has a `Role`.
-  - The front ends only paint. The TUI maps roles to theme colours
-    (`badgeStyle`, status.go), and bunk-gui maps them to its palette
-    (`badgeLook`, cmd/bunk-gui/badge.go) the same way.
+  - The front ends only paint. `theme.BadgeInks` names each role's colours:
+    palette slots, most backgrounds blended `theme.BadgeDim` (40%) toward
+    the theme background, and fixed agent colours. The TUI resolves them in
+    tcell colours (`badgeStyle`, status.go), and bunk-gui through
+    `Theme.Badge` (`badgeLook`, cmd/bunk-gui/badge.go).
   - Add a badge in `internal/badges`, never in one front end, and add a case
     to `badgetest.Cases`. `TestBadgeParityTUI` and `TestBadgeParityGUI` both
     draw every case, so the front ends cannot drift apart.
@@ -407,6 +424,36 @@ its default.
   - The find bar keeps the top right, and the badges sit right below it while
     it is open. A badge that appears while a query is typed never moves the
     bar.
+
+- Themes come from `internal/theme`, for both front ends.
+  - `theme.NewRegistry` holds the built-in themes and a config's
+    `[themes.NAME]` tables, and `Registry.Select` picks one and applies
+    `[ui]` overrides. Problems come back as a `*theme.Error`, and the theme
+    falls back to the default one. The TUI logs them; bunk-gui shows the
+    settings toast.
+  - A `theme.Color` is 0xRRGGBB with a set bit. Its zero value, `Unset`,
+    leaves the colour to the host terminal; the `terminal` theme leaves
+    every colour unset, and the TUI probes the host's colours.
+  - bunk-gui has no host terminal, so it shows every theme
+    `Filled` from the default theme. There, `terminal` looks like
+    `default`, the colours bunk-gui had before themes existed. bunk-gui
+    forces libadwaita's dark style, so a theme that followed the desktop's
+    light or dark preference would always be dark.
+  - In bunk-gui the theme sets the ANSI palette, the default foreground,
+    background and cursor, the badge colours, the content background and
+    the dividers between panes (`InactiveBorder`). The rail, the bar and
+    the dialogs keep libadwaita's dark style. Programs' OSC 4/10/11/12
+    colours stay in front of the theme.
+  - A theme change in bunk-gui (Preferences, a config edit) restyles the
+    CSS and repaints each pane once: `Pane.themeChanged` reloads the
+    colours and marks every row dirty. An idle window then draws no frames.
+  - `TestThemesMatchOldConfig` compares the TUI's colours with the code
+    from before the move (`theme_oracle_test.go`) for every built-in theme.
+    `TestThemeParityTUI` and `TestThemeParityGUI` check both front ends
+    against `internal/theme`, so they show the same colours.
+  - In the `terminal` theme, the TUI blends a dimmed badge background from
+    unset colours as tcell's RGB of them, -1 per channel, which gives white.
+    The oracle keeps this behaviour.
 
 - The PTY is one column narrower than the pane. The rightmost column
   (`p.x + p.w - 1`) is reserved for the scrollbar; the PTY never writes there.

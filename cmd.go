@@ -6,10 +6,12 @@ package main
 
 import (
 	"bunk/internal/notify"
+	"bunk/internal/theme"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/spf13/cobra"
@@ -41,7 +43,7 @@ func bunkLogo() string {
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path (default: ~/.config/bunk/config.toml)")
-	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
+	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "theme `NAME`: "+strings.Join(theme.BuiltinNames(), ", ")+", or a [themes.NAME] table of the config")
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug-level logging")
 	rootCmd.PersistentFlags().BoolVar(&flagTrace, "trace", false, "enable trace-level logging (logs raw PTY byte chunks)")
 	// Declared here so cobra does not add its -v shorthand.
@@ -126,7 +128,10 @@ func run(configPath, themeName string, debug, trace bool) error {
 	cleanup := initLogger(logFile, logLevel)
 	defer cleanup()
 
-	L.Info("bunk starting", "theme", themeName, "log_level", logLevel)
+	L.Info("bunk starting", "theme", cfg.ThemeName, "log_level", logLevel)
+	if cfg.ThemeErr != nil {
+		L.Warn("config: theme settings", "err", cfg.ThemeErr)
+	}
 
 	// Query cell aspect ratio BEFORE screen.Init() — after Init tcell owns
 	// stdin and we must not read from it directly.

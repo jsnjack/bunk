@@ -1,8 +1,8 @@
 // Package badges decides the status badges at the top right of a pane:
 // which show, their order, their text and how they shrink to fit. Both
 // front ends draw the Row that Layout returns, so a badge reads and fits
-// the same in bunk's TUI and in bunk-gui. Colours stay with each front
-// end, which paints a badge by its Role.
+// the same in bunk's TUI and in bunk-gui. Each front end paints a badge
+// by its Role, in the colours internal/theme gives the role.
 package badges
 
 import (

@@ -24,6 +24,10 @@ type frameFixture struct {
 	fr   *fakeRaster
 }
 
+// testTheme is the default theme, which bunk-gui shows without a theme
+// setting.
+var testTheme = defaultTheme()
+
 // newFixture builds the main-thread frame path without GTK, GL or a PTY: a
 // session around a vt10x terminal (with scrollback), the termView copy and
 // a Renderer that only holds instances.
@@ -33,7 +37,7 @@ func newFixture(cols, rows int) *frameFixture {
 	r := &Renderer{atlas: a, cols: cols, rows: rows, inst: make([]Instance, cols*rows), rowDirty: make([]bool, rows)}
 	s := &session.Session{ScrollbackLines: 1000, Scrollback: session.Ring{MaxLines: 1000}}
 	s.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(s.OnScrollRow), vt10x.WithLinkReferences(s.MarkLinks))
-	return &frameFixture{s: s, term: s.Term, tv: newTermView(), r: r, fr: fr}
+	return &frameFixture{s: s, term: s.Term, tv: newTermView(&testTheme), r: r, fr: fr}
 }
 
 func (f *frameFixture) frame() (bool, int) {
@@ -56,7 +60,7 @@ func TestConvertColoursAndAttributes(t *testing.T) {
 	f.write("\x1b[31mR\x1b[0m\x1b[48;2;1;2;3mT\x1b[0m\x1b[1mB\x1b[0mb\x1b[4mU\x1b[0m\x1b[7mV\x1b[0m\x1b[38;5;196mP\x1b[0m\x1b[2mD\x1b[0m")
 	f.frame()
 	tv := f.tv
-	if got := f.cell(0, 0); got.FG != rgba(theme.palette[1]) || got.BG != rgba(theme.bg) {
+	if got := f.cell(0, 0); got.FG != rgba(testTheme.ANSI[1].Hex()) || got.BG != rgba(testTheme.Background.Hex()) {
 		t.Errorf("red R: fg %08x bg %08x", got.FG, got.BG)
 	}
 	if got := f.cell(1, 0); got.BG != rgba(0x010203) || got.FG != tv.defFG {
@@ -69,11 +73,11 @@ func TestConvertColoursAndAttributes(t *testing.T) {
 	if f.cell(4, 0).Glyph&flagUnderline == 0 {
 		t.Error("underlined U has no underline flag")
 	}
-	if got := f.cell(5, 0); got.FG != rgba(theme.bg) || got.BG != rgba(theme.fg) {
+	if got := f.cell(5, 0); got.FG != rgba(testTheme.Background.Hex()) || got.BG != rgba(testTheme.Foreground.Hex()) {
 		t.Errorf("reverse V: fg %08x bg %08x, want swapped defaults", got.FG, got.BG)
 	}
-	if got := f.cell(6, 0); got.FG != rgba(paletteRGB(196)) {
-		t.Errorf("256-colour P: fg %08x want %08x", got.FG, rgba(paletteRGB(196)))
+	if got := f.cell(6, 0); got.FG != rgba(paletteRGB(&testTheme, 196)) {
+		t.Errorf("256-colour P: fg %08x want %08x", got.FG, rgba(paletteRGB(&testTheme, 196)))
 	}
 	if got := f.cell(7, 0); got.FG == tv.defFG {
 		t.Error("dim D kept the full foreground")

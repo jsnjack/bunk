@@ -181,7 +181,7 @@ func TestGUIPassthrough(t *testing.T) {
 		t.Fatalf("passthrough on: pane %+v, tab 1 pass %v, tab 2 pass %v, menu check %v", p, on.tab(t, 1).Pass, on.tab(t, 2).Pass, on.MenuPassCheck)
 	}
 	// The PASS badge is the first of the pane's badge row (badge.go).
-	_, bg, _ := badgeLook(badges.RolePass)
+	_, bg, _ := badgeLook(&testTheme, badges.RolePass)
 	badge := hex(bg)
 	img := loadPNG(t, g.file("on.png"))
 	x, y, w, h := inner(p.Badges[0].Rect, 1)

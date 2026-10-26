@@ -2,10 +2,11 @@ package main
 
 // Per-pane status badges, as in bunk's TUI: internal/badges decides which
 // show, their order, text and fitting from the pane's state and width in
-// cells; here they become GTK widgets in a row at the top right of the
-// pane, over its texture, in the terminal font. Changing a badge changes
-// those widgets only: GSK reuses the pane's texture, so the pane draws no
-// frame.
+// cells, and internal/theme their colours; here they become GTK widgets in
+// a row at the top right of the pane, over its texture, in the terminal
+// font. Changing a badge changes those widgets only: GSK reuses the pane's
+// texture, so the pane draws no frame. A theme change restyles them
+// through the theme's CSS (themes.go).
 //
 // The row follows the pane's state after every frame (App.syncBadges, from
 // after-paint), which is where scrolling and a new grid width show up, and
@@ -26,70 +27,25 @@ import (
 	"github.com/rivo/uniseg"
 
 	"bunk/internal/badges"
+	"bunk/internal/theme"
 )
 
-// Agent badge colours (0xRRGGBB), those of the chrome's state classes
-// and of bunk's TUI; they do not follow the palette.
-const (
-	agentBadgeBG = 0x24262b // background of the quiet states
-	agentInk     = 0x131416 // text on the needs-you and done badges
-	agentWorking = 0x5aa9ff
-	agentNeeds   = 0xffb454
-	agentIdle    = 0x9aa0a8
-	agentFailed  = 0xff8a8a
-	agentDone    = 0x7ee2a8
-)
-
-// dimRGB blends c 40% toward the terminal background, as bunk's TUI
-// softens badge backgrounds.
-func dimRGB(c uint32) uint32 {
-	mix := func(shift uint) uint32 {
-		a, b := c>>shift&0xff, theme.bg>>shift&0xff
-		return (a*60 + b*40) / 100 << shift
-	}
-	return mix(16) | mix(8) | mix(0)
-}
-
-// badgeLook returns how a badge of role is painted: text and background
-// colours (0xRRGGBB) and bold. They follow bunk's TUI over the palette
-// both front ends share (theme).
-func badgeLook(role badges.Role) (fg, bg uint32, bold bool) {
-	text, yellow, dark := theme.palette[7], theme.palette[3], theme.palette[0]
-	switch role {
-	case badges.RolePass, badges.RoleContainer:
-		return text, dimRGB(theme.palette[6]), true
-	case badges.RoleScroll, badges.RoleZoom:
-		return yellow, dark, true
-	case badges.RoleSudo:
-		return text, dimRGB(theme.palette[1]), true
-	case badges.RoleSSH:
-		return text, dimRGB(theme.palette[4]), true
-	case badges.RoleMosh:
-		return text, dark, true
-	case badges.RoleFlash:
-		return text, dimRGB(theme.palette[2]), true
-	case badges.RoleWorking:
-		return agentWorking, agentBadgeBG, false
-	case badges.RoleIdle:
-		return agentIdle, agentBadgeBG, false
-	case badges.RoleFailed:
-		return agentFailed, agentBadgeBG, true
-	case badges.RoleNeedsYou:
-		return agentInk, agentNeeds, true
-	case badges.RoleDone:
-		return agentInk, agentDone, true
-	}
-	return theme.fg, theme.bg, false
+// badgeLook returns how a badge of role is painted in theme t: text and
+// background colours (0xRRGGBB) and bold, as internal/theme gives them to
+// both front ends.
+func badgeLook(t *theme.Theme, role badges.Role) (fg, bg uint32, bold bool) {
+	f, b, bold := t.Badge(role)
+	return f.Hex(), b.Hex(), bold
 }
 
 // badgeClass is the CSS class of a role's colours.
 func badgeClass(role badges.Role) string { return "badge-" + role.String() }
 
-// badgeCSS styles each role's class with its colours.
-func badgeCSS() string {
+// badgeCSS styles each role's class with its colours in theme t.
+func badgeCSS(t *theme.Theme) string {
 	var b strings.Builder
 	for _, r := range badges.Roles {
-		fg, bg, bold := badgeLook(r)
+		fg, bg, bold := badgeLook(t, r)
 		weight := 400
 		if bold {
 			weight = 700

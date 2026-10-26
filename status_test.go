@@ -107,8 +107,8 @@ func simScreen(t *testing.T, w, h int) tcell.SimulationScreen {
 func TestBadgesMatchOldRenderer(t *testing.T) {
 	themes := map[string]resolvedTheme{
 		"test":           testTheme(),
-		"default":        resolveTheme(BuiltinThemes["default"]),
-		"solarized-dark": resolveTheme(BuiltinThemes["solarized-dark"]),
+		"default":        builtinTheme("default"),
+		"solarized-dark": builtinTheme("solarized-dark"),
 	}
 	states := randomBadgeStates(3000)
 	every := badgeState{pass: true, scroll: 7, agent: paneAgent{"claude", session.AgentNeedsYou, "Approve edit to main.go?"},
@@ -145,7 +145,7 @@ func TestBadgesMatchOldRenderer(t *testing.T) {
 // style, nothing else on the row. bunk-gui's TestBadgeParityGUI checks the
 // same cases, so both front ends show the same badges.
 func TestBadgeParityTUI(t *testing.T) {
-	rt := resolveTheme(BuiltinThemes["default"])
+	rt := builtinTheme("default")
 	p := regressionPane(10, 2)
 	for _, c := range badgetest.Cases {
 		t.Run(c.Name, func(t *testing.T) {
@@ -184,7 +184,7 @@ func TestBadgeParityTUI(t *testing.T) {
 // TestBadgeLooksTUI: under bunk's "default" theme each role has the
 // colours in badgetest.DefaultLooks, which bunk-gui's badges use too.
 func TestBadgeLooksTUI(t *testing.T) {
-	rt := resolveTheme(BuiltinThemes["default"])
+	rt := builtinTheme("default")
 	hex := func(c tcell.Color) uint32 {
 		r, g, b := c.RGB()
 		return uint32(r)<<16 | uint32(g)<<8 | uint32(b)

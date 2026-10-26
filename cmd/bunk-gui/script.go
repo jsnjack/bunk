@@ -75,6 +75,7 @@ import (
 //	status-clear [tab=N|pane=ID]
 //	run CMD                          a shell command, e.g. to edit config.toml
 //	shortcut-scroll ACTION           scroll the shortcuts window to a row
+//	pref-scroll NAME                 scroll the preferences window to a control
 //	quit-dialog cancel               close the quit dialog
 //	dialog-close                     close the open dialog (quit, shortcuts, preferences, About)
 //	maximize | unmaximize | quit
@@ -461,6 +462,12 @@ func (a *App) doAction(action string, done func()) {
 			return
 		}
 		check(a.shortcutsWin.scrollTo(arg))
+	case "pref-scroll":
+		if a.prefsWin == nil {
+			a.reportError("%s: the preferences window is not open", action)
+			return
+		}
+		check(a.prefsWin.scrollTo(arg))
 	case "quit-dialog":
 		if a.quitDialog == nil {
 			a.reportError("%s: no quit dialog", action)

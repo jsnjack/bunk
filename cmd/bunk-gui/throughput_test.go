@@ -24,7 +24,7 @@ func TestSessionThroughput(t *testing.T) {
 	s := &session.Session{ScrollbackLines: session.DefaultScrollbackLines}
 	s.Scrollback = session.Ring{MaxLines: s.ScrollbackLines}
 	s.Term = vt10x.New(vt10x.WithSize(120, 36), vt10x.WithScrollCallback(s.OnScrollRow))
-	tv := newTermView()
+	tv := newTermView(&testTheme)
 	f := newFixture(120, 36)
 	start := time.Now()
 	frames := 0

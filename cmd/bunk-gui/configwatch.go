@@ -1,8 +1,9 @@
 package main
 
 // config.toml is watched: edits apply to the running window. Key bindings
-// always reload; the layout and the font apply when the file changed them
-// (and no command-line flag set them).
+// and the theme always reload (--theme keeps its theme, whose colours a
+// [themes.NAME] table may change); the layout and the font apply when the
+// file changed them (and no command-line flag set them).
 
 import (
 	"context"
@@ -46,6 +47,10 @@ func (a *App) reloadSettings() {
 	a.rep.Reloads++
 	a.settings.Keys, a.settings.keymap, a.settings.was = st.Keys, st.keymap, st.was
 	a.settings.Agents = st.Agents
+	a.settings.Theme, a.settings.Themes, a.settings.themes = st.Theme, st.Themes, st.themes
+	if t, err := a.selectTheme(); err == nil {
+		a.applyTheme(t)
+	}
 	if (st.Font != old.Font || st.FontSize != old.FontSize || st.TextZoom != old.TextZoom) && a.cfg.font == "" {
 		a.settings.Font, a.settings.FontSize, a.settings.TextZoom = st.Font, st.FontSize, st.TextZoom
 		a.fontSize = st.startSize()

@@ -1,9 +1,10 @@
 package main
 
 // The preferences window (action "preferences"): layout, the rail, the
-// font and the default text zoom, and the [[agents]] list. Every change is
-// written into config.toml at once by the line editor (keysfile.go), so
-// the user's comments and order stay; the reload applies it.
+// font and the default text zoom, the theme, and the [[agents]] list.
+// Every change is written into config.toml at once by the line editor
+// (keysfile.go), so the user's comments and order stay; the reload
+// applies it.
 
 import (
 	"context"
@@ -37,6 +38,9 @@ type prefsWindow struct {
 	railOpen          *gtk.Switch
 	font              *gtk.Entry
 	fontSize, zoom    *gtk.SpinButton
+	themes            []themeChoice // the Theme section (prefs_theme.go)
+	scroll            *gtk.ScrolledWindow
+	content           *gtk.Box // the scrolled content
 }
 
 type agentRow struct {
@@ -118,6 +122,8 @@ func (a *App) showPreferences() {
 	})
 	box.Append(prefRow("Default text zoom (%)", w.zoom))
 
+	w.addThemeSection(box, st)
+
 	box.Append(heading("Agents"))
 	hint := label("Agent CLIs to recognise besides the built-in ones: a name, and process names or script paths (comma separated).", "statelabel")
 	hint.SetWrap(true)
@@ -136,10 +142,10 @@ func (a *App) showPreferences() {
 	w.loadAgents()
 	w.syncing = false
 
-	scroll := gtk.NewScrolledWindow()
-	scroll.SetVExpand(true)
-	scroll.SetChild(box)
-	view.SetContent(scroll)
+	w.scroll, w.content = gtk.NewScrolledWindow(), box
+	w.scroll.SetVExpand(true)
+	w.scroll.SetChild(box)
+	view.SetContent(w.scroll)
 	w.dlg.SetChild(view)
 	w.dlg.ConnectClosed(func() {
 		a.prefsWin = nil
@@ -149,6 +155,20 @@ func (a *App) showPreferences() {
 	})
 	a.prefsWin = w
 	w.dlg.Present(a.win)
+}
+
+// scrollTo brings a control into view (tests aim the pointer at it).
+func (w *prefsWindow) scrollTo(name string) error {
+	c, ok := w.controls[name]
+	if !ok {
+		return errors.New("no preference control " + name)
+	}
+	b, ok := gtk.BaseWidget(c).ComputeBounds(w.content)
+	if !ok {
+		return errors.New("preference control not laid out")
+	}
+	w.scroll.VAdjustment().SetValue(float64(b.Y()) - 60)
+	return nil
 }
 
 func heading(text string) *gtk.Label {

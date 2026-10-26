@@ -22,7 +22,7 @@ import (
 // (Main.dc.html: rail, Horizontal.dc.html: bar): colours, sizes, glyphs,
 // menu items and shortcuts come from there.
 const chromeCSS = `
-window.bunk-window, .bunk-content { background: #16171a; }
+window.bunk-window { background: #16171a; }
 .bunk-bar { background: #131416; border-bottom: 1px solid #24262b; min-height: 43px; padding: 0 6px; }
 .bunk-rail { background: #131416; border-right: 1px solid #24262b; }
 .bunk-rail.collapsed { min-width: 47px; padding: 8px 0; }
@@ -96,7 +96,7 @@ button.switchrow.active { background: #26292f; }
 button.switchrow:hover { background: #23252a; }
 button.switchclose { min-height: 36px; padding: 0 12px; border: 1px solid #34373e; border-radius: 6px; background: none;
 	color: #b4b9c1; box-shadow: none; margin-top: 4px; }
-paned > separator { min-width: 1px; min-height: 1px; background: #2a2c31; }
+paned > separator { min-width: 1px; min-height: 1px; }
 .shortcutrow { padding: 6px 4px; border-bottom: 1px solid #2a2c31; }
 .shortcutdesc { font-size: 14px; color: #e6e8eb; }
 .collide { color: #ffb454; font-size: 15px; }
@@ -105,12 +105,15 @@ button.tabbtn label, button.rowbtn label, button.menuitem label, button.switchro
 button label.agent { font-weight: 600; }
 `
 
+// loadCSS styles the chrome. The colours that follow the theme (the
+// content background, dividers and badges) come from the theme's CSS
+// (themes.go).
 func loadCSS() {
 	// The chrome and the terminal are dark whatever the desktop's style:
 	// popovers, toasts and tooltips follow.
 	adw.StyleManagerGetDefault().SetColorScheme(adw.ColorSchemeForceDark)
 	css := gtk.NewCSSProvider()
-	css.LoadFromString(chromeCSS + badgeCSS()) // badge colours follow the palette (badge.go)
+	css.LoadFromString(chromeCSS)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }
 

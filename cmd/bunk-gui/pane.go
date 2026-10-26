@@ -377,7 +377,7 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 	rowsBuilt := p.tv.convert(p.r)
 	bg := p.tv.defBG
 	p.r.clearRGB = [3]float32{float32(bg&0xff) / 255, float32(bg>>8&0xff) / 255, float32(bg>>16&0xff) / 255}
-	viewSetBGC(p.view, bg&0xff<<16|bg&0xff00|bg>>16&0xff)
+	viewSetBGC(p.view, unrgba(bg))
 	t2 := monoNs()
 
 	slot := -1
