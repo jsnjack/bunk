@@ -286,7 +286,9 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 			"menu open",
 			"wait menu_open=true",
 			"menu-item New window",
-			"wait run.toasts~\"New window is not built yet\"",
+			"wait run.windows.#=1",
+			"kbd ctrl+shift+n",
+			"wait run.windows.#=2",
 			"menu open",
 			"wait menu_open=true",
 			"menu-item Find",
@@ -447,7 +449,10 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 	if s := g.snap("prefs-open"); s.Prefs == nil {
 		t.Error("Preferences: no window")
 	}
-	for _, want := range []string{"No agent needs you", "New window is not built yet"} {
+	if dir, err := filepath.EvalSymlinks(g.dir); err != nil || !slices.Equal(g.Windows, []string{dir, dir}) {
+		t.Errorf("New window and Ctrl+Shift+N opened windows in %q, want two in %q (%v)", g.Windows, dir, err)
+	}
+	for _, want := range []string{"No agent needs you"} {
 		if !slices.ContainsFunc(g.Toasts, func(s string) bool { return strings.HasPrefix(s, want) }) {
 			t.Errorf("no toast %q in %q", want, g.Toasts)
 		}

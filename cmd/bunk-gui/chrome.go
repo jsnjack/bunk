@@ -671,7 +671,6 @@ func (a *App) railHint() string {
 }
 
 func (a *App) menuGroups() [][]menuItem {
-	later := func(what string) func() { return func() { a.toast(what + " is not built yet") } }
 	layout := []menuItem{}
 	if a.layout == "rail" {
 		if a.railOpen {
@@ -689,7 +688,7 @@ func (a *App) menuGroups() [][]menuItem {
 	return [][]menuItem{
 		{
 			{label: "New tab", action: "new_tab", run: func() { a.newTab("", a.cwdForNew()) }},
-			{label: "New window", action: "new_window", run: later("New window")},
+			{label: "New window", action: "new_window", run: a.openWindow},
 			{label: "Close tab", action: "close_tab", run: func() { a.closeTab(a.active) }},
 		},
 		{

@@ -50,6 +50,7 @@ type runReport struct {
 	ConfigError string               `json:"config_error"`
 	Reloads     int                  `json:"reloads"` // config.toml reloads after a change
 	Opened      []string             `json:"opened"`  // links opened (openURL)
+	Windows     []string             `json:"windows"` // directories of new windows (App.openWindow)
 	// Desktop notification calls (postAlert, withdrawAlert) and clicks.
 	Notifications []alertRecord `json:"notifications"`
 }

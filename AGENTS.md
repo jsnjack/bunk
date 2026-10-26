@@ -137,6 +137,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     show-pane action, --report records, preferences section
   desknotify.go     org.freedesktop.Notifications client: replace, withdraw,
                     clicks with their activation token
+  newwindow.go      New window: another bunk-gui process in the pane's
+                    directory, with an activation token
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
@@ -457,6 +459,15 @@ its default; Design Decisions says where the defaults come from.
   - The shortcuts window marks keys terminal programs use (Ctrl+C, Alt+A,
     F2 and others) with ⚠. Passthrough (Ctrl+F12) sends all of them to the
     program.
+
+- Each bunk-gui window is its own process. The application is non-unique,
+  and each process has its own notify socket. New window (Ctrl+Shift+N,
+  the menu) starts bunk-gui again in the active pane's directory, in a new
+  session, with an XDG activation token so the window takes the focus. The
+  desktop entry's `new-window` action gives GNOME Shell's app menu the same
+  item: Shell offers no New Window for a running GTK application without
+  one. On the test compositor the window is recorded in `--report`
+  (`windows`) and not started.
 
 - A bunk-gui tab can hold several agents in split panes. Its label keeps
   the name, repo and location of the first pane with an agent

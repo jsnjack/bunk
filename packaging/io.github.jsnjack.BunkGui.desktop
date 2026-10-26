@@ -10,3 +10,8 @@ Categories=System;TerminalEmulator;
 Keywords=terminal;shell;prompt;command;agent;claude;copilot;codex;tabs;split;
 StartupNotify=true
 StartupWMClass=io.github.jsnjack.BunkGui
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=bunk-gui

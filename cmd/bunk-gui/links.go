@@ -70,13 +70,14 @@ var openURL = func(a *App, uri string) {
 // headlessOnly keeps input injection on it.
 func launchRefused() error {
 	if where := testCompositor(); where != "" {
-		return errors.New("links are not launched on " + where)
+		return errors.New("nothing is launched on " + where)
 	}
 	return nil
 }
 
 // testCompositor names the headless test compositor bunk-gui runs on, or
-// returns "" on a desktop. Links and desktop notifications never leave it.
+// returns "" on a desktop. Links, new windows and desktop notifications
+// never leave it.
 func testCompositor() string {
 	if os.Getenv("BUNK_HEADLESS") != "" {
 		return "the headless test compositor (BUNK_HEADLESS set)"

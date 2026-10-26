@@ -203,7 +203,7 @@ func (a *App) runAction(name string, termKey bool) bool {
 	case "close_tab":
 		return global(func() { a.closeTab(t) })
 	case "new_window":
-		return global(func() { a.toast("New window is not built yet") })
+		return global(a.openWindow)
 	case "next_tab":
 		return global(func() { a.selectOffset(+1) })
 	case "prev_tab":

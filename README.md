@@ -34,10 +34,6 @@ bunk runs inside any terminal emulator, so it works over SSH and on servers. bun
 
 bunk-gui draws each pane into a texture at the widget's device-pixel size, so text stays on the pixel grid at 133% and other fractional scales.
 
-## In progress
-
-Opening a new window is deferred, and Ctrl+Shift+N shows "not built yet".
-
 ## bunk-gui
 
 <table>
@@ -64,6 +60,7 @@ bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, 
 | Feature | Default keys | Details |
 | :- | :- | :- |
 | New / close tab | F2 / Ctrl+Shift+W | A new tab starts in the current pane's directory |
+| New window | Ctrl+Shift+N | Starts another bunk-gui in the current pane's directory; GNOME's app menu has New Window too |
 | Switch tab | Ctrl+Right / Ctrl+Left, Alt+1…9, Alt+0 | Alt+0 selects tab 10 |
 | Move tab | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn | Moves the selected tab in the rail or the bar |
 | Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
