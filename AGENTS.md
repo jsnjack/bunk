@@ -451,6 +451,10 @@ its default; Design Decisions says where the defaults come from.
     the next Ctrl+C reaches the program; with nothing selected it sends ^C.
     Ctrl+Shift+C always copies. The rule follows `keyCombo.collides`: a copy
     key a terminal program may use falls through without a selection.
+  - Ctrl+V and Ctrl+Shift+V paste text. An image goes as the path of a PNG
+    file in the temporary directory, as in bunk's TUI, and agents attach
+    it. With neither on the clipboard, Ctrl+V sends ^V; Ctrl+Shift+V sends
+    nothing.
   - While the find bar has the keyboard, Ctrl+C and Ctrl+V edit its text,
     and Ctrl+N, Ctrl+P, Enter and Esc step through matches and close it.
     Elsewhere Ctrl+N, Ctrl+P, Enter and Esc reach the program.

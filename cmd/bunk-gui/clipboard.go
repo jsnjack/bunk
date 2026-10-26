@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
+	"log/slog"
+	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -80,16 +83,74 @@ func (a *App) copyPrimary(p *Pane) {
 }
 
 // paste reads the clipboard (or the primary selection) and sends it to the
-// pane: Ctrl+Shift+V and middle click.
-func (a *App) paste(p *Pane, primary bool) {
+// pane: Ctrl+V, Ctrl+Shift+V and middle click. An image goes as the path of
+// a PNG file holding it, as bunk's TUI pastes one: a terminal program
+// cannot read image data, and agents attach an image whose path is pasted.
+// It reports false when the clipboard holds neither text nor an image.
+func (a *App) paste(p *Pane, primary bool) bool {
 	cb := clipboard(primary)
-	cb.ReadTextAsync(context.Background(), func(res gio.AsyncResulter) {
-		text, err := cb.ReadTextFinish(res)
-		if err != nil || text == "" || p.removeOnce {
-			return
+	text, image := clipOffers(cb.Formats())
+	switch {
+	case text:
+		cb.ReadTextAsync(context.Background(), func(res gio.AsyncResulter) {
+			text, err := cb.ReadTextFinish(res)
+			if err != nil || text == "" || p.removeOnce {
+				return
+			}
+			p.paste(text)
+		})
+	case image:
+		cb.ReadTextureAsync(context.Background(), func(res gio.AsyncResulter) {
+			tex, err := cb.ReadTextureFinish(res)
+			if err != nil || p.removeOnce {
+				slog.Debug("paste: read image", "err", err)
+				return
+			}
+			path, err := savePastedImage(gdk.BaseTexture(tex))
+			if err != nil {
+				a.toast("Could not paste the image")
+				slog.Warn("paste: save image", "err", err)
+				return
+			}
+			p.paste(path)
+		})
+	default:
+		return false
+	}
+	return true
+}
+
+// clipOffers reports whether formats offer text and an image. It reads the
+// MIME types itself: gotk4's binding of
+// gdk_content_formats_union_deserialize_gtypes frees formats twice.
+func clipOffers(formats *gdk.ContentFormats) (text, image bool) {
+	text = formats.ContainGType(coreglib.TypeString)
+	image = formats.ContainGType(gdk.GTypeTexture)
+	for _, m := range formats.MIMETypes() {
+		text = text || strings.HasPrefix(m, "text/plain")
+		image = image || strings.HasPrefix(m, "image/")
+	}
+	return text, image
+}
+
+// savePastedImage writes tex to a new PNG file in the temporary directory
+// and returns its path.
+func savePastedImage(tex *gdk.Texture) (string, error) {
+	f, err := os.CreateTemp("", "bunk-paste-*.png")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	if !tex.SaveToPNG(path) {
+		if err := os.Remove(path); err != nil {
+			slog.Debug("paste: remove", "path", path, "err", err)
 		}
-		p.paste(text)
-	})
+		return "", fmt.Errorf("write %s", path)
+	}
+	return path, nil
 }
 
 // paste writes text to the child as one paste.

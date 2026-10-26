@@ -73,7 +73,7 @@ bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, 
 | Move between panes | Alt+arrows | |
 | Find | Ctrl+F or Ctrl+Shift+F | Enter or Ctrl+N: next; Ctrl+P: previous; Esc keeps the scroll position; Ctrl+C and Ctrl+V edit the bar's text |
 | Scrollback | Shift+PgUp / Shift+PgDn | |
-| Copy / paste | Ctrl+C / Ctrl+V, Ctrl+Shift+C / Ctrl+Shift+V | Ctrl+C copies a selection and ends it; with nothing selected it reaches the program. Selecting copies to the primary selection; middle click pastes it |
+| Copy / paste | Ctrl+C / Ctrl+V, Ctrl+Shift+C / Ctrl+Shift+V | Ctrl+C copies a selection and ends it; with nothing selected it reaches the program. An image pastes as the path of a PNG file holding it; with nothing to paste, Ctrl+V reaches the program. Selecting copies to the primary selection; middle click pastes it |
 | Select all | Ctrl+Shift+A | Selects the scrollback and the screen, and copies them to the primary selection |
 | Text size | Ctrl+= / Ctrl+- / Ctrl+0 | |
 | Images | | SIXEL, Kitty and iTerm2 images drawn at full resolution, 1:1 in device pixels |

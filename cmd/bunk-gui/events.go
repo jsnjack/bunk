@@ -166,9 +166,10 @@ func (a *App) modalOpen() bool {
 
 // runAction runs a bound action and reports whether it applied. termKey
 // says the key is one terminal programs use (keyCombo.collides): copy and
-// paste then leave it to the find bar while that has the keyboard, and
-// copy leaves it to the terminal unless text is selected, as bunk's TUI
-// does with Ctrl+C.
+// paste then leave it to the find bar while that has the keyboard. Copy
+// leaves it to the terminal unless text is selected, and paste unless the
+// clipboard holds text or an image, as bunk's TUI does with Ctrl+C and
+// Ctrl+V.
 func (a *App) runAction(name string, termKey bool) bool {
 	t, p := a.active, a.activePane()
 	split := t != nil && t.root != nil && t.root.pane == nil
@@ -270,7 +271,7 @@ func (a *App) runAction(name string, termKey bool) bool {
 		if termKey && a.findFocused() {
 			return false
 		}
-		a.paste(p, false)
+		return a.paste(p, false) || !termKey
 	case "select_all":
 		a.selectAll(p)
 	default:

@@ -4,7 +4,9 @@ package main
 // quitting and agent hook reports.
 
 import (
+	enchex "encoding/hex"
 	"fmt"
+	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -442,6 +444,53 @@ func TestGUITextKeys(t *testing.T) {
 	}
 	if f := g.snap("find-shift").Find; f == nil || !f.Focused || f.Query != "" {
 		t.Errorf("Ctrl+Shift+F: find bar %+v", f)
+	}
+}
+
+// TestGUIPasteImage: Ctrl+V with an image on the clipboard pastes the path
+// of a PNG file holding it, as bunk's TUI does. With nothing on the
+// clipboard Ctrl+V reaches the program as ^V, and Ctrl+Shift+V sends
+// nothing.
+func TestGUIPasteImage(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	g := runGUI(t, scenario{
+		args:  []string{"--size", "100x30", "--command", "python3 keylog.py"},
+		env:   []string{"TMPDIR=" + tmp},
+		files: map[string]string{"keylog.py": keylog},
+		script: []string{
+			"wait pane.0.text~\"keylog ready\"",
+			"clip-image 4 3",
+			"kbd ctrl+v",
+			"wait pane.0.screen~\"keylog ready\\n2f\"",
+			"clip-clear",
+			"kbd ctrl+shift+v",
+			"kbd ctrl+v",
+			"wait pane.0.screen~\"\\n16\"",
+			"snap pasted",
+			"quit",
+		},
+	})
+	// The path may come in more than one read.
+	lines := keylogLines(g.snap("pasted").pane(t, 0))
+	if len(lines) < 2 || lines[len(lines)-1] != "16" {
+		t.Fatalf("the pane read %q, want the image's path, then ^V alone", lines)
+	}
+	b, err := enchex.DecodeString(strings.Join(lines[:len(lines)-1], ""))
+	if err != nil {
+		t.Fatalf("pasted %q: %v", lines, err)
+	}
+	path := string(b)
+	if dir, name := filepath.Split(path); dir != tmp+"/" || !strings.HasPrefix(name, "bunk-paste-") || !strings.HasSuffix(name, ".png") {
+		t.Fatalf("pasted %q, want a bunk-paste-*.png in %s", path, tmp)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if c, err := png.DecodeConfig(f); err != nil || c.Width != 4 || c.Height != 3 {
+		t.Errorf("%s: %dx%d PNG, err %v; want 4x3", path, c.Width, c.Height, err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
 	"bunk/internal/session"
@@ -45,6 +47,7 @@ import (
 //	click|dclick COL ROW [BTN]       click / double click
 //	wheel N                          wheel notches (N > 0: down)
 //	copy | paste | paste-primary | clip TEXT | print-clip | print-primary
+//	clip-image W H | clip-clear      a W×H image on the clipboard / nothing
 //	typing start DUR | typing stop   write 'x' to the focused pane every DUR (latency)
 //
 // Real input through the compositor (window maximized for ptr*); "wait
@@ -311,6 +314,12 @@ func (a *App) doAction(action string, done func()) {
 		a.paste(p, true)
 	case "clip":
 		clipboard(false).SetText(unescape(arg))
+	case "clip-image":
+		w, h := num(0, 1), num(1, 1)
+		px := bytes.Repeat([]byte{0x20, 0x80, 0xe0, 0xff}, w*h)
+		clipboard(false).SetTexture(gdk.NewMemoryTexture(w, h, gdk.MemoryR8G8B8A8, glib.NewBytes(px), uint(4*w)))
+	case "clip-clear":
+		clipboard(false).SetContent(nil)
 	case "print-clip", "print-primary":
 		cb := clipboard(verb == "print-primary")
 		async = true
