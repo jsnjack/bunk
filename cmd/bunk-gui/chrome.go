@@ -472,8 +472,12 @@ func (a *App) cwdForNew() string {
 // the same events (alerts.go).
 func (a *App) refreshChrome() {
 	a.syncAlerts()
-	if a.tabsBox == nil || a.tabDrag != nil && a.tabDrag.active {
-		return // a drag marks the items; its end refreshes
+	if a.tabsBox == nil {
+		return
+	}
+	if d := a.tabDrag; d != nil {
+		d.stale = true // a tab is pressed (tabdrag.go); its release refreshes
+		return
 	}
 	infos := a.tabInfos()
 	var key strings.Builder

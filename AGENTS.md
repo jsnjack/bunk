@@ -464,7 +464,8 @@ its default; Design Decisions says where the defaults come from.
     the rail, the bar, Alt+1…0 and the report's tabs. Dragging a tab moves
     it too (`tabdrag.go`): a gesture on the tab list claims the press past
     8 px, so the tab's button never clicks. A line marks the slot, and the
-    release moves the tab. Chrome rebuilds wait until the drag ends.
+    release moves the tab. Chrome rebuilds wait while a tab is pressed, so
+    a status change cannot replace the button being clicked.
   - The shortcuts window marks keys terminal programs use (Ctrl+C, Alt+A,
     F2 and others) with ⚠. Passthrough (Ctrl+F12) sends all of them to the
     program. Each key is a chip: a click captures a key in its place, ×

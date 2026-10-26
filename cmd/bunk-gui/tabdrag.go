@@ -2,9 +2,11 @@ package main
 
 // Tabs move by dragging them in the rail or the bar. A line marks where
 // the tab goes, and the move happens on release. The gesture sits on the
-// tab list, so it outlives the tab items it marks.
+// tab list, so it outlives the tab items it marks. While a tab is pressed,
+// refreshChrome waits: a rebuild would replace the button being clicked.
 
 import (
+	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
@@ -17,6 +19,7 @@ type tabDrag struct {
 	x, y   float64 // the press, in the tab list's coordinates
 	active bool    // past the threshold: the click is cancelled
 	slot   int     // where the tab goes: before the item with this index
+	stale  bool    // refreshChrome waited for the press to end
 	marked gtk.Widgetter
 }
 
@@ -53,7 +56,15 @@ func (a *App) watchTabDrag() {
 	g.ConnectDragEnd(func(dx, dy float64) {
 		d := a.tabDrag
 		a.tabDrag = nil
-		if d == nil || !d.active {
+		if d == nil {
+			return
+		}
+		if !d.active {
+			// A click: the button sees the release after this gesture, so
+			// rebuild after it.
+			if d.stale {
+				coreglib.IdleAdd(a.refreshChrome)
+			}
 			return
 		}
 		a.unmarkDrop(d)

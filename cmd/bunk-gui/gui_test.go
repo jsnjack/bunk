@@ -530,7 +530,9 @@ func TestGUITabDrag(t *testing.T) {
 		args:   []string{"--size", "100x30", "--tab", "", "--tab", "", "--tab", ""},
 		script: []string{
 			"maximize",
-			"wait window.maximized=true tabs.#=4 tab.4.panes.#=1",
+			// Each shell's first status rebuilds the tab items, and a press
+			// right after a rebuild finds no item with a size yet.
+			"wait window.maximized=true tabs.#=4 tab.1.agent=sh tab.2.agent=sh tab.3.agent=sh tab.4.agent=sh",
 			"snap start",
 			"ptr-at tab 1",
 			"ptr-press",
