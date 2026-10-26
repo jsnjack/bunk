@@ -14,6 +14,7 @@ const ProcessPoll = time.Second
 type Timing struct {
 	Poll         time.Duration // foreground-process poll; default ProcessPoll
 	Idle         time.Duration // silence before working turns idle; default IdleAfter
+	Done         time.Duration // a working stretch this long turns done, not idle, when it ends; default DoneAfter
 	HangupGrace  time.Duration // Close: from SIGHUP to killing the group; default HangupGrace
 	RecentlyLeft time.Duration // a failure this soon after the agent left is the agent's; default recentlyLeft
 	SyncRelease  time.Duration // release of an abandoned synchronized update; default SyncUpdateTimeout
@@ -28,6 +29,7 @@ func orDefault(d, def time.Duration) time.Duration {
 
 func (t Timing) poll() time.Duration         { return orDefault(t.Poll, ProcessPoll) }
 func (t Timing) idle() time.Duration         { return orDefault(t.Idle, IdleAfter) }
+func (t Timing) done() time.Duration         { return orDefault(t.Done, DoneAfter) }
 func (t Timing) hangupGrace() time.Duration  { return orDefault(t.HangupGrace, HangupGrace) }
 func (t Timing) recentlyLeft() time.Duration { return orDefault(t.RecentlyLeft, recentlyLeft) }
 func (t Timing) syncRelease() time.Duration  { return orDefault(t.SyncRelease, SyncUpdateTimeout) }

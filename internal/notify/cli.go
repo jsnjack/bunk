@@ -43,7 +43,7 @@ terminal UI or in bunk-gui.
 Events: working, idle, needs-you, done, failed, clear.
 The message is the notice for needs-you, done and failed. "-" reads it
 from stdin. A hook's JSON input gives its "message",
-"last_assistant_message" or similar field.
+"last_assistant_message" or similar field, or the question its tool asks.
 Inside bunk it reports over BUNK_NOTIFY_SOCKET. Without a reachable
 socket, with BUNK_NOTIFY_SESSION set or on a host reached over ssh
 (SSH_CONNECTION set), it writes the report to its terminal for the bunk
@@ -158,8 +158,9 @@ func readStdin(stdin io.Reader) string {
 }
 
 // hookText returns text, or, when text is a JSON object such as a hook's
-// input, its first non-empty hookTextFields value. A JSON object without
-// one, or a cut-off one, gives "".
+// input, its first non-empty hookTextFields value, else what the tool it
+// names asks the user (toolQuestion). A JSON object without either, or a
+// cut-off one, gives "".
 func hookText(text string) string {
 	trimmed := strings.TrimSpace(text)
 	if !strings.HasPrefix(trimmed, "{") {
@@ -185,6 +186,47 @@ func hookText(text string) string {
 		if err := json.Unmarshal(raw, &nested); err == nil && strings.TrimSpace(nested.Message) != "" {
 			return nested.Message
 		}
+	}
+	return toolQuestion(obj)
+}
+
+// planNotice starts the notice of a plan that waits for approval.
+const planNotice = "Approve the plan"
+
+// toolQuestion returns what a tool that waits for the user asks, from a
+// Claude Code PreToolUse input: the first question of AskUserQuestion, or
+// for ExitPlanMode planNotice and the plan's title, its first line without
+// heading marks. Other inputs give "".
+func toolQuestion(obj map[string]json.RawMessage) string {
+	var tool string
+	if err := json.Unmarshal(obj["tool_name"], &tool); err != nil {
+		return ""
+	}
+	var in struct {
+		Questions []struct {
+			Question string `json:"question"`
+		} `json:"questions"`
+		Plan string `json:"plan"`
+	}
+	if err := json.Unmarshal(obj["tool_input"], &in); err != nil {
+		return ""
+	}
+	switch tool {
+	case askUserQuestion:
+		for _, q := range in.Questions {
+			if strings.TrimSpace(q.Question) != "" {
+				return q.Question
+			}
+		}
+	case exitPlanMode:
+		for line := range strings.Lines(in.Plan) {
+			title := strings.TrimSpace(strings.TrimLeft(line, "# \t"))
+			title = strings.TrimSpace(strings.TrimPrefix(title, "Plan:"))
+			if title != "" {
+				return planNotice + ": " + title
+			}
+		}
+		return planNotice
 	}
 	return ""
 }

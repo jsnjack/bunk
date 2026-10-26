@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bunk/internal/alert"
 	"bunk/internal/notify"
 	"bunk/internal/notify/wire"
 	"bunk/internal/session"
@@ -323,6 +324,65 @@ sleep 30
 	app.render()
 	expectBadge(t, scr, 0, w, " ✕ claude failed ", colorAgentFailed, colorAgentBadge)
 	expectBorder(t, scr, sepRow, 0, w, rt.activeBorder)
+}
+
+// TestAgentInferredDoneRealPane runs a fake claude without hooks in a real
+// pane. Its output after a prompt lasts longer than Timing.Done, so when it
+// stops the pane shows done, as for a reported done but without a notice,
+// and the host terminal gets a notification. Focusing the pane
+// acknowledges it.
+func TestAgentInferredDoneRealPane(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\nIFS= read -r line\nfor i in 1 2 3 4 5; do echo \"fake claude working $i\"; sleep 0.2; done\nsleep 30\n"
+	claudePath := filepath.Join(bin, "claude")
+	if err := os.WriteFile(claudePath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const w, h = 100, 20
+	app, scr := newStatusApp(t, w, h)
+	var host bytes.Buffer
+	app.hostOut = &host
+	app.alerts.Settings = alert.Default()
+	app.timing = fastTiming
+	app.timing.Done = time.Millisecond
+	claude := spawn(t, app, 0, 0, w, h/2, claudePath)
+	shell := spawn(t, app, 0, h/2+1, w, h-h/2-1, "/bin/sh", "-c", "sleep 30")
+	app.root = newLeaf(claude, 0, 0, w, h)
+	app.root.split(shell, splitHorizontal)
+	app.active = shell
+	const sepRow = h / 2
+
+	waitStatus(t, scr, claude, "agent detected", func(st session.Status) bool {
+		return st.Agent == "claude" && st.State == session.AgentIdle
+	})
+	if err := claude.WriteInput([]byte("go\r")); err != nil {
+		t.Fatal(err)
+	}
+	st := waitStatus(t, scr, claude, "inferred done", func(st session.Status) bool { return st.State == session.AgentDone })
+	if st.Reported || st.Notice != "" {
+		t.Fatalf("inferred done: %+v, want no report and no notice", st)
+	}
+	app.render()
+	app.render()
+	expectBadge(t, scr, 0, w, " ✓ claude done ", colorAgentInk, colorAgentDone)
+	expectBorder(t, scr, sepRow, 0, w, colorAgentDone)
+	if got := notifications(&host); len(got) != 1 || !strings.HasPrefix(got[0], "\x1b]777;notify;claude is done;Finished its turn") {
+		t.Fatalf("notifications %q, want one that claude is done", got)
+	}
+
+	app.handleKey(keyEv(tcell.KeyUp, tcell.ModAlt))
+	if app.active != claude {
+		t.Fatal("Alt+Up did not focus the claude pane")
+	}
+	if st := claude.Status(); st.State != session.AgentIdle {
+		t.Fatalf("focus did not acknowledge: %+v", st)
+	}
+	app.render()
+	expectBadge(t, scr, 0, w, " ○ claude idle ", colorAgentIdle, colorAgentBadge)
+	if got := notifications(&host); len(got) != 0 {
+		t.Fatalf("notifications after focus: %q", got)
+	}
 }
 
 // captureRowText returns live row y of p's terminal without trailing

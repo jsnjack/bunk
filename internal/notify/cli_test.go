@@ -28,6 +28,12 @@ const (
 	geminiAfterAgent  = `{"session_id":"s","hook_event_name":"AfterAgent","prompt":"fix it","prompt_response":"Done: fixed it.","stop_hook_active":false}`
 	copilotError      = `{"sessionId":"s","timestamp":1,"cwd":"/w","error":{"message":"Network timeout","name":"TimeoutError"},"recoverable":false}`
 	codexPermission   = `{"session_id":"s","hook_event_name":"PermissionRequest","turn_id":"t","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}`
+	claudeQuestion    = `{"session_id":"abc123","hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[` +
+		`{"question":"Which framework?","header":"Framework","options":[{"label":"React","description":"Component library"},` +
+		`{"label":"Vue","description":"Progressive framework"}],"multiSelect":false},` +
+		`{"question":"Which bundler?","header":"Bundler","options":[{"label":"Vite"},{"label":"esbuild"}]}]},"tool_use_id":"toolu_01"}`
+	claudePlan = `{"session_id":"abc123","hook_event_name":"PreToolUse","tool_name":"ExitPlanMode",` +
+		`"tool_input":{"plan":"\n# Plan: Infer done from output\n\n1. Track the working stretch.\n","planFilePath":"/home/u/.claude/plans/p.md"},"tool_use_id":"toolu_02"}`
 )
 
 func TestCLI(t *testing.T) {
@@ -108,6 +114,16 @@ func TestCLI(t *testing.T) {
 		{name: "Gemini AfterAgent on stdin", args: []string{"done", "-"}, env: inside, stdin: geminiAfterAgent, want: &report{session.EventDone, "Done: fixed it."}},
 		{name: "error object on stdin", args: []string{"failed", "-"}, env: inside, stdin: copilotError, want: &report{session.EventFailed, "Network timeout"}},
 		{name: "hook JSON without text", args: []string{"needs-you", "-"}, env: inside, stdin: codexPermission, want: &report{session.EventNeedsYou, ""}},
+		{name: "Claude question on stdin", args: []string{"needs-you", "-"}, env: inside, stdin: claudeQuestion,
+			want: &report{session.EventNeedsYou, "Which framework?"}},
+		{name: "Claude plan on stdin", args: []string{"needs-you", "-"}, env: inside, stdin: claudePlan,
+			want: &report{session.EventNeedsYou, "Approve the plan: Infer done from output"}},
+		{name: "Claude plan without text", args: []string{"needs-you", "-"}, env: inside,
+			stdin: `{"hook_event_name":"PreToolUse","tool_name":"ExitPlanMode","tool_input":{"plan":"# Plan:\n"}}`,
+			want:  &report{session.EventNeedsYou, "Approve the plan"}},
+		{name: "question of another tool", args: []string{"needs-you", "-"}, env: inside,
+			stdin: `{"hook_event_name":"PreToolUse","tool_name":"mcp__survey__ask","tool_input":{"questions":[{"question":"Rate us?"}]}}`,
+			want:  &report{session.EventNeedsYou, ""}},
 		{name: "cut-off hook JSON", args: []string{"done", "-"}, env: inside, stdin: claudeStop[:40], want: &report{session.EventDone, ""}},
 		{name: "plain text on stdin", args: []string{"failed", "-"}, env: inside, stdin: "make: *** [test] Error 1\n", want: &report{session.EventFailed, "make: *** [test] Error 1"}},
 		{name: "list hook agents", args: []string{"hooks"}, stdout: "claude"},
@@ -273,14 +289,15 @@ func codexNotifyArgv(t *testing.T, snippet string) []string {
 
 // TestHookSnippets parses each agent's snippet and runs every hook command
 // with sh. Outside bunk it succeeds without running anything. Inside it runs
-// "bunk notify" with the recipe's arguments, or "bunk-gui notify" when bunk
-// is not on PATH. The Codex notify program passes Codex's JSON payload on.
+// "bunk-gui notify" with the recipe's arguments, or "bunk notify" when
+// bunk-gui is not on PATH, as on a server reached over ssh. The Codex
+// notify program passes Codex's JSON payload on.
 func TestHookSnippets(t *testing.T) {
 	t.Parallel()
-	both, guiOnly := t.TempDir(), t.TempDir()
+	both, guiOnly, tuiOnly := t.TempDir(), t.TempDir(), t.TempDir()
 	out := filepath.Join(t.TempDir(), "calls")
 	fake := "#!/bin/sh\nprintf '%s %s\\n' \"${0##*/}\" \"$*\" >> \"$OUT\"\n"
-	for _, f := range []string{filepath.Join(both, "bunk"), filepath.Join(both, "bunk-gui"), filepath.Join(guiOnly, "bunk-gui")} {
+	for _, f := range []string{filepath.Join(both, "bunk"), filepath.Join(both, "bunk-gui"), filepath.Join(guiOnly, "bunk-gui"), filepath.Join(tuiOnly, "bunk")} {
 		if err := os.WriteFile(f, []byte(fake), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -326,10 +343,12 @@ func TestHookSnippets(t *testing.T) {
 				}{
 					{"outside bunk", []string{"PATH=" + empty}, ""},
 					{"outside bunk with bunk installed", []string{"PATH=" + both}, ""},
-					{"inside bunk", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk notify " + h.args + "\n"},
+					{"inside bunk with both binaries", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk-gui notify " + h.args + "\n"},
 					{"inside bunk-gui without bunk", []string{"PATH=" + guiOnly, EnvSession + "=tok"}, "bunk-gui notify " + h.args + "\n"},
+					{"inside bunk without bunk-gui", []string{"PATH=" + tuiOnly, EnvSession + "=tok"}, "bunk notify " + h.args + "\n"},
 					{"inside bunk without either binary", []string{"PATH=" + empty, EnvSession + "=tok"}, ""},
-					{"over ssh", []string{"PATH=" + both, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, "bunk notify " + h.args + "\n"},
+					{"over ssh", []string{"PATH=" + tuiOnly, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, "bunk notify " + h.args + "\n"},
+					{"over ssh with both binaries", []string{"PATH=" + both, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, "bunk-gui notify " + h.args + "\n"},
 					{"over ssh without bunk", []string{"PATH=" + empty, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, ""},
 				} {
 					if got := run(t, []string{"/bin/sh", "-c", cmd}, tc.env); got != tc.want {
@@ -348,8 +367,8 @@ func TestHookSnippets(t *testing.T) {
 			}{
 				{"outside bunk", []string{"PATH=" + empty}, ""},
 				{"over ssh without bunk", []string{"PATH=" + empty, envSSH + "=x"}, ""},
-				{"over ssh", []string{"PATH=" + guiOnly, envSSH + "=x"}, "bunk-gui notify done " + codexNotify + "\n"},
-				{"inside bunk", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk notify done " + codexNotify + "\n"},
+				{"over ssh", []string{"PATH=" + tuiOnly, envSSH + "=x"}, "bunk notify done " + codexNotify + "\n"},
+				{"inside bunk with both binaries", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk-gui notify done " + codexNotify + "\n"},
 				{"inside bunk-gui without bunk", []string{"PATH=" + guiOnly, EnvSession + "=tok"}, "bunk-gui notify done " + codexNotify + "\n"},
 			} {
 				if got := run(t, argv, tc.env); got != tc.want {
@@ -361,6 +380,67 @@ func TestHookSnippets(t *testing.T) {
 	if _, ok := HookSnippet("emacs"); ok {
 		t.Fatal("snippet for an unknown agent")
 	}
+}
+
+// TestClaudeQuestionHooks runs the Claude snippet's PreToolUse and
+// PostToolUse commands with the real CLI (this test binary as bunk-gui) and
+// Claude Code's hook input: a question or a plan reports needs-you with the
+// question as the notice, and the answer reports work again. The commands
+// print nothing, so Claude Code reads no permission decision from them.
+func TestClaudeQuestionHooks(t *testing.T) {
+	srv, token, target := startServer(t)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	wrapper := "#!/bin/sh\n[ \"$1\" = notify ] && shift\nGORACE=\"$GORACE atexit_sleep_ms=0\" " + cliHelperEnv + "=1 exec '" + exe + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "bunk-gui"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snippet, _ := HookSnippet("claude")
+	var cfg struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal([]byte(snippet), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	command := func(event string) string {
+		t.Helper()
+		groups := cfg.Hooks[event]
+		if len(groups) != 1 || groups[0].Matcher != "AskUserQuestion|ExitPlanMode" || len(groups[0].Hooks) != 1 {
+			t.Fatalf("%s hooks %+v, want one group matching AskUserQuestion and ExitPlanMode", event, groups)
+		}
+		return groups[0].Hooks[0].Command
+	}
+	postAnswer := `{"session_id":"abc123","hook_event_name":"PostToolUse","tool_name":"AskUserQuestion",` +
+		`"tool_input":{"questions":[{"question":"Which framework?"}]},"tool_response":{"answers":{"Which framework?":"React"}}}`
+	for _, tc := range []struct {
+		name, event, input string
+		want               report
+	}{
+		{"question shown", "PreToolUse", claudeQuestion, report{session.EventNeedsYou, "Which framework?"}},
+		{"question answered", "PostToolUse", postAnswer, report{session.EventWorking, ""}},
+		{"plan shown", "PreToolUse", claudePlan, report{session.EventNeedsYou, "Approve the plan: Infer done from output"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := exec.Command("/bin/sh", "-c", command(tc.event))
+			c.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", EnvSocket + "=" + srv.Path(), EnvSession + "=" + token}
+			c.Stdin = strings.NewReader(tc.input)
+			if out, err := c.CombinedOutput(); err != nil || len(out) > 0 {
+				t.Fatalf("hook: %v, output %q", err, out)
+			}
+			if got := next(t, target); got != tc.want {
+				t.Fatalf("report %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+	expectEmpty(t, target)
 }
 
 // TestHookDocs: docs/agent-hooks.md shows exactly what "notify hooks" prints.

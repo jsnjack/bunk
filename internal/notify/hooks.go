@@ -8,11 +8,14 @@ import (
 	"strings"
 )
 
-// Command is how hook snippets run the notify CLI: bunk's when bunk is on
-// PATH, else bunk-gui's, and nothing when neither is installed, as on a
-// server without bunk. Both binaries run the same CLI (RunCLI) and serve
-// the same protocol, so either reaches the front end of the session.
-const Command = `! b=$(command -v bunk || command -v bunk-gui) || "$b" notify`
+// Command is how hook snippets run the notify CLI: bunk-gui's when bunk-gui
+// is on PATH, else bunk's, and nothing when neither is installed, as on a
+// server without bunk. Both binaries run the same CLI (RunCLI) and speak
+// the same protocol to the socket BUNK_NOTIFY_SOCKET names, so either
+// reaches the front end of the session. bunk-gui comes first because a
+// stale bunk on PATH may predate the notify command; over ssh usually only
+// bunk is installed.
+const Command = `! b=$(command -v bunk-gui || command -v bunk) || "$b" notify`
 
 // hookTimeout is the timeout snippets give each hook, in seconds. The CLI
 // gives up after clientTimeout plus stdinTimeout.
@@ -33,12 +36,27 @@ type agentHooks struct {
 	render func([]hook) (string, error)
 }
 
+// claudeQuestionTools are Claude Code's tools that wait for the user: a
+// multiple-choice question and the approval of a plan. No notification
+// type of Claude Code names them, so PreToolUse, which runs before the
+// prompt shows, reports them, and PostToolUse, which runs once the user
+// has answered, reports work again.
+const claudeQuestionTools = askUserQuestion + "|" + exitPlanMode
+
+// The tool names of Claude Code's question and plan approval.
+const (
+	askUserQuestion = "AskUserQuestion"
+	exitPlanMode    = "ExitPlanMode"
+)
+
 // recipes are the agents "notify hooks" knows, in listing order.
 var recipes = []agentHooks{
 	{
 		name: "claude", dest: "~/.claude/settings.json (merge the \"hooks\" key)",
 		hooks: []hook{
 			{event: "UserPromptSubmit", args: "working"},
+			{event: "PreToolUse", matcher: claudeQuestionTools, args: "needs-you -"},
+			{event: "PostToolUse", matcher: claudeQuestionTools, args: "working"},
 			{event: "Notification", matcher: "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input", args: "needs-you -"},
 			{event: "Stop", args: "done -"},
 			{event: "StopFailure", args: "failed -"},

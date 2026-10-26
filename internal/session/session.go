@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -48,6 +49,7 @@ type Session struct {
 
 	PTY      *os.File      // PTY master: ReadLoop reads output; writes go through out
 	out      ptyWriter     // queues replies and input for the PTY (writer.go)
+	inputs   atomic.Uint64 // input events queued by WriteInput; a change starts a working stretch
 	ptmxOnce sync.Once     // ensures PTY master fd is closed exactly once
 	killOnce sync.Once     // Close arms the SIGKILL fallback once
 	Cmd      *exec.Cmd     // the shell process
@@ -124,6 +126,10 @@ type Session struct {
 	needsYou, failed  bool        // attention requested / last command failed
 	notice            string      // text of the latest attention request
 	lastOutput        time.Time   // when the last chunk of output arrived
+	workStart         time.Time   // first output of the working stretch lastOutput ends; zero after Acknowledge
+	stretchInputs     uint64      // inputs when the working stretch began
+	hooked            bool        // the foreground agent reports through hooks: inference never says done
+	hookedPGID        int         // foreground process group when the agent last reported
 	cwd, repo, branch string      // foreground cwd and its git work tree
 	agentGone         bool        // the failed agent has exited; keep showing it
 	lastAgent         string      // the agent that most recently left the foreground
@@ -446,7 +452,7 @@ func (s *Session) ReadLoop(h Hooks) {
 			now := time.Now()
 			s.Lock()
 			s.CaptureAndWrite(chunk)
-			s.lastOutput = now
+			s.noteOutput(now)
 			watched := s.agent != ""
 			agentChanged := s.takeAgentChange(now)
 			scrolled := s.ScrollOffset > 0

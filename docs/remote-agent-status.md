@@ -129,7 +129,7 @@ The hook snippets used to run only when `BUNK_NOTIFY_SESSION` was set. They
 now run when `BUNK_NOTIFY_SESSION` or `SSH_CONNECTION` is set:
 
 ```
-[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk || command -v bunk-gui) || "$b" notify working
+[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk-gui || command -v bunk) || "$b" notify working
 ```
 
 One snippet works on the local machine and on servers, so dotfiles can share

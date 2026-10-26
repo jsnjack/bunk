@@ -81,8 +81,9 @@ internal/session/   One terminal session, shared by front ends
   process.go        Foreground process, SSH host and container detection
   search.go         Case-insensitive search over scrollback and the live grid
   status.go         Agent status: AgentSpec detection, attention requests
-                    (OSC 9/99/777, BEL), failures (OSC 133;D), git branch,
-                    explicit agent reports (Notify)
+                    (OSC 9/99/777, BEL), failures (OSC 133;D), done after a
+                    long working stretch, git branch, explicit agent
+                    reports (Notify)
   winsize.go        PTY window size in cells and virtual pixels
   timing.go         Timing: per-session timer intervals (Options.Timing)
   ptyfd.go          Setsize: window-size ioctl that holds the PTY descriptor
@@ -673,6 +674,22 @@ its default; Design Decisions says where the defaults come from.
   record of the last announced state. Without hooks, Claude Code only sends
   OSC notifications to terminals it recognises; set its
   `preferredNotifChannel` to `terminal_bell`.
+  - A known local agent whose working stretch lasted `Timing.Done`
+    (`DoneAfter`, 10 s) is done, not idle, once its output stops. A stretch
+    runs from the first output after `Timing.Idle` of silence, after the
+    user's input (`WriteInput`) or after `Acknowledge`, to the last output.
+  - The inferred done holds like a reported one: until `Acknowledge`, new
+    output, `clear` or a foreground change. Its notice is empty, and
+    `Status.Reported` is false.
+  - An agent that has reported through hooks is never inferred done, until
+    `clear` or until its process group leaves the foreground. The hook
+    snippets report `working` as each turn starts, so a turn ends with the
+    agent's own `done` alone and alerts once.
+  - The hook snippets run `bunk-gui notify` when bunk-gui is on PATH, else
+    `bunk notify`; both reach the socket `BUNK_NOTIFY_SOCKET` names. The
+    Claude snippet reports AskUserQuestion and ExitPlanMode as needs-you
+    from PreToolUse, with the question as the notice, and work again from
+    PostToolUse.
 - Agents on hosts reached over ssh report in-band
   (`docs/remote-agent-status.md`). Without a reachable socket, `bunk notify`
   writes the report line as `OSC 1337 ; SetUserVar=bunk_notify=<base64>` to
@@ -752,11 +769,12 @@ its default; Design Decisions says where the defaults come from.
   - Both front ends clean desktop text with `alert.DesktopText`: the same
     character rules and limits, the body escaped as markup for GNOME Shell.
 - Session timers are set per session. `Options.Timing` holds the
-  foreground poll (`ProcessPoll`, 1 s), idle (`IdleAfter`, 2 s), hang-up
-  grace (`HangupGrace`, 1 s), recently-left (2 s) and sync-release
-  (`SyncUpdateTimeout`, 1 s) intervals. A zero field takes the default;
-  both front ends leave it zero. Tests shorten it per session, never
-  through package variables, so parallel tests cannot race on it.
+  foreground poll (`ProcessPoll`, 1 s), idle (`IdleAfter`, 2 s), done
+  (`DoneAfter`, 10 s), hang-up grace (`HangupGrace`, 1 s), recently-left
+  (2 s) and sync-release (`SyncUpdateTimeout`, 1 s) intervals. A zero
+  field takes the default; both front ends leave it zero. Tests shorten it
+  per session, never through package variables, so parallel tests cannot
+  race on it.
 - Nested sessions are refused. `BUNK=1` is exported into every pane's
   environment; the binary exits at startup if it sees it set.
 - bunk-gui's panes get `TERM_PROGRAM=bunk-gui` and `TERM_PROGRAM_VERSION`
@@ -845,7 +863,8 @@ For short timers, session tests pass `fastTiming` (`helpers_test.go`) in
 - A timer test loops over `timings(fast)` so that the defaults stay
   covered. That gives a `short` subtest, plus a `default` one unless
   `-short`, run in parallel. `TestStatusTiming` checks Idle and RecentlyLeft
-  against their defaults without waiting.
+  against their defaults without waiting, and `TestInferredDoneStretch`
+  does the same for Done.
 - Wait for a state rather than a time. Poll `Status()`, a hook or the PTY
   until the state arrives, with a deadline of seconds.
 - Independent slow tests call `t.Parallel()`. They start after every serial

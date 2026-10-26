@@ -24,12 +24,18 @@ const (
 	AgentIdle                       // no output for IdleAfter
 	AgentNeedsYou                   // the agent asked for attention; not yet acknowledged
 	AgentFailed                     // the agent's command failed
-	AgentDone                       // the agent reported a finished turn; not yet acknowledged
+	AgentDone                       // the agent finished a turn, reported or after DoneAfter of work; not yet acknowledged
 )
 
 // IdleAfter is how long an agent counts as working after its last output
 // (default of Timing.Idle).
 const IdleAfter = 2 * time.Second
+
+// DoneAfter is how long a known agent's working stretch must last for its
+// end to count as a finished turn, AgentDone, rather than a pause, AgentIdle
+// (default of Timing.Done). Agents that report through hooks say when they
+// are done instead.
+const DoneAfter = 10 * time.Second
 
 // Status describes a session for tab labels and switchers.
 type Status struct {
@@ -77,15 +83,17 @@ func (s *Session) Status() Status {
 }
 
 // Acknowledge records that the user has seen the session. It clears a
-// pending attention request and the agent's explicit report, so inference
-// shows the session until the agent reports again. It keeps what a remote
-// agent's report said about where it runs. It runs no hook itself:
-// the next output or process tick (at most Timing.Poll later) announces the
-// change through Hooks.StatusChanged, so callers may hold their own locks.
+// pending attention request, an inferred finished turn and the agent's
+// explicit report, so inference shows the session until the agent reports
+// again. It keeps what a remote agent's report said about where it runs.
+// It runs no hook itself: the next output or process tick (at most
+// Timing.Poll later) announces the change through Hooks.StatusChanged, so
+// callers may hold their own locks.
 func (s *Session) Acknowledge() {
 	s.Lock()
 	s.needsYou, s.notice = false, ""
 	s.report = agentReport{}
+	s.workStart = time.Time{}
 	s.Unlock()
 }
 
@@ -162,8 +170,32 @@ func (s *Session) agentState(now time.Time, agent string) AgentState {
 		return AgentNeedsYou
 	case now.Sub(s.lastOutput) < s.timing.idle():
 		return AgentWorking
+	case s.finishedTurn():
+		return AgentDone
 	}
 	return AgentIdle
+}
+
+// finishedTurn reports whether the known local agent's last working stretch
+// lasted Timing.Done, so the silence after it is a finished turn. It stays
+// true until Acknowledge, new output, EventClear or a change of the
+// foreground process group. An agent that reports through hooks reports
+// its own turns. It requires the session lock.
+func (s *Session) finishedTurn() bool {
+	return s.agent != "" && !s.hooked && !s.workStart.IsZero() &&
+		s.lastOutput.Sub(s.workStart) >= s.timing.done()
+}
+
+// noteOutput records output that arrived at now. Output after Timing.Idle
+// of silence, after the user's input (WriteInput) or after Acknowledge
+// starts a new working stretch; other output extends the current one. It
+// requires the session lock.
+func (s *Session) noteOutput(now time.Time) {
+	inputs := s.inputs.Load()
+	if s.workStart.IsZero() || inputs != s.stretchInputs || now.Sub(s.lastOutput) >= s.timing.idle() {
+		s.workStart, s.stretchInputs = now, inputs
+	}
+	s.lastOutput = now
 }
 
 // AgentSpec says how to recognise one agent CLI in the foreground.
@@ -502,6 +534,13 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 		s.report = agentReport{}
 		changed = true
 	}
+	if pgidChanged {
+		if pgid <= 0 || pgid != s.hookedPGID {
+			s.hooked = false
+		}
+		// A turn inferred done belongs to the group that left.
+		s.workStart = time.Time{}
+	}
 	if pgidChanged && s.remote != (remoteAgent{}) && (pgid <= 0 || pgid != s.remotePGID) {
 		// The ssh or bunk that carried the remote agent's reports has left.
 		s.remote, s.remotePGID = remoteAgent{}, 0
@@ -629,6 +668,7 @@ func (s *Session) record(r Report, pgid int) {
 	switch r.Event {
 	case EventClear:
 		s.report = agentReport{}
+		s.hooked, s.workStart = false, time.Time{}
 		s.remote, s.remotePGID = remoteAgent{}, 0
 		if s.remoteClient && s.agent == "" {
 			s.needsYou, s.notice = false, ""
@@ -649,6 +689,7 @@ func (s *Session) record(r Report, pgid int) {
 	}
 	rep.pgid = pgid
 	s.report = rep
+	s.hooked, s.hookedPGID = true, pgid
 	where := remoteAgent{
 		agent: cleanNotice(r.Agent, ""), host: cleanNotice(r.Host, ""), repo: cleanNotice(r.Repo, ""),
 		branch: cleanNotice(r.Branch, ""), cwd: cleanNotice(r.Cwd, ""),

@@ -573,8 +573,8 @@ func (a *App) setTitle(p *Pane, title string) {
 }
 
 // jumpNeedingYou selects the next tab (after the selected one) whose agent
-// needs the user, else the next whose agent reported done
-// (next_needs_you). Focusing the pane acknowledges it.
+// needs the user, else the next whose agent is done (next_needs_you).
+// Focusing the pane acknowledges it.
 func (a *App) jumpNeedingYou() {
 	i := a.tabIndex(a.active)
 	for _, want := range []session.AgentState{session.AgentNeedsYou, session.AgentDone} {

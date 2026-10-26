@@ -274,7 +274,7 @@ states = ["needs-you", "done", "failed"]
 Both front ends infer each agent's state from these sources:
 
 - The foreground process names the agent. Both recognise 15 agent CLIs, such as claude, codex, copilot and gemini, and bunk-gui's `[[agents]]` adds more.
-- Output in the last 2 s means working, and silence means idle.
+- Output in the last 2 s means working, and silence means idle. When an agent stops after at least 10 s of output, it is done instead, so agents without hooks notify you too.
 - OSC 9/99/777 notifications and BEL from an agent mean needs you.
 - While ssh or mosh runs in a pane, OSC 9/99/777 from the other end mean needs you too. Bells from there do not count, because a remote shell rings one on a failed tab completion.
 - A failed command reported through OSC 133;D means failed.
@@ -297,7 +297,8 @@ bunk notify hooks claude        # print the hook snippet for Claude Code
 bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
 ```
 
-- `bunk notify` and `bunk-gui notify` take the same arguments, and the snippets call whichever is installed.
+- `bunk notify` and `bunk-gui notify` take the same arguments, and the snippets call bunk-gui when it is installed, else bunk.
+- The Claude Code snippet also reports a question (AskUserQuestion) or a plan waiting for approval as needs you, with the question as the notice.
 - Each pane gets `BUNK_NOTIFY_SOCKET` and `BUNK_NOTIFY_SESSION` in its environment. Sockets live under `$XDG_RUNTIME_DIR/bunk/`.
 - [docs/agent-hooks.md](docs/agent-hooks.md) has snippets for Claude Code, Codex, Copilot CLI and Gemini CLI, the wire format and exit codes.
 

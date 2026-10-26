@@ -207,8 +207,11 @@ func (w *ptyWriter) stats() WriteStats {
 // report) for the child and returns at once; the event reaches the PTY
 // whole, after everything queued before it. When the child has not read
 // enough of the input before it, the event is refused with ErrInputFull
-// and nothing of it is written. Input to a closed session is dropped.
+// and nothing of it is written. Input to a closed session is dropped. The
+// output that follows input starts a new working stretch (noteOutput), so
+// an echoed prompt the user types never counts as the agent's work.
 func (s *Session) WriteInput(data []byte) error {
+	s.inputs.Add(1)
 	return s.out.queue(s.PTY, data, false)
 }
 
