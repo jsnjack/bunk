@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bunk/internal/alert"
 	"bunk/internal/session"
 	"bunk/internal/theme"
 	"errors"
@@ -32,6 +33,9 @@ type fileConfig struct {
 	UI         theme.UI             `toml:"ui"`
 	Themes     map[string]theme.Def `toml:"themes"` // custom themes, [themes.NAME]
 	Keys       map[string]string    `toml:"keys"`   // action → key string, e.g. "split" → "f1"
+	// Notifications: OSC 777 notifications to the host terminal when an
+	// agent in a pane the user is not looking at needs them.
+	Notifications alert.Config `toml:"notifications"`
 }
 
 // keybindingNames maps lowercase TOML key names to their tcell.Key constant.
@@ -300,6 +304,7 @@ type Config struct {
 	CellAspect  float64 // 0 = auto-detect via TIOCGWINSZ
 	Scrollback  int     // max scrollback lines per pane
 	Keybindings Keybindings
+	Alerts      alert.Settings // [notifications]
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +351,10 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 	if scrollback <= 0 {
 		scrollback = session.DefaultScrollbackLines
 	}
+	alerts, err := fc.Notifications.Settings()
+	if err != nil {
+		return Config{}, fmt.Errorf("load config %q: %w", path, err)
+	}
 
 	return Config{
 		Theme:       resolveTheme(t),
@@ -356,6 +365,7 @@ func LoadConfig(path, themeOverride string) (Config, error) {
 		CellAspect:  fc.CellAspect,
 		Scrollback:  scrollback,
 		Keybindings: resolveKeybindings(fc.Keys),
+		Alerts:      alerts,
 	}, nil
 }
 
@@ -414,6 +424,13 @@ log_level = "info"  # trace | debug | info | warn | error
 # Note: scrollback stores screen rows, not logical lines — narrower panes
 # consume more rows per line of output due to wrapping.
 # scrollback = 10000
+
+# Desktop notifications through the host terminal (OSC 777 notify) when an
+# agent in a pane you are not looking at needs you, is done or failed.
+# foot, WezTerm, Ghostty and urxvt show them.
+[notifications]
+enabled = true
+states  = ["needs-you", "done", "failed"]
 
 # Optional UI color overrides - leave blank to use the theme's defaults.
 # Values must be "#RRGGBB" hex strings.

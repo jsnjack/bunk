@@ -69,13 +69,22 @@ var openURL = func(a *App, uri string) {
 // launchRefused keeps the real launcher off the test compositor, as
 // headlessOnly keeps input injection on it.
 func launchRefused() error {
-	if os.Getenv("BUNK_HEADLESS") != "" {
-		return errors.New("links are not launched on the headless test compositor (BUNK_HEADLESS set)")
-	}
-	if strings.HasPrefix(os.Getenv("WAYLAND_DISPLAY"), "bunk-headless-") {
-		return errors.New("links are not launched on a scripts/headless-gui.sh display")
+	if where := testCompositor(); where != "" {
+		return errors.New("links are not launched on " + where)
 	}
 	return nil
+}
+
+// testCompositor names the headless test compositor bunk-gui runs on, or
+// returns "" on a desktop. Links and desktop notifications never leave it.
+func testCompositor() string {
+	if os.Getenv("BUNK_HEADLESS") != "" {
+		return "the headless test compositor (BUNK_HEADLESS set)"
+	}
+	if strings.HasPrefix(os.Getenv("WAYLAND_DISPLAY"), "bunk-headless-") {
+		return "a scripts/headless-gui.sh display"
+	}
+	return ""
 }
 
 // linkState is the link under the pointer while Ctrl is held.

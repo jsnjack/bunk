@@ -12,6 +12,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"bunk/internal/alert"
 	"bunk/internal/session"
 	"bunk/internal/theme"
 )
@@ -41,6 +42,10 @@ import (
 //	processes = ["myagent"]
 //	scripts = ["@me/myagent"]
 //
+//	[notifications]          # desktop notifications for tabs you are not looking at
+//	enabled = true
+//	states = ["needs-you", "done", "failed"]
+//
 // The file is watched: edits apply to the running window.
 type Settings struct {
 	Tabs     string               `toml:"tabs"`
@@ -52,10 +57,13 @@ type Settings struct {
 	Themes   map[string]theme.Def `toml:"themes"`
 	Agents   []session.AgentSpec  `toml:"agents"`
 	Keys     map[string]any       `toml:"keys"`
+	// Notifications is the [notifications] table as written.
+	Notifications alert.Config `toml:"notifications"`
 
 	keymap keymap              // Keys applied to the defaults
 	was    map[string][]string // bindings of disabled actions, from "# was" comments
 	themes *theme.Registry     // the built-in themes and the valid ones of Themes
+	alerts alert.Settings      // Notifications applied to the defaults
 }
 
 // startSize is the text size at start and after Ctrl+0: font_size at
@@ -67,7 +75,7 @@ func (st Settings) startSize() float64 {
 func defaultSettings() Settings {
 	km, _ := resolveKeys(nil)
 	return Settings{Tabs: "rail", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
-		keymap: km, was: map[string][]string{}}
+		keymap: km, was: map[string][]string{}, alerts: alert.Default()}
 }
 
 // configPath is $XDG_CONFIG_HOME/bunk-gui/config.toml.
@@ -149,6 +157,11 @@ func loadSettings(path string) (Settings, error) {
 	km, keyProblems := resolveKeys(f.Keys)
 	st.Keys, st.keymap, st.was = f.Keys, km, keysWas(string(data))
 	problems = append(problems, keyProblems...)
+	alerts, err := f.Notifications.Settings()
+	if err != nil {
+		problems = append(problems, err.Error())
+	}
+	st.Notifications, st.alerts = f.Notifications, alerts
 	for i, a := range f.Agents {
 		if a.Name == "" || len(a.Processes)+len(a.Scripts) == 0 {
 			problems = append(problems, fmt.Sprintf("agents[%d] needs a name and processes or scripts", i))

@@ -73,6 +73,8 @@ import (
 //	       [repo=R] [branch=B] [container=C] [process=P] [ssh=H] [notice=TEXT...]
 //	                                 override a pane's status (test hook)
 //	status-clear [tab=N|pane=ID]
+//	alert-click N                    click tab N's desktop notification, as the server would
+//	decoy open|close                 a second window takes the keyboard focus (inactive window)
 //	run CMD                          a shell command, e.g. to edit config.toml
 //	shortcut-scroll ACTION           scroll the shortcuts window to a row
 //	pref-scroll NAME                 scroll the preferences window to a control
@@ -444,6 +446,14 @@ func (a *App) doAction(action string, done func()) {
 		a.jumpNeedingYou()
 	case "status", "status-clear":
 		a.scriptStatus(verb == "status-clear", arg)
+	case "alert-click":
+		check(a.alertClick(num(0, 0)))
+	case "decoy":
+		if arg != "open" && arg != "close" {
+			a.reportError("%s: want open or close", action)
+			return
+		}
+		check(a.decoy(arg == "open"))
 	case "maximize":
 		a.win.Maximize()
 	case "unmaximize":

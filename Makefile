@@ -117,9 +117,11 @@ gui: version
 	cd $(GUI_DIR) && go build $(LDFLAGS) -o ../../bin/bunk-gui .
 
 # Window tests run on a private headless compositor, never on the desktop.
+# gotk4's marshalling trips checkptr, which -race turns on: unit tests that
+# get GLib callbacks build without it, like the bunk-gui of the window tests.
 gui-test:
 	cd $(GUI_DIR) && go vet ./... && \
-		../../scripts/headless-gui.sh go test -race $(TEST_COUNT) ./...
+		../../scripts/headless-gui.sh go test -race -gcflags=all=-d=checkptr=0 $(TEST_COUNT) ./...
 	desktop-file-validate packaging/$(APP_ID).desktop
 	appstreamcli validate --no-net packaging/$(APP_ID).metainfo.xml
 

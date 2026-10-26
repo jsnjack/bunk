@@ -1,10 +1,10 @@
 package main
 
 // The preferences window (action "preferences"): layout, the rail, the
-// font and the default text zoom, the theme, and the [[agents]] list.
-// Every change is written into config.toml at once by the line editor
-// (keysfile.go), so the user's comments and order stay; the reload
-// applies it.
+// font and the default text zoom, the theme, desktop notifications
+// (alerts.go), and the [[agents]] list. Every change is written into
+// config.toml at once by the line editor (keysfile.go), so the user's
+// comments and order stay; the reload applies it.
 
 import (
 	"context"
@@ -41,6 +41,7 @@ type prefsWindow struct {
 	themes            []themeChoice // the Theme section (prefs_theme.go)
 	scroll            *gtk.ScrolledWindow
 	content           *gtk.Box // the scrolled content
+	notify            *notifyPrefs
 }
 
 type agentRow struct {
@@ -123,6 +124,7 @@ func (a *App) showPreferences() {
 	box.Append(prefRow("Default text zoom (%)", w.zoom))
 
 	w.addThemeSection(box, st)
+	w.addNotifications(box)
 
 	box.Append(heading("Agents"))
 	hint := label("Agent CLIs to recognise besides the built-in ones: a name, and process names or script paths (comma separated).", "statelabel")

@@ -397,8 +397,10 @@ func (a *App) cwdForNew() string {
 // runs on events (tab changes, focus, StatusChanged), never per frame, and
 // does nothing when no shown text, state or selection changed (a status
 // report about a field the chrome does not show, such as a short-lived
-// foreground process of a hidden tab).
+// foreground process of a hidden tab). The desktop notifications follow
+// the same events (alerts.go).
 func (a *App) refreshChrome() {
+	a.syncAlerts()
 	if a.tabsBox == nil {
 		return
 	}

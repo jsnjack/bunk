@@ -23,6 +23,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
+	"bunk/internal/alert"
 	"bunk/internal/badges"
 	"bunk/internal/leakcheck"
 	"bunk/internal/session"
@@ -49,6 +50,8 @@ type runReport struct {
 	ConfigError string               `json:"config_error"`
 	Reloads     int                  `json:"reloads"` // config.toml reloads after a change
 	Opened      []string             `json:"opened"`  // links opened (openURL)
+	// Desktop notification calls (postAlert, withdrawAlert) and clicks.
+	Notifications []alertRecord `json:"notifications"`
 }
 
 type verifyReport struct {
@@ -113,7 +116,9 @@ type statusReport struct {
 }
 
 type tabReport struct {
-	Index    int          `json:"index"` // 1-based
+	Index    int          `json:"index"`    // 1-based
+	ID       int          `json:"id"`       // names its desktop notification
+	Notified bool         `json:"notified"` // its desktop notification is up
 	Title    string       `json:"title"`
 	Agent    string       `json:"agent"` // as shown: the agent, else the process
 	State    string       `json:"state"`
@@ -288,6 +293,9 @@ type prefsReport struct {
 	Themes   []string               `json:"themes"` // the themes offered, in order
 	Agents   [][3]string            `json:"agents"` // name, processes, scripts as the rows show them
 	Controls map[string]*rectReport `json:"controls"`
+	// Notifications as the switch and check buttons show them.
+	Notify       bool     `json:"notify"`
+	NotifyStates []string `json:"notify_states"`
 }
 
 type findReport struct {
@@ -432,6 +440,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			Index: in.index + 1, Agent: in.agent, State: stateName[in.st.State], Label: in.look.label, Dot: in.look.dot,
 			Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.st.Notice, Tooltip: in.tooltip,
 			Selected: in.active, Needs: in.needs, Focus: -1, Zoomed: -1, Status: statusOf(in.st), Pass: in.pass,
+			ID: t.id, Notified: a.alerts.tracker.Shown(t.id),
 		}
 		if t.focus != nil {
 			tr.Focus, tr.Title = t.focus.id, t.focus.title
@@ -515,6 +524,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		for k, c := range w.controls {
 			pr.Controls[k] = a.widgetRect(g, c)
 		}
+		pr.Notify, pr.NotifyStates = w.notifyShown()
 		s.Prefs = pr
 	}
 	if f := a.find; f != nil {
@@ -835,6 +845,7 @@ func (a *App) writeReport(reason string) {
 	r.Settings = map[string]any{
 		"tabs": a.settings.Tabs, "rail_open": a.settings.RailOpen, "font": a.settings.Font,
 		"font_size": a.settings.FontSize, "agents": a.settings.Agents, "theme": a.settings.Theme,
+		"notifications": map[string]any{"enabled": a.settings.alerts.Enabled, "states": alert.Names(a.settings.alerts.States)},
 	}
 	if a.configErr != nil {
 		r.ConfigError = a.configErr.Error()

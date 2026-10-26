@@ -32,6 +32,7 @@ osc.go              Host passthrough buffer for OSC 7/52/133
 mouse.go            Mouse events → PTY byte sequences
 status.go           Draws the pane badges (rules in internal/badges) in theme
                     colours; agent-state separator colours
+alerts.go           Agent notifications to the host terminal (OSC 777 notify)
 search.go           In-pane search UI (matching is session.FindAll)
 config.go           TOML config, the theme in tcell colours, keybinding resolution
 hostcolors.go       Host terminal OSC colour probing
@@ -95,6 +96,10 @@ internal/theme/     Colour themes for both front ends: the built-in themes,
 internal/notify/    Agent hook reports: Unix socket server (token → Session),
                     client, `notify` CLI (RunCLI), hook snippets per agent
 
+internal/alert/     Agent notifications for both front ends: when a state
+                    change notifies (Tracker), the text, [notifications]
+                    settings, and the sanitised OSC 777 sequence
+
 internal/leakcheck/ Test helper: fds, goroutines, child processes and live heap
                     of the process, compared with a baseline after a settle wait
 
@@ -114,6 +119,10 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     background, dividers and badges; repaints on a change
   prefs_theme.go    The Theme section of Preferences: a choice per theme with
                     a preview of its colours
+  alerts.go         Desktop notifications per tab: when (internal/alert), the
+                    show-tab action, --report records, preferences section
+  desknotify.go     org.freedesktop.Notifications client: replace, withdraw,
+                    clicks with their activation token
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
@@ -292,8 +301,9 @@ bench target is part of `check` or `check-all`, because timings depend on load.
 Fuzz targets cover every parser of program output and user input:
 `internal/vt10x` (FuzzParse, FuzzResize), `internal/session` (FuzzPTYStream,
 FuzzOSCScanner, FuzzStatusOSC, FuzzQueryReplies, FuzzXTGETTCAP,
-FuzzFindAndSelect, FuzzPTYWriterOrder), `internal/input` (FuzzEncodeKey, FuzzEncodeMouse) and
-`internal/graphics` (FuzzGraphicsDecoder, FuzzStore). Their seed corpora in
+FuzzFindAndSelect, FuzzPTYWriterOrder), `internal/input` (FuzzEncodeKey, FuzzEncodeMouse),
+`internal/graphics` (FuzzGraphicsDecoder, FuzzStore) and `internal/alert`
+(FuzzOSC777, program text in the notification sent to the host). Their seed corpora in
 `testdata/fuzz` run with every `go test`, so keep seeds small. When a target
 fails, keep the input it wrote to `testdata/fuzz`, fix the code, and add a
 named regression test to the package's `fuzz_regression_test.go`. Run one
@@ -312,6 +322,13 @@ the `--report` snapshot, frames drawn, no frames for a while, or injected
 input received. Use `sleep` only where a check measures time (idle frames,
 typing latency, CSS fades in screenshots). At most `BUNK_GUI_PARALLEL`
 scenarios run at once (default 8); those with a higher `cost` start first.
+Desktop notifications are recorded in `--report` (`notifications`) and
+never reach a notification server on the test compositor. `decoy open`
+gives the keyboard focus to a second window, so the main window is
+inactive, and `alert-click N` clicks tab N's notification as the server
+would. `make gui-test` builds with `-race -gcflags=all=-d=checkptr=0`,
+as the window tests' bunk-gui does, because gotk4's GLib callbacks trip
+checkptr.
 
 Run `make check-all` before reporting any work as done. Work is done only
 when the full suite is green; report its result, including failures.
@@ -383,13 +400,18 @@ These are the key fields agents may need to know about:
   next_needs_you; "none" disables an action and sends its key to the pane.
 - `[ui]` holds hex colour overrides for borders and scrollbar. An invalid
   value is logged, and the theme's colour stays.
+- `[notifications]` turns the host terminal notifications on or off
+  (`enabled`) and picks the agent states that send one (`states`, default
+  needs-you, done and failed). A state name bunk does not know fails at
+  startup.
 
 `config.go` is the authoritative reference for every field and its default.
 
 bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
 `rail_open`, `font`, `font_size`, `text_zoom`, `theme`, `[themes.NAME]`,
-`[[agents]]` and `[keys]`. `theme` and `[themes.NAME]` work as in bunk's
-config, and `--theme` overrides `theme` for one run. `[keys]` uses
+`[[agents]]`, `[notifications]` and `[keys]`. `theme` and `[themes.NAME]`
+work as in bunk's config, and `--theme` overrides `theme` for one run.
+`[notifications]` has the same keys as in bunk's config. `[keys]` uses
 bunk's action names and key syntax where they overlap; "none" sends the key
 to the terminal. The file is watched and reloads live, and a bad value shows
 a toast and keeps the default. The shortcuts window (Ctrl+Shift+?) and the
@@ -580,6 +602,40 @@ its default.
   `Hooks.StatusChanged` only wakes the render loop. Focus or typing calls
   `Acknowledge`; `next_needs_you` (Alt+A) jumps. bunk serves the notify
   socket like bunk-gui, and `bunk notify` runs the same CLI.
+- An agent notifies the user when nobody is looking at it.
+  `internal/alert`'s Tracker decides for both front ends, from the status
+  after every `Hooks.StatusChanged`, so inferred states, hook reports and
+  any other source of a status change notify alike.
+  - A source alerts when its agent enters a `[notifications]` state, or
+    its notice changes there, while it is not watched. In bunk-gui a tab is
+    watched while the window is active and the tab selected; in bunk a pane
+    is watched while it is active and the host terminal has the focus
+    (DECSET 1004).
+  - The title names the agent and its host ("claude on gpu01 needs you",
+    `SSHHost` for now). The body is the notice, or a default for the state,
+    and "repo ⎇ branch".
+  - Watching the source, the state leaving those states, turning
+    notifications off and the source going away withdraw the notification.
+    The same state notifies again only 10 s (`alert.DefaultRepeat`) after
+    the last one unless the user watched the source; until then it is held,
+    and `Tracker.Next` says when to look again.
+  - bunk-gui keeps one notification per tab on org.freedesktop.Notifications
+    (`desknotify.go`), keyed by the tab's ID, the ID of the pane it opened
+    with. A click runs `app.show-tab` with that ID: the window takes the
+    focus with the shell's activation token and selects the tab.
+    GNotification is not used: on GNOME, GLib sends it through
+    org.gtk.Notifications, where GNOME Shell needs an installed desktop file
+    and runs the action through the application's bus name, which a
+    non-unique application never owns; GLib's freedesktop backend drops the
+    activation token. A missing server only logs at debug level.
+  - The window is not marked as needing attention. GTK 4 has no urgency
+    hint, and on Wayland a present without a token makes GNOME Shell post a
+    second "bunk-gui is ready" notification.
+  - bunk writes `alert.OSC777` to the host from the render pass, which reads
+    every pane's status under `app.mu`. Control and bidi characters go, ';'
+    becomes ',', and the title and body are cut to 120 and 360 bytes. foot,
+    WezTerm, Ghostty and urxvt show it; VTE 0.84 (GNOME Terminal, Ptyxis on
+    Fedora 44) reads OSC 777 notify only as "Command completed".
 - Session timers are set per session. `Options.Timing` holds the
   foreground poll (`ProcessPoll`, 1 s), idle (`IdleAfter`, 2 s), hang-up
   grace (`HangupGrace`, 1 s), recently-left (2 s) and sync-release

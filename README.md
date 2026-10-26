@@ -66,6 +66,7 @@ Opening a new window is deferred, and Ctrl+Shift+N shows "not built yet".
 | Agent status | | Dot, state, repo ⎇ branch, container or SSH host, and the agent's notice; see [Agent status and hooks](#agent-status-and-hooks) |
 | Switcher | Ctrl+Shift+Space | Lists needs-you tabs first; type to filter |
 | Next needing you | Ctrl+Shift+J | Visits needs-you tabs, then done tabs, and acknowledges each |
+| Notifications | | A desktop notification when an agent in a tab you are not looking at needs you, is done or failed; clicking it opens the tab |
 | Split | F1 / Alt+F1 | Side by side or stacked by pane shape; Alt+F1 opens a shell in the same container |
 | Zoom pane | F12 | |
 | Move between panes | Alt+arrows | |
@@ -77,7 +78,7 @@ Opening a new window is deferred, and Ctrl+Shift+N shows "not built yet".
 | Links | Ctrl+click | Opens OSC 8 links and plain http, https and file URLs; Ctrl+hover underlines them |
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
 | Shortcuts window | Ctrl+Shift+? | Rebind or turn off any action; ⚠ marks keys terminal programs may use |
-| Preferences | Ctrl+, | Layout, rail, font, text zoom, theme and extra agent CLIs |
+| Preferences | Ctrl+, | Layout, rail, font, text zoom, theme, notifications and extra agent CLIs |
 | Themes | | bunk's themes; picking one in Preferences repaints the panes at once |
 | Quit | Ctrl+Shift+Q | Asks first while a pane runs more than an idle shell |
 
@@ -105,6 +106,7 @@ Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. b
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program |
 | Agent status | | A badge per pane: working, idle, needs you (amber), done (green) or failed, with the agent's notice |
 | Next needing you | Alt+A | Focuses the next pane whose agent needs you, else one that is done |
+| Notifications | | Asks the host terminal to show a desktop notification (OSC 777) when an agent in a pane you are not looking at needs you, is done or failed |
 | Re-initialise host terminal | Alt+R | Recovers after binary output corrupts the host |
 | Quit | Ctrl+Q | Ctrl+D or `exit` closes one pane |
 | Mouse | | Click focuses, drag selects, double click selects a word; Shift overrides program mouse mode |
@@ -203,6 +205,10 @@ theme = "default"      # terminal, default, solarized-dark, dracula, nord, or a 
 [ui]                   # "#RRGGBB" overrides; empty uses the theme
 active_border = ""
 
+[notifications]        # OSC 777 to the host terminal for panes you are not looking at
+enabled = true
+states  = ["needs-you", "done", "failed"]
+
 [themes.paper]         # a theme of your own: background, foreground and 16 palette colours
 background = "#FDF6E3"
 foreground = "#586E75"
@@ -243,6 +249,10 @@ zoom = "none"              # F12 goes to the terminal
 name = "myagent"
 processes = ["myagent"]
 scripts = ["@me/myagent"]  # for agents that run under node, python, bun, deno or ruby
+
+[notifications]            # desktop notifications for tabs you are not looking at
+enabled = true
+states = ["needs-you", "done", "failed"]
 ```
 
 - bunk-gui watches the file and applies edits to the running window.
@@ -265,6 +275,13 @@ Both front ends infer each agent's state from these sources:
 - A failed command reported through OSC 133;D means failed.
 
 Focusing the pane or typing into it acknowledges the state and clears needs you and done.
+
+When an agent you are not looking at needs you, is done or failed, both front ends notify you:
+
+- bunk-gui shows a desktop notification per tab, such as "claude needs you" with the notice and repo ⎇ branch. A newer state replaces it, and it goes away when you look at the tab. Clicking it raises the window and selects the tab.
+- bunk sends an OSC 777 notification to the host terminal for a pane that is not active, or for any pane while the host terminal is not focused. foot, WezTerm, Ghostty and urxvt show it. GNOME Terminal and Ptyxis with VTE 0.84 do not.
+- The same state notifies again only 10 s after the last notification, so an agent that flaps between states does not flood the desktop.
+- `[notifications]` in either config.toml turns notifications off or picks the states, and bunk-gui's preferences window edits it.
 
 With hooks, the agent reports its own state, and the report takes priority over inference:
 
@@ -308,6 +325,7 @@ bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
 | `internal/vt10x/` | VT/xterm emulator, a fork of hinshun/vt10x: parser, 16-byte cells, graphemes, rewrap |
 | `internal/input/` | Key, mouse, focus and paste encoding: legacy, application modes, Kitty CSI u |
 | `internal/notify/` | Agent hook reports: Unix socket server, the `notify` CLI both binaries run, hook snippets per agent |
+| `internal/alert/` | Agent notifications: when a state change notifies, the text, and the OSC 777 sequence bunk sends |
 | `internal/graphics/` | Bounded SIXEL, Kitty and iTerm2 image decoders; the bitmap store behind full-resolution drawing |
 | `internal/theme/` | Colour themes of both front ends: built-in and custom themes, `[ui]` overrides, badge colours |
 | `third_party/tcell/` | tcell v2.13.9 with overline, keypad and keycap-width patches |
