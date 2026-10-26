@@ -169,11 +169,11 @@ bunk-gui runs on Linux and needs Go 1.26, gcc, GTK 4, libadwaita and OpenGL 3.3.
 
 ```bash
 sudo dnf install golang gcc gtk4-devel libadwaita-devel
-make gui            # writes bin/bunk-gui
+make build          # runs the tests, then writes bin/bunk and bin/bunk-gui
 bin/bunk-gui
 ```
 
-`make rpm` builds a Fedora RPM in `bin/rpmbuild`. Packaging is still being finalised.
+`make gui` rebuilds only `bin/bunk-gui`, without tests. `make rpm` builds a Fedora RPM in `bin/rpmbuild`. Packaging is still being finalised.
 
 | Flag | Effect |
 | :- | :- |

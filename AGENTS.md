@@ -183,7 +183,8 @@ session lock.
 ```bash
 make check    # full validation gate (fmt → vet → race tests → build → lint)
 make test     # tests only (race-enabled)
-make build    # cross-compiles bin/bunk_{linux,darwin}_{amd64,arm64}
+make build    # bin/bunk_{linux,darwin}_{amd64,arm64} after the core tests, bin/bunk-gui after the window tests
+make gui      # bin/bunk-gui only, without tests (quick rebuild while iterating)
 make run      # builds local binary and opens a debug session with --trace
 make gui-test # bunk-gui: vet, race tests, packaging validation
 make check-all # fmt+vet, then core and GUI tests in parallel, then build+lint

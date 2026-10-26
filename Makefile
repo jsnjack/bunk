@@ -20,8 +20,11 @@ IMPORTS_FILES = $(GOFILES)
 else
 IMPORTS_FILES = $(CHANGED_GOFILES)
 endif
-# Binaries wait for the tests; check-all clears this after running them.
-TEST_GATE ?= test
+# bunk for every platform; make build adds bin/bunk-gui.
+BUNK_BINS := bin/$(BINARY) bin/$(BINARY)_linux_amd64 bin/$(BINARY)_linux_arm64 bin/$(BINARY)_darwin_amd64 bin/$(BINARY)_darwin_arm64
+# Binaries wait for their tests; check-all clears these after running them.
+TEST_GATE     ?= test
+GUI_TEST_GATE ?= gui-test
 
 # Formatting, tests, and binaries share files even with make -j.
 .NOTPARALLEL:
@@ -59,7 +62,7 @@ lint: vet
 	}
 	golangci-lint run
 
-check: fmt vet build lint
+check: fmt vet $(BUNK_BINS) lint
 	@echo "==> make check: all green"
 
 standards:
@@ -80,9 +83,11 @@ bin/$(BINARY)_darwin_amd64: $(TEST_GATE) version
 bin/$(BINARY)_darwin_arm64: $(TEST_GATE) version
 	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $@
 
-build: bin/$(BINARY) bin/$(BINARY)_linux_amd64 bin/$(BINARY)_linux_arm64 bin/$(BINARY)_darwin_amd64 bin/$(BINARY)_darwin_arm64
+# Every binary: bunk for four platforms and bunk-gui for this machine (cgo
+# and GTK4 rule out cross builds), each after its own tests.
+build: $(BUNK_BINS) bin/bunk-gui
 
-release: build
+release: $(BUNK_BINS)
 	tar -czf bin/$(BINARY)_linux_amd64.tar.gz  --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_amd64
 	tar -czf bin/$(BINARY)_linux_arm64.tar.gz  --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_arm64
 	tar -czf bin/$(BINARY)_darwin_amd64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_darwin_amd64
@@ -103,6 +108,10 @@ run: test
 GUI_DIR := cmd/bunk-gui
 RPM_TOP := $(PWD)/bin/rpmbuild
 APP_ID  := io.github.jsnjack.BunkGui
+
+# bin/bunk-gui waits for the window tests; make gui builds it without them.
+bin/bunk-gui: $(GUI_TEST_GATE)
+	cd $(GUI_DIR) && go build -o ../../bin/bunk-gui .
 
 gui:
 	cd $(GUI_DIR) && go build -o ../../bin/bunk-gui .
@@ -128,7 +137,7 @@ check-all: fmt vet
 	wait $$t; tr=$$?; wait $$g; gr=$$?; \
 	cat bin/check-test.log bin/check-gui.log; \
 	test $$tr -eq 0 && test $$gr -eq 0
-	@$(MAKE) --no-print-directory build lint TEST_GATE=
+	@$(MAKE) --no-print-directory build lint TEST_GATE= GUI_TEST_GATE=
 	@echo "==> make check-all: all green"
 
 # Runs every Fuzz target in turn for FUZZTIME each. Not part of check or
@@ -196,5 +205,6 @@ rpm: version
 clean:
 	rm -rf bin/ $(BINARY)
 
+# bin/bunk-gui is phony so a build without its test gate still rebuilds it.
 .PHONY: version build release test vet fmt lint check standards run clean gui gui-test screenshots check-all rpm fuzz soak \
-	bench-check bench-baseline
+	bench-check bench-baseline bin/bunk-gui
