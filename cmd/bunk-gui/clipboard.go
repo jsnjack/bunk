@@ -31,13 +31,44 @@ func (p *Pane) selectionText() string {
 	return p.s.SelText()
 }
 
-// copySelection puts the selection on the clipboard (Ctrl+Shift+C) and
-// flashes the Copied badge, as bunk's TUI does.
-func (a *App) copySelection(p *Pane) {
-	if text := p.selectionText(); text != "" {
-		clipboard(false).SetText(text)
-		p.showFlash(badges.Copied)
+// copySelection puts the selection on the clipboard and flashes the
+// Copied badge, as bunk's TUI does. With clear (Ctrl+C) the selection ends,
+// so the next Ctrl+C reaches the program. It reports whether anything was
+// selected.
+func (a *App) copySelection(p *Pane, clear bool) bool {
+	text := p.selectionText()
+	if text == "" {
+		return false
 	}
+	clipboard(false).SetText(text)
+	if clear {
+		p.setSelection(false, session.SelPos{}, session.SelPos{})
+	}
+	p.showFlash(badges.Copied)
+	return true
+}
+
+// selectAll selects the scrollback and the screen down to the last row
+// with text, and puts it on the primary selection, as a drag does.
+func (a *App) selectAll(p *Pane) {
+	p.s.Lock()
+	cols, rows := p.s.Term.Size()
+	last := -1 // the last screen row with text
+	for y := rows - 1; y >= 0 && last < 0; y-- {
+		for _, g := range session.CaptureRow(p.s.Term, y, cols) {
+			if g.Char != 0 && g.Char != ' ' {
+				last = y
+				break
+			}
+		}
+	}
+	end := p.s.Scrollback.Count + last
+	p.s.Unlock()
+	if end < 0 {
+		return
+	}
+	p.setSelection(true, session.SelPos{}, session.SelPos{Row: end, Col: cols - 1})
+	a.copyPrimary(p)
 }
 
 // copyPrimary puts the selection on the primary selection, as finishing a

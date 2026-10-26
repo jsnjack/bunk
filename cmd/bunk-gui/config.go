@@ -33,8 +33,8 @@ import (
 //	palette = ["#073642", …] # 16 colours
 //
 //	[keys]                   # key bindings (see bindings.go for the actions)
-//	switcher = "ctrl+shift+space"
-//	next_needs_you = ["ctrl+shift+j", "f9"]
+//	next_tab = ["ctrl+right", "ctrl+pgdn"]
+//	copy = "ctrl+shift+c"    # Ctrl+C always goes to the terminal
 //	zoom = "none"            # "none" or "": the key goes to the terminal
 //
 //	[[agents]]               # extra agent CLIs to recognise (repeatable)

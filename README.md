@@ -17,7 +17,7 @@ A coding agent spends minutes on a task, then waits for an answer. With several 
 - bunk-gui gives each agent a tab with its repo, branch, container or SSH host, and state.
 - Each tab shows one of five states: working, idle, needs you, done or failed.
 - bunk shows the same states on a badge in each pane.
-- One key jumps to the next agent that waits for you: Ctrl+Shift+J in bunk-gui and Alt+A in bunk.
+- One key jumps to the next agent that waits for you: Alt+A in both bunk and bunk-gui.
 - Every pane is a real PTY, so agents, vim, btop and shells behave as they do in any terminal.
 
 Both front ends run on one Go core. `internal/session` owns the PTY, the emulator, scrollback, reflow, search and agent status. Each front end adds input and drawing.
@@ -45,7 +45,7 @@ Opening a new window is deferred, and Ctrl+Shift+N shows "not built yet".
 <td width="50%"><img src="assets/gui-bar.png" alt="Tabs in a bar on top"></td>
 </tr>
 <tr>
-<td>Switcher (Ctrl+Shift+Space): needs-you first, filter by agent, repo or branch</td>
+<td>Switcher (Ctrl+Shift+O): needs-you first, filter by agent, repo or branch</td>
 <td>Tabs on top: <code>tabs = "bar"</code></td>
 </tr>
 <tr>
@@ -53,34 +53,40 @@ Opening a new window is deferred, and Ctrl+Shift+N shows "not built yet".
 <td><img src="assets/gui-shortcuts.png" alt="Keyboard shortcuts window"></td>
 </tr>
 <tr>
-<td>Find (Ctrl+Shift+F) with the rail collapsed</td>
+<td>Find (Ctrl+F) with the rail collapsed</td>
 <td>Shortcuts window (Ctrl+Shift+?): click a key to rebind it</td>
 </tr>
 </table>
 
+bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, with F2 for a new tab and Ctrl+Left/Right to switch tabs.
+
 | Feature | Default keys | Details |
 | :- | :- | :- |
-| New / close tab | Ctrl+Shift+T / Ctrl+Shift+W | A new tab starts in the current pane's directory |
-| Switch tab | Ctrl+PgDn / Ctrl+PgUp, Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+1…9 | |
+| New / close tab | F2 / Ctrl+Shift+W | A new tab starts in the current pane's directory |
+| Switch tab | Ctrl+Right / Ctrl+Left, Alt+1…9, Alt+0 | Alt+0 selects tab 10 |
+| Move tab | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn | Moves the selected tab in the rail or the bar |
 | Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
 | Agent status | | Dot, state, repo ⎇ branch, container or SSH host, and the agent's notice; see [Agent status and hooks](#agent-status-and-hooks) |
-| Switcher | Ctrl+Shift+Space | Lists needs-you tabs first; type to filter |
-| Next needing you | Ctrl+Shift+J | Visits needs-you tabs, then done tabs, and acknowledges each |
+| Switcher | Ctrl+Shift+O | Lists needs-you tabs first; type to filter |
+| Next needing you | Alt+A | Visits needs-you tabs, then done tabs, and acknowledges each |
 | Notifications | | A desktop notification when an agent in a tab you are not looking at needs you, is done or failed; clicking it opens the tab |
 | Split | F1 / Alt+F1 | Side by side or stacked by pane shape; Alt+F1 opens a shell in the same container |
 | Zoom pane | F12 | |
 | Move between panes | Alt+arrows | |
-| Find | Ctrl+Shift+F | Enter or Ctrl+Shift+G: next; Shift+Enter: previous; Esc keeps the scroll position |
+| Find | Ctrl+F or Ctrl+Shift+F | Enter or Ctrl+N: next; Ctrl+P: previous; Esc keeps the scroll position; Ctrl+C and Ctrl+V edit the bar's text |
 | Scrollback | Shift+PgUp / Shift+PgDn | |
-| Copy / paste | Ctrl+Shift+C / Ctrl+Shift+V | Selecting copies to the primary selection; middle click pastes it |
+| Copy / paste | Ctrl+C / Ctrl+V, Ctrl+Shift+C / Ctrl+Shift+V | Ctrl+C copies a selection and ends it; with nothing selected it reaches the program. Selecting copies to the primary selection; middle click pastes it |
+| Select all | Ctrl+Shift+A | Selects the scrollback and the screen, and copies them to the primary selection |
 | Text size | Ctrl+= / Ctrl+- / Ctrl+0 | |
 | Images | | SIXEL, Kitty and iTerm2 images drawn at full resolution, 1:1 in device pixels |
 | Links | Ctrl+click | Opens OSC 8 links and plain http, https and file URLs; Ctrl+hover underlines them |
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
-| Shortcuts window | Ctrl+Shift+? | Rebind or turn off any action; ⚠ marks keys terminal programs may use |
+| Shortcuts window | Ctrl+Shift+? / Ctrl+? | Rebind or turn off any action; ⚠ marks keys terminal programs may use |
 | Preferences | Ctrl+, | Layout, rail, font, text zoom, theme, notifications and extra agent CLIs |
+| Options menu | F10 | |
+| Fullscreen | F11 | |
 | Themes | | bunk's themes; picking one in Preferences repaints the panes at once |
-| Quit | Ctrl+Shift+Q | Asks first while a pane runs more than an idle shell |
+| Quit | Ctrl+Q / Ctrl+Shift+Q | Asks first while a pane runs more than an idle shell |
 
 Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. bunk-gui draws their images 1:1:
 
@@ -241,8 +247,8 @@ text_zoom = 100            # % of font_size at start and after Ctrl+0
 theme = "default"          # as in bunk, with [themes.NAME] tables of your own
 
 [keys]                     # one key or a list; actions in cmd/bunk-gui/bindings.go
-switcher = "ctrl+shift+space"
-next_needs_you = ["ctrl+shift+j", "f9"]
+next_tab = ["ctrl+right", "ctrl+pgdn"]
+copy = "ctrl+shift+c"      # Ctrl+C always goes to the terminal
 zoom = "none"              # F12 goes to the terminal
 
 [[agents]]                 # another agent CLI to recognise; repeatable

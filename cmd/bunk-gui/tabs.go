@@ -239,6 +239,18 @@ func (a *App) selectOffset(d int) {
 	}
 }
 
+// moveTab moves the selected tab d places along the rail or the bar. At
+// either end it stays where it is.
+func (a *App) moveTab(d int) {
+	i := a.tabIndex(a.active)
+	j := i + d
+	if i < 0 || j < 0 || j >= len(a.tabs) {
+		return
+	}
+	a.tabs[i], a.tabs[j] = a.tabs[j], a.tabs[i]
+	a.refreshChrome()
+}
+
 // closeTab ends every session of t (SIGHUP) and removes the tab. Closing
 // the last tab quits.
 func (a *App) closeTab(t *Tab) {

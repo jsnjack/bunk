@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -129,8 +130,8 @@ func (a *App) installShortcuts() {
 // the key goes on to the focused widget (usually the terminal), when no
 // action is bound, when the focused pane sends all keys to the terminal
 // (passthrough; only its own toggle still works), while a dialog is open,
-// and when the action does not apply (zoom without a split). keycode 0
-// means unknown.
+// and when the action does not apply (zoom without a split, Ctrl+C with
+// nothing selected). keycode 0 means unknown.
 func (a *App) onShortcut(keyval, keycode uint, state gdk.ModifierType) bool {
 	if a.modalOpen() {
 		return false
@@ -145,14 +146,14 @@ func (a *App) onShortcut(keyval, keycode uint, state gdk.ModifierType) bool {
 		}
 		return kv
 	}
-	name, ok := a.keys().match(keyval, state, unshift)
+	name, combo, ok := a.keys().match(keyval, state, unshift)
 	if !ok {
 		return false
 	}
 	if p := a.activePane(); p != nil && p.passthrough && name != "passthrough" && a.switcher == nil {
 		return false
 	}
-	return a.runAction(name)
+	return a.runAction(name, combo.collides())
 }
 
 // keys is the key map in force.
@@ -163,8 +164,12 @@ func (a *App) modalOpen() bool {
 	return a.about != nil || a.shortcutsWin != nil || a.prefsWin != nil || a.quitDialog != nil
 }
 
-// runAction runs a bound action and reports whether it applied.
-func (a *App) runAction(name string) bool {
+// runAction runs a bound action and reports whether it applied. termKey
+// says the key is one terminal programs use (keyCombo.collides): copy and
+// paste then leave it to the find bar while that has the keyboard, and
+// copy leaves it to the terminal unless text is selected, as bunk's TUI
+// does with Ctrl+C.
+func (a *App) runAction(name string, termKey bool) bool {
 	t, p := a.active, a.activePane()
 	split := t != nil && t.root != nil && t.root.pane == nil
 	// Window actions close the switcher first; pane actions leave its keys
@@ -177,11 +182,11 @@ func (a *App) runAction(name string) bool {
 		return true
 	}
 	if n, ok := strings.CutPrefix(name, "select_tab_"); ok {
-		i := int(n[0] - '1')
-		if i < 0 || i >= len(a.tabs) {
+		i, err := strconv.Atoi(n)
+		if err != nil || i < 1 || i > len(a.tabs) {
 			return true
 		}
-		return global(func() { a.selectTab(a.tabs[i]) })
+		return global(func() { a.selectTab(a.tabs[i-1]) })
 	}
 	switch name {
 	case "search_next", "search_prev", "search_exit":
@@ -203,6 +208,12 @@ func (a *App) runAction(name string) bool {
 		return global(func() { a.selectOffset(+1) })
 	case "prev_tab":
 		return global(func() { a.selectOffset(-1) })
+	case "move_tab_left":
+		return global(func() { a.moveTab(-1) })
+	case "move_tab_right":
+		return global(func() { a.moveTab(+1) })
+	case "toggle_fullscreen":
+		return global(a.toggleFullscreen)
 	case "toggle_rail":
 		if a.layout != "rail" {
 			return false
@@ -251,9 +262,17 @@ func (a *App) runAction(name string) bool {
 	case "search":
 		a.openFind()
 	case "copy":
-		a.copySelection(p)
+		if termKey {
+			return !a.findFocused() && a.copySelection(p, true)
+		}
+		a.copySelection(p, false)
 	case "paste":
+		if termKey && a.findFocused() {
+			return false
+		}
 		a.paste(p, false)
+	case "select_all":
+		a.selectAll(p)
 	default:
 		return false
 	}

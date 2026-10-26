@@ -14,12 +14,15 @@
 //	bunk-gui --command 'htop'               # run sh -c CMD; quit when it exits
 //	bunk-gui --command 'cat big.txt; sleep 1' --stats --timeout 10s
 //
-// Keys: Ctrl+Shift+T/W/N new/close tab, new window; Ctrl+PgUp/PgDn,
-// Ctrl+(Shift+)Tab and Ctrl+1…9 switch tabs; Ctrl+Space switcher; Ctrl+J next
-// tab needing you; Ctrl+B expand/collapse the rail; F1 / Alt+F1 split (in
-// the same container); F12 zoom pane; Alt+arrows move between panes;
-// Ctrl+= / Ctrl+- / Ctrl+0 text size; Ctrl+Shift+C/V copy/paste;
-// Shift+PgUp/PgDn scroll; Ctrl+Q quit.
+// Default keys follow bunk's TUI and Ptyxis (bindings.go): F2 new tab;
+// Ctrl+Shift+W/N close tab, new window; Ctrl+Left/Right and Alt+1…0 switch
+// tabs; Ctrl+Shift+PgUp/PgDn move the tab; Ctrl+Shift+O switcher; Alt+A
+// next tab needing you; Ctrl+Shift+B expand/collapse the rail; F1 / Alt+F1
+// split (in the same container); F12 zoom pane; Alt+arrows move between
+// panes; Ctrl+F find; Ctrl+C/V and Ctrl+Shift+C/V copy/paste (Ctrl+C
+// copies only a selection); Ctrl+Shift+A select all; Shift+PgUp/PgDn
+// scroll; Ctrl+= / Ctrl+- / Ctrl+0 text size; F10 menu; F11 fullscreen;
+// Ctrl+Q quit.
 package main
 
 import "runtime"

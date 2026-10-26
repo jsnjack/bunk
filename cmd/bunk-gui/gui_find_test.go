@@ -60,8 +60,9 @@ func TestGUICellPixels(t *testing.T) {
 	}
 }
 
-// TestGUIFind drives the find bar with real keys: incremental typing,
-// next and previous with wrap-around, scrolling a match in scrollback into
+// TestGUIFind drives the find bar with real keys: Ctrl+F, incremental
+// typing, next (Enter, Ctrl+N) and previous (Ctrl+P) with wrap-around,
+// scrolling a match in scrollback into
 // view, the count, no matches, Esc keeping the scroll position (as bunk's
 // TUI), highlight colours in pixels, and no allocations in the frame path
 // while matches are shown.
@@ -79,7 +80,7 @@ exec sh
 `},
 		script: []string{
 			"wait focused.text=\"row 300 Needle here\" focused.line=$",
-			"kbd ctrl+shift+f",
+			"kbd ctrl+f",
 			"wait find.focused=true",
 			"kbd-type needle",
 			"wait find.query=needle find.busy=false find.total=30",
@@ -88,11 +89,12 @@ exec sh
 			"kbd Return",
 			"wait find.index=0 find.current.row>=0",
 			"snap next-wrap",
-			"kbd shift+Return",
+			"kbd ctrl+p",
 			"wait find.index=29",
 			"snap prev-wrap",
-			"kbd Return",
+			"kbd ctrl+n",
 			"wait find.index=0",
+			"snap next-ctrl",
 			"kbd Return",
 			"wait find.index=1",
 			"snap second",
@@ -160,10 +162,13 @@ exec sh
 		t.Errorf("Enter after the last match: match %d, current %+v; want the first, scrolled into view", f.Index+1, f.Current)
 	}
 	if f := find("prev-wrap"); f.Index != total-1 || g.snap("prev-wrap").pane(t, 0).Scroll != 0 {
-		t.Errorf("Shift+Enter on the first match: match %d, scroll %d; want the last, live", f.Index+1, g.snap("prev-wrap").pane(t, 0).Scroll)
+		t.Errorf("Ctrl+P on the first match: match %d, scroll %d; want the last, live", f.Index+1, g.snap("prev-wrap").pane(t, 0).Scroll)
+	}
+	if f := find("next-ctrl"); f.Index != 0 || f.Current == nil || f.Current.Row < 0 {
+		t.Errorf("Ctrl+N on the last match: match %d, current %+v; want the first", f.Index+1, f.Current)
 	}
 	if f := find("second"); f.Index != 1 || f.Current == nil || f.Current.Row < 0 {
-		t.Errorf("Enter twice: match %d, current %+v", f.Index+1, f.Current)
+		t.Errorf("Ctrl+N then Enter: match %d, current %+v", f.Index+1, f.Current)
 	}
 	if f := find("none"); f.Query != "needlex" || f.Total != 0 || f.Count != "0/0" {
 		t.Errorf("no matches: query %q, count %q", f.Query, f.Count)

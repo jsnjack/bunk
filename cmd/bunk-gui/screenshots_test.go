@@ -111,7 +111,7 @@ func TestGUIScreenshots(t *testing.T) {
 			"shot gui-find.png",
 			"kbd Escape",
 			"wait find=null",
-			"kbd ctrl+1",
+			"kbd alt+1",
 			"wait selected_tab=1",
 			"kbd ctrl+shift+question",
 			"wait shortcuts!=null",

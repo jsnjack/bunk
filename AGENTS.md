@@ -434,11 +434,29 @@ to the terminal. The file is watched and reloads live, and a bad value shows
 a toast and keeps the default. The shortcuts window (Ctrl+Shift+?) and the
 preferences window (Ctrl+,) rewrite only the lines they change
 (`cmd/bunk-gui/keysfile.go`). `cmd/bunk-gui/bindings.go` lists every action and
-its default.
+its default; Design Decisions says where the defaults come from.
 
 ---
 
 ## Design Decisions
+
+- bunk-gui's default keys are the keys the user presses today in bunk's
+  TUI inside Ptyxis. They are bunk's TUI defaults plus Ptyxis's shortcuts,
+  with the user's own Ptyxis keys: F2 opens a tab and Ctrl+Left/Right
+  switch tabs. A change to a default needs the user's agreement;
+  `TestDefaultKeys` lists every action's keys.
+  - Ctrl+C copies only while text is selected, and ends the selection, so
+    the next Ctrl+C reaches the program; with nothing selected it sends ^C.
+    Ctrl+Shift+C always copies. The rule follows `keyCombo.collides`: a copy
+    key a terminal program may use falls through without a selection.
+  - While the find bar has the keyboard, Ctrl+C and Ctrl+V edit its text,
+    and Ctrl+N, Ctrl+P, Enter and Esc step through matches and close it.
+    Elsewhere Ctrl+N, Ctrl+P, Enter and Esc reach the program.
+  - Ctrl+Shift+PgUp/PgDn move the selected tab in `App.tabs`, which orders
+    the rail, the bar, Alt+1…0 and the report's tabs.
+  - The shortcuts window marks keys terminal programs use (Ctrl+C, Alt+A,
+    F2 and others) with ⚠. Passthrough (Ctrl+F12) sends all of them to the
+    program.
 
 - Keyboard passthrough is per pane. Ctrl+F12 (`[keys].passthrough`) toggles
   forwarding of all other keys through the normal terminal encoder. The toggle

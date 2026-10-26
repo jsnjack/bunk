@@ -578,6 +578,14 @@ func (a *App) setLayout(layout string, railOpen bool) {
 	}
 }
 
+func (a *App) toggleFullscreen() {
+	if a.win.IsFullscreen() {
+		a.win.Unfullscreen()
+	} else {
+		a.win.Fullscreen()
+	}
+}
+
 // ---- options menu ----
 
 type menuItem struct {
@@ -785,7 +793,7 @@ func (a *App) toast(text string) {
 	a.toastLog = append(a.toastLog, text)
 }
 
-// ---- switcher (Ctrl+Space) ----
+// ---- switcher ----
 
 type switcher struct {
 	shown []*Tab // rows in the order shown

@@ -2,6 +2,7 @@ package main
 
 import (
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -68,12 +69,96 @@ func TestCollides(t *testing.T) {
 	for s, want := range map[string]bool{
 		"ctrl+j": true, "alt+b": true, "ctrl+1": true, "ctrl+equal": true, "ctrl+space": true,
 		"f1": true, "f12": true, "alt+left": true, "ctrl+up": true,
+		"ctrl+c": true, "ctrl+v": true, "ctrl+f": true, "ctrl+n": true, "ctrl+p": true, "ctrl+q": true,
+		"ctrl+left": true, "ctrl+right": true, "alt+1": true, "alt+0": true, "alt+a": true,
+		"f2": true, "f10": true, "f11": true, "ctrl+question": true,
 		"ctrl+shift+j": false, "ctrl+shift+space": false, "ctrl+f12": false, "alt+f1": false,
 		"shift+pgup": false, "ctrl+shift+question": false, "ctrl+pgdn": false,
+		"ctrl+shift+o": false, "ctrl+shift+a": false, "ctrl+shift+pgup": false, "enter": false, "escape": false,
 	} {
 		if got := mustCombo(t, s).collides(); got != want {
 			t.Errorf("%s: collides %v, want %v", s, got, want)
 		}
+	}
+}
+
+// defaultKeys are bunk-gui's default bindings: the keys of bunk's TUI and
+// Ptyxis the user has today (AGENTS.md, Design Decisions).
+var defaultKeys = map[string][]string{
+	"new_tab":           {"f2"},
+	"close_tab":         {"ctrl+shift+w"},
+	"new_window":        {"ctrl+shift+n"},
+	"next_tab":          {"ctrl+right"},
+	"prev_tab":          {"ctrl+left"},
+	"move_tab_left":     {"ctrl+shift+pgup"},
+	"move_tab_right":    {"ctrl+shift+pgdn"},
+	"select_tab_1":      {"alt+1"},
+	"select_tab_2":      {"alt+2"},
+	"select_tab_3":      {"alt+3"},
+	"select_tab_4":      {"alt+4"},
+	"select_tab_5":      {"alt+5"},
+	"select_tab_6":      {"alt+6"},
+	"select_tab_7":      {"alt+7"},
+	"select_tab_8":      {"alt+8"},
+	"select_tab_9":      {"alt+9"},
+	"select_tab_10":     {"alt+0"},
+	"switcher":          {"ctrl+shift+o"},
+	"next_needs_you":    {"alt+a"},
+	"split":             {"f1"},
+	"split_context":     {"alt+f1"},
+	"zoom":              {"f12"},
+	"nav_up":            {"alt+up"},
+	"nav_down":          {"alt+down"},
+	"nav_left":          {"alt+left"},
+	"nav_right":         {"alt+right"},
+	"scroll_up":         {"shift+pgup"},
+	"scroll_down":       {"shift+pgdn"},
+	"search":            {"ctrl+f", "ctrl+shift+f"},
+	"search_next":       {"ctrl+n", "enter"},
+	"search_prev":       {"ctrl+p"},
+	"search_exit":       {"escape"},
+	"copy":              {"ctrl+shift+c", "ctrl+c"},
+	"paste":             {"ctrl+shift+v", "ctrl+v"},
+	"select_all":        {"ctrl+shift+a"},
+	"passthrough":       {"ctrl+f12"},
+	"toggle_rail":       {"ctrl+shift+b"},
+	"toggle_fullscreen": {"f11"},
+	"font_bigger":       {"ctrl+equal", "ctrl+plus", "ctrl+kp_add"},
+	"font_smaller":      {"ctrl+minus", "ctrl+kp_subtract"},
+	"font_reset":        {"ctrl+0", "ctrl+kp_0"},
+	"menu":              {"f10"},
+	"preferences":       {"ctrl+comma"},
+	"shortcuts":         {"ctrl+shift+question", "ctrl+question"},
+	"quit":              {"ctrl+q", "ctrl+shift+q"},
+}
+
+// TestDefaultKeys: every action's default keys, as written and as bound
+// with an empty [keys] table.
+func TestDefaultKeys(t *testing.T) {
+	m, problems := resolveKeys(nil)
+	if len(problems) != 0 {
+		t.Fatalf("defaults: %q", problems)
+	}
+	if len(keyActions) != len(defaultKeys) {
+		t.Errorf("%d actions, %d in the table", len(keyActions), len(defaultKeys))
+	}
+	for _, act := range keyActions {
+		t.Run(act.name, func(t *testing.T) {
+			want, ok := defaultKeys[act.name]
+			if !ok {
+				t.Fatalf("no defaults listed for %s", act.name)
+			}
+			if !slices.Equal(act.defs, want) {
+				t.Errorf("defaults %q, want %q", act.defs, want)
+			}
+			var bound []string
+			for _, c := range m.bind[act.name] {
+				bound = append(bound, c.String())
+			}
+			if !slices.Equal(bound, want) {
+				t.Errorf("bound %q, want %q", bound, want)
+			}
+		})
 	}
 }
 
@@ -82,21 +167,9 @@ func TestResolveKeys(t *testing.T) {
 	if len(problems) != 0 {
 		t.Fatalf("defaults: %q", problems)
 	}
-	for _, act := range keyActions {
-		if len(m.bind[act.name]) != len(act.defs) {
-			t.Errorf("%s: %d defaults bound of %d", act.name, len(m.bind[act.name]), len(act.defs))
-		}
-	}
-	// The user decisions: conflicting keys moved to Ctrl+Shift.
-	for action, want := range map[string]string{
-		"switcher": "ctrl+shift+space", "next_needs_you": "ctrl+shift+j", "toggle_rail": "ctrl+shift+b",
-		"quit": "ctrl+shift+q", "passthrough": "ctrl+f12",
-	} {
-		if got := m.bind[action]; len(got) != 1 || got[0].String() != want {
-			t.Errorf("%s: %v, want %s", action, got, want)
-		}
-	}
-	for _, free := range []string{"ctrl+j", "ctrl+b", "ctrl+space", "ctrl+q", "ctrl+f"} {
+	// Keys shells and editors need stay with the terminal.
+	for _, free := range []string{"ctrl+a", "ctrl+b", "ctrl+d", "ctrl+e", "ctrl+j", "ctrl+k", "ctrl+l", "ctrl+r",
+		"ctrl+u", "ctrl+w", "ctrl+z", "ctrl+space", "ctrl+shift+t", "ctrl+tab", "ctrl+pgdn"} {
 		if a, ok := m.action[mustCombo(t, free)]; ok {
 			t.Errorf("%s is bound to %s; it must reach the terminal", free, a)
 		}
@@ -140,8 +213,8 @@ paste = "ctrl+alt+n"
 	check("split") // only a bad key: nothing bound
 	check("copy")  // f9 went to next_needs_you, listed first
 	check("paste") // ctrl+alt+n went to new_tab
-	check("quit", "ctrl+shift+q")
-	if _, ok := m.action[mustCombo(t, "ctrl+shift+t")]; ok {
+	check("quit", "ctrl+q", "ctrl+shift+q")
+	if _, ok := m.action[mustCombo(t, "f2")]; ok {
 		t.Error("the default new_tab key stays bound after rebinding")
 	}
 }
@@ -150,32 +223,49 @@ func TestKeymapMatch(t *testing.T) {
 	m, _ := resolveKeys(nil)
 	none := func() uint { return 0 }
 	slash := func() uint { return gdk.KEY_slash }
-	tab := func() uint { return gdk.KEY_Tab }
 	for _, c := range []struct {
 		keyval  uint
 		state   gdk.ModifierType
 		unshift func() uint
 		want    string
+		combo   string
 	}{
-		{gdk.KEY_J, gdk.ControlMask | gdk.ShiftMask, none, "next_needs_you"},
-		{gdk.KEY_j, gdk.ControlMask, none, ""},
-		{gdk.KEY_space, gdk.ControlMask | gdk.ShiftMask, none, "switcher"},
-		{gdk.KEY_space, gdk.ControlMask, none, ""},
-		{gdk.KEY_question, gdk.ControlMask | gdk.ShiftMask, slash, "shortcuts"},
-		{gdk.KEY_plus, gdk.ControlMask | gdk.ShiftMask, none, "font_bigger"}, // Ctrl+Shift+= on US layouts
-		{gdk.KEY_ISO_Left_Tab, gdk.ControlMask | gdk.ShiftMask, tab, "prev_tab"},
-		{gdk.KEY_Tab, gdk.ControlMask, none, "next_tab"},
-		{gdk.KEY_F12, gdk.ControlMask, none, "passthrough"},
-		{gdk.KEY_F12, 0, none, "zoom"},
-		{gdk.KEY_F1, gdk.AltMask, none, "split_context"},
-		{gdk.KEY_Page_Up, gdk.ShiftMask, none, "scroll_up"},
-		{gdk.KEY_q, gdk.ControlMask, none, ""},
-		{gdk.KEY_Q, gdk.ControlMask | gdk.ShiftMask, none, "quit"},
-		{gdk.KEY_3, gdk.ControlMask, none, "select_tab_3"},
+		{gdk.KEY_a, gdk.AltMask, none, "next_needs_you", "alt+a"},
+		{gdk.KEY_J, gdk.ControlMask | gdk.ShiftMask, none, "", ""},
+		{gdk.KEY_O, gdk.ControlMask | gdk.ShiftMask, none, "switcher", "ctrl+shift+o"},
+		{gdk.KEY_space, gdk.ControlMask | gdk.ShiftMask, none, "", ""},
+		{gdk.KEY_question, gdk.ControlMask | gdk.ShiftMask, slash, "shortcuts", "ctrl+shift+question"},
+		{gdk.KEY_question, gdk.ControlMask, none, "shortcuts", "ctrl+question"},
+		{gdk.KEY_plus, gdk.ControlMask | gdk.ShiftMask, none, "font_bigger", "ctrl+plus"}, // Ctrl+Shift+= on US layouts
+		{gdk.KEY_Right, gdk.ControlMask, none, "next_tab", "ctrl+right"},
+		{gdk.KEY_Left, gdk.ControlMask, none, "prev_tab", "ctrl+left"},
+		{gdk.KEY_Page_Up, gdk.ControlMask | gdk.ShiftMask, none, "move_tab_left", "ctrl+shift+pgup"},
+		{gdk.KEY_Page_Down, gdk.ControlMask | gdk.ShiftMask, none, "move_tab_right", "ctrl+shift+pgdn"},
+		{gdk.KEY_Tab, gdk.ControlMask, none, "", ""},
+		{gdk.KEY_F12, gdk.ControlMask, none, "passthrough", "ctrl+f12"},
+		{gdk.KEY_F12, 0, none, "zoom", "f12"},
+		{gdk.KEY_F1, gdk.AltMask, none, "split_context", "alt+f1"},
+		{gdk.KEY_F2, 0, none, "new_tab", "f2"},
+		{gdk.KEY_F10, 0, none, "menu", "f10"},
+		{gdk.KEY_F11, 0, none, "toggle_fullscreen", "f11"},
+		{gdk.KEY_Page_Up, gdk.ShiftMask, none, "scroll_up", "shift+pgup"},
+		{gdk.KEY_q, gdk.ControlMask, none, "quit", "ctrl+q"},
+		{gdk.KEY_Q, gdk.ControlMask | gdk.ShiftMask, none, "quit", "ctrl+shift+q"},
+		{gdk.KEY_c, gdk.ControlMask, none, "copy", "ctrl+c"},
+		{gdk.KEY_C, gdk.ControlMask | gdk.ShiftMask, none, "copy", "ctrl+shift+c"},
+		{gdk.KEY_v, gdk.ControlMask, none, "paste", "ctrl+v"},
+		{gdk.KEY_A, gdk.ControlMask | gdk.ShiftMask, none, "select_all", "ctrl+shift+a"},
+		{gdk.KEY_f, gdk.ControlMask, none, "search", "ctrl+f"},
+		{gdk.KEY_n, gdk.ControlMask, none, "search_next", "ctrl+n"},
+		{gdk.KEY_p, gdk.ControlMask, none, "search_prev", "ctrl+p"},
+		{gdk.KEY_3, gdk.AltMask, none, "select_tab_3", "alt+3"},
+		{gdk.KEY_0, gdk.AltMask, none, "select_tab_10", "alt+0"},
+		{gdk.KEY_0, gdk.ControlMask, none, "font_reset", "ctrl+0"},
+		{gdk.KEY_3, gdk.ControlMask, none, "", ""},
 	} {
-		got, _ := m.match(c.keyval, c.state|gdk.LockMask, c.unshift)
-		if got != c.want {
-			t.Errorf("%s with %v: %q, want %q", gdk.KeyvalName(c.keyval), c.state, got, c.want)
+		got, combo, ok := m.match(c.keyval, c.state|gdk.LockMask, c.unshift)
+		if ok != (c.want != "") || got != c.want || (ok && combo.String() != c.combo) {
+			t.Errorf("%s with %v: %q by %q, want %q by %q", gdk.KeyvalName(c.keyval), c.state, got, combo.String(), c.want, c.combo)
 		}
 	}
 }

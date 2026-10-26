@@ -50,7 +50,7 @@ import (
 // Real input through the compositor (window maximized for ptr*); "wait
 // input" holds until the window has seen every key and button event:
 //
-//	kbd SPEC...                      key combinations, e.g. kbd ctrl+shift+t F1 alt+Left
+//	kbd SPEC...                      key combinations, e.g. kbd ctrl+shift+o F1 alt+Left
 //	kbd-down KEY... | kbd-up KEY...  hold or release keys, e.g. kbd-down ctrl shift
 //	kbd-type TEXT                    text typed key by key
 //	ptr-move X Y                     pointer to window coordinates
@@ -304,7 +304,7 @@ func (a *App) doAction(action string, done func()) {
 	case "wheel":
 		p.wheel(float64(num(0, 1)), 0)
 	case "copy":
-		a.copySelection(p)
+		a.copySelection(p, false)
 	case "paste":
 		a.paste(p, false)
 	case "paste-primary":

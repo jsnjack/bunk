@@ -30,11 +30,11 @@ var alertRepo = map[string]string{".git": "gitdir: .\n", "HEAD": "ref: refs/head
 
 // startAlertAgent runs the fake claude in tab 2 and selects tab 1.
 var startAlertAgent = []string{
-	"kbd ctrl+2",
+	"kbd alt+2",
 	"wait selected_tab=2 focused.line=$ tab.2.status.branch=feature-x",
 	"type claude\\r",
 	"wait tab.2.status.agent=claude",
-	"kbd ctrl+1",
+	"kbd alt+1",
 	"wait selected_tab=1",
 }
 
@@ -73,9 +73,9 @@ func TestGUINotifications(t *testing.T) {
 		"run touch go1",
 		"wait tab.2.state=done run.notifications.#=2",
 		"snap done",
-		"kbd ctrl+2",
+		"kbd alt+2",
 		"wait selected_tab=2 tab.2.state=idle run.notifications.#=3 tab.2.notified=false",
-		"kbd ctrl+1",
+		"kbd alt+1",
 		"wait selected_tab=1",
 		"run touch go2",
 		"wait tab.2.state=needs run.notifications.#=4",

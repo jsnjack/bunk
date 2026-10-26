@@ -166,8 +166,9 @@ type paneReport struct {
 	Status     statusReport     `json:"status"`
 	Title      string           `json:"title"`
 	Scroll     int              `json:"scroll"`
-	Text       []string         `json:"text"` // live grid rows, trailing blanks trimmed
-	Line       string           `json:"line"` // the text cursor's row of Text: "$" at an idle sh prompt
+	Text       []string         `json:"text"`      // live grid rows, trailing blanks trimmed
+	Selection  string           `json:"selection"` // the selected text, "" when none
+	Line       string           `json:"line"`      // the text cursor's row of Text: "$" at an idle sh prompt
 	// Settled: the pane's last frame was drawn at its current size and
 	// font, no frame or reflow is pending, and the grid fits the frame.
 	Settled bool         `json:"settled"`
@@ -339,12 +340,13 @@ type quitReport struct {
 }
 
 type windowReport struct {
-	W         int     `json:"w"` // logical
-	H         int     `json:"h"`
-	Scale     float64 `json:"scale"`
-	Maximized bool    `json:"maximized"`
-	Active    bool    `json:"active"`
-	Title     string  `json:"title"`
+	W          int     `json:"w"` // logical
+	H          int     `json:"h"`
+	Scale      float64 `json:"scale"`
+	Maximized  bool    `json:"maximized"`
+	Fullscreen bool    `json:"fullscreen"`
+	Active     bool    `json:"active"`
+	Title      string  `json:"title"`
 }
 
 type switchReport struct {
@@ -422,7 +424,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		Label: label, TMs: time.Since(a.started).Milliseconds(),
 		Layout: a.layout, RailOpen: a.railOpen,
 		Window: windowReport{W: a.win.Width(), H: a.win.Height(), Scale: g.scale,
-			Maximized: a.win.IsMaximized(), Active: a.win.IsActive(), Title: a.win.Title()},
+			Maximized: a.win.IsMaximized(), Fullscreen: a.win.IsFullscreen(), Active: a.win.IsActive(), Title: a.win.Title()},
 		Chrome: a.widgetRect(g, a.chrome), NewTab: a.widgetRect(g, a.newTabBtn),
 		CloseWindow: a.widgetRect(g, a.closeWinBtn),
 		FocusedPane: -1, ZoomedPane: -1,
@@ -661,6 +663,7 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		if cy := p.s.Term.Cursor().Y; cy >= 0 && cy < len(r.Text) {
 			r.Line = r.Text[cy]
 		}
+		r.Selection = p.s.SelText()
 		p.s.Unlock()
 	}
 	return r

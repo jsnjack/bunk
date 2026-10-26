@@ -30,24 +30,29 @@ type keyAction struct {
 }
 
 // keyActions lists every action in the order the shortcuts window shows
-// them. The names shared with bunk's TUI mean the same there.
+// them. The names shared with bunk's TUI mean the same there. The defaults
+// are bunk's TUI keys plus Ptyxis's, with F2 and Ctrl+Left/Right for tabs as
+// the user set them in Ptyxis (AGENTS.md, Design Decisions).
 var keyActions = []keyAction{
-	{"new_tab", "New tab", []string{"ctrl+shift+t"}},
+	{"new_tab", "New tab", []string{"f2"}},
 	{"close_tab", "Close tab", []string{"ctrl+shift+w"}},
 	{"new_window", "New window", []string{"ctrl+shift+n"}},
-	{"next_tab", "Next tab", []string{"ctrl+pgdn", "ctrl+tab"}},
-	{"prev_tab", "Previous tab", []string{"ctrl+pgup", "ctrl+shift+tab"}},
-	{"select_tab_1", "Select tab 1", []string{"ctrl+1"}},
-	{"select_tab_2", "Select tab 2", []string{"ctrl+2"}},
-	{"select_tab_3", "Select tab 3", []string{"ctrl+3"}},
-	{"select_tab_4", "Select tab 4", []string{"ctrl+4"}},
-	{"select_tab_5", "Select tab 5", []string{"ctrl+5"}},
-	{"select_tab_6", "Select tab 6", []string{"ctrl+6"}},
-	{"select_tab_7", "Select tab 7", []string{"ctrl+7"}},
-	{"select_tab_8", "Select tab 8", []string{"ctrl+8"}},
-	{"select_tab_9", "Select tab 9", []string{"ctrl+9"}},
-	{"switcher", "Switch tab", []string{"ctrl+shift+space"}},
-	{"next_needs_you", "Next tab needing you", []string{"ctrl+shift+j"}},
+	{"next_tab", "Next tab", []string{"ctrl+right"}},
+	{"prev_tab", "Previous tab", []string{"ctrl+left"}},
+	{"move_tab_left", "Move the tab left", []string{"ctrl+shift+pgup"}},
+	{"move_tab_right", "Move the tab right", []string{"ctrl+shift+pgdn"}},
+	{"select_tab_1", "Select tab 1", []string{"alt+1"}},
+	{"select_tab_2", "Select tab 2", []string{"alt+2"}},
+	{"select_tab_3", "Select tab 3", []string{"alt+3"}},
+	{"select_tab_4", "Select tab 4", []string{"alt+4"}},
+	{"select_tab_5", "Select tab 5", []string{"alt+5"}},
+	{"select_tab_6", "Select tab 6", []string{"alt+6"}},
+	{"select_tab_7", "Select tab 7", []string{"alt+7"}},
+	{"select_tab_8", "Select tab 8", []string{"alt+8"}},
+	{"select_tab_9", "Select tab 9", []string{"alt+9"}},
+	{"select_tab_10", "Select tab 10", []string{"alt+0"}},
+	{"switcher", "Switch tab", []string{"ctrl+shift+o"}},
+	{"next_needs_you", "Next tab needing you", []string{"alt+a"}},
 	{"split", "Split pane", []string{"f1"}},
 	{"split_context", "Split in the same container", []string{"alt+f1"}},
 	{"zoom", "Zoom pane", []string{"f12"}},
@@ -57,21 +62,23 @@ var keyActions = []keyAction{
 	{"nav_right", "Focus the pane on the right", []string{"alt+right"}},
 	{"scroll_up", "Scroll back", []string{"shift+pgup"}},
 	{"scroll_down", "Scroll forward", []string{"shift+pgdn"}},
-	{"search", "Find in the pane", []string{"ctrl+shift+f"}},
-	{"search_next", "Next match (while finding)", []string{"enter", "ctrl+shift+g"}},
-	{"search_prev", "Previous match (while finding)", []string{"shift+enter"}},
+	{"search", "Find in the pane", []string{"ctrl+f", "ctrl+shift+f"}},
+	{"search_next", "Next match (while finding)", []string{"ctrl+n", "enter"}},
+	{"search_prev", "Previous match (while finding)", []string{"ctrl+p"}},
 	{"search_exit", "Close the find bar", []string{"escape"}},
-	{"copy", "Copy", []string{"ctrl+shift+c"}},
-	{"paste", "Paste", []string{"ctrl+shift+v"}},
+	{"copy", "Copy", []string{"ctrl+shift+c", "ctrl+c"}},
+	{"paste", "Paste", []string{"ctrl+shift+v", "ctrl+v"}},
+	{"select_all", "Select all", []string{"ctrl+shift+a"}},
 	{"passthrough", "Send all keys to the terminal", []string{"ctrl+f12"}},
 	{"toggle_rail", "Expand or collapse the rail", []string{"ctrl+shift+b"}},
+	{"toggle_fullscreen", "Fullscreen", []string{"f11"}},
 	{"font_bigger", "Larger text", []string{"ctrl+equal", "ctrl+plus", "ctrl+kp_add"}},
 	{"font_smaller", "Smaller text", []string{"ctrl+minus", "ctrl+kp_subtract"}},
 	{"font_reset", "Reset text size", []string{"ctrl+0", "ctrl+kp_0"}},
-	{"menu", "Options menu", nil},
+	{"menu", "Options menu", []string{"f10"}},
 	{"preferences", "Preferences", []string{"ctrl+comma"}},
-	{"shortcuts", "Keyboard shortcuts", []string{"ctrl+shift+question"}},
-	{"quit", "Quit", []string{"ctrl+shift+q"}},
+	{"shortcuts", "Keyboard shortcuts", []string{"ctrl+shift+question", "ctrl+question"}},
+	{"quit", "Quit", []string{"ctrl+q", "ctrl+shift+q"}},
 }
 
 func findAction(name string) (keyAction, bool) {
@@ -333,10 +340,11 @@ func resolveKeys(table map[string]any) (keymap, []string) {
 	return m, problems
 }
 
-// match finds the action for a key press. unshift returns the keyval the
-// key's keycode gives without Shift (0 if unknown), for bindings written
-// with Shift and the unshifted key ("ctrl+shift+slash").
-func (m keymap) match(keyval uint, state gdk.ModifierType, unshift func() uint) (string, bool) {
+// match finds the action for a key press and the binding it matched.
+// unshift returns the keyval the key's keycode gives without Shift (0 if
+// unknown), for bindings written with Shift and the unshifted key
+// ("ctrl+shift+slash").
+func (m keymap) match(keyval uint, state gdk.ModifierType, unshift func() uint) (string, keyCombo, bool) {
 	mods := state & comboMods
 	key := gdk.KeyvalToLower(keyval)
 	cands := []keyCombo{{key, mods}}
@@ -351,10 +359,10 @@ func (m keymap) match(keyval uint, state gdk.ModifierType, unshift func() uint) 
 	}
 	for _, c := range cands {
 		if a, ok := m.action[c]; ok {
-			return a, true
+			return a, c, true
 		}
 	}
-	return "", false
+	return "", keyCombo{}, false
 }
 
 // withBinding returns a copy of m with action bound to combos.

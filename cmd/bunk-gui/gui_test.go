@@ -488,7 +488,7 @@ func TestGUIConfigErrors(t *testing.T) {
 
 // TestGUITabsAndStatus: status from the test hook drives dots, labels,
 // locations and tints; the switcher sorts needs-you first and filters by
-// typed text; Ctrl+J visits tabs needing you in order; Ctrl+1…9 select
+// typed text; Alt+A visits tabs needing you in order; Alt+1…9 select
 // tabs; a pane needing you gets the ring until it is focused; inactive
 // panes are dimmed.
 func TestGUITabsAndStatus(t *testing.T) {
@@ -505,7 +505,7 @@ func TestGUITabsAndStatus(t *testing.T) {
 			"wait tab.2.state=needs tab.3.state=working tab.4.state=failed",
 			"snap states",
 			"shot states.png",
-			"kbd ctrl+shift+space",
+			"kbd ctrl+shift+o",
 			"wait switcher.open=true keyboard_focus=switcher",
 			"snap switcher",
 			"kbd-type gh-mirror",
@@ -514,25 +514,25 @@ func TestGUITabsAndStatus(t *testing.T) {
 			"kbd Return",
 			"wait switcher.open=false selected_tab=4 keyboard_focus=\"pane 3\"",
 			"snap picked",
-			"kbd ctrl+1",
+			"kbd alt+1",
 			"wait selected_tab=1",
 			"status tab=4 state=needs notice=Second request",
-			"kbd ctrl+shift+j",
+			"kbd alt+a",
 			"wait selected_tab=2 tab.2.state=idle",
 			"snap jump1",
-			"kbd ctrl+shift+j",
+			"kbd alt+a",
 			"wait selected_tab=4 tab.4.state=idle",
 			"snap jump2",
-			"kbd ctrl+shift+j",
+			"kbd alt+a",
 			"wait last_toast=\"No agent needs you\"",
 			"snap jump3",
-			"kbd ctrl+3",
+			"kbd alt+3",
 			"wait selected_tab=3",
-			"snap ctrl3",
-			"kbd ctrl+9",
+			"snap alt3",
+			"kbd alt+9",
 			"wait input",
-			"snap ctrl9",
-			"kbd ctrl+1",
+			"snap alt9",
+			"kbd alt+1",
 			"wait selected_tab=1",
 			"split",
 			"wait tab.1.panes.#=2 pane.4.line=$",
@@ -605,19 +605,19 @@ func TestGUITabsAndStatus(t *testing.T) {
 		t.Errorf("after Enter: switcher open %v, selected %d, keyboard %q", s.Switcher.Open, s.SelectedTab, s.KeyboardFocus)
 	}
 	if s := g.snap("jump1"); s.SelectedTab != 2 || s.tab(t, 2).State != "idle" || s.tab(t, 4).State != "needs" {
-		t.Errorf("first Ctrl+J: selected %d, tab 2 %q, tab 4 %q", s.SelectedTab, s.tab(t, 2).State, s.tab(t, 4).State)
+		t.Errorf("first Alt+A: selected %d, tab 2 %q, tab 4 %q", s.SelectedTab, s.tab(t, 2).State, s.tab(t, 4).State)
 	}
 	if s := g.snap("jump2"); s.SelectedTab != 4 || s.tab(t, 4).State != "idle" {
-		t.Errorf("second Ctrl+J: selected %d, tab 4 %q", s.SelectedTab, s.tab(t, 4).State)
+		t.Errorf("second Alt+A: selected %d, tab 4 %q", s.SelectedTab, s.tab(t, 4).State)
 	}
 	if s := g.snap("jump3"); s.SelectedTab != 4 || s.LastToast != "No agent needs you" {
-		t.Errorf("third Ctrl+J: selected %d, toast %q", s.SelectedTab, s.LastToast)
+		t.Errorf("third Alt+A: selected %d, toast %q", s.SelectedTab, s.LastToast)
 	}
-	if s := g.snap("ctrl3"); s.SelectedTab != 3 {
-		t.Errorf("Ctrl+3: selected %d", s.SelectedTab)
+	if s := g.snap("alt3"); s.SelectedTab != 3 {
+		t.Errorf("Alt+3: selected %d", s.SelectedTab)
 	}
-	if s := g.snap("ctrl9"); s.SelectedTab != 3 {
-		t.Errorf("Ctrl+9 with 4 tabs: selected %d", s.SelectedTab)
+	if s := g.snap("alt9"); s.SelectedTab != 3 {
+		t.Errorf("Alt+9 with 4 tabs: selected %d", s.SelectedTab)
 	}
 
 	ring := g.snap("ring")
@@ -696,10 +696,10 @@ exit 3
 		args:   []string{"--size", "100x30", "--tab", ""},
 		env:    []string{"PATH=" + bin + ":" + os.Getenv("PATH")},
 		script: []string{
-			"kbd ctrl+2",
+			"kbd alt+2",
 			"wait selected_tab=2 focused.line=$",
 			"type claude\\r",
-			"kbd ctrl+1",
+			"kbd alt+1",
 			"wait selected_tab=1 focused.line=$",
 			"type aider\\r",
 			"wait tab.2.status.agent=claude tab.2.state=working tab.1.agent=aider",
@@ -708,7 +708,7 @@ exit 3
 			"wait tab.2.state=needs",
 			"snap needs",
 			"shot needs.png",
-			"kbd ctrl+shift+j",
+			"kbd alt+a",
 			"wait selected_tab=2 tab.2.state!=needs tab.2.notice=\"\"",
 			"snap acked",
 			"type yes\\r",
@@ -752,7 +752,7 @@ exit 3
 		}
 	}
 	if s := g.snap("acked"); s.SelectedTab != 2 || s.tab(t, 2).State == "needs" || s.tab(t, 2).Notice != "" {
-		t.Errorf("after Ctrl+J: selected %d, tab 2 %+v", s.SelectedTab, s.tab(t, 2))
+		t.Errorf("after Alt+A: selected %d, tab 2 %+v", s.SelectedTab, s.tab(t, 2))
 	}
 	b := g.snap("bell")
 	if tb := b.tab(t, 2); tb.State != "needs" || !b.pane(t, 1).Ring {
@@ -852,12 +852,12 @@ exec "$@"
 			"type exit\\r",
 			"wait tab.1.panes.#=5",
 			"snap closed-pane",
-			"kbd ctrl+2",
+			"kbd alt+2",
 			"wait selected_tab=2 focused.line=$",
 			"type exit\\r",
 			"wait tabs.#=1 selected_tab=1",
 			"snap closed-tab",
-			"kbd ctrl+shift+t",
+			"kbd f2",
 			"wait tabs.#=2",
 			"layout bar",
 			"wait layout=bar",
