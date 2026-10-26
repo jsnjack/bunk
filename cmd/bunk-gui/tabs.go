@@ -345,6 +345,7 @@ func (a *App) split(p *Pane, args []string) *Pane {
 	paned.SetWideHandle(false)
 	paned.SetShrinkStartChild(false)
 	paned.SetShrinkEndChild(false)
+	paned.NotifyProperty("position", func() { a.splitMoved(paned) })
 	t.replace(n, paned)
 	paned.SetStartChild(p.frame)
 	paned.SetEndChild(np.frame)

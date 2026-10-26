@@ -51,24 +51,24 @@ bunk-gui draws each pane into a texture at the widget's device-pixel size, so te
 </tr>
 <tr>
 <td>Find (Ctrl+F) with the rail collapsed</td>
-<td>Shortcuts window (Ctrl+Shift+?): click a key to rebind it</td>
+<td>Shortcuts window (Ctrl+Shift+?): click a key to rebind it, + adds one</td>
 </tr>
 </table>
 
-bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, with F2 for a new tab and Ctrl+Left/Right to switch tabs.
+bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, with F2 for a new tab and Ctrl+Left/Right or Ctrl+Up/Down to switch tabs.
 
 | Feature | Default keys | Details |
 | :- | :- | :- |
 | New / close tab | F2 / Ctrl+Shift+W | A new tab starts in the current pane's directory |
 | New window | Ctrl+Shift+N | Starts another bunk-gui in the current pane's directory; GNOME's app menu has New Window too |
-| Switch tab | Ctrl+Right / Ctrl+Left, Alt+1…9, Alt+0 | Alt+0 selects tab 10 |
-| Move tab | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn | Moves the selected tab in the rail or the bar |
+| Switch tab | Ctrl+Right / Ctrl+Left, Ctrl+Down / Ctrl+Up, Alt+1…9, Alt+0 | Alt+0 selects tab 10 |
+| Move tab | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn, or drag | Moves the selected tab in the rail or the bar; any tab can be dragged to a new place |
 | Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
 | Agent status | | Dot, state, repo ⎇ branch, container or SSH host, and the agent's notice; see [Agent status and hooks](#agent-status-and-hooks) |
-| Switcher | Ctrl+Shift+O | Lists needs-you tabs first; type to filter |
+| Switcher | Ctrl+Shift+O | Lists needs-you tabs first; type to filter, Up and Down pick a row, Enter opens it |
 | Next needing you | Alt+A | Visits needs-you tabs, then done tabs, and acknowledges each |
 | Notifications | | A desktop notification when an agent in a tab you are not looking at needs you, is done or failed; clicking it opens the tab |
-| Split | F1 / Alt+F1 | Side by side or stacked by pane shape; Alt+F1 opens a shell in the same container |
+| Split | F1 / Alt+F1 | Side by side or stacked by pane shape; Alt+F1 opens a shell in the same container. While you drag a divider, a label shows each side's share |
 | Zoom pane | F12 | |
 | Move between panes | Alt+arrows | |
 | Find | Ctrl+F or Ctrl+Shift+F | Enter or Ctrl+N: next; Ctrl+P: previous; Esc keeps the scroll position; Ctrl+C and Ctrl+V edit the bar's text |
@@ -79,9 +79,9 @@ bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, 
 | Images | | SIXEL, Kitty and iTerm2 images drawn at full resolution, 1:1 in device pixels |
 | Links | Ctrl+click | Opens OSC 8 links and plain http, https and file URLs; Ctrl+hover underlines them |
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
-| Shortcuts window | Ctrl+Shift+? / Ctrl+? | Rebind or turn off any action; ⚠ marks keys terminal programs may use |
+| Shortcuts window | Ctrl+Shift+? / Ctrl+? | Rebind or turn off any action, and give it more than one key; ⚠ marks keys terminal programs may use |
 | Preferences | Ctrl+, | Layout, rail, font, text zoom, theme, notifications and extra agent CLIs |
-| Options menu | F10 | |
+| Options menu | F10 | The ≡ button at the bottom of the rail, or at the right of the bar |
 | Fullscreen | F11 | |
 | Themes | | bunk's themes; picking one in Preferences repaints the panes at once |
 | Quit | Ctrl+Q / Ctrl+Shift+Q | Asks first while a pane runs more than an idle shell |

@@ -336,6 +336,12 @@ func (a *App) injectText(text string) error {
 // markInject stamps the injection, for the inject -> PTY write latency.
 func (a *App) markInject() { a.injectAt = monoNs() }
 
+// pointerBy moves the pointer by dx, dy and leaves the buttons as they
+// are, so ptr-press, ptr-by and ptr-release drag in steps.
+func (a *App) pointerBy(dx, dy float64) error {
+	return injectOK(C.inj_motion(C.double(dx), C.double(dy)))
+}
+
 // pointerTo moves the pointer to window coordinates. The window must be
 // maximized: it then starts at the monitor's origin, and the pointer is
 // first pushed into the corner, so relative motion lands exactly.
@@ -575,7 +581,9 @@ func (a *App) target(args []string) (float64, float64, error) {
 			return 0, 0, errors.New("pane not shown")
 		}
 		return x + cx, y + cy, nil
-	case "shortcut-keys", "shortcut-switch":
+	case "shortcut-keys", "shortcut-remove", "shortcut-add", "shortcut-switch":
+		// shortcut-keys ACTION [N] and shortcut-remove ACTION [N] aim at the
+		// Nth key's chip (default 1) or its × button.
 		if a.shortcutsWin == nil || len(args) < 2 {
 			return 0, 0, errors.New("the shortcuts window is not open")
 		}
@@ -583,10 +591,26 @@ func (a *App) target(args []string) (float64, float64, error) {
 		if !ok {
 			return 0, 0, errors.New("no shortcut row " + args[1])
 		}
-		if args[0] == "shortcut-keys" {
-			return centre(r.keys)
+		switch args[0] {
+		case "shortcut-add":
+			return centre(r.add)
+		case "shortcut-switch":
+			return centre(r.sw)
 		}
-		return centre(r.sw)
+		i := 0
+		if len(args) > 2 {
+			i = num(2) - 1
+			if numErr != nil {
+				return 0, 0, numErr
+			}
+		}
+		if i < 0 || i >= len(r.keys) {
+			return 0, 0, fmt.Errorf("shortcut row %s has no key %d", args[1], i+1)
+		}
+		if args[0] == "shortcut-keys" {
+			return centre(r.keys[i])
+		}
+		return centre(r.removes[i])
 	case "pref":
 		if a.prefsWin == nil || len(args) < 2 {
 			return 0, 0, errors.New("the preferences window is not open")

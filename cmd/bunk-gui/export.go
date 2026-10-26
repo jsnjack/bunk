@@ -13,6 +13,12 @@ func paneByID(id C.int) *Pane {
 	return theApp.panes[id]
 }
 
+//export goButtonPressed
+func goButtonPressed(x, y C.double) { theApp.buttonPressed(float64(x), float64(y)) }
+
+//export goButtonReleased
+func goButtonReleased() { theApp.hideSplitRatio() }
+
 //export goBeforePaint
 func goBeforePaint() { theApp.beforePaint() }
 

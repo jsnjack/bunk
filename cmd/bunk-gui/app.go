@@ -55,6 +55,8 @@ type App struct {
 	menuBox    *gtk.Box
 	zoomLabel  *gtk.Label
 	switcher   *switcher
+	ratio      *splitRatio // the label on a held divider (splitratio.go)
+	tabDrag    *tabDrag    // a tab being dragged (tabdrag.go)
 	lastToast  string
 	// Chrome widgets the report and the pointer-injection targets name.
 	tabItems    []tabItem
@@ -189,6 +191,7 @@ func (a *App) activate() {
 	a.initAlerts()
 	a.win.ConnectCloseRequest(a.onCloseRequest)
 	a.installShortcuts()
+	a.installSplitRatio()
 	a.watchConfig()
 	ptr := gtk.NewEventControllerMotion()
 	ptr.ConnectMotion(func(x, y float64) { a.ptrX, a.ptrY = x, y })

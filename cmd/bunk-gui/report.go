@@ -269,6 +269,8 @@ type uiSnapshot struct {
 	FontSize      float64             `json:"font_size"`
 	TextPercent   int                 `json:"text_percent"`
 	Switcher      switchReport        `json:"switcher"`
+	SplitRatio    *ratioReport        `json:"split_ratio"` // the label on a held divider; null when none
+	TabDrag       *tabDragReport      `json:"tab_drag"`    // a tab being dragged; null when none
 	MenuOpen      bool                `json:"menu_open"`
 	AboutOpen     bool                `json:"about_open"`
 	LastToast     string              `json:"last_toast"`
@@ -335,7 +337,8 @@ type shortcutsRowReport struct {
 	Keys     string      `json:"keys"` // as the row shows them
 	Enabled  bool        `json:"enabled"`
 	Collides bool        `json:"collides"`
-	KeysBtn  *rectReport `json:"keys_button,omitempty"`
+	KeysBtn  *rectReport `json:"keys_button,omitempty"` // the first key's chip
+	AddBtn   *rectReport `json:"add_button,omitempty"`
 	Switch   *rectReport `json:"switch,omitempty"`
 }
 
@@ -353,10 +356,21 @@ type windowReport struct {
 	Title      string  `json:"title"`
 }
 
+type tabDragReport struct {
+	Tab  int `json:"tab"`  // the dragged tab's index (1-based)
+	Slot int `json:"slot"` // it goes before the tab with this index (1-based); tabs+1: last
+}
+
+type ratioReport struct {
+	Text string      `json:"text"` // "60/40": the start child's share, then the end child's
+	Rect *rectReport `json:"rect"`
+}
+
 type switchReport struct {
 	Open   bool   `json:"open"`
 	Filter string `json:"filter"`
-	Rows   []int  `json:"rows"` // tab indexes in the order shown
+	Rows   []int  `json:"rows"`   // tab indexes in the order shown
+	Cursor int    `json:"cursor"` // tab index of the row Enter picks; 0 with no rows
 }
 
 var stateName = map[session.AgentState]string{
@@ -484,10 +498,22 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			s.ZoomedPane = t.zoom.id
 		}
 	}
+	if d := a.tabDrag; d != nil && d.active {
+		s.TabDrag = &tabDragReport{Tab: a.tabIndex(d.t) + 1, Slot: d.slot + 1}
+	}
+	if r := a.ratio; r != nil && r.paned != nil {
+		s.SplitRatio = &ratioReport{
+			Text: strings.TrimSuffix(r.a.Text(), "%") + "/" + strings.TrimSuffix(r.b.Text(), "%"),
+			Rect: a.widgetRect(g, r.box),
+		}
+	}
 	if sw := a.switcher; sw != nil {
 		s.Switcher.Open, s.Switcher.Filter = true, sw.entry.Text()
-		for _, t := range sw.shown {
+		for i, t := range sw.shown {
 			s.Switcher.Rows = append(s.Switcher.Rows, a.tabIndex(t)+1)
+			if i == sw.cur {
+				s.Switcher.Cursor = a.tabIndex(t) + 1
+			}
 		}
 	}
 	s.KeyboardFocus = a.keyboardFocus()
@@ -509,10 +535,14 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			Indicator: gtk.BaseWidget(w.scroll.VScrollbar()).Opacity()}
 		for _, act := range keyActions {
 			r := w.rows[act.name]
-			sr.Rows = append(sr.Rows, shortcutsRowReport{
-				Action: act.name, Keys: r.keys.Label(), Enabled: r.sw.Active(), Collides: r.warn.Opacity() > 0,
-				KeysBtn: a.widgetRect(g, r.keys), Switch: a.widgetRect(g, r.sw),
-			})
+			row := shortcutsRowReport{
+				Action: act.name, Keys: r.shown, Enabled: r.sw.Active(), Collides: r.warn.Opacity() > 0,
+				AddBtn: a.widgetRect(g, r.add), Switch: a.widgetRect(g, r.sw),
+			}
+			if len(r.keys) > 0 {
+				row.KeysBtn = a.widgetRect(g, r.keys[0])
+			}
+			sr.Rows = append(sr.Rows, row)
 		}
 		s.Shortcuts = sr
 	}

@@ -95,13 +95,24 @@ button.switchrow { background: none; box-shadow: none; border: none; min-height:
 	color: inherit; font-size: 14px; }
 button.switchrow.active { background: #26292f; }
 button.switchrow:hover { background: #23252a; }
+button.switchrow.cursor { background: #30343b; box-shadow: inset 0 0 0 1px #4a4f58; }
 button.switchclose { min-height: 36px; padding: 0 12px; border: 1px solid #34373e; border-radius: 6px; background: none;
 	color: #b4b9c1; box-shadow: none; margin-top: 4px; }
 paned > separator { min-width: 1px; min-height: 1px; }
+.dragged { opacity: 0.5; }
+.bunk-rail .drop-before { box-shadow: inset 0 2px #5aa9ff; }
+.bunk-rail .drop-after { box-shadow: inset 0 -2px #5aa9ff; }
+.bunk-bar .drop-before { box-shadow: inset 2px 0 #5aa9ff; }
+.bunk-bar .drop-after { box-shadow: inset -2px 0 #5aa9ff; }
+.splitratio { background: alpha(#1b1c20, 0.94); border: 1px solid #34373e; border-radius: 6px; padding: 4px 8px;
+	font-family: "Noto Sans Mono", monospace; font-size: 13px; color: #e6e8eb; }
+.splitratio > separator { background: #4a4f58; margin: 0 8px; }
+.splitratio.vertical > separator { margin: 4px 0; }
 .shortcutrow { padding: 6px 4px; border-bottom: 1px solid #2a2c31; }
 .shortcutdesc { font-size: 14px; color: #e6e8eb; }
 .collide { color: #ffb454; font-size: 15px; }
-button.shortcutkeys { font-family: "Noto Sans Mono", monospace; font-size: 12px; min-width: 150px; }
+button.shortcutkeys, button.keyadd { font-family: "Noto Sans Mono", monospace; font-size: 12px; }
+button.keyremove { padding: 0 8px; color: #9aa0a8; }
 button.tabbtn label, button.rowbtn label, button.menuitem label, button.switchrow label, button.raildot label { font-weight: normal; }
 button label.agent { font-weight: 600; }
 `
@@ -393,27 +404,32 @@ func (a *App) buildChrome() {
 			a.newTabBtn = newTab
 			head.Append(newTab)
 			head.Append(dragArea(true))
-			head.Append(a.optionsButton(34))
 			head.Append(a.closeWindowButton(34))
 			rail.Append(head)
 			a.tabsBox = gtk.NewBox(gtk.OrientationVertical, 2)
 			rail.Append(a.tabsBox)
 			spacer := dragArea(false)
 			rail.Append(spacer)
+			// The options button sits bottom left in both rail states, so
+			// it stays under the pointer when the rail opens or closes.
+			foot := gtk.NewBox(gtk.OrientationHorizontal, 4)
+			opts := a.optionsButton(34)
+			opts.SetDirection(gtk.ArrowUp)
+			opts.SetVAlign(gtk.AlignEnd)
+			foot.Append(opts)
 			hint := label(a.railHint(), "hint")
 			hint.SetWrap(true)
-			hint.SetMaxWidthChars(28) // a wrapping label is as wide as its text otherwise
+			hint.SetMaxWidthChars(24) // a wrapping label is as wide as its text otherwise
 			hint.SetXAlign(0)
-			rail.Append(hint)
+			hint.SetHExpand(true)
+			foot.Append(hint)
+			rail.Append(foot)
 		} else {
 			rail.AddCSSClass("collapsed")
 			rail.SetSizeRequest(48, -1)
 			cw := a.closeWindowButton(40)
 			cw.SetHAlign(gtk.AlignCenter)
 			rail.Append(cw)
-			opts := a.optionsButton(40)
-			opts.SetHAlign(gtk.AlignCenter)
-			rail.Append(opts)
 			sep := gtk.NewBox(gtk.OrientationHorizontal, 0)
 			sep.AddCSSClass("railsep")
 			sep.SetHAlign(gtk.AlignCenter)
@@ -428,10 +444,16 @@ func (a *App) buildChrome() {
 			plus.ConnectClicked(func() { a.newTab("", a.cwdForNew()) })
 			a.newTabBtn = plus
 			rail.Append(plus)
+			opts := a.optionsButton(40)
+			opts.SetDirection(gtk.ArrowUp)
+			opts.SetHAlign(gtk.AlignCenter)
+			rail.Append(opts)
 		}
 		a.chrome = rail
 	}
 	a.rootBox.Prepend(a.chrome)
+	a.tabDrag = nil
+	a.watchTabDrag()
 	a.refreshChrome()
 }
 
@@ -450,8 +472,8 @@ func (a *App) cwdForNew() string {
 // the same events (alerts.go).
 func (a *App) refreshChrome() {
 	a.syncAlerts()
-	if a.tabsBox == nil {
-		return
+	if a.tabsBox == nil || a.tabDrag != nil && a.tabDrag.active {
+		return // a drag marks the items; its end refreshes
 	}
 	infos := a.tabInfos()
 	var key strings.Builder
@@ -841,11 +863,12 @@ func (a *App) toast(text string) {
 
 type switcher struct {
 	shown []*Tab // rows in the order shown
+	rows  []*gtk.Button
 	a     *App
 	bg    *gtk.Box
 	entry *gtk.Entry
 	list  *gtk.Box
-	first *Tab
+	cur   int // the row Enter picks; Up and Down move it
 }
 
 var stateOrder = map[session.AgentState]int{
@@ -854,7 +877,8 @@ var stateOrder = map[session.AgentState]int{
 }
 
 // openSwitcher shows the tab switcher: a filter field and the tabs, those
-// needing you first. Enter picks the first match; Esc closes.
+// needing you first. Up and Down move the cursor, which starts on the
+// first match; Enter picks its tab; Esc closes.
 func (a *App) openSwitcher() {
 	if a.switcher != nil {
 		a.closeSwitcher()
@@ -877,7 +901,10 @@ func (a *App) openSwitcher() {
 	sw.entry = gtk.NewEntry()
 	sw.entry.AddCSSClass("switcher-entry")
 	sw.entry.SetPlaceholderText("Type to filter")
-	sw.entry.ConnectChanged(sw.refresh)
+	sw.entry.ConnectChanged(func() {
+		sw.shown = sw.shown[:0] // a new filter puts the cursor on its first match
+		sw.refresh()
+	})
 	sw.entry.ConnectActivate(sw.pick)
 	dlg.Append(sw.entry)
 	sw.list = gtk.NewBox(gtk.OrientationVertical, 0)
@@ -889,13 +916,22 @@ func (a *App) openSwitcher() {
 	cl.ConnectClicked(a.closeSwitcher)
 	dlg.Append(cl)
 	sw.bg.Append(dlg)
+	// The capture phase sees Up and Down before the entry, whose
+	// keyboard navigation would move the focus out of it.
 	keys := gtk.NewEventControllerKey()
+	keys.SetPropagationPhase(gtk.PhaseCapture)
 	keys.ConnectKeyPressed(func(keyval, _ uint, _ gdk.ModifierType) bool {
-		if keyval == gdk.KEY_Escape {
+		switch keyval {
+		case gdk.KEY_Escape:
 			a.closeSwitcher()
-			return true
+		case gdk.KEY_Up, gdk.KEY_KP_Up:
+			sw.move(-1)
+		case gdk.KEY_Down, gdk.KEY_KP_Down:
+			sw.move(+1)
+		default:
+			return false
 		}
-		return false
+		return true
 	})
 	sw.bg.AddController(keys)
 	a.switcher = sw
@@ -904,12 +940,24 @@ func (a *App) openSwitcher() {
 	sw.entry.GrabFocus()
 }
 
-// pick selects the first tab that matches the filter (Enter).
+// pick selects the tab under the cursor (Enter).
 func (sw *switcher) pick() {
-	if t := sw.first; t != nil {
+	if sw.cur < len(sw.shown) {
+		t := sw.shown[sw.cur]
 		sw.a.closeSwitcher()
 		sw.a.selectTab(t)
 	}
+}
+
+// move steps the cursor by d rows, wrapping at either end.
+func (sw *switcher) move(d int) {
+	n := len(sw.rows)
+	if n == 0 {
+		return
+	}
+	sw.rows[sw.cur].RemoveCSSClass("cursor")
+	sw.cur = (sw.cur + d + n) % n
+	sw.rows[sw.cur].AddCSSClass("cursor")
 }
 
 func (a *App) closeSwitcher() {
@@ -928,16 +976,21 @@ func (sw *switcher) refresh() {
 	for c := sw.list.FirstChild(); c != nil; c = sw.list.FirstChild() {
 		sw.list.Remove(c)
 	}
+	// A status change reorders the rows; the cursor stays on its tab.
+	var cur *Tab
+	if sw.cur < len(sw.shown) {
+		cur = sw.shown[sw.cur]
+	}
 	f := strings.ToLower(strings.TrimSpace(sw.entry.Text()))
 	infos := a.tabInfos()
 	sort.SliceStable(infos, func(i, j int) bool { return stateOrder[infos[i].state] < stateOrder[infos[j].state] })
-	sw.first, sw.shown = nil, sw.shown[:0]
+	sw.cur, sw.shown, sw.rows = 0, sw.shown[:0], sw.rows[:0]
 	for _, in := range infos {
 		if f != "" && !strings.Contains(in.accessKey, f) {
 			continue
 		}
-		if sw.first == nil {
-			sw.first = in.t
+		if in.t == cur {
+			sw.cur = len(sw.shown)
 		}
 		sw.shown = append(sw.shown, in.t)
 		b := gtk.NewButton()
@@ -968,8 +1021,11 @@ func (sw *switcher) refresh() {
 			a.selectTab(t)
 		})
 		sw.list.Append(b)
+		sw.rows = append(sw.rows, b)
 	}
-	if sw.first == nil {
+	if len(sw.rows) > 0 {
+		sw.rows[sw.cur].AddCSSClass("cursor")
+	} else {
 		none := label("No tab matches.", "statelabel")
 		none.SetXAlign(0)
 		none.SetMarginStart(8)

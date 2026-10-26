@@ -518,9 +518,80 @@ func TestGUIConfigErrors(t *testing.T) {
 	}
 }
 
+// TestGUITabDrag drags tabs with the pointer in the expanded rail, the
+// collapsed rail and the bar: while dragging, the report names the slot,
+// the release moves the tab there, a drag never clicks (the selected tab
+// stays), and a press without a drag still selects.
+func TestGUITabDrag(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost:   1.5,
+		config: "tabs = \"rail\"\nrail_open = true\n",
+		args:   []string{"--size", "100x30", "--tab", "", "--tab", "", "--tab", ""},
+		script: []string{
+			"maximize",
+			"wait window.maximized=true tabs.#=4 tab.4.panes.#=1",
+			"snap start",
+			"ptr-at tab 1",
+			"ptr-press",
+			"ptr-at tab 3 0 10",
+			"wait tab_drag.slot=4",
+			"snap rail-dragging",
+			"ptr-release",
+			"wait tab_drag=null tab.3.id=0",
+			"snap rail",
+			"kbd ctrl+shift+b",
+			"wait rail_open=false",
+			"ptr-at tab 4",
+			"ptr-press",
+			"ptr-at tab 1 0 -8",
+			"wait tab_drag.slot=1",
+			"ptr-release",
+			"wait tab_drag=null tab.1.id=3",
+			"snap dots",
+			"layout bar",
+			"wait layout=bar",
+			"ptr-at tab 1",
+			"ptr-press",
+			"ptr-at tab 2 20 0",
+			"wait tab_drag.slot=3",
+			"ptr-release",
+			"wait tab_drag=null tab.2.id=3",
+			"snap bar",
+			"ptr-at tab 3",
+			"ptr-click",
+			"wait selected_tab=3",
+			"snap clicked",
+			"quit",
+		},
+	})
+	ids := func(s *uiSnapshot) []int {
+		var out []int
+		for _, tb := range s.Tabs {
+			out = append(out, tb.ID)
+		}
+		return out
+	}
+	start := g.snap("start")
+	selected := start.tab(t, start.SelectedTab).ID
+	if s := g.snap("rail-dragging"); s.TabDrag == nil || s.TabDrag.Tab != 1 || !slices.Equal(ids(s), []int{0, 1, 2, 3}) {
+		t.Errorf("dragging in the rail: %+v, order %v; want tab 1 dragged, order unchanged until the release", s.TabDrag, ids(s))
+	}
+	for label, want := range map[string][]int{"rail": {1, 2, 0, 3}, "dots": {3, 1, 2, 0}, "bar": {1, 3, 2, 0}} {
+		s := g.snap(label)
+		if got := ids(s); !slices.Equal(got, want) || s.tab(t, s.SelectedTab).ID != selected {
+			t.Errorf("%s: order %v, selected tab id %d; want %v, selected id %d", label, got, s.tab(t, s.SelectedTab).ID, want, selected)
+		}
+	}
+	if s := g.snap("clicked"); s.tab(t, 3).ID != 2 {
+		t.Errorf("click on tab 3: selected tab id %d, want 2", s.tab(t, 3).ID)
+	}
+}
+
 // TestGUITabsAndStatus: status from the test hook drives dots, labels,
-// locations and tints; the switcher sorts needs-you first and filters by
-// typed text; Alt+A visits tabs needing you in order; Alt+1…9 select
+// locations and tints; the switcher sorts needs-you first, moves its
+// cursor with Up and Down (wrapping, kept on its tab when the rows
+// reorder) and filters by typed text; Alt+A visits tabs needing you in order; Alt+1…9 select
 // tabs; a pane needing you gets the ring until it is focused; inactive
 // panes are dimmed.
 func TestGUITabsAndStatus(t *testing.T) {
@@ -540,6 +611,22 @@ func TestGUITabsAndStatus(t *testing.T) {
 			"kbd ctrl+shift+o",
 			"wait switcher.open=true keyboard_focus=switcher",
 			"snap switcher",
+			"kbd down down",
+			"wait switcher.cursor=3",
+			"snap switcher-down",
+			"kbd up up up",
+			"wait switcher.cursor=1",
+			"snap switcher-wrap",
+			"kbd down down",
+			"wait switcher.cursor=4",
+			"status tab=4 state=idle",
+			"wait switcher.rows.1=3",
+			"snap switcher-reorder",
+			"kbd-type ma",
+			"wait switcher.filter=ma",
+			"snap switcher-typed",
+			"kbd BackSpace BackSpace",
+			"wait switcher.filter=\"\"",
 			"kbd-type gh-mirror",
 			"wait switcher.filter=gh-mirror switcher.rows.#=1",
 			"snap switcher-filter",
@@ -630,7 +717,21 @@ func TestGUITabsAndStatus(t *testing.T) {
 	if s := g.snap("switcher"); !s.Switcher.Open || !slices.Equal(s.Switcher.Rows, []int{2, 4, 3, 1}) || s.KeyboardFocus != "switcher" {
 		t.Errorf("switcher: %+v, keyboard focus %q; want rows needs-you, failed, working, shell", s.Switcher, s.KeyboardFocus)
 	}
-	if s := g.snap("switcher-filter"); s.Switcher.Filter != "gh-mirror" || !slices.Equal(s.Switcher.Rows, []int{4}) {
+	for label, want := range map[string]struct {
+		rows   []int
+		cursor int
+	}{
+		"switcher":         {[]int{2, 4, 3, 1}, 2},
+		"switcher-down":    {[]int{2, 4, 3, 1}, 3},
+		"switcher-wrap":    {[]int{2, 4, 3, 1}, 1},
+		"switcher-reorder": {[]int{2, 3, 4, 1}, 4},
+		"switcher-typed":   {[]int{3, 4}, 3},
+	} {
+		if s := g.snap(label); !slices.Equal(s.Switcher.Rows, want.rows) || s.Switcher.Cursor != want.cursor || s.KeyboardFocus != "switcher" {
+			t.Errorf("%s: switcher %+v, keyboard focus %q; want rows %v, cursor on tab %d", label, s.Switcher, s.KeyboardFocus, want.rows, want.cursor)
+		}
+	}
+	if s := g.snap("switcher-filter"); s.Switcher.Filter != "gh-mirror" || !slices.Equal(s.Switcher.Rows, []int{4}) || s.Switcher.Cursor != 4 {
 		t.Errorf("filtered switcher: %+v", s.Switcher)
 	}
 	if s := g.snap("picked"); s.Switcher.Open || s.SelectedTab != 4 || s.KeyboardFocus != "pane 3" {
@@ -854,8 +955,15 @@ exec "$@"
 			"snap unzoomed",
 			"ptr-at divider r",
 			"snap before-drag",
-			"ptr-drag -300 0 10",
+			"ptr-press",
+			"wait split_ratio!=null",
+			"snap ratio-pressed",
+			"ptr-by -150 0",
+			"ptr-by -150 0",
 			"wait input idle 50ms",
+			"snap ratio-dragging",
+			"ptr-release",
+			"wait input idle 50ms split_ratio=null",
 			"snap dragged",
 			"fake-container toolbox fakebox",
 			"kbd alt+F1",
@@ -966,6 +1074,27 @@ exec "$@"
 	}
 	if pos0, pos1 := before.Tree.Position, after.Tree.Position; math.Abs(float64(pos0-pos1)-300) > 4 {
 		t.Errorf("divider position %d -> %d", pos0, pos1)
+	}
+	// While the divider is held, a label on it shows the shares of the
+	// split's width; the release hides it.
+	for _, label := range []string{"ratio-pressed", "ratio-dragging"} {
+		s := g.snap(label)
+		r, d := s.SplitRatio, s.Tree.Divider
+		if r == nil || r.Rect == nil || d == nil {
+			t.Errorf("%s: split ratio %+v, divider %+v", label, r, d)
+			continue
+		}
+		if cx := d.X + d.W/2; math.Abs(r.Rect.X+r.Rect.W/2-cx) > 2 {
+			t.Errorf("%s: ratio label %+v not centred on the divider at x %.1f", label, r.Rect, cx)
+		}
+		total := s.pane(t, 0).Rect.W + s.pane(t, 1).Rect.W
+		want := int(math.Round(100 * float64(s.Tree.Position) / total))
+		if r.Text != fmt.Sprintf("%d/%d", want, 100-want) {
+			t.Errorf("%s: ratio %q, want %d/%d (position %d of %.0f)", label, r.Text, want, 100-want, s.Tree.Position, total)
+		}
+	}
+	if r := g.snap("ratio-dragging").SplitRatio; r != nil && r.Text == "50/50" {
+		t.Errorf("ratio unchanged by the drag: %q", r.Text)
 	}
 
 	c := g.snap("container")

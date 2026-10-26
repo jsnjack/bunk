@@ -15,8 +15,8 @@
 //	bunk-gui --command 'cat big.txt; sleep 1' --stats --timeout 10s
 //
 // Default keys follow bunk's TUI and Ptyxis (bindings.go): F2 new tab;
-// Ctrl+Shift+W/N close tab, new window; Ctrl+Left/Right and Alt+1…0 switch
-// tabs; Ctrl+Shift+PgUp/PgDn move the tab; Ctrl+Shift+O switcher; Alt+A
+// Ctrl+Shift+W/N close tab, new window; Ctrl+Left/Right, Ctrl+Up/Down and
+// Alt+1…0 switch tabs; Ctrl+Shift+PgUp/PgDn move the tab; Ctrl+Shift+O switcher; Alt+A
 // next tab needing you; Ctrl+Shift+B expand/collapse the rail; F1 / Alt+F1
 // split (in the same container); F12 zoom pane; Alt+arrows move between
 // panes; Ctrl+F find; Ctrl+C/V and Ctrl+Shift+C/V copy/paste (Ctrl+C

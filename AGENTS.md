@@ -445,8 +445,9 @@ its default; Design Decisions says where the defaults come from.
 - bunk-gui's default keys are the keys the user presses today in bunk's
   TUI inside Ptyxis. They are bunk's TUI defaults plus Ptyxis's shortcuts,
   with the user's own Ptyxis keys: F2 opens a tab and Ctrl+Left/Right
-  switch tabs. A change to a default needs the user's agreement;
-  `TestDefaultKeys` lists every action's keys.
+  switch tabs. Ctrl+Up/Down switch tabs too, at the user's request, to
+  match the rail's vertical list. A change to a default needs the user's
+  agreement; `TestDefaultKeys` lists every action's keys.
   - Ctrl+C copies only while text is selected, and ends the selection, so
     the next Ctrl+C reaches the program; with nothing selected it sends ^C.
     Ctrl+Shift+C always copies. The rule follows `keyCombo.collides`: a copy
@@ -459,10 +460,27 @@ its default; Design Decisions says where the defaults come from.
     and Ctrl+N, Ctrl+P, Enter and Esc step through matches and close it.
     Elsewhere Ctrl+N, Ctrl+P, Enter and Esc reach the program.
   - Ctrl+Shift+PgUp/PgDn move the selected tab in `App.tabs`, which orders
-    the rail, the bar, Alt+1…0 and the report's tabs.
+    the rail, the bar, Alt+1…0 and the report's tabs. Dragging a tab moves
+    it too (`tabdrag.go`): a gesture on the tab list claims the press past
+    8 px, so the tab's button never clicks. A line marks the slot, and the
+    release moves the tab. Chrome rebuilds wait until the drag ends.
   - The shortcuts window marks keys terminal programs use (Ctrl+C, Alt+A,
     F2 and others) with ⚠. Passthrough (Ctrl+F12) sends all of them to the
-    program.
+    program. Each key is a chip: a click captures a key in its place, ×
+    removes it, and + adds one. A row's chips are rebuilt only when its
+    keys change, because a button replaced under the pointer can miss the
+    next click.
+  - The switcher's Up and Down move a cursor, which starts on the first
+    match and stays on its tab when a status change reorders the rows;
+    Enter opens its tab.
+
+- While a divider is held, bunk-gui shows the split's shares on it
+  (`splitratio.go`). A legacy event controller written in C sees the press
+  first, because gotk4 v0.4.1 passes a GdkEvent to Go handlers as a
+  GObject and GLib asserts. GtkPaned's `position` updates the label, and
+  the release hides it. `gtk_widget_measure` includes the margins that
+  place the label, so they are subtracted. bunk's TUI has no divider to
+  drag.
 
 - Each bunk-gui window is its own process. The application is non-unique,
   and each process has its own notify socket. New window (Ctrl+Shift+N,

@@ -57,9 +57,11 @@ import (
 //	kbd-down KEY... | kbd-up KEY...  hold or release keys, e.g. kbd-down ctrl shift
 //	kbd-type TEXT                    text typed key by key
 //	ptr-move X Y                     pointer to window coordinates
+//	ptr-by DX DY                     pointer moved by DX, DY, buttons kept (a drag in steps)
 //	ptr-at TARGET [DX DY]            tab N | tabclose N | newtab | options | closewin |
 //	                                 pane ID | cell ID COL ROW | divider r[a|b…] | menu LABEL |
-//	                                 shortcut-keys ACTION | shortcut-switch ACTION | button LABEL |
+//	                                 shortcut-keys ACTION [N] | shortcut-remove ACTION [N] |
+//	                                 shortcut-add ACTION | shortcut-switch ACTION | button LABEL |
 //	                                 pref NAME (tabs-rail, font-size, agent-0-name, agent-add, …);
 //	                                 waits until the target exists and stays put for two
 //	                                 frames, and until the window sees the pointer there
@@ -342,7 +344,7 @@ func (a *App) doAction(action string, done func()) {
 		}
 		a.startTyping(d)
 
-	case "kbd", "kbd-down", "kbd-up", "kbd-type", "ptr-move", "ptr-at", "ptr-press", "ptr-release", "ptr-click", "ptr-drag", "ptr-scroll":
+	case "kbd", "kbd-down", "kbd-up", "kbd-type", "ptr-move", "ptr-by", "ptr-at", "ptr-press", "ptr-release", "ptr-click", "ptr-drag", "ptr-scroll":
 		if err := injectOpen(); err != nil {
 			a.reportError("%s: %v", action, err)
 			return
@@ -593,6 +595,8 @@ func (a *App) injectAction(verb, arg string, args []string, num func(int, int) i
 		return a.injectText(unescape(arg))
 	case "ptr-move":
 		return a.pointerTo(fnum(0), fnum(1))
+	case "ptr-by":
+		return a.pointerBy(fnum(0), fnum(1))
 	case "ptr-press", "ptr-release":
 		return a.pointerButton(num(0, 1), verb == "ptr-press")
 	case "ptr-click":

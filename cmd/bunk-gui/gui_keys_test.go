@@ -496,8 +496,9 @@ func TestGUIPasteImage(t *testing.T) {
 
 // TestGUIShortcutsWindow drives the shortcuts window with real pointer
 // clicks and keys: turn an action off and on again, rebind by key capture,
-// cancel with Esc, clear with Backspace, refuse a key in use; config.toml
-// is saved with everything else kept byte for byte.
+// add a second key with + and remove it with ×, refuse a key the action
+// has, cancel with Esc, remove the last key with Backspace, refuse a key
+// in use; config.toml is saved with everything else kept byte for byte.
 func TestGUIShortcutsWindow(t *testing.T) {
 	t.Parallel()
 	const cfg = `# my settings: keep this comment
@@ -534,6 +535,23 @@ processes = ["aider"]
 			"kbd ctrl+alt+t",
 			"wait keys.new_tab=ctrl+alt+t shortcuts.capturing=\"\"",
 			"snap rebound",
+			"ptr-at shortcut-add new_tab",
+			"ptr-click",
+			"wait shortcuts.capturing=new_tab",
+			"snap adding",
+			"kbd ctrl+alt+y",
+			"wait keys.new_tab.#=2 shortcuts.capturing=\"\"",
+			"snap added",
+			"ptr-at shortcut-add new_tab",
+			"ptr-click",
+			"wait shortcuts.capturing=new_tab",
+			"kbd ctrl+alt+t",
+			"wait shortcuts.message~\"already a key of New tab\"",
+			"snap duplicate",
+			"ptr-at shortcut-remove new_tab 2",
+			"ptr-click",
+			"wait keys.new_tab.#=1",
+			"snap removed",
 			"shortcut-scroll zoom",
 			"ptr-at shortcut-keys zoom",
 			"ptr-click",
@@ -595,7 +613,7 @@ processes = ["aider"]
 			t.Errorf("%s: collides %v, want %v", action, r.Collides, want)
 		}
 	}
-	for action, want := range map[string]string{"new_tab": "Ctrl+Shift+T", "next_tab": "Ctrl+Right",
+	for action, want := range map[string]string{"new_tab": "Ctrl+Shift+T", "next_tab": "Ctrl+Right / Ctrl+Down",
 		"move_tab_left": "Ctrl+Shift+PgUp", "select_tab_10": "Alt+0", "switcher": "Ctrl+Shift+O",
 		"next_needs_you": "Alt+A", "search": "Ctrl+F / Ctrl+Shift+F", "search_next": "Ctrl+N / Enter",
 		"copy": "Ctrl+Shift+C / Ctrl+C", "paste": "Ctrl+Shift+V / Ctrl+V", "select_all": "Ctrl+Shift+A",
@@ -612,6 +630,16 @@ processes = ["aider"]
 	}
 	if s := g.snap("rebound"); keys(s, "new_tab") != "ctrl+alt+t" || row(s, "new_tab").Keys != "Ctrl+Alt+T" || s.Shortcuts.Capturing != "" {
 		t.Errorf("rebound: %q, row %+v", keys(s, "new_tab"), row(s, "new_tab"))
+	}
+	for label, want := range map[string]struct{ keys, row string }{
+		"adding":    {"ctrl+alt+t", "Ctrl+Alt+T / Press a key…"},
+		"added":     {"ctrl+alt+t,ctrl+alt+y", "Ctrl+Alt+T / Ctrl+Alt+Y"},
+		"duplicate": {"ctrl+alt+t,ctrl+alt+y", "Ctrl+Alt+T / Ctrl+Alt+Y"},
+		"removed":   {"ctrl+alt+t", "Ctrl+Alt+T"},
+	} {
+		if s := g.snap(label); keys(s, "new_tab") != want.keys || row(s, "new_tab").Keys != want.row {
+			t.Errorf("%s: new_tab %q, row %q; want %q, %q", label, keys(s, "new_tab"), row(s, "new_tab").Keys, want.keys, want.row)
+		}
 	}
 	if s := g.snap("escaped"); keys(s, "zoom") != "f12" || s.Shortcuts.Capturing != "" {
 		t.Errorf("Esc: zoom %q, capturing %q", keys(s, "zoom"), s.Shortcuts.Capturing)

@@ -32,13 +32,15 @@ type keyAction struct {
 // keyActions lists every action in the order the shortcuts window shows
 // them. The names shared with bunk's TUI mean the same there. The defaults
 // are bunk's TUI keys plus Ptyxis's, with F2 and Ctrl+Left/Right for tabs as
-// the user set them in Ptyxis (AGENTS.md, Design Decisions).
+// the user set them in Ptyxis, and Ctrl+Up/Down for tabs, which the user
+// asked for to match the rail's vertical tab list (AGENTS.md, Design
+// Decisions).
 var keyActions = []keyAction{
 	{"new_tab", "New tab", []string{"f2"}},
 	{"close_tab", "Close tab", []string{"ctrl+shift+w"}},
 	{"new_window", "New window", []string{"ctrl+shift+n"}},
-	{"next_tab", "Next tab", []string{"ctrl+right"}},
-	{"prev_tab", "Previous tab", []string{"ctrl+left"}},
+	{"next_tab", "Next tab", []string{"ctrl+right", "ctrl+down"}},
+	{"prev_tab", "Previous tab", []string{"ctrl+left", "ctrl+up"}},
 	{"move_tab_left", "Move the tab left", []string{"ctrl+shift+pgup"}},
 	{"move_tab_right", "Move the tab right", []string{"ctrl+shift+pgdn"}},
 	{"select_tab_1", "Select tab 1", []string{"alt+1"}},

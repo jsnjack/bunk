@@ -1,13 +1,15 @@
 package main
 
 // The shortcuts window (action "shortcuts"): one row per action with its
-// keys, a switch, and click-to-rebind. Changes go straight into the [keys]
-// table of config.toml (keysfile.go); the file watcher then reloads them
-// like any other edit.
+// keys, a switch, and click-to-rebind. Each key is a chip: a click captures
+// a new key in its place and × removes it; + captures one more. Changes go
+// straight into the [keys] table of config.toml (keysfile.go); the file
+// watcher then reloads them like any other edit.
 
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
@@ -23,11 +25,18 @@ type shortcutsWindow struct {
 	message   *gtk.Label
 	rows      map[string]*shortcutRow
 	capturing string // action waiting for a key; "" when none
+	slot      int    // the key it replaces (index in its bindings); -1 adds one
 }
 
 type shortcutRow struct {
 	box     *gtk.Box
-	keys    *gtk.Button
+	chips   *gtk.Box      // the keys: a chip per key, or a "Disabled" label
+	keys    []*gtk.Button // each chip's key button
+	removes []*gtk.Button // each chip's × button
+	off     *gtk.Label    // "Disabled"
+	built   string        // the keys the chips were built for
+	add     *gtk.Button
+	shown   string // the keys as the row shows them
 	sw      *gtk.Switch
 	warn    *gtk.Label
 	syncing bool
@@ -50,7 +59,7 @@ func (a *App) showShortcuts() {
 	content.SetMarginStart(12)
 	content.SetMarginEnd(12)
 	content.SetMarginBottom(12)
-	w.message = label("Click a shortcut to change it: Esc cancels, Backspace clears. ⚠ may collide with terminal apps.", "statelabel")
+	w.message = label("Click a key to change it, × removes it, + adds one: Esc cancels. ⚠ may collide with terminal apps.", "statelabel")
 	w.message.SetWrap(true)
 	w.message.SetXAlign(0)
 	content.Append(w.message)
@@ -96,12 +105,17 @@ func (w *shortcutsWindow) newRow(act keyAction) gtk.Widgetter {
 	r.warn = label("⚠", "collide")
 	r.warn.SetTooltipText(collideHint)
 	r.box.Append(r.warn)
-	r.keys = gtk.NewButton()
-	r.keys.AddCSSClass("shortcutkeys")
-	r.keys.SetVAlign(gtk.AlignCenter)
 	name := act.name
-	r.keys.ConnectClicked(func() { w.startCapture(name) })
-	r.box.Append(r.keys)
+	r.chips = gtk.NewBox(gtk.OrientationHorizontal, 6)
+	r.chips.SetVAlign(gtk.AlignCenter)
+	r.box.Append(r.chips)
+	r.add = gtk.NewButton()
+	r.add.SetLabel("+")
+	r.add.AddCSSClass("keyadd")
+	r.add.SetTooltipText("Add a key")
+	r.add.SetVAlign(gtk.AlignCenter)
+	r.add.ConnectClicked(func() { w.startCapture(name, -1) })
+	r.box.Append(r.add)
 	r.sw = gtk.NewSwitch()
 	r.sw.SetVAlign(gtk.AlignCenter)
 	r.sw.ConnectStateSet(func(on bool) bool {
@@ -128,14 +142,7 @@ func (w *shortcutsWindow) refresh() {
 			r.sw.SetActive(on)
 			r.syncing = false
 		}
-		switch {
-		case w.capturing == name:
-			r.keys.SetLabel("Press a key…")
-		case len(cs) == 0:
-			r.keys.SetLabel("Disabled")
-		default:
-			r.keys.SetLabel(km.labels(name))
-		}
+		w.fillChips(name, r, cs)
 		collide := false
 		for _, c := range cs {
 			collide = collide || c.collides()
@@ -144,14 +151,87 @@ func (w *shortcutsWindow) refresh() {
 	}
 }
 
+// fillChips shows a row's keys as chips; the key being captured, or the
+// one being added, reads "Press a key…". The chips are built again only
+// when the keys change: a chip replaced under the pointer can miss the
+// next click.
+func (w *shortcutsWindow) fillChips(action string, r *shortcutRow, cs []keyCombo) {
+	var labels []string
+	for _, c := range cs {
+		labels = append(labels, c.Label())
+	}
+	if built := strings.Join(labels, " / "); built != r.built || r.off == nil {
+		r.built = built
+		for c := r.chips.FirstChild(); c != nil; c = r.chips.FirstChild() {
+			r.chips.Remove(c)
+		}
+		r.keys, r.removes = r.keys[:0], r.removes[:0]
+		for i := range cs {
+			chip := gtk.NewBox(gtk.OrientationHorizontal, 0)
+			chip.AddCSSClass("linked")
+			k := gtk.NewButton()
+			k.AddCSSClass("shortcutkeys")
+			k.SetTooltipText("Change this key")
+			k.ConnectClicked(func() { w.startCapture(action, i) })
+			x := gtk.NewButton()
+			x.SetLabel("×")
+			x.AddCSSClass("keyremove")
+			x.SetTooltipText("Remove this key")
+			x.ConnectClicked(func() { w.remove(action, i) })
+			chip.Append(k)
+			chip.Append(x)
+			r.chips.Append(chip)
+			r.keys = append(r.keys, k)
+			r.removes = append(r.removes, x)
+		}
+		r.off = label("Disabled", "statelabel")
+		r.chips.Append(r.off)
+	}
+	shown := labels
+	for i, k := range r.keys {
+		if w.capturing == action && w.slot == i {
+			shown[i] = "Press a key…"
+		}
+		k.SetLabel(shown[i])
+	}
+	adding := w.capturing == action && w.slot < 0
+	if adding {
+		shown = append(shown, "Press a key…")
+		r.add.SetLabel("Press a key…")
+	} else {
+		r.add.SetLabel("+")
+	}
+	r.off.SetVisible(len(cs) == 0 && !adding)
+	if r.off.Visible() {
+		shown = append(shown, "Disabled")
+	}
+	r.shown = strings.Join(shown, " / ")
+}
+
 func (w *shortcutsWindow) say(format string, args ...any) {
 	w.message.SetText(fmt.Sprintf(format, args...))
 }
 
-func (w *shortcutsWindow) startCapture(action string) {
-	w.capturing = action
+// startCapture waits for a key that replaces the action's key at slot, or
+// is added to its keys when slot is -1.
+func (w *shortcutsWindow) startCapture(action string, slot int) {
+	w.capturing, w.slot = action, slot
 	act, _ := findAction(action)
-	w.say("Press the new keys for %s: Esc cancels, Backspace clears.", act.desc)
+	if slot < 0 {
+		w.say("Press a key to add to %s: Esc cancels.", act.desc)
+	} else {
+		w.say("Press the new key for %s: Esc cancels, Backspace removes it.", act.desc)
+	}
+	w.refresh()
+}
+
+// remove drops the action's key at slot; without keys the action is off.
+func (w *shortcutsWindow) remove(action string, slot int) {
+	cs := w.a.keys().bind[action]
+	if slot >= len(cs) {
+		return
+	}
+	w.apply(action, slices.Delete(slices.Clone(cs), slot, slot+1))
 	w.refresh()
 }
 
@@ -165,22 +245,35 @@ func (w *shortcutsWindow) onKey(keyval uint, state gdk.ModifierType) bool {
 		gdk.KEY_Super_L, gdk.KEY_Super_R, gdk.KEY_Meta_L, gdk.KEY_Meta_R, gdk.KEY_ISO_Level3_Shift, gdk.KEY_Caps_Lock:
 		return true // wait for the key itself
 	}
-	action := w.capturing
+	action, slot := w.capturing, w.slot
 	w.capturing = ""
 	mods := state & comboMods
 	act, _ := findAction(action)
+	cs := slices.Clone(w.a.keys().bind[action])
+	if slot >= len(cs) { // a reload took the key away meanwhile
+		slot = -1
+	}
+	c := keyCombo{gdk.KeyvalToLower(keyval), mods}
 	switch {
 	case keyval == gdk.KEY_Escape && mods == 0:
 		w.say("Unchanged: %s.", act.desc)
 	case keyval == gdk.KEY_BackSpace && mods == 0:
-		w.apply(action, nil)
+		if slot < 0 {
+			w.say("Unchanged: %s.", act.desc)
+		} else {
+			w.apply(action, slices.Delete(cs, slot, slot+1))
+		}
 	default:
-		c := keyCombo{gdk.KeyvalToLower(keyval), mods}
 		if other, ok := w.a.keys().action[c]; ok && other != action {
 			o, _ := findAction(other)
 			w.say("%s is already used by %s.", c.Label(), o.desc)
+		} else if i := slices.Index(cs, c); i >= 0 && i != slot {
+			w.say("%s is already a key of %s.", c.Label(), act.desc)
+		} else if slot < 0 {
+			w.apply(action, append(cs, c))
 		} else {
-			w.apply(action, []keyCombo{c})
+			cs[slot] = c
+			w.apply(action, cs)
 		}
 	}
 	w.refresh()
