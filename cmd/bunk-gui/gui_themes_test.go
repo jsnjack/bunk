@@ -100,7 +100,7 @@ func checkThemeShot(t *testing.T, img image.Image, s *uiSnapshot, th *theme.Them
 	}
 	// A 1 px divider at 133 % covers more than half of at least one
 	// device pixel per row.
-	want := hex(th.InactiveBorder.Hex())
+	want := hex(dividerColor(th).Hex())
 	if n := blendCount(img, d.DX-1, d.DY, d.DW+2, d.DH, want, hex(th.Background.Hex())); n < d.DH*4/5 {
 		var row []string
 		for x := d.DX - 3; x < d.DX+d.DW+3; x++ {

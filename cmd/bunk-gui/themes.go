@@ -72,12 +72,22 @@ func (a *App) loadThemeCSS() {
 	a.themeCSS.LoadFromString(themeCSS(&a.theme))
 }
 
+// dividerDim is how far the 1-px dividers between panes blend the theme's
+// inactive border toward its background; for the default theme that keeps
+// them as quiet as the fixed #2a2c31 they replaced.
+const dividerDim = 75
+
+// dividerColor is the colour of the dividers between panes in theme t.
+func dividerColor(t *theme.Theme) theme.Color {
+	return theme.Mix(t.InactiveBorder, t.Background, dividerDim)
+}
+
 // themeCSS is the CSS of the colours that follow theme t.
 func themeCSS(t *theme.Theme) string {
 	// libadwaita draws the divider line as an inset shadow over the
 	// background; without it the line is the background alone.
 	return fmt.Sprintf(".bunk-content { background: %s; }\npaned > separator { background: %s; box-shadow: none; }\n",
-		t.Background, t.InactiveBorder) + badgeCSS(t)
+		t.Background, dividerColor(t)) + badgeCSS(t)
 }
 
 // xparse writes c as OSC 10/11/12 replies give colours.

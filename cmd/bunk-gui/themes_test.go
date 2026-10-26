@@ -40,7 +40,7 @@ func TestThemeParityGUI(t *testing.T) {
 			css := themeCSS(&th)
 			for _, rule := range []string{
 				".bunk-content { background: " + th.Background.String() + "; }",
-				"paned > separator { background: " + th.InactiveBorder.String() + "; box-shadow: none; }",
+				"paned > separator { background: " + dividerColor(&th).String() + "; box-shadow: none; }",
 			} {
 				if !strings.Contains(css, rule) {
 					t.Errorf("CSS lacks %q", rule)
