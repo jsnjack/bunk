@@ -298,7 +298,7 @@ bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
 ```
 
 - `bunk notify` and `bunk-gui notify` take the same arguments, and the snippets call bunk-gui when it is installed, else bunk.
-- The Claude Code snippet also reports a question (AskUserQuestion) or a plan waiting for approval as needs you, with the question as the notice.
+- The Claude Code snippet also reports a question (AskUserQuestion) or a plan waiting for approval as needs you, with the question as the notice. A turn that ends while a background shell or subagent still runs stays working until Claude finishes after it.
 - Each pane gets `BUNK_NOTIFY_SOCKET` and `BUNK_NOTIFY_SESSION` in its environment. Sockets live under `$XDG_RUNTIME_DIR/bunk/`.
 - [docs/agent-hooks.md](docs/agent-hooks.md) has snippets for Claude Code, Codex, Copilot CLI and Gemini CLI, the wire format and exit codes.
 

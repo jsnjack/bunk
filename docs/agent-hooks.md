@@ -247,7 +247,7 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 | PreToolUse (AskUserQuestion, ExitPlanMode) | `needs-you` | the first question, or "Approve the plan: " and the plan's title |
 | PostToolUse (AskUserQuestion, ExitPlanMode) | `working` | none |
 | Notification (permission, elicitation, agent input) | `needs-you` | `message` from stdin |
-| Stop | `done` | `last_assistant_message` |
+| Stop | `done`, or `working` while `background_tasks` is not empty | `last_assistant_message` |
 | StopFailure (API error) | `failed` | `last_assistant_message`, e.g. "API Error: Rate limit reached" |
 | SessionEnd (exit, `/clear`, `/resume`) | `clear` | none |
 
@@ -259,6 +259,12 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 - A rejected plan or a question closed with Esc runs no PostToolUse. The
   keypress acknowledges the pane, so inference shows it until the next
   report.
+- A turn can end while shells, subagents or monitors it started still run
+  in the background. Claude Code lists them in the Stop input's
+  `background_tasks` and resumes the session when they finish, so `notify
+  done -` reports `working` until a later Stop lists none. Scheduled
+  wakeups (`session_crons`, such as the next round of `/loop`) do not
+  count, because they can be far off.
 - Stop does not run when the user interrupts a turn. The keypress
   acknowledges the pane, so inference takes over until the next prompt.
 - The snippet leaves out the `idle_prompt` notification. It arrives 60

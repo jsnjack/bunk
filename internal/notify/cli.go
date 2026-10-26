@@ -44,6 +44,8 @@ Events: working, idle, needs-you, done, failed, clear.
 The message is the notice for needs-you, done and failed. "-" reads it
 from stdin. A hook's JSON input gives its "message",
 "last_assistant_message" or similar field, or the question its tool asks.
+A done whose Claude Code Stop input lists background_tasks reports
+working: the agent resumes when they end.
 Inside bunk it reports over BUNK_NOTIFY_SOCKET. Without a reachable
 socket, with BUNK_NOTIFY_SESSION set or on a host reached over ssh
 (SSH_CONNECTION set), it writes the report to its terminal for the bunk
@@ -102,6 +104,11 @@ func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.
 	text := strings.Join(args[1:], " ")
 	if text == "-" {
 		text = readStdin(stdin)
+	}
+	if ev == session.EventDone && backgroundTasks(text) {
+		// Claude Code ended its turn while work it started runs on: it
+		// resumes when that work ends, and its next Stop reports done.
+		ev = session.EventWorking
 	}
 	text = hookText(text)
 	if socket != "" && token != "" {
@@ -188,6 +195,18 @@ func hookText(text string) string {
 		}
 	}
 	return toolQuestion(obj)
+}
+
+// backgroundTasks reports whether text is a Claude Code Stop input whose
+// background_tasks lists work still in flight: shells, subagents,
+// monitors. Its session_crons do not count: a scheduled wakeup, such as
+// the next round of /loop, may be far off.
+func backgroundTasks(text string) bool {
+	var in struct {
+		Tasks []json.RawMessage `json:"background_tasks"`
+	}
+	trimmed := strings.TrimSpace(text)
+	return strings.HasPrefix(trimmed, "{") && json.Unmarshal([]byte(trimmed), &in) == nil && len(in.Tasks) > 0
 }
 
 // planNotice starts the notice of a plan that waits for approval.

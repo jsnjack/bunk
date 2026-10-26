@@ -690,7 +690,8 @@ its default; Design Decisions says where the defaults come from.
     `bunk notify`; both reach the socket `BUNK_NOTIFY_SOCKET` names. The
     Claude snippet reports AskUserQuestion and ExitPlanMode as needs-you
     from PreToolUse, with the question as the notice, and work again from
-    PostToolUse.
+    PostToolUse. `notify done` reports working instead when the Stop input
+    lists `background_tasks`: Claude resumes when they end.
 - Agents on hosts reached over ssh report in-band
   (`docs/remote-agent-status.md`). Without a reachable socket, `bunk notify`
   writes the report line as `OSC 1337 ; SetUserVar=bunk_notify=<base64>` to
