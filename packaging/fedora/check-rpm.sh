@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-rpm.sh RPM SOURCE_TARBALL - check a built bunk-gui RPM.
+# check-rpm.sh RPM - check a built bunk-gui RPM.
 #
 # Checks the license tag and files, the installed files, hardening flags,
 # dependencies and the stamped version, then runs the packaged binary on the
@@ -7,8 +7,7 @@
 # after rpmbuild.
 set -euo pipefail
 
-rpm=$(realpath "${1:?usage: check-rpm.sh RPM SOURCE_TARBALL}")
-tarball=$(realpath "${2:?usage: check-rpm.sh RPM SOURCE_TARBALL}")
+rpm=$(realpath "${1:?usage: check-rpm.sh RPM}")
 top=$(git rev-parse --show-toplevel)
 appid=io.github.jsnjack.BunkGui
 failures=0
@@ -29,13 +28,14 @@ cmp -s "$lic/LICENSE" "$top/LICENSE" &&
 cmp -s "$lic/bundled-licenses/github.com/hinshun/vt10x/LICENSE" "$top/internal/vt10x/LICENSE" &&
 	pass "vt10x notice shipped" || fail "vt10x LICENSE missing or changed"
 
-# bunk itself is vendored into cmd/bunk-gui; its LICENSE is not a bundled one.
+# bunk itself is a module of cmd/bunk-gui; its LICENSE is not a bundled one.
 [[ ! -e $lic/bundled-licenses/bunk ]] && pass "no bunk copy among bundled licenses" ||
 	fail "bundled-licenses/bunk duplicates bunk's own LICENSE"
 
-# Every vendored module must ship at least one license file under its path.
-modules=$(tar -xzOf "$tarball" --wildcards '*/cmd/bunk-gui/vendor/modules.txt' |
-	awk '$1 == "#" && $2 != "bunk" { print $2 }')
+# Every module linked into bunk-gui must ship at least one license file
+# under its path.
+modules=$(cd "$top/cmd/bunk-gui" &&
+	go list -deps -f '{{with .Module}}{{if and (not .Main) (ne .Path "bunk")}}{{.Path}}{{end}}{{end}}' . | sort -u)
 for m in $modules; do
 	if compgen -G "$lic/bundled-licenses/$m/LICENSE*" >/dev/null ||
 		compgen -G "$lic/bundled-licenses/$m/COPYING*" >/dev/null; then

@@ -238,7 +238,7 @@ make run      # builds local binary and opens a debug session with --trace
 make gui-test # bunk-gui: vet, race tests, packaging validation
 make check-all # fmt+vet, then core and GUI tests in parallel, then build+lint
 make check-all FRESH=1 # the same, uncached and goimports on every file
-make rpm      # Fedora RPM of bunk-gui in bin/rpmbuild, checked by packaging/fedora/check-rpm.sh
+make rpm      # Fedora RPM of a bunk-gui built with go build (cached), checked by packaging/fedora/check-rpm.sh
 make fuzz     # every Fuzz target in turn, FUZZTIME each (default 30s); not in check-all
 make soak     # leak and soak tests at full length (SOAK=1); not in check-all
 make bench-check    # key benchmarks pinned to one core; fails on a >10% slowdown
@@ -247,7 +247,7 @@ make bench-baseline # records testdata/bench-baseline.txt for bench-check
 
 Every binary target stamps `main.Version` through `-ldflags` with the
 version monova reports, or 0.0.0 without monova; `--version` prints it. The
-RPM spec stamps the package version the same way.
+RPM gets the same version as its package version.
 
 Leak and soak tests check that sessions, panes and the notify socket release
 everything they take. Each takes a `leakcheck.Snapshot`, runs a workload and
@@ -336,7 +336,7 @@ bunk-gui window tests run on a private headless mutter through
 virtual monitor at 133% on the GPU, with its own D-Bus and clipboard. Every
 GUI check, including pixel, idle-frame, allocation and latency checks, lives
 in the test suite; turn a manual check into a test before relying on it.
-`go test -short` skips the window tests (the RPM's %check uses it).
+`go test -short` skips the window tests.
 Scenarios drive bunk-gui with `--do` steps that run in sequence. A `wait`
 step holds until the UI reaches a state (`cmd/bunk-gui/wait.go`): a field of
 the `--report` snapshot, frames drawn, no frames for a while, or injected

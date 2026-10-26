@@ -180,7 +180,7 @@ make build          # runs the tests, then writes bin/bunk and bin/bunk-gui
 bin/bunk-gui
 ```
 
-`make gui` rebuilds only `bin/bunk-gui`, without tests. `make rpm` builds a Fedora RPM in `bin/rpmbuild`. Packaging is still being finalised.
+`make gui` rebuilds only `bin/bunk-gui`, without tests. `make rpm` builds a Fedora RPM in `bin/rpmbuild` from a bunk-gui that `go build` compiles with the build cache, so a rebuild takes seconds. It runs no tests; `make check-all` is the gate. Packaging is still being finalised.
 
 | Flag | Effect |
 | :- | :- |
@@ -371,7 +371,7 @@ make run           # build bunk and open it with --trace in a new terminal
 - The compositor has one 2560x1600 monitor at 133%, its own D-Bus and its own clipboard.
 - Pixel, idle-frame, allocation and latency checks are Go tests. Turn a manual check into a test.
 - check-all counts fds, goroutines, child processes and heap around session, TUI and GUI cycles to find leaks.
-- `go test -short` skips window tests, and the RPM's `%check` uses it for package builds.
+- `go test -short` skips window tests.
 - Scenario steps wait for UI states rather than fixed times. `BUNK_GUI_PARALLEL` (default 8) sets how many scenarios run at once.
 - Window tests need mutter, gdctl and dbus-run-session. Packaging checks need desktop-file-validate and appstreamcli.
 - `TestGUIScreenshots` renders the README scenario in every `make gui-test`.

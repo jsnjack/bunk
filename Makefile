@@ -195,16 +195,24 @@ bench-check:
 bench-baseline:
 	$(BENCH_RUN) -o $(BENCH_BASELINE)
 
+# The RPM packages a bunk-gui that go build makes here, as mailbox does: the
+# build cache keeps every package that did not change, while rpmbuild's
+# per-version directory recompiled gotk4 for each version. The binary is
+# PIE with full RELRO, the hardening check-rpm.sh requires.
+RPM_STAGE := $(RPM_TOP)/stage
 rpm: version
 	rm -rf $(RPM_TOP)
-	packaging/fedora/sources.sh $(VERSION) $(RPM_TOP)/SOURCES
-	rpmbuild -ba --define "_topdir $(RPM_TOP)" \
+	cd $(GUI_DIR) && go build -buildmode=pie \
+		-ldflags="-X main.Version=$(VERSION) -linkmode=external -extldflags '-Wl,-z,relro -Wl,-z,now'" \
+		-o $(RPM_STAGE)/bunk-gui .
+	packaging/fedora/licenses.sh $(RPM_STAGE)/bundled-licenses
+	rpmbuild -bb --define "_topdir $(RPM_TOP)" \
+		--define "srcdir $(CURDIR)" --define "stagedir $(RPM_STAGE)" \
 		--define "bunk_version $(VERSION)" \
 		--define "snapinfo git$$(git rev-parse --short HEAD)" \
 		packaging/fedora/bunk-gui.spec
-	packaging/fedora/check-rpm.sh $(RPM_TOP)/RPMS/*/bunk-gui-$(VERSION)-*.$$(uname -m).rpm \
-		$(RPM_TOP)/SOURCES/bunk-gui-$(VERSION).tar.gz
-	@ls $(RPM_TOP)/RPMS/*/bunk-gui-*.rpm $(RPM_TOP)/SRPMS/*.rpm
+	packaging/fedora/check-rpm.sh $(RPM_TOP)/RPMS/*/bunk-gui-$(VERSION)-*.$$(uname -m).rpm
+	@ls $(RPM_TOP)/RPMS/*/bunk-gui-*.rpm
 
 clean:
 	rm -rf bin/ $(BINARY)
