@@ -105,8 +105,18 @@ func simScreen(t *testing.T, w, h int) tcell.SimulationScreen {
 // status_oracle_test.go): text, width and style, over thousands of states,
 // every width from 0 to 130, and three themes.
 func TestBadgesMatchOldRenderer(t *testing.T) {
+	// Unset slots now take the host's palette colour undimmed, where the
+	// old code painted white (TestTerminalThemeBadgesUseHostColours); here
+	// they are the host's palette colours themselves, so both paths still
+	// run: palette-index colours and RGB ones.
+	test := testTheme()
+	for i, c := range test.palette {
+		if c == tcell.ColorDefault {
+			test.palette[i] = tcell.PaletteColor(i)
+		}
+	}
 	themes := map[string]resolvedTheme{
-		"test":           testTheme(),
+		"test":           test,
 		"default":        builtinTheme("default"),
 		"solarized-dark": builtinTheme("solarized-dark"),
 	}

@@ -115,8 +115,10 @@ scrollbar_track = "0f1e2d"
 							t.Errorf("vtColor(%d): %v, was %v", c, g, w)
 						}
 					}
+					// The old blend painted the terminal theme's dimmed badges
+					// white; TestTerminalThemeBadgesUseHostColours covers it.
 					for _, role := range append(slices.Clone(badges.Roles), badges.RoleNone) {
-						if g, w := badgeStyle(role, got), oldBadgeStyle(role, want); g != w {
+						if g, w := badgeStyle(role, got), oldBadgeStyle(role, want); g != w && name != theme.Terminal {
 							t.Errorf("badge %s: style %v, was %v", role, g, w)
 						}
 					}
@@ -273,4 +275,30 @@ func TestThemeParityTUI(t *testing.T) {
 			t.Error("terminal theme does not probe the host colours")
 		}
 	})
+}
+
+// TestTerminalThemeBadgesUseHostColours: with the terminal theme a badge
+// takes the host's own palette colour of its slot, undimmed, and fixed
+// colours stay; blending unknown host colours used to paint badges white.
+func TestTerminalThemeBadgesUseHostColours(t *testing.T) {
+	rt := builtinTheme(theme.Terminal)
+	white := tcell.NewRGBColor(255, 255, 255)
+	want := func(i theme.Ink) tcell.Color {
+		if i.ANSI >= 0 {
+			return tcell.PaletteColor(i.ANSI)
+		}
+		return tcellColor(i.Fixed)
+	}
+	for _, role := range badges.Roles {
+		t.Run(role.String(), func(t *testing.T) {
+			fi, bi, _ := theme.BadgeInks(role)
+			fg, bg, _ := badgeStyle(role, rt).Decompose()
+			if fg != want(fi) || bg != want(bi) {
+				t.Errorf("%v on %v, want %v on %v", fg, bg, want(fi), want(bi))
+			}
+			if bg == white && bi.ANSI >= 0 {
+				t.Errorf("background is white")
+			}
+		})
+	}
 }

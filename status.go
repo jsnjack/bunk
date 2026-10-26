@@ -163,15 +163,20 @@ func badgeStyle(role badges.Role, rt resolvedTheme) tcell.Style {
 	return tcell.StyleDefault.Foreground(rt.ink(fg)).Background(rt.ink(bg)).Bold(bold)
 }
 
-// ink resolves a badge colour in the theme's tcell colours. A colour the
-// theme leaves to the host blends as tcell's RGB of it, -1 per channel,
-// as the TUI always did.
+// ink resolves a badge colour in the theme's tcell colours. A palette slot
+// the theme leaves to the host is the host's own colour of that index, and
+// it is not dimmed: the host's RGB values are unknown here. Blending them
+// as tcell's -1 per channel used to paint those badges white.
 func (rt resolvedTheme) ink(i theme.Ink) tcell.Color {
 	c := tcellColor(i.Fixed)
+	host := false
 	if i.ANSI >= 0 {
 		c = rt.palette[i.ANSI]
+		if c == tcell.ColorDefault {
+			c, host = tcell.PaletteColor(i.ANSI), true
+		}
 	}
-	if !i.Dim {
+	if !i.Dim || host || rt.bg == tcell.ColorDefault {
 		return c
 	}
 	r1, g1, b1 := c.RGB()
