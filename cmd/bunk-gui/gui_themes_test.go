@@ -198,7 +198,7 @@ palette = ["#073642", "#DC322F", "#859900", "#B58900", "#268BD2", "#D33682", "#2
 		"ptr-at pref theme-paper", "ptr-click",
 		"wait theme=paper prefs.theme=paper idle 300ms",
 		"dialog-close",
-		"wait prefs=null pane.0.settled=true pane.1.settled=true idle 300ms",
+		"wait prefs=null pane.0.settled=true pane.1.settled=true idle 1s",
 		"snap paper", "shot paper.png",
 		"mark idle-start", "sleep 1s", "mark idle-end",
 		"typing start 25ms", "sleep 300ms",

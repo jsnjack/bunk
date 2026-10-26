@@ -258,6 +258,9 @@ A helper child that is the test binary itself sets
 Run `make bench-check` before merging a performance-sensitive change. It
 compares the key benchmarks with `testdata/bench-baseline.txt`. Neither
 bench target is part of `check` or `check-all`, because timings depend on load.
+It also runs bunk-gui's `TestGUIFrame` with `BUNKGUI_LATENCY_P99=1`, which
+adds the p99 bound on key-to-render latency; check-all keeps only the p50
+bound, because one stalled key under load decides p99.
 - `scripts/benchcheck` builds each test binary once. It runs every vt10x
   benchmark, session `BenchmarkOutput` and `BenchmarkReflow`, and bunk-gui
   `BenchmarkFullScreenFrame`. Write and Output include the `termcorpus`
