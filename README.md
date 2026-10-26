@@ -16,6 +16,7 @@ A coding agent spends minutes on a task, then waits for an answer. With several 
 
 - bunk-gui gives each agent a tab with its repo, branch, container or SSH host, and state.
 - Each tab shows one of five states: working, idle, needs you, done or failed.
+- A tab split between several agents keeps the first agent's name with "+1" for each other one, and shows the most urgent state among them.
 - bunk shows the same states on a badge in each pane.
 - One key jumps to the next agent that waits for you: Alt+A in both bunk and bunk-gui.
 - Every pane is a real PTY, so agents, vim, btop and shells behave as they do in any terminal.
@@ -285,7 +286,7 @@ Focusing the pane or typing into it acknowledges the state and clears needs you 
 
 When an agent you are not looking at needs you, is done or failed, both front ends notify you:
 
-- bunk-gui shows a desktop notification per tab, such as "claude needs you" or "claude on build01 needs you" with the notice and repo ⎇ branch. A newer state replaces it, and it goes away when you look at the tab. Clicking it raises the window and selects the tab.
+- bunk-gui shows a desktop notification per pane, such as "claude needs you" or "claude on build01 needs you" with the notice and repo ⎇ branch. Two agents split in one tab each send their own. A newer state replaces it, and it goes away when you focus the pane. Clicking it raises the window, selects the tab and focuses the pane.
 - bunk notifies for a pane that is not active, or for any pane while the host terminal is not focused.
 - On your desktop's machine, bunk shows desktop notifications through D-Bus with `gdbus`, which GLib installs. They follow the same rules as bunk-gui's, without the click: bunk cannot raise its terminal's window.
 - Over SSH, without a session bus or without `gdbus`, bunk sends an OSC 777 notification to the host terminal instead. foot, WezTerm, Ghostty and urxvt show it. GNOME Terminal and Ptyxis with VTE 0.84 do not.

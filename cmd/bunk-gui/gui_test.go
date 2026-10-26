@@ -475,10 +475,9 @@ func checkChromeButtons(t *testing.T, label string, s *uiSnapshot) {
 	if s.Layout != "bar" {
 		return
 	}
-	// These tabs show only "shell", so they stay at their 132 px minimum.
 	for _, tb := range s.Tabs {
-		if tb.Item == nil || tb.Item.W != 132 {
-			t.Errorf("%s: tab %d %+v, want 132 px wide", label, tb.Index, tb.Item)
+		if tb.Item == nil || tb.NaturalW < 132 || tb.Item.W != float64(tb.NaturalW) {
+			t.Errorf("%s: tab %d %+v, want its natural width %d (at least 132)", label, tb.Index, tb.Item, tb.NaturalW)
 		}
 	}
 }

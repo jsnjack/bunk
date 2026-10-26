@@ -1,9 +1,9 @@
 // Package alert decides when an agent's state should alert a user who is
-// not looking at it, and what the alert says. Both front ends use it:
-// bunk-gui shows one desktop notification per tab, and bunk sends an
-// OSC 777 notification per pane to its host terminal.
+// not looking at it, and what the alert says. Both front ends use it and
+// alert once per pane: bunk-gui with a desktop notification, bunk with a
+// desktop notification or an OSC 777 notification to its host terminal.
 //
-// A Tracker follows each source (a tab or a pane) and answers every status
+// A Tracker follows each source (a pane) and answers every status
 // update with an Action: send an alert, withdraw the one shown, or leave it.
 // An alert goes out when an agent enters a state the Settings name while
 // nobody watches the source, and is withdrawn when someone does, when the

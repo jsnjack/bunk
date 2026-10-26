@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -14,13 +15,26 @@ import (
 func alertAgent(t *testing.T, events ...string) string {
 	t.Helper()
 	bin := t.TempDir()
+	writeAgent(t, bin, "claude", "go", events...)
+	return agentPath(t, bin)
+}
+
+// writeAgent writes a fake agent called name into bin that reports
+// through "bunk-gui notify": each line of events runs once the script
+// creates <prefix>0, <prefix>1, ….
+func writeAgent(t *testing.T, bin, name, prefix string, events ...string) {
+	t.Helper()
 	var b strings.Builder
-	b.WriteString("#!/bin/sh\necho fake claude\n")
+	fmt.Fprintf(&b, "#!/bin/sh\necho fake %s\n", name)
 	for i, ev := range events {
-		fmt.Fprintf(&b, "until [ -e \"$BUNK_TEST_DIR/go%d\" ]; do sleep 0.05; done\nbunk-gui notify %s\n", i, ev)
+		fmt.Fprintf(&b, "until [ -e \"$BUNK_TEST_DIR/%s%d\" ]; do sleep 0.05; done\nbunk-gui notify %s\n", prefix, i, ev)
 	}
 	b.WriteString("sleep 60\n")
-	must(t, os.WriteFile(filepath.Join(bin, "claude"), []byte(b.String()), 0o755))
+	must(t, os.WriteFile(filepath.Join(bin, name), []byte(b.String()), 0o755))
+}
+
+// agentPath is the scenario's PATH: the fake agents in bin, then bunk-gui.
+func agentPath(t *testing.T, bin string) string {
 	return "PATH=" + bin + ":" + filepath.Dir(guiBinary(t)) + ":" + os.Getenv("PATH")
 }
 
@@ -38,16 +52,16 @@ var startAlertAgent = []string{
 	"wait selected_tab=1",
 }
 
-// checkRecord compares a notification call in --report with want; Tab,
-// TMs and the fields want leaves empty are not compared.
-func checkRecord(t *testing.T, g *guiRun, i int, tab int, want alertRecord) {
+// checkRecord compares a notification call in --report with want, for
+// the pane with the ID pane; TMs is not compared.
+func checkRecord(t *testing.T, g *guiRun, i int, pane int, want alertRecord) {
 	t.Helper()
 	if i >= len(g.Notifications) {
 		t.Errorf("notification %d: none (%d calls: %+v)", i, len(g.Notifications), g.Notifications)
 		return
 	}
 	got := g.Notifications[i]
-	want.Tab, want.TMs = tab, got.TMs
+	want.Pane, want.TMs = pane, got.TMs
 	if got != want {
 		t.Errorf("notification %d: %+v\nwant %+v", i, got, want)
 	}
@@ -55,8 +69,8 @@ func checkRecord(t *testing.T, g *guiRun, i int, tab int, want alertRecord) {
 
 // TestGUINotifications: a fake claude in tab 2 reports through "bunk-gui
 // notify" while tab 1 is selected. needs-you sends one notification for
-// tab 2, with the agent, notice, repo and branch, and app.show-tab with
-// the tab's ID as its action; done replaces it; selecting the tab
+// its pane, with the agent, notice, repo and branch, and app.show-pane
+// with the pane's ID as its action; done replaces it; selecting the tab
 // acknowledges the agent and withdraws it. A click on the next one raises
 // the window and selects the tab, which withdraws it. The selected tab of
 // the active window sends none; with another window focused, it does. On
@@ -68,7 +82,7 @@ func TestGUINotifications(t *testing.T) {
 	script := append(append([]string{}, startAlertAgent...),
 		"wait run.notifications.#=0",
 		"run touch go0",
-		"wait tab.2.state=needs run.notifications.#=1 tab.2.notified=true",
+		"wait tab.2.state=needs run.notifications.#=1 tab.2.notified=true pane.1.notified=true",
 		"snap needs",
 		"run touch go1",
 		"wait tab.2.state=done run.notifications.#=2",
@@ -79,7 +93,7 @@ func TestGUINotifications(t *testing.T) {
 		"wait selected_tab=1",
 		"run touch go2",
 		"wait tab.2.state=needs run.notifications.#=4",
-		"alert-click 2",
+		"alert-click 1",
 		"wait selected_tab=2 window.active=true run.notifications.#=6 tab.2.notified=false",
 		"snap clicked",
 		"run touch go3",
@@ -90,7 +104,7 @@ func TestGUINotifications(t *testing.T) {
 		"run touch go4",
 		"wait tab.2.state=failed run.notifications.#=7",
 		"snap inactive",
-		"alert-click 2",
+		"alert-click 1",
 		"wait window.active=true run.notifications.#=9",
 		"decoy close",
 		"quit",
@@ -103,24 +117,24 @@ func TestGUINotifications(t *testing.T) {
 		script: script,
 		limit:  25e9,
 	})
-	tab2 := g.snap("needs").tab(t, 2)
-	if tab2.ID == g.snap("needs").tab(t, 1).ID {
-		t.Fatalf("tabs 1 and 2 share ID %d", tab2.ID)
+	if panes := g.snap("needs").tab(t, 2).Panes; !slices.Equal(panes, []int{1}) {
+		t.Fatalf("tab 2 has panes %v, want pane 1, which the script clicks", panes)
 	}
+	const pane = 1
 	where := filepath.Base(g.dir) + " ⎇ feature-x"
-	checkRecord(t, g, 0, tab2.ID, alertRecord{Op: "send", Title: "claude needs you", Body: "Allow npm install?\n" + where,
-		State: "needs-you", Action: "app.show-tab"})
-	checkRecord(t, g, 1, tab2.ID, alertRecord{Op: "send", Title: "claude is done", Body: "Finished the refactor\n" + where,
-		State: "done", Action: "app.show-tab"})
-	checkRecord(t, g, 2, tab2.ID, alertRecord{Op: "withdraw"})
-	checkRecord(t, g, 3, tab2.ID, alertRecord{Op: "send", Title: "claude needs you", Body: "Run the tests?\n" + where,
-		State: "needs-you", Action: "app.show-tab"})
-	checkRecord(t, g, 4, tab2.ID, alertRecord{Op: "activate"})
-	checkRecord(t, g, 5, tab2.ID, alertRecord{Op: "withdraw"})
-	checkRecord(t, g, 6, tab2.ID, alertRecord{Op: "send", Title: "claude failed", Body: "Out of credits\n" + where,
-		State: "failed", Action: "app.show-tab"})
-	checkRecord(t, g, 7, tab2.ID, alertRecord{Op: "activate"})
-	checkRecord(t, g, 8, tab2.ID, alertRecord{Op: "withdraw"})
+	checkRecord(t, g, 0, pane, alertRecord{Op: "send", Title: "claude needs you", Body: "Allow npm install?\n" + where,
+		State: "needs-you", Action: "app.show-pane"})
+	checkRecord(t, g, 1, pane, alertRecord{Op: "send", Title: "claude is done", Body: "Finished the refactor\n" + where,
+		State: "done", Action: "app.show-pane"})
+	checkRecord(t, g, 2, pane, alertRecord{Op: "withdraw"})
+	checkRecord(t, g, 3, pane, alertRecord{Op: "send", Title: "claude needs you", Body: "Run the tests?\n" + where,
+		State: "needs-you", Action: "app.show-pane"})
+	checkRecord(t, g, 4, pane, alertRecord{Op: "activate"})
+	checkRecord(t, g, 5, pane, alertRecord{Op: "withdraw"})
+	checkRecord(t, g, 6, pane, alertRecord{Op: "send", Title: "claude failed", Body: "Out of credits\n" + where,
+		State: "failed", Action: "app.show-pane"})
+	checkRecord(t, g, 7, pane, alertRecord{Op: "activate"})
+	checkRecord(t, g, 8, pane, alertRecord{Op: "withdraw"})
 	if len(g.Notifications) != 9 {
 		t.Errorf("%d notification calls, want 9: %+v", len(g.Notifications), g.Notifications)
 	}
@@ -138,6 +152,82 @@ func TestGUINotifications(t *testing.T) {
 	}
 	if !strings.Contains(g.stderr, `level=DEBUG msg="desktop notifications are recorded, not shown"`) {
 		t.Errorf("no record that notifications stay off the notification server on the test compositor")
+	}
+}
+
+// TestGUISplitAgents: tab 2 runs a fake claude and, split beside it, a
+// fake codex, while tab 1 is selected. The tab keeps claude's name with
+// "+1"; its state is the most urgent of the two, with codex's notice when
+// codex is that agent. Each pane sends its own notification. Alt+A
+// focuses codex, which withdraws only its notification; focusing claude
+// withdraws the other.
+func TestGUISplitAgents(t *testing.T) {
+	t.Parallel()
+	bin := t.TempDir()
+	writeAgent(t, bin, "claude", "c", `done "Finished the refactor"`)
+	writeAgent(t, bin, "codex", "x", `needs-you "Allow npm install?"`)
+	g := runGUI(t, scenario{
+		cost:  3,
+		args:  []string{"--size", "100x30", "--tab", ""},
+		env:   []string{agentPath(t, bin)},
+		files: alertRepo,
+		script: []string{
+			"kbd alt+2",
+			"wait selected_tab=2 focused.line=$ tab.2.status.branch=feature-x",
+			"type claude\\r",
+			"wait pane.1.status.agent=claude",
+			"split",
+			"wait tab.2.panes.#=2 focused_pane=2 pane.2.line=$",
+			"type codex\\r",
+			"wait pane.2.status.agent=codex tab.2.more=1",
+			"kbd alt+1",
+			"wait selected_tab=1",
+			"run touch x0",
+			"wait tab.2.state=needs pane.2.notified=true run.notifications.#=1",
+			"snap codex-needs",
+			"run touch c0",
+			"wait pane.1.status.state=done pane.1.notified=true run.notifications.#=2",
+			"snap both",
+			"kbd alt+a",
+			"wait selected_tab=2 focused_pane=2 pane.2.notified=false run.notifications.#=3",
+			"snap jumped",
+			"focus left",
+			"wait focused_pane=1 pane.1.notified=false run.notifications.#=4",
+			"snap seen",
+			"quit",
+		},
+		limit: 25e9,
+	})
+	where := filepath.Base(g.dir) + " ⎇ feature-x"
+	s := g.snap("codex-needs")
+	tab := s.tab(t, 2)
+	if tab.Agent != "claude" || tab.More != 1 || tab.State != "needs" || !tab.Needs || tab.Notice != "codex: Allow npm install?" {
+		t.Errorf("codex needs you: tab 2 %q +%d, state %q, needs %v, notice %q", tab.Agent, tab.More, tab.State, tab.Needs, tab.Notice)
+	}
+	if !strings.Contains(tab.Tooltip, "\ncodex · needs you · Allow npm install?") {
+		t.Errorf("codex needs you: tooltip %q", tab.Tooltip)
+	}
+	if !tab.Notified || s.pane(t, 1).Notified || !s.pane(t, 2).Notified {
+		t.Errorf("codex needs you: tab notified %v, claude %v, codex %v", tab.Notified, s.pane(t, 1).Notified, s.pane(t, 2).Notified)
+	}
+	if tab := g.snap("both").tab(t, 2); tab.State != "needs" || tab.Agent != "claude" {
+		t.Errorf("claude done, codex needs you: tab 2 %q, state %q", tab.Agent, tab.State)
+	}
+	if tab := g.snap("jumped").tab(t, 2); tab.State != "done" || tab.Notice != "Finished the refactor" {
+		t.Errorf("codex seen, claude done: tab 2 state %q, notice %q", tab.State, tab.Notice)
+	}
+	// Both agents are idle, or working for 2 s after their last output.
+	if tab := g.snap("seen").tab(t, 2); (tab.State != "idle" && tab.State != "working") || tab.Notified {
+		t.Errorf("both seen: tab 2 state %q, notified %v", tab.State, tab.Notified)
+	}
+	checkRecord(t, g, 0, 2, alertRecord{Op: "send", Title: "codex needs you", Body: "Allow npm install?\n" + where,
+		State: "needs-you", Action: "app.show-pane"})
+	checkRecord(t, g, 1, 1, alertRecord{Op: "send", Title: "claude is done", Body: "Finished the refactor\n" + where,
+		State: "done", Action: "app.show-pane"})
+	checkRecord(t, g, 2, 2, alertRecord{Op: "withdraw"})
+	checkRecord(t, g, 3, 1, alertRecord{Op: "withdraw"})
+	if len(g.Notifications) != 4 {
+		t.Errorf("%d notification calls, want 4: %+v", len(g.Notifications), g.Notifications)
 	}
 }
 
@@ -203,10 +293,10 @@ func TestGUINotificationSettings(t *testing.T) {
 	if s := g.snap("done"); s.tab(t, 2).Notified {
 		t.Errorf("done, which the preferences left out: notified")
 	}
-	tab2 := g.snap("done").tab(t, 2).ID
-	checkRecord(t, g, 0, tab2, alertRecord{Op: "send", Title: "claude failed",
-		Body: "Crashed\n" + filepath.Base(g.dir) + " ⎇ feature-x", State: "failed", Action: "app.show-tab"})
-	checkRecord(t, g, 1, tab2, alertRecord{Op: "withdraw"})
+	pane := g.snap("done").tab(t, 2).Panes[0]
+	checkRecord(t, g, 0, pane, alertRecord{Op: "send", Title: "claude failed",
+		Body: "Crashed\n" + filepath.Base(g.dir) + " ⎇ feature-x", State: "failed", Action: "app.show-pane"})
+	checkRecord(t, g, 1, pane, alertRecord{Op: "withdraw"})
 	if len(g.Notifications) != 2 {
 		t.Errorf("%d notification calls, want 2: %+v", len(g.Notifications), g.Notifications)
 	}

@@ -1,7 +1,7 @@
 package main
 
 // The desktop's notification server (org.freedesktop.Notifications), as
-// the tabs' notifications use it (alerts.go).
+// the panes' notifications use it (alerts.go).
 //
 // bunk-gui does not use GNotification. On GNOME, GLib sends it through
 // org.gtk.Notifications: GNOME Shell takes it only from an installed
@@ -33,22 +33,22 @@ const (
 	fdoDefault = "default"
 )
 
-// deskNotifier keeps one notification per tab on the notification server.
+// deskNotifier keeps one notification per pane on the notification server.
 type deskNotifier struct {
-	bus   *gio.DBusConnection
-	notes map[int]*deskNote // by tab ID
-	tabOf map[uint32]int    // tab ID by server ID
+	bus    *gio.DBusConnection
+	notes  map[int]*deskNote // by pane ID
+	paneOf map[uint32]int    // pane ID by server ID
 	// The activation token the server sent last, and the server ID of
 	// the notification it came with.
 	token    string
 	tokenFor uint32
 	sub      uint
-	// onClick runs when the user clicks a tab's notification, with the
+	// onClick runs when the user clicks a pane's notification, with the
 	// activation token for it ("" when the server sent none).
-	onClick func(tab int, token string)
+	onClick func(pane int, token string)
 }
 
-// deskNote is one tab's notification.
+// deskNote is one pane's notification.
 type deskNote struct {
 	id       uint32       // the server's ID; 0 while none is known
 	busy     bool         // a Notify call waits for its answer
@@ -57,8 +57,8 @@ type deskNote struct {
 }
 
 // newDeskNotifier listens to the notification server's signals on bus.
-func newDeskNotifier(bus *gio.DBusConnection, onClick func(tab int, token string)) *deskNotifier {
-	d := &deskNotifier{bus: bus, notes: map[int]*deskNote{}, tabOf: map[uint32]int{}, onClick: onClick}
+func newDeskNotifier(bus *gio.DBusConnection, onClick func(pane int, token string)) *deskNotifier {
+	d := &deskNotifier{bus: bus, notes: map[int]*deskNote{}, paneOf: map[uint32]int{}, onClick: onClick}
 	d.sub = bus.SignalSubscribe(fdoName, fdoIface, "", fdoPath, "", gio.DBusSignalFlagsNone, d.onSignal)
 	return d
 }
@@ -66,12 +66,12 @@ func newDeskNotifier(bus *gio.DBusConnection, onClick func(tab int, token string
 // close stops listening to the server.
 func (d *deskNotifier) close() { d.bus.SignalUnsubscribe(d.sub) }
 
-// send shows al as tab's notification, replacing the one it has.
-func (d *deskNotifier) send(tab int, al alert.Alert) {
-	n := d.notes[tab]
+// send shows al as pane's notification, replacing the one it has.
+func (d *deskNotifier) send(pane int, al alert.Alert) {
+	n := d.notes[pane]
 	if n == nil {
 		n = &deskNote{}
-		d.notes[tab] = n
+		d.notes[pane] = n
 	}
 	if n.busy {
 		// The server answers with the ID to replace; the newest alert
@@ -85,30 +85,30 @@ func (d *deskNotifier) send(tab int, al alert.Alert) {
 			v, err := d.bus.CallFinish(res)
 			n.busy = false
 			if err != nil {
-				slog.Debug("desktop notification not shown", "tab", tab, "err", err)
+				slog.Debug("desktop notification not shown", "pane", pane, "err", err)
 			} else {
 				id := v.ChildValue(0).Uint32()
 				if n.id != 0 && n.id != id {
-					delete(d.tabOf, n.id)
+					delete(d.paneOf, n.id)
 				}
 				n.id = id
-				d.tabOf[id] = tab
+				d.paneOf[id] = pane
 			}
 			switch {
 			case n.withdraw:
 				n.withdraw = false
-				d.withdraw(tab)
+				d.withdraw(pane)
 			case n.next != nil:
 				next := *n.next
 				n.next = nil
-				d.send(tab, next)
+				d.send(pane, next)
 			}
 		})
 }
 
-// withdraw removes tab's notification.
-func (d *deskNotifier) withdraw(tab int) {
-	n := d.notes[tab]
+// withdraw removes pane's notification.
+func (d *deskNotifier) withdraw(pane int) {
+	n := d.notes[pane]
 	if n == nil {
 		return
 	}
@@ -116,16 +116,16 @@ func (d *deskNotifier) withdraw(tab int) {
 		n.withdraw, n.next = true, nil
 		return
 	}
-	delete(d.notes, tab)
+	delete(d.notes, pane)
 	if n.id == 0 {
 		return
 	}
-	delete(d.tabOf, n.id)
+	delete(d.paneOf, n.id)
 	args := glib.NewVariantTuple([]*glib.Variant{glib.NewVariantUint32(n.id)})
 	d.bus.Call(context.Background(), fdoName, fdoPath, fdoIface, "CloseNotification", args,
 		nil, gio.DBusCallFlagsNone, -1, func(res gio.AsyncResulter) {
 			if _, err := d.bus.CallFinish(res); err != nil {
-				slog.Debug("desktop notification not withdrawn", "tab", tab, "err", err)
+				slog.Debug("desktop notification not withdrawn", "pane", pane, "err", err)
 			}
 		})
 }
@@ -143,20 +143,20 @@ func (d *deskNotifier) onSignal(_ *gio.DBusConnection, _, _, _, signal string, p
 			token = d.token
 		}
 		d.token, d.tokenFor = "", 0
-		if tab, ok := d.tabOf[id]; ok && key == fdoDefault {
-			d.onClick(tab, token)
+		if pane, ok := d.paneOf[id]; ok && key == fdoDefault {
+			d.onClick(pane, token)
 		}
 	case signal == "NotificationClosed" && params.IsOfType(glib.NewVariantType("(uu)")):
 		id := params.ChildValue(0).Uint32()
-		tab, ok := d.tabOf[id]
+		pane, ok := d.paneOf[id]
 		if !ok {
 			return
 		}
-		delete(d.tabOf, id)
-		if n := d.notes[tab]; n != nil && n.id == id {
+		delete(d.paneOf, id)
+		if n := d.notes[pane]; n != nil && n.id == id {
 			n.id = 0
 			if !n.busy {
-				delete(d.notes, tab)
+				delete(d.notes, pane)
 			}
 		}
 	}

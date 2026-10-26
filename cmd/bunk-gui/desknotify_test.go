@@ -29,10 +29,10 @@ import (
 var alertsInTests []string
 
 func init() {
-	postAlert = func(_ *App, tab int, al alert.Alert) {
-		alertsInTests = append(alertsInTests, fmt.Sprintf("send %d %s", tab, al.Title))
+	postAlert = func(_ *App, pane int, al alert.Alert) {
+		alertsInTests = append(alertsInTests, fmt.Sprintf("send %d %s", pane, al.Title))
 	}
-	withdrawAlert = func(_ *App, tab int) { alertsInTests = append(alertsInTests, fmt.Sprintf("withdraw %d", tab)) }
+	withdrawAlert = func(_ *App, pane int) { alertsInTests = append(alertsInTests, fmt.Sprintf("withdraw %d", pane)) }
 }
 
 // privateBus starts a message bus for the test alone, with no service
@@ -145,11 +145,11 @@ func TestDeskNotifierNoServer(t *testing.T) {
 	d.send(3, testAlert)
 	pump(t, "the Notify answer", func() bool { return !d.notes[3].busy })
 	d.withdraw(3)
-	if len(d.notes)+len(d.tabOf) != 0 {
-		t.Errorf("left behind: notes %v, ids %v", d.notes, d.tabOf)
+	if len(d.notes)+len(d.paneOf) != 0 {
+		t.Errorf("left behind: notes %v, ids %v", d.notes, d.paneOf)
 	}
 	got := logs.String()
-	if !strings.Contains(got, `level=DEBUG msg="desktop notification not shown" tab=3`) ||
+	if !strings.Contains(got, `level=DEBUG msg="desktop notification not shown" pane=3`) ||
 		!strings.Contains(got, fdoName) {
 		t.Errorf("no debug record of the failure:\n%s", got)
 	}
@@ -233,7 +233,7 @@ func (s *fakeServer) emit(t *testing.T, signal string, args ...*glib.Variant) {
 
 func u32(v *glib.Variant) string { return v.Print(false) }
 
-// TestDeskNotifier: against a fake notification server, a tab's alert
+// TestDeskNotifier: against a fake notification server, a pane's alert
 // shows with the app's name, icon and desktop entry, the title and the
 // escaped body, and a default action; a newer alert replaces it, also one
 // sent before the server answered; withdrawing closes it; a click with
@@ -246,11 +246,11 @@ func TestDeskNotifier(t *testing.T) {
 	addr := privateBus(t)
 	srv := newFakeServer(t, addr)
 	type click struct {
-		tab   int
+		pane  int
 		token string
 	}
 	var clicks []click
-	d := newDeskNotifier(busConn(t, addr), func(tab int, token string) { clicks = append(clicks, click{tab, token}) })
+	d := newDeskNotifier(busConn(t, addr), func(pane int, token string) { clicks = append(clicks, click{pane, token}) })
 	defer d.close()
 	settle := func(what string) {
 		t.Helper()
@@ -284,8 +284,8 @@ func TestDeskNotifier(t *testing.T) {
 	if !slices.Equal(srv.log, want) {
 		t.Fatalf("server calls:\n%s\nwant:\n%s", strings.Join(srv.log, "\n"), strings.Join(want, "\n"))
 	}
-	if d.notes[1].id != 42 || d.notes[2].id != 43 || d.tabOf[42] != 1 || d.tabOf[43] != 2 {
-		t.Fatalf("notes %+v %+v, ids %v", *d.notes[1], *d.notes[2], d.tabOf)
+	if d.notes[1].id != 42 || d.notes[2].id != 43 || d.paneOf[42] != 1 || d.paneOf[43] != 2 {
+		t.Fatalf("notes %+v %+v, ids %v", *d.notes[1], *d.notes[2], d.paneOf)
 	}
 
 	srv.log = nil
@@ -295,18 +295,18 @@ func TestDeskNotifier(t *testing.T) {
 		t.Errorf("withdraw: server calls %q, note %v", srv.log, d.notes[1])
 	}
 
-	srv.emit(t, "ActionInvoked", glib.NewVariantUint32(42), glib.NewVariantString(fdoDefault)) // withdrawn: no tab
+	srv.emit(t, "ActionInvoked", glib.NewVariantUint32(42), glib.NewVariantString(fdoDefault)) // withdrawn: no pane
 	srv.emit(t, "ActivationToken", glib.NewVariantUint32(43), glib.NewVariantString("token-43"))
 	srv.emit(t, "ActionInvoked", glib.NewVariantUint32(43), glib.NewVariantString(fdoDefault))
 	srv.emit(t, "NotificationClosed", glib.NewVariantUint32(43), glib.NewVariantUint32(2))
 	pump(t, "the click", func() bool { return len(clicks) > 0 && d.notes[2] == nil })
 	if !slices.Equal(clicks, []click{{2, "token-43"}}) {
-		t.Errorf("clicks %+v, want tab 2 with token-43", clicks)
+		t.Errorf("clicks %+v, want pane 2 with token-43", clicks)
 	}
 	srv.log = nil
 	d.withdraw(2)
-	if len(d.tabOf) != 0 || len(d.notes) != 0 {
-		t.Errorf("after the server closed it: notes %v, ids %v", d.notes, d.tabOf)
+	if len(d.paneOf) != 0 || len(d.notes) != 0 {
+		t.Errorf("after the server closed it: notes %v, ids %v", d.notes, d.paneOf)
 	}
 	if got := logs.String(); strings.Contains(got, "level=WARN") || strings.Contains(got, "level=ERROR") {
 		t.Errorf("logged:\n%s", got)

@@ -57,6 +57,7 @@ entry.findentry { min-height: 30px; background: #131416; color: #e6e8eb; }
 .passtag { background: #e6e8eb; color: #131416; font-weight: 700; font-size: 9px; padding: 0 4px; border-radius: 3px; }
 .agent { font-weight: 600; font-size: 13px; }
 .repo { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
+.more { font-size: 12px; color: #9aa0a8; }
 .loc { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #c7b8ff; }
 .notice { font-size: 12px; color: #ffb454; }
 button.raildot { background: none; box-shadow: none; border: none; padding: 0; min-width: 40px; min-height: 40px;
@@ -140,11 +141,17 @@ func lookOf(state session.AgentState) look {
 	return look{dot, label, "idle"}
 }
 
-// tabInfo is the label data of one tab, from its agent pane's status.
+// tabInfo is the label data of one tab. The name, repo and location come
+// from its agent pane (Tab.agentPane), so the label stays put while
+// agents in other panes change state; the state shown is the most urgent
+// of all its agents' (stateOrder), with that agent's notice.
 type tabInfo struct {
 	t                  *Tab
 	index              int
-	st                 session.Status
+	st                 session.Status // the agent pane's
+	state              session.AgentState
+	notice             string // of the agent in state; "agent: notice" when not the agent pane's
+	more               int    // agents in the tab's other panes, shown as "+N"
 	look               look
 	agent, repo, loc   string
 	locGlyph           string
@@ -165,11 +172,31 @@ func (a *App) tabInfos() []tabInfo {
 			continue
 		}
 		st := p.status()
-		in := tabInfo{t: t, index: i, st: st, look: lookOf(st.State), active: t == a.active,
-			needs: st.State == session.AgentNeedsYou}
+		in := tabInfo{t: t, index: i, st: st, state: st.State, notice: st.Notice, active: t == a.active}
+		var others []string // tooltip lines and names of the other panes' agents
 		for _, q := range t.panes() {
 			in.pass = in.pass || q.passthrough
+			qs := q.status()
+			if q == p || qs.Agent == "" {
+				continue
+			}
+			in.more++
+			if stateOrder[qs.State] < stateOrder[in.state] {
+				in.state, in.notice = qs.State, ""
+				if qs.Notice != "" {
+					in.notice = qs.Agent + ": " + qs.Notice
+				}
+			}
+			line := []string{qs.Agent}
+			if l := lookOf(qs.State).label; l != "" {
+				line = append(line, l)
+			}
+			if qs.Notice != "" {
+				line = append(line, qs.Notice)
+			}
+			others = append(others, strings.Join(line, " · "))
 		}
+		in.look, in.needs = lookOf(in.state), in.state == session.AgentNeedsYou
 		in.agent = st.Agent
 		if in.agent == "" {
 			in.agent = st.Process
@@ -202,8 +229,8 @@ func (a *App) tabInfos() []tabInfo {
 		if in.loc != "" {
 			parts = append(parts, in.loc)
 		}
-		if in.look.label != "" {
-			parts = append(parts, in.look.label)
+		if l := lookOf(st.State).label; l != "" {
+			parts = append(parts, l)
 		}
 		if in.pass {
 			parts = append(parts, "all keys go to the terminal")
@@ -212,10 +239,24 @@ func (a *App) tabInfos() []tabInfo {
 		if st.Notice != "" {
 			in.tooltip += "\n" + st.Notice
 		}
-		in.accessKey = strings.ToLower(in.agent + " " + in.repo + " " + in.loc)
+		for _, line := range others {
+			in.tooltip += "\n" + line
+		}
+		in.accessKey = strings.ToLower(in.agent + " " + in.repo + " " + in.loc + " " + strings.Join(others, " "))
 		out = append(out, in)
 	}
 	return out
+}
+
+// agentLabel is the tab's agent name in bold, then "+N" for the agents
+// in its other panes.
+func (in tabInfo) agentLabel() *gtk.Box {
+	box := gtk.NewBox(gtk.OrientationHorizontal, 4)
+	box.Append(label(in.agent, "agent"))
+	if in.more > 0 {
+		box.Append(label(fmt.Sprintf("+%d", in.more), "more"))
+	}
+	return box
 }
 
 // passTag marks a tab whose pane sends all keys to the terminal.
@@ -415,7 +456,7 @@ func (a *App) refreshChrome() {
 	infos := a.tabInfos()
 	var key strings.Builder
 	for _, in := range infos {
-		fmt.Fprintf(&key, "%p|%s|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.agent, in.repo, in.loc, in.tooltip, in.active, in.needs, in.pass)
+		fmt.Fprintf(&key, "%p|%s|%s|%d|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.agent, in.more, in.repo, in.loc, in.notice, in.tooltip, in.active, in.needs, in.pass)
 	}
 	if key.String() == a.chromeKey {
 		return
@@ -460,7 +501,7 @@ func (a *App) barTab(in tabInfo) tabItem {
 	box.SetTooltipText(in.tooltip)
 	inner := gtk.NewBox(gtk.OrientationHorizontal, 8)
 	inner.Append(label(in.look.dot, "dot", in.look.cls))
-	inner.Append(label(in.agent, "agent"))
+	inner.Append(in.agentLabel())
 	if in.pass {
 		inner.Append(passTag())
 	}
@@ -527,7 +568,7 @@ func (a *App) railRow(in tabInfo) tabItem {
 	lines := gtk.NewBox(gtk.OrientationVertical, 3)
 	top := gtk.NewBox(gtk.OrientationHorizontal, 8)
 	top.Append(label(in.look.dot, "dot", in.look.cls))
-	top.Append(label(in.agent, "agent"))
+	top.Append(in.agentLabel())
 	if in.pass {
 		top.Append(passTag())
 	}
@@ -551,8 +592,8 @@ func (a *App) railRow(in tabInfo) tabItem {
 	if in.loc != "" {
 		add(in.loc, "loc")
 	}
-	if in.st.Notice != "" {
-		add(in.st.Notice, "notice")
+	if in.notice != "" {
+		add(in.notice, "notice")
 	}
 	btn := gtk.NewButton()
 	btn.AddCSSClass("rowbtn")
@@ -890,7 +931,7 @@ func (sw *switcher) refresh() {
 	}
 	f := strings.ToLower(strings.TrimSpace(sw.entry.Text()))
 	infos := a.tabInfos()
-	sort.SliceStable(infos, func(i, j int) bool { return stateOrder[infos[i].st.State] < stateOrder[infos[j].st.State] })
+	sort.SliceStable(infos, func(i, j int) bool { return stateOrder[infos[i].state] < stateOrder[infos[j].state] })
 	sw.first, sw.shown = nil, sw.shown[:0]
 	for _, in := range infos {
 		if f != "" && !strings.Contains(in.accessKey, f) {
@@ -907,9 +948,8 @@ func (sw *switcher) refresh() {
 		}
 		row := gtk.NewBox(gtk.OrientationHorizontal, 10)
 		row.Append(label(in.look.dot, "dot", in.look.cls))
-		ag := label(in.agent, "agent")
+		ag := in.agentLabel()
 		ag.SetSizeRequest(72, -1)
-		ag.SetXAlign(0)
 		row.Append(ag)
 		repo := label(in.repo, "repo")
 		repo.SetEllipsize(pango.EllipsizeEnd)

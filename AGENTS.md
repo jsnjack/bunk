@@ -133,8 +133,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     background, dividers and badges; repaints on a change
   prefs_theme.go    The Theme section of Preferences: a choice per theme with
                     a preview of its colours
-  alerts.go         Desktop notifications per tab: when (internal/alert), the
-                    show-tab action, --report records, preferences section
+  alerts.go         Desktop notifications per pane: when (internal/alert), the
+                    show-pane action, --report records, preferences section
   desknotify.go     org.freedesktop.Notifications client: replace, withdraw,
                     clicks with their activation token
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
@@ -458,6 +458,15 @@ its default; Design Decisions says where the defaults come from.
     F2 and others) with ⚠. Passthrough (Ctrl+F12) sends all of them to the
     program.
 
+- A bunk-gui tab can hold several agents in split panes. Its label keeps
+  the name, repo and location of the first pane with an agent
+  (`Tab.agentPane`), so it does not change as the agents change state.
+  "+N" counts the agents in its other panes. The dot, colour and needs-you
+  highlight show the most urgent state among them (`stateOrder`), and the
+  rail shows that agent's notice as "agent: notice". The tooltip lists
+  every agent. Notifications are per pane, as in the TUI, and Alt+A
+  focuses the pane that needs the user.
+
 - Keyboard passthrough is per pane. Ctrl+F12 (`[keys].passthrough`) toggles
   forwarding of all other keys through the normal terminal encoder. The toggle
   remains reserved and exits bunk search. Mouse handling is unchanged. The PASS
@@ -671,10 +680,12 @@ its default; Design Decisions says where the defaults come from.
     The same state notifies again only 10 s (`alert.DefaultRepeat`) after
     the last one unless the user watched the source; until then it is held,
     and `Tracker.Next` says when to look again.
-  - bunk-gui keeps one notification per tab on org.freedesktop.Notifications
-    (`desknotify.go`), keyed by the tab's ID, the ID of the pane it opened
-    with. A click runs `app.show-tab` with that ID: the window takes the
-    focus with the shell's activation token and selects the tab.
+  - bunk-gui keeps one notification per pane on org.freedesktop.Notifications
+    (`desknotify.go`), keyed by the pane's ID. The user watches a pane while
+    it is the focused pane of the selected tab in the active window, as in
+    bunk. A click runs `app.show-pane` with that ID: the window takes the
+    focus with the shell's activation token, selects the pane's tab and
+    focuses the pane.
     GNotification is not used: on GNOME, GLib sends it through
     org.gtk.Notifications, where GNOME Shell needs an installed desktop file
     and runs the action through the application's bus name, which a

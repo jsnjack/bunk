@@ -117,12 +117,13 @@ type statusReport struct {
 }
 
 type tabReport struct {
-	Index    int          `json:"index"`    // 1-based
-	ID       int          `json:"id"`       // names its desktop notification
-	Notified bool         `json:"notified"` // its desktop notification is up
+	Index    int          `json:"index"` // 1-based
+	ID       int          `json:"id"`
+	Notified bool         `json:"notified"` // a desktop notification of one of its panes is up
 	Title    string       `json:"title"`
 	Agent    string       `json:"agent"` // as shown: the agent, else the process
-	State    string       `json:"state"`
+	More     int          `json:"more"`  // agents in its other panes ("+N")
+	State    string       `json:"state"` // the most urgent of its agents'
 	Label    string       `json:"label"`
 	Dot      string       `json:"dot"`
 	Repo     string       `json:"repo"` // as shown: "repo ⎇ branch" or the directory
@@ -136,6 +137,7 @@ type tabReport struct {
 	Focus    int          `json:"focus"`
 	Zoomed   int          `json:"zoomed"` // pane id, -1 when none
 	Item     *rectReport  `json:"item,omitempty"`
+	NaturalW int          `json:"natural_w"` // the width its content asks for, logical px
 	Close    *rectReport  `json:"close,omitempty"`
 	Status   statusReport `json:"status"` // of the agent pane
 	Pass     bool         `json:"pass"`   // shows the PASS tag
@@ -157,6 +159,7 @@ type paneReport struct {
 	Visible  bool        `json:"visible"`
 	Override bool        `json:"override"`
 	Pass     bool        `json:"passthrough"`
+	Notified bool        `json:"notified"` // its desktop notification is up
 	// Status badges as shown: right to left, Badges[0] at the right edge,
 	// and BadgeRow, their texts left to right as on screen. BadgeInput is
 	// the state they were laid out from (internal/badges).
@@ -440,10 +443,10 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	for i, in := range infos {
 		t := in.t
 		tr := tabReport{
-			Index: in.index + 1, Agent: in.agent, State: stateName[in.st.State], Label: in.look.label, Dot: in.look.dot,
-			Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.st.Notice, Tooltip: in.tooltip,
+			Index: in.index + 1, Agent: in.agent, More: in.more, State: stateName[in.state], Label: in.look.label,
+			Dot: in.look.dot, Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.notice, Tooltip: in.tooltip,
 			Selected: in.active, Needs: in.needs, Focus: -1, Zoomed: -1, Status: statusOf(in.st), Pass: in.pass,
-			ID: t.id, Notified: a.alerts.tracker.Shown(t.id),
+			ID: t.id,
 		}
 		if t.focus != nil {
 			tr.Focus, tr.Title = t.focus.id, t.focus.title
@@ -453,9 +456,11 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		}
 		for _, p := range t.panes() {
 			tr.Panes = append(tr.Panes, p.id)
+			tr.Notified = tr.Notified || a.alerts.tracker.Shown(p.id)
 		}
 		if i < len(a.tabItems) {
 			tr.Item = a.widgetRect(g, a.tabItems[i].item)
+			_, tr.NaturalW, _, _ = gtk.BaseWidget(a.tabItems[i].item).Measure(gtk.OrientationHorizontal, -1)
 			tr.Close = a.widgetRect(g, a.tabItems[i].close)
 		}
 		s.Tabs = append(s.Tabs, tr)
@@ -582,7 +587,7 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		Focused: t.focus == p, HasFocus: p.widget.HasFocus(), Dimmed: t.dimmed(p), Zoomed: t.zoom == p,
 		Ring: p.status().State == session.AgentNeedsYou, Visible: p.widget.IsDrawable(),
 		Override: p.statusOverride != nil, Status: statusOf(p.status()), Title: p.title,
-		Pass: p.passthrough,
+		Pass: p.passthrough, Notified: a.alerts.tracker.Shown(p.id),
 	}
 	in := p.badgeKey.in
 	r.BadgeInput = badgeInputReport{Passthrough: in.Passthrough, Scroll: in.ScrollOffset, Agent: in.Agent,

@@ -287,8 +287,6 @@ no `export`.
   pane on focus-in and report its most urgent pane again on focus-out.
 - Let the relay report how many panes share the most urgent state. A tab
   could then show "2 need you".
-- Use the relay's urgency order for bunk-gui's split tabs, which show the
-  first pane that has an agent.
 - Find the agent's terminal on macOS servers, which have no `/proc`.
 - Test GNU screen and container exec end to end.
 

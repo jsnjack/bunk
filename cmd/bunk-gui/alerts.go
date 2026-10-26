@@ -1,17 +1,20 @@
 package main
 
-// Desktop notifications for agent states, one per tab.
+// Desktop notifications for agent states, one per pane, as in the TUI
+// (bunk's alerts.go): two agents split in one tab each send their own.
 //
 //   - internal/alert decides: an agent enters needs-you, done or failed
-//     ([notifications] states) while the window is inactive or another tab
-//     is selected. A newer state replaces the tab's notification; looking
-//     at the tab, the state leaving those states, turning notifications
-//     off and closing the tab withdraw it.
-//   - syncAlerts runs whenever a tab's status, the selection or the
-//     window's focus changes (refreshChrome and the is-active notify).
-//   - Clicking a notification runs app.show-tab with the tab's ID: the
-//     window takes the focus with the shell's activation token, and the
-//     tab is selected.
+//     ([notifications] states) while the user is not looking at its pane:
+//     the window is inactive, or the pane is not the focused pane of the
+//     selected tab. A newer state replaces the pane's notification;
+//     looking at the pane, the state leaving those states, turning
+//     notifications off and closing the pane withdraw it.
+//   - syncAlerts runs whenever a pane's status, the selection, the
+//     focused pane or the window's focus changes (refreshChrome and the
+//     is-active notify).
+//   - Clicking a notification runs app.show-pane with the pane's ID: the
+//     window takes the focus with the shell's activation token, the
+//     pane's tab is selected and the pane focused.
 //   - postAlert and withdrawAlert record every call in --report and reach
 //     the notification server (desknotify.go) only off the test
 //     compositor. Tests replace them.
@@ -37,23 +40,23 @@ import (
 	"bunk/internal/session"
 )
 
-// showTabAction is the app action a notification's default action runs,
-// with the tab's ID as its target.
-const showTabAction = "show-tab"
+// showPaneAction is the app action a notification's default action runs,
+// with the pane's ID as its target.
+const showPaneAction = "show-pane"
 
 // alertState is the window's desktop notifications.
 type alertState struct {
 	tracker alert.Tracker
 	desk    *deskNotifier // nil on the test compositor and without a session bus
 	due     time.Time     // when the timeout for a held alert fires
-	click   string        // activation token of the click show-tab handles
+	click   string        // activation token of the click show-pane handles
 	decoy   *gtk.Window   // a test window holding the focus ("decoy open")
 }
 
 // alertRecord is one notification call in --report.
 type alertRecord struct {
-	Op     string `json:"op"`  // send, withdraw, or activate (a click)
-	Tab    int    `json:"tab"` // the tab's ID: the notification's key and its action's target
+	Op     string `json:"op"`   // send, withdraw, or activate (a click)
+	Pane   int    `json:"pane"` // the pane's ID: the notification's key and its action's target
 	Title  string `json:"title,omitempty"`
 	Body   string `json:"body,omitempty"`
 	State  string `json:"state,omitempty"`  // needs-you, done or failed
@@ -62,38 +65,38 @@ type alertRecord struct {
 	TMs    int64  `json:"t_ms"`
 }
 
-// postAlert shows al as the tab's desktop notification, replacing the one
-// it has. Tests replace it. It records the call in --report.
-var postAlert = func(a *App, tab int, al alert.Alert) {
-	a.recordAlert(alertRecord{Op: "send", Tab: tab, Title: al.Title, Body: al.Body(),
-		State: alert.StateName(al.State), Action: "app." + showTabAction})
+// postAlert shows al as the pane's desktop notification, replacing the
+// one it has. Tests replace it. It records the call in --report.
+var postAlert = func(a *App, pane int, al alert.Alert) {
+	a.recordAlert(alertRecord{Op: "send", Pane: pane, Title: al.Title, Body: al.Body(),
+		State: alert.StateName(al.State), Action: "app." + showPaneAction})
 	if a.alerts.desk != nil {
-		a.alerts.desk.send(tab, al)
+		a.alerts.desk.send(pane, al)
 	}
 }
 
-// withdrawAlert removes the tab's desktop notification. Tests replace it.
-// It records the call in --report.
-var withdrawAlert = func(a *App, tab int) {
-	a.recordAlert(alertRecord{Op: "withdraw", Tab: tab})
+// withdrawAlert removes the pane's desktop notification. Tests replace
+// it. It records the call in --report.
+var withdrawAlert = func(a *App, pane int) {
+	a.recordAlert(alertRecord{Op: "withdraw", Pane: pane})
 	if a.alerts.desk != nil {
-		a.alerts.desk.withdraw(tab)
+		a.alerts.desk.withdraw(pane)
 	}
 }
 
 func (a *App) recordAlert(r alertRecord) {
 	r.TMs = time.Since(a.started).Milliseconds()
 	a.rep.Notifications = append(a.rep.Notifications, r)
-	fmt.Printf("notification: %s tab %d %q\n", r.Op, r.Tab, r.Title)
+	fmt.Printf("notification: %s pane %d %q\n", r.Op, r.Pane, r.Title)
 }
 
-// initAlerts adds the show-tab action and connects the notifications to
+// initAlerts adds the show-pane action and connects the notifications to
 // the window's focus and the notification server.
 func (a *App) initAlerts() {
-	act := gio.NewSimpleAction(showTabAction, glib.NewVariantType("i"))
+	act := gio.NewSimpleAction(showPaneAction, glib.NewVariantType("i"))
 	act.ConnectActivate(func(target *glib.Variant) {
 		if target != nil {
-			a.showTab(int(target.Int32()))
+			a.showPane(int(target.Int32()))
 		}
 	})
 	a.app.AddAction(act)
@@ -112,22 +115,22 @@ func (a *App) initAlerts() {
 }
 
 // clickAlert runs a clicked notification's default action, as the
-// notification server asked: app.show-tab with the tab's ID.
-func (a *App) clickAlert(tab int, token string) {
+// notification server asked: app.show-pane with the pane's ID.
+func (a *App) clickAlert(pane int, token string) {
 	a.alerts.click = token
-	a.app.ActivateAction(showTabAction, glib.NewVariantInt32(int32(tab)))
+	a.app.ActivateAction(showPaneAction, glib.NewVariantInt32(int32(pane)))
 	a.alerts.click = ""
 }
 
-// showTab is app.show-tab: it raises the window and selects the tab with
-// the ID id. With the activation token of the click, the window takes the
-// focus on Wayland.
-func (a *App) showTab(id int) {
+// showPane is app.show-pane: it raises the window, selects the tab of the
+// pane with the ID id and focuses the pane. With the activation token of
+// the click, the window takes the focus on Wayland.
+func (a *App) showPane(id int) {
 	token := a.alerts.click
 	a.alerts.click = ""
-	a.recordAlert(alertRecord{Op: "activate", Tab: id, Token: token != ""})
-	t := a.tabByID(id)
-	if t == nil || a.finished {
+	a.recordAlert(alertRecord{Op: "activate", Pane: id, Token: token != ""})
+	p := a.paneByID(id)
+	if p == nil || a.finished {
 		return
 	}
 	if token != "" {
@@ -135,20 +138,23 @@ func (a *App) showTab(id int) {
 	} else {
 		a.win.Present()
 	}
-	a.selectTab(t)
-}
-
-func (a *App) tabByID(id int) *Tab {
-	for _, t := range a.tabs {
-		if t.id == id {
-			return t
-		}
+	a.selectTab(p.tab)
+	if p.tab.focus != p {
+		p.widget.GrabFocus()
 	}
-	return nil
+	a.onPaneFocus(p)
 }
 
-// syncAlerts brings every tab's notification up to date with its agent's
-// status, the selected tab and the window's focus.
+// paneByID is the open pane with the ID id, or nil.
+func (a *App) paneByID(id int) *Pane {
+	if id < 0 || id >= len(a.panes) || a.panes[id] == nil || a.panes[id].removeOnce {
+		return nil
+	}
+	return a.panes[id]
+}
+
+// syncAlerts brings every pane's notification up to date with its agent's
+// status, the selected tab, its focused pane and the window's focus.
 func (a *App) syncAlerts() {
 	if a.finished || a.win == nil {
 		return
@@ -157,19 +163,18 @@ func (a *App) syncAlerts() {
 	tr.Settings = a.settings.alerts
 	now, active := time.Now(), a.win.IsActive()
 	for _, t := range a.tabs {
-		var st session.Status
-		if p := t.agentPane(); p != nil {
-			st = p.status()
-		}
-		switch act, al := tr.Update(t.id, st, active && t == a.active, now); act {
-		case alert.Send:
-			postAlert(a, t.id, al)
-		case alert.Withdraw:
-			withdrawAlert(a, t.id)
+		for _, p := range t.panes() {
+			watched := active && t == a.active && t.focus == p
+			switch act, al := tr.Update(p.id, p.status(), watched, now); act {
+			case alert.Send:
+				postAlert(a, p.id, al)
+			case alert.Withdraw:
+				withdrawAlert(a, p.id)
+			}
 		}
 	}
 	for _, id := range tr.IDs() {
-		if a.tabByID(id) == nil && tr.Remove(id) == alert.Withdraw {
+		if a.paneByID(id) == nil && tr.Remove(id) == alert.Withdraw {
 			withdrawAlert(a, id)
 		}
 	}
@@ -197,15 +202,12 @@ func (a *App) withdrawAlerts() {
 	}
 }
 
-// alertClick is the "alert-click N" script action: it clicks tab N's
-// notification as the notification server would, without a token.
-func (a *App) alertClick(n int) error {
-	if n < 1 || n > len(a.tabs) {
-		return fmt.Errorf("no tab %d", n)
-	}
-	id := a.tabs[n-1].id
+// alertClick is the "alert-click ID" script action: it clicks the
+// notification of the pane with that ID as the notification server
+// would, without a token.
+func (a *App) alertClick(id int) error {
 	if !a.alerts.tracker.Shown(id) {
-		return fmt.Errorf("tab %d has no notification", n)
+		return fmt.Errorf("pane %d has no notification", id)
 	}
 	a.clickAlert(id, "")
 	return nil
