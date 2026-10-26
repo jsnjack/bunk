@@ -1026,3 +1026,22 @@ func texBright(img image.Image, p paneReport) int {
 	}
 	return best
 }
+
+// TestGUITermProgram: panes name bunk-gui in TERM_PROGRAM, in place of the
+// one bunk-gui inherited.
+func TestGUITermProgram(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		args: []string{"--size", "80x10", "--command", "echo \"tp=$TERM_PROGRAM v=$TERM_PROGRAM_VERSION.\"; sleep 30"},
+		env:  []string{"TERM_PROGRAM=outer-term", "TERM_PROGRAM_VERSION=9"},
+		script: []string{
+			"wait pane.0.text~\"tp=\"",
+			"snap env",
+			"quit",
+		},
+	})
+	want := "tp=bunk-gui v=" + Version + "."
+	if p := g.snap("env").pane(t, 0); !slices.Contains(p.Text, want) {
+		t.Errorf("pane printed %q, want %q", p.Text, want)
+	}
+}

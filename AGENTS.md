@@ -741,6 +741,11 @@ its default; Design Decisions says where the defaults come from.
   through package variables, so parallel tests cannot race on it.
 - Nested sessions are refused. `BUNK=1` is exported into every pane's
   environment; the binary exits at startup if it sees it set.
+- bunk-gui's panes get `TERM_PROGRAM=bunk-gui` and `TERM_PROGRAM_VERSION`
+  in place of inherited ones, so shell start-up files can skip starting
+  bunk's TUI there (README). bunk's TUI passes an inherited `TERM_PROGRAM`
+  on: Claude Code sends OSC notifications only to terminals it recognises
+  by it, such as iTerm on macOS.
 - Closing a session ends it, whatever its child does. `Session.Close`
   closes the PTY master and sends SIGHUP; a child still running after
   `HangupGrace` (1 s) is killed with its process group. On Linux the master

@@ -157,6 +157,9 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 		Agents:     a.settings.Agents,
 		ImageBytes: a.cfg.imageBytes,
 		InputBytes: a.cfg.inputBytes,
+		// Shell start-up files tell bunk-gui apart from the terminal it
+		// was started from, e.g. to start bunk's TUI only outside it.
+		Env: []string{"TERM_PROGRAM=bunk-gui", "TERM_PROGRAM_VERSION=" + Version},
 	}
 	// Agent hooks report through the notify socket with the session's token.
 	if a.notify != nil {

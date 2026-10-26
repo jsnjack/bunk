@@ -163,12 +163,12 @@ You can also download a binary from [Releases](https://github.com/jsnjack/bunk/r
 To start bunk in every new terminal, add this to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
-if [[ -t 1 ]] && [[ -z "$BUNK" ]] && [[ -z "$SSH_TTY" ]] && command -v bunk &>/dev/null; then
+if [[ -t 1 ]] && [[ -z "$BUNK" ]] && [[ "$TERM_PROGRAM" != "bunk-gui" ]] && [[ -z "$SSH_TTY" ]] && command -v bunk &>/dev/null; then
     exec bunk
 fi
 ```
 
-bunk sets `BUNK=1` in every pane and refuses to start inside itself.
+bunk sets `BUNK=1` in every pane and refuses to start inside itself. bunk-gui sets `TERM_PROGRAM=bunk-gui`, so its tabs get a plain shell; it has its own splits.
 
 ### bunk-gui
 
