@@ -147,6 +147,7 @@ Both front ends share the emulator, so they support the same sequences.
 - Input supports the Kitty keyboard protocol, application cursor and keypad modes, and SGR mouse reports.
 - Wide characters, combining marks and emoji sequences stay together through copy, search and reflow.
 - Both front ends show SIXEL, Kitty and iTerm2 static images. bunk-gui draws them at full resolution, and bunk draws them as half-block cells.
+- bunk-gui draws box drawing, block, braille and powerline characters itself, so lines and blocks join across cells without seams.
 - Each pane answers DA, DECRQM, DECRQSS and XTGETTCAP itself, also over SSH.
 - On one core, a session parses agent transcripts at about 180 MB/s and plain text at 400 MB/s.
 

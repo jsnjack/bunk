@@ -101,6 +101,10 @@ internal/theme/     Colour themes for both front ends: the built-in themes,
                     custom [themes.NAME] tables, [ui] overrides, and the
                     colours of badge roles (BadgeInks) and agent states
 
+internal/boxdraw/   Cell masks for box drawing, blocks, shades, braille,
+                    legacy computing symbols, powerline and branch symbols
+                    (kitty's set); bunk-gui's atlas uses them, not the font
+
 internal/notify/    Agent hook reports: Unix socket server (token → Session),
                     client, `notify` CLI (RunCLI), hook snippets per agent,
                     whether they are installed and installing the
@@ -664,6 +668,29 @@ its default; Design Decisions says where the defaults come from.
 - Hyperlink IDs are swept and reused. A cell's `Glyph.Link` is a uint16
   ID into its terminal's URL table. A sweep frees the IDs no cell of either
   screen, cursor attribute or kept row refers to; new URLs reuse them, lowest
+- bunk-gui draws box drawing and similar characters itself
+  (`internal/boxdraw`), as kitty and VTE do. A font's glyphs for them
+  seldom reach the cell's edges, so neighbouring cells showed seams.
+  - The set is kitty's 1,098 characters: box drawing, blocks and shades,
+    braille, the symbols for legacy computing and their supplement,
+    powerline separators, Fira Code's progress bar and spinner, and the
+    branch drawing symbols of git graphs.
+  - `Atlas.add` puts the mask into the glyph's slot on first use, so a
+    frame costs what it did. Bold draws the same mask, and a character
+    with a combining mark still goes to the font.
+  - A light line is `LineWidth(cellW)` pixels wide: the cell width / 6.5,
+    at least 1. A heavy line keeps the light line's parity, so both share
+    a centre. A double line is two light lines a light line apart.
+  - Fractions of the cell round through one function (`part`), so a half
+    block ends where the second row of quarter blocks does. Shades are
+    flat coverage (25, 50 and 75%), not dither patterns.
+  - Curves, diagonals and triangles are antialiased from signed distance
+    functions. Where a line leaves the cell it has the straight line's
+    edge, so it meets the next cell's line. `TestLinesMeet` checks every
+    edge, and `TestGUIBoxDrawing` compares the window's pixels with the
+    masks.
+  - bunk's TUI is unchanged: there the host terminal draws every glyph.
+
   first. Sweeps run when the table reaches 4,096 URLs or twice what the last
   sweep kept, and after ED 3 and RIS. A cell never changes its ID, so it keeps
   its URL. Rows kept outside the terminal must be marked through

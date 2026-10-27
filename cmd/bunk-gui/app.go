@@ -474,8 +474,8 @@ func (a *App) printStats(p *Pane, reason string) {
 			len(a.tabs), open, g.lw, g.lh, g.scale, g.dw, g.dh, p.cols, p.rows, p.atlas.CellW, p.atlas.CellH)
 		fmt.Printf("- focused view: snapshots %d, renders %d, reused %d, wake-ups %d, scale changes %d; keyboard focus: %v\n",
 			g.snapshots, g.renders, g.reused, g.wakes, g.scaleChg, p.widget.HasFocus())
-		fmt.Printf("- atlas: %d glyphs rasterized (%d as U+FFFD), %dx%d px, %d lookups found no slot\n",
-			p.atlas.Rasterized, p.atlas.Replaced, p.atlas.W, p.atlas.H, p.atlas.Full)
+		fmt.Printf("- atlas: %d glyphs rasterized (%d as U+FFFD), %d drawn as box drawing, %dx%d px, %d lookups found no slot\n",
+			p.atlas.Rasterized, p.atlas.Replaced, p.atlas.Drawn, p.atlas.W, p.atlas.H, p.atlas.Full)
 	}
 	for _, q := range a.panes {
 		if q != nil && q != p && !q.removeOnce {

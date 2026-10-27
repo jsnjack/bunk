@@ -8,6 +8,8 @@ import (
 	"github.com/diamondburned/gotk4/pkg/cairo"
 	"github.com/diamondburned/gotk4/pkg/pango"
 	"github.com/diamondburned/gotk4/pkg/pangocairo"
+
+	"bunk/internal/boxdraw"
 )
 
 // Instance.Glyph layout: the low 16 bits are the atlas slot (0 = nothing to
@@ -61,13 +63,15 @@ type Atlas struct {
 	other map[clusterKey]uint32
 
 	raster     rasterizer
-	Rasterized int // glyphs drawn so far
+	line       int // width of a light box drawing line
+	Rasterized int // glyphs the font drew so far
+	Drawn      int // glyphs boxdraw drew so far
 	Replaced   int // glyphs drawn as U+FFFD (colour emoji)
 	Full       int // lookups that found no free slot
 }
 
 func newAtlas(cellW, cellH int, r rasterizer) *Atlas {
-	a := &Atlas{CellW: cellW, CellH: cellH, SlotsPerRow: 64, raster: r, other: make(map[clusterKey]uint32)}
+	a := &Atlas{CellW: cellW, CellH: cellH, SlotsPerRow: 64, raster: r, line: boxdraw.LineWidth(cellW), other: make(map[clusterKey]uint32)}
 	a.slotRows = 16
 	a.W, a.H = a.SlotsPerRow*cellW, a.slotRows*cellH
 	a.Pixels = make([]byte, a.W*a.H)
@@ -100,15 +104,22 @@ func (a *Atlas) add(r rune, comb string, bold, wide bool) uint32 {
 	slot := a.alloc(cells)
 	v := uint32(slot)
 	if slot != 0 {
-		text := string(r) + comb
-		if isColorEmoji(r, comb) {
-			// Colour glyphs need an RGBA atlas; draw a placeholder for now.
-			text = "�"
-			a.Replaced++
-		}
 		x, y := (slot%a.SlotsPerRow)*a.CellW, (slot/a.SlotsPerRow)*a.CellH
-		a.raster.draw(text, bold, cells, a.Pixels[y*a.W+x:], a.W)
-		a.Rasterized++
+		dst := a.Pixels[y*a.W+x:]
+		if comb == "" && boxdraw.Draw(r, dst, a.W, cells*a.CellW, a.CellH, a.line) {
+			// Box drawing, blocks, braille and the like fill the cell
+			// exactly, so neighbouring cells join without seams.
+			a.Drawn++
+		} else {
+			text := string(r) + comb
+			if isColorEmoji(r, comb) {
+				// Colour glyphs need an RGBA atlas; draw a placeholder for now.
+				text = "�"
+				a.Replaced++
+			}
+			a.raster.draw(text, bold, cells, dst, a.W)
+			a.Rasterized++
+		}
 		if wide {
 			v |= flagWide
 		}

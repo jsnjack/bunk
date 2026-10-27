@@ -1,6 +1,6 @@
 # Bunk Terminal Feature Audit
 
-Date: 2026-03-12 (updated 2026-10-25)
+Date: 2026-03-12 (updated 2026-10-27)
 
 ## Legend
 - **OK** — fully handled
@@ -165,6 +165,7 @@ CSI 14/16/18 and PTY pixel sizes describe the same virtual cell geometry.
 | CJK double-width | **FIXED** | vt10x tracks display-cell widths and continuations, including right-edge wrapping and editing. Rendering, cursor positions, copy, search, and reflow use those same coordinates |
 | Combining characters | OK | Immutable grapheme suffix retained in lead cells, including copy/search/reflow |
 | Emoji (multi-codepoint) | OK | ZWJ families, flags, modifiers, variation selectors, and keycaps; widths and continuation cells agree with tcell. Visual shaping still requires a capable host/font |
+| Box drawing, blocks, braille | OK | bunk-gui draws kitty's set of 1,098 characters itself (`internal/boxdraw`): lines, blocks and shades fill the cell exactly and join across cells. bunk's TUI leaves them to the host terminal's font |
 
 ---
 
@@ -378,3 +379,16 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
 - The fuzz invariants now require a continuation to match its lead's
   colours, attributes, underline colour and link. Every ICH and DCH count
   at every column of mixed wide/narrow rows is tested.
+
+### Box drawing in bunk-gui (2026-10-27)
+
+- bunk-gui took block and line characters from the font. Their glyphs
+  stop short of the cell's edges, so Claude Code's logo and box frames
+  showed seams between cells.
+- `internal/boxdraw` now draws the characters kitty draws: box drawing,
+  blocks and shades, braille, legacy computing symbols, powerline
+  separators, Fira Code's progress bar and spinner, and branch symbols.
+  The atlas stores each mask once, so frames cost the same.
+- Tests check that every line edge matches the straight line of its
+  weight, that blocks partition the cell, and that the window's pixels
+  equal the masks.
