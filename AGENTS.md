@@ -247,6 +247,7 @@ make gui-test # bunk-gui: vet, race tests, packaging validation
 make check-all # fmt+vet, then core and GUI tests in parallel, then build+lint
 make check-all FRESH=1 # the same, uncached and goimports on every file
 make rpm      # Fedora RPM of a bunk-gui built with go build (cached), checked by packaging/fedora/check-rpm.sh
+make release  # GitHub release v<version>: bunk tarballs after the core tests, the bunk-gui RPM after the window tests
 make fuzz     # every Fuzz target in turn, FUZZTIME each (default 30s); not in check-all
 make soak     # leak and soak tests at full length (SOAK=1); not in check-all
 make bench-check    # key benchmarks pinned to one core; fails on a >10% slowdown

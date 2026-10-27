@@ -174,7 +174,13 @@ bunk sets `BUNK=1` in every pane and refuses to start inside itself. bunk-gui se
 
 ### bunk-gui
 
-bunk-gui runs on Linux and needs Go 1.26, gcc, GTK 4, libadwaita and OpenGL 3.3. On Fedora, install and build it like this:
+On Fedora x86_64, download `bunk-gui-<version>-1.*.x86_64.rpm` from [Releases](https://github.com/jsnjack/bunk/releases) and install it; dnf pulls in GTK 4 and libadwaita:
+
+```bash
+sudo dnf install ./bunk-gui-*.x86_64.rpm
+```
+
+To build it, bunk-gui needs Linux, Go 1.26, gcc, GTK 4, libadwaita and OpenGL 3.3. On Fedora:
 
 ```bash
 sudo dnf install golang gcc gtk4-devel libadwaita-devel
@@ -182,7 +188,7 @@ make build          # runs the tests, then writes bin/bunk and bin/bunk-gui
 bin/bunk-gui
 ```
 
-`make gui` rebuilds only `bin/bunk-gui`, without tests. `make rpm` builds a Fedora RPM in `bin/rpmbuild` from a bunk-gui that `go build` compiles with the build cache, so a rebuild takes seconds. It runs no tests; `make check-all` is the gate. Packaging is still being finalised.
+`make gui` rebuilds only `bin/bunk-gui`, without tests. `make rpm` builds a Fedora RPM in `bin/rpmbuild` from a bunk-gui that `go build` compiles with the build cache, so a rebuild takes seconds. It runs no tests; `make check-all` is the gate. `make release` attaches this RPM to the GitHub release.
 
 | Flag | Effect |
 | :- | :- |

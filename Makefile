@@ -87,7 +87,10 @@ bin/$(BINARY)_darwin_arm64: $(TEST_GATE) version
 # and GTK4 rule out cross builds), each after its own tests.
 build: $(BUNK_BINS) bin/bunk-gui
 
-release: $(BUNK_BINS)
+# A release tags v<version> on GitHub with bunk for four platforms, after
+# the core tests, and the bunk-gui RPM for this machine, after the window
+# tests (cgo and GTK4 rule out other builds of bunk-gui).
+release: $(BUNK_BINS) $(GUI_TEST_GATE) rpm
 	tar -czf bin/$(BINARY)_linux_amd64.tar.gz  --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_amd64
 	tar -czf bin/$(BINARY)_linux_arm64.tar.gz  --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_linux_arm64
 	tar -czf bin/$(BINARY)_darwin_amd64.tar.gz --transform 's|.*/$(BINARY)_.*|$(BINARY)|' bin/$(BINARY)_darwin_amd64
@@ -97,6 +100,7 @@ release: $(BUNK_BINS)
 		-f bin/$(BINARY)_linux_arm64.tar.gz \
 		-f bin/$(BINARY)_darwin_amd64.tar.gz \
 		-f bin/$(BINARY)_darwin_arm64.tar.gz \
+		-f "$$(ls $(RPM_TOP)/RPMS/*/bunk-gui-$(VERSION)-*.rpm)" \
 		-t "v`monova`"
 
 run: test
