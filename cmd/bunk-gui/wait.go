@@ -239,20 +239,27 @@ func (a *App) startWait(arg string, next func()) {
 		next()
 		return
 	}
-	coreglib.TimeoutAdd(uint(waitTick.Milliseconds()), func() bool {
-		if a.finished {
+	// Each check arms the next waitTick after it ends. A repeating timeout
+	// is due again from the start of the loop iteration that ran it, so a
+	// check slower than waitTick (snapshots under --alloc-probe) would run
+	// back to back and starve the idle callbacks that bring status changes
+	// to the panes.
+	var arm func()
+	arm = func() {
+		coreglib.TimeoutAdd(uint(waitTick.Milliseconds()), func() bool {
+			switch {
+			case a.finished:
+			case w.check():
+				next()
+			case time.Since(w.start) >= w.timeout:
+				w.fail()
+			default:
+				arm()
+			}
 			return false
-		}
-		if w.check() {
-			next()
-			return false
-		}
-		if time.Since(w.start) >= w.timeout {
-			w.fail()
-			return false
-		}
-		return true
-	})
+		})
+	}
+	arm()
 }
 
 // check evaluates every condition; all are evaluated so the timeout
