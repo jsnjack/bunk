@@ -34,7 +34,8 @@ type fileConfig struct {
 	Themes     map[string]theme.Def `toml:"themes"` // custom themes, [themes.NAME]
 	Keys       map[string]string    `toml:"keys"`   // action → key string, e.g. "split" → "f1"
 	// Notifications: desktop or host terminal notifications when an agent
-	// in a pane the user is not looking at needs them (alerts.go).
+	// in a pane the user is not looking at needs them, or a long command
+	// there ends (alerts.go).
 	Notifications alert.Config `toml:"notifications"`
 }
 
@@ -426,12 +427,14 @@ log_level = "info"  # trace | debug | info | warn | error
 # scrollback = 10000
 
 # Desktop notifications when an agent in a pane you are not looking at
-# needs you, is done or failed: through D-Bus (gdbus) on your desktop's
-# machine, else as OSC 777 to the host terminal, which foot, WezTerm,
-# Ghostty and urxvt show.
+# needs you, is done or failed, or when a command there ends after running
+# command_after seconds or longer (0 turns that off): through D-Bus (gdbus)
+# on your desktop's machine, else as OSC 777 to the host terminal, which
+# foot, WezTerm, Ghostty and urxvt show.
 [notifications]
-enabled = true
-states  = ["needs-you", "done", "failed"]
+enabled       = true
+states        = ["needs-you", "done", "failed"]
+command_after = 10
 
 # Optional UI color overrides - leave blank to use the theme's defaults.
 # Values must be "#RRGGBB" hex strings.

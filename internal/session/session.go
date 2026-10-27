@@ -141,6 +141,13 @@ type Session struct {
 	statusHook        func()      // Hooks.StatusChanged, set by Run, for Notify
 	shown             agentView   // the agent state StatusChanged last announced
 
+	// Commands the shell runs (command.go). Protected by mu.
+	cmd        runningCommand // the command the shell runs now
+	fg         foreground     // the foreground group the last process poll saw
+	promptAt   time.Time      // the shell's last OSC 133;D mark: its prompt
+	ended      Command        // the last command that ended
+	shownEnded time.Time      // ended.Ended as StatusChanged last announced it
+
 	// knownToken is Options.KnownToken. Set before the session runs; read
 	// without the lock.
 	knownToken func(token string) bool

@@ -1,7 +1,8 @@
-// Package alert decides when an agent's state should alert a user who is
-// not looking at it, and what the alert says. Both front ends use it and
-// alert once per pane: bunk-gui with a desktop notification, bunk with a
-// desktop notification or an OSC 777 notification to its host terminal.
+// Package alert decides when an agent's state or a long command's end
+// should alert a user who is not looking at it, and what the alert says.
+// Both front ends use it and alert once per pane: bunk-gui with a desktop
+// notification, bunk with a desktop notification or an OSC 777
+// notification to its host terminal.
 //
 // A Tracker follows each source (a pane) and answers every status
 // update with an Action: send an alert, withdraw the one shown, or leave it.
@@ -9,23 +10,33 @@
 // nobody watches the source, and is withdrawn when someone does, when the
 // state leaves those states, or when the source goes away. An agent that
 // flaps between a state and another sends that state at most once per
-// Tracker.Repeat.
+// Tracker.Repeat. A command that ran Settings.CommandAfter or longer
+// alerts when it ends, and its alert stays until the user watches the
+// source.
 package alert
 
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"bunk/internal/session"
 )
 
-// Settings say whether agents alert the user, and on which states.
+// Settings say whether agents alert the user, on which states, and after
+// how long a command alerts when it ends.
 type Settings struct {
 	Enabled bool
 	States  []session.AgentState
+	// CommandAfter is how long a command must run for its end to alert;
+	// zero turns command alerts off.
+	CommandAfter time.Duration
 }
+
+// DefaultCommandAfter is CommandAfter without a command_after key.
+const DefaultCommandAfter = 10 * time.Second
 
 // stateNames are the config names of the states that can alert, in the
 // order Default lists them.
@@ -39,10 +50,11 @@ var stateNames = []struct {
 }
 
 // Default returns the settings without a [notifications] table: on, for
-// needs-you, done and failed. A failed agent has stopped like a done one
-// and waits for the user just the same.
+// needs-you, done and failed, and for commands that ran
+// DefaultCommandAfter. A failed agent has stopped like a done one and
+// waits for the user just the same.
 func Default() Settings {
-	s := Settings{Enabled: true}
+	s := Settings{Enabled: true, CommandAfter: DefaultCommandAfter}
 	for _, n := range stateNames {
 		s.States = append(s.States, n.state)
 	}
@@ -53,6 +65,15 @@ func Default() Settings {
 func (s Settings) Alerts(state session.AgentState) bool {
 	return s.Enabled && slices.Contains(s.States, state)
 }
+
+// AlertsCommand reports whether the end of command c alerts the user: it
+// ran CommandAfter or longer.
+func (s Settings) AlertsCommand(c session.Command) bool {
+	return s.commands() && !c.Ended.IsZero() && c.Took >= s.CommandAfter
+}
+
+// commands reports whether commands alert at all.
+func (s Settings) commands() bool { return s.Enabled && s.CommandAfter > 0 }
 
 // StateName returns the config name of a state that can alert, such as
 // "needs-you", or "" for another state.
@@ -89,14 +110,22 @@ func AlertingStates() []session.AgentState {
 type Config struct {
 	Enabled *bool    `toml:"enabled"`
 	States  []string `toml:"states"`
+	// CommandAfter is in whole seconds; 0 turns command alerts off.
+	CommandAfter *int `toml:"command_after"`
 }
 
-// Settings resolves c. An unknown state name is an error, and the states
-// then keep their default.
+// Settings resolves c. An unknown state name or a negative command_after
+// is an error, and the setting then keeps its default.
 func (c Config) Settings() (Settings, error) {
 	s := Default()
 	if c.Enabled != nil {
 		s.Enabled = *c.Enabled
+	}
+	if n := c.CommandAfter; n != nil {
+		if *n < 0 {
+			return s, fmt.Errorf("notifications.command_after: %d is negative (want seconds, or 0 for no command notifications)", *n)
+		}
+		s.CommandAfter = time.Duration(*n) * time.Second
 	}
 	if c.States == nil {
 		return s, nil
@@ -130,12 +159,22 @@ func Names(states []session.AgentState) []string {
 	return out
 }
 
-// Alert is what one notification about an agent says.
+// Alert is what one notification about an agent or a command says.
 type Alert struct {
-	State  session.AgentState
-	Title  string // "claude needs you"
-	Notice string // the agent's notice, or a default for the state
-	Where  string // "repo ⎇ branch", the repo, or "" outside a git work tree
+	State   session.AgentState // a command's is AgentDone, or AgentFailed for a non-zero exit status
+	Command bool               // the alert is about a command that ended, not an agent
+	Title   string             // "claude needs you", "tar finished after 2m 14s"
+	Notice  string             // the agent's notice or a default for the state; the command line
+	Where   string             // "repo ⎇ branch", the repo, or "" outside a git work tree
+}
+
+// Name says what the alert is about, for logs and --report: the config
+// name of the agent's state, or "command".
+func (a Alert) Name() string {
+	if a.Command {
+		return "command"
+	}
+	return StateName(a.State)
 }
 
 // unnamedAgent names an agent in a title when the status has no name.
@@ -166,13 +205,68 @@ func For(st session.Status) Alert {
 	if strings.TrimSpace(a.Notice) == "" {
 		a.Notice = fallback
 	}
+	a.Where = where(st)
+	return a
+}
+
+// unnamedCommand names a command in a title when no poll saw it run, such
+// as one a remote shell's marks report.
+const unnamedCommand = "Command"
+
+// ForCommand returns the alert for the command that ended in st.Command:
+// "tar finished after 2m 14s", or "failed" for a non-zero exit status,
+// with the command line and the exit status as the notice.
+func ForCommand(st session.Status) Alert {
+	c := st.Command
+	name := c.Name
+	if name == "" {
+		name = unnamedCommand
+	}
+	a := Alert{State: session.AgentDone, Command: true, Notice: c.Line, Where: where(st)}
+	verb := " finished after "
+	if c.Failed() {
+		a.State, verb = session.AgentFailed, " failed after "
+		status := "exit status " + strconv.Itoa(c.Exit)
+		if a.Notice == "" {
+			a.Notice = "Stopped with " + status
+		} else {
+			a.Notice += " (" + status + ")"
+		}
+	}
+	a.Title = name + verb + Duration(c.Took)
+	return a
+}
+
+// Duration writes d for people, to the second, or to the minute from an
+// hour on: "45s", "2m 14s", "1h 3m".
+func Duration(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d >= time.Hour {
+		d = d.Round(time.Minute)
+	}
+	h, m, s := int(d/time.Hour), int(d%time.Hour/time.Minute), int(d%time.Minute/time.Second)
+	switch {
+	case h > 0 && m > 0:
+		return fmt.Sprintf("%dh %dm", h, m)
+	case h > 0:
+		return fmt.Sprintf("%dh", h)
+	case m > 0 && s > 0:
+		return fmt.Sprintf("%dm %ds", m, s)
+	case m > 0:
+		return fmt.Sprintf("%dm", m)
+	}
+	return fmt.Sprintf("%ds", s)
+}
+
+// where is "repo ⎇ branch", the repo, or "" outside a git work tree.
+func where(st session.Status) string {
 	switch {
 	case st.Repo != "" && st.Branch != "":
-		a.Where = st.Repo + " ⎇ " + st.Branch
+		return st.Repo + " ⎇ " + st.Branch
 	case st.Repo != "":
-		a.Where = st.Repo
+		return st.Repo
 	}
-	return a
+	return ""
 }
 
 // host is the machine the agent runs on when it is not this one: the host
@@ -185,10 +279,11 @@ func host(st session.Status) string {
 	return st.SSHHost
 }
 
-// Body is the notice and, on a second line, where the agent runs.
+// Body is the notice and, on a second line, where the agent or command
+// runs. Either may be empty.
 func (a Alert) Body() string {
-	if a.Where == "" {
-		return a.Notice
+	if a.Where == "" || a.Notice == "" {
+		return a.Notice + a.Where
 	}
 	return a.Notice + "\n" + a.Where
 }
@@ -233,11 +328,13 @@ type Tracker struct {
 
 // source is what a Tracker knows about one source.
 type source struct {
-	seen    view // state and notice at the last Update
-	pending bool // entered an alerting state; not sent yet
-	shown   bool // a notification is up
-	// The state of the last alert sent since the user last watched the
-	// source, and when it went out.
+	seen    view      // state and notice at the last Update
+	ended   time.Time // Command.Ended at the last Update
+	pending bool      // entered an alerting state; not sent yet
+	shown   bool      // a notification is up
+	command bool      // the notification up is a command's
+	// The state of the last agent alert sent since the user last watched
+	// the source, and when it went out.
 	sent   session.AgentState
 	sentAt time.Time
 }
@@ -267,6 +364,11 @@ func (t *Tracker) repeat() time.Duration {
 // states, withdraws its notification. The same state alerts again only
 // Repeat after the last alert, unless the user watched the source since;
 // until then the alert is held, and Next says when to call Update again.
+//
+// A command that ran Settings.CommandAfter or longer alerts at once when
+// it ends while nobody watches the source, replacing the source's
+// notification. That notification stays until the user watches the
+// source, a newer alert replaces it, or command alerts are turned off.
 func (t *Tracker) Update(id int, st session.Status, watched bool, now time.Time) (Action, Alert) {
 	if t.sources == nil {
 		t.sources = map[int]*source{}
@@ -279,16 +381,23 @@ func (t *Tracker) Update(id int, st session.Status, watched bool, now time.Time)
 	v := view{st.State, st.Notice}
 	changed := v != s.seen
 	s.seen = v
-	if watched || !t.Settings.Alerts(st.State) {
+	ended := !st.Command.Ended.Equal(s.ended)
+	s.ended = st.Command.Ended
+	if watched {
 		s.pending = false
-		if watched {
-			s.sent = session.AgentNone // seen: the next alert need not wait
+		s.sent = session.AgentNone // seen: the next alert need not wait
+		return s.withdraw()
+	}
+	if ended && t.Settings.AlertsCommand(st.Command) {
+		s.shown, s.command = true, true
+		return Send, ForCommand(st)
+	}
+	if !t.Settings.Alerts(st.State) {
+		s.pending = false
+		if s.command && t.Settings.commands() {
+			return Keep, Alert{}
 		}
-		if s.shown {
-			s.shown = false
-			return Withdraw, Alert{}
-		}
-		return Keep, Alert{}
+		return s.withdraw()
 	}
 	if changed {
 		s.pending = true
@@ -296,8 +405,17 @@ func (t *Tracker) Update(id int, st session.Status, watched bool, now time.Time)
 	if !s.pending || s.held(t.repeat(), now) {
 		return Keep, Alert{}
 	}
-	s.pending, s.shown, s.sent, s.sentAt = false, true, st.State, now
+	s.pending, s.shown, s.command, s.sent, s.sentAt = false, true, false, st.State, now
 	return Send, For(st)
+}
+
+// withdraw takes down the source's notification, if it has one up.
+func (s *source) withdraw() (Action, Alert) {
+	if !s.shown {
+		return Keep, Alert{}
+	}
+	s.shown, s.command = false, false
+	return Withdraw, Alert{}
 }
 
 // held reports whether the source's pending alert waits for the repeat

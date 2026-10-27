@@ -28,6 +28,8 @@ func status(state session.AgentState, notice string) session.Status {
 
 func boolp(b bool) *bool { return &b }
 
+func intp(n int) *int { return &n }
+
 // TestConfigSettings: the [notifications] table resolves to settings;
 // missing keys keep their defaults and a bad state name is an error.
 func TestConfigSettings(t *testing.T) {
@@ -37,9 +39,14 @@ func TestConfigSettings(t *testing.T) {
 		cfg     alert.Config
 		enabled bool
 		states  []session.AgentState
+		after   time.Duration // CommandAfter; zero means the default
 		err     string
 	}{
 		{name: "no table", enabled: true, states: all},
+		{name: "command_after", cfg: alert.Config{CommandAfter: intp(30)}, enabled: true, states: all, after: 30 * time.Second},
+		{name: "no command alerts", cfg: alert.Config{CommandAfter: intp(0)}, enabled: true, states: all, after: -1},
+		{name: "negative command_after", cfg: alert.Config{CommandAfter: intp(-5)}, enabled: true, states: all,
+			err: "notifications.command_after: -5 is negative (want seconds, or 0 for no command notifications)"},
 		{name: "off", cfg: alert.Config{Enabled: boolp(false)}, enabled: false, states: all},
 		{name: "on", cfg: alert.Config{Enabled: boolp(true)}, enabled: true, states: all},
 		{name: "two states", cfg: alert.Config{States: []string{"done", "needs-you"}}, enabled: true, states: []session.AgentState{done, needs}},
@@ -55,6 +62,16 @@ func TestConfigSettings(t *testing.T) {
 			}
 			if s.Enabled != tc.enabled || !slices.Equal(s.States, tc.states) {
 				t.Errorf("settings %+v, want enabled %v states %v", s, tc.enabled, tc.states)
+			}
+			after := tc.after
+			switch after {
+			case 0:
+				after = alert.DefaultCommandAfter
+			case -1:
+				after = 0
+			}
+			if s.CommandAfter != after {
+				t.Errorf("command after %v, want %v", s.CommandAfter, after)
 			}
 		})
 	}
@@ -302,6 +319,158 @@ func TestFlappingStates(t *testing.T) {
 			{time.Second, idle, "", true, alert.Withdraw},
 			{2 * time.Second, needs, "", false, alert.Send},
 		})
+	})
+}
+
+// ended is a status whose last command ended at t0 plus at.
+func ended(c session.Command, at time.Duration) session.Status {
+	c.Ended = time.Unix(1000, 0).Add(at)
+	return session.Status{Repo: "bunk", Branch: "main", Command: c}
+}
+
+// TestCommandAlertText: the title names the command, how it ended and how
+// long it ran; the body is the command line with a non-zero exit status,
+// and the repo and branch.
+func TestCommandAlertText(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		c     session.Command
+		repo  string
+		title string
+		body  string
+		state session.AgentState
+	}{
+		{"finished", session.Command{Name: "tar", Line: "tar czf a.tgz src", Took: 134 * time.Second, ExitKnown: true}, "bunk",
+			"tar finished after 2m 14s", "tar czf a.tgz src\nbunk ⎇ main", done},
+		{"exit status unknown", session.Command{Name: "rsync", Line: "rsync -a src/ dst/", Took: 45 * time.Second}, "",
+			"rsync finished after 45s", "rsync -a src/ dst/", done},
+		{"failed", session.Command{Name: "make", Line: "make check", Took: time.Hour + 3*time.Minute, Exit: 2, ExitKnown: true}, "bunk",
+			"make failed after 1h 3m", "make check (exit status 2)\nbunk ⎇ main", failed},
+		{"unnamed", session.Command{Took: 90 * time.Second, ExitKnown: true}, "",
+			"Command finished after 1m 30s", "", done},
+		{"unnamed, failed", session.Command{Took: 2 * time.Hour, Exit: 1, ExitKnown: true}, "bunk",
+			"Command failed after 2h", "Stopped with exit status 1\nbunk ⎇ main", failed},
+		{"unnamed, in a repo", session.Command{Took: 10 * time.Second}, "bunk",
+			"Command finished after 10s", "bunk ⎇ main", done},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := ended(tc.c, 0)
+			if tc.repo == "" {
+				st.Repo, st.Branch = "", ""
+			}
+			a := alert.ForCommand(st)
+			if a.Title != tc.title || a.Body() != tc.body || a.State != tc.state || !a.Command || a.Name() != "command" {
+				t.Errorf("alert %+v body %q, want title %q body %q state %v", a, a.Body(), tc.title, tc.body, tc.state)
+			}
+		})
+	}
+	for d, want := range map[time.Duration]string{
+		0: "0s", 400 * time.Millisecond: "0s", 1500 * time.Millisecond: "2s", 59 * time.Second: "59s",
+		time.Minute: "1m", 61 * time.Second: "1m 1s", time.Hour: "1h", time.Hour + 59*time.Second: "1h 1m",
+		26 * time.Hour: "26h",
+	} {
+		if got := alert.Duration(d); got != want {
+			t.Errorf("Duration(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// TestCommandAlerts: a command that ran CommandAfter or longer alerts
+// when it ends while nobody watches its source, once, and its alert stays
+// until the user watches the source, a newer alert replaces it, or
+// command alerts are turned off.
+func TestCommandAlerts(t *testing.T) {
+	const s = time.Second
+	long := session.Command{Name: "tar", Took: 30 * s}
+	short := session.Command{Name: "ls", Took: s}
+	t0 := time.Unix(1000, 0)
+	type cstep struct {
+		st      session.Status
+		watched bool
+		want    alert.Action
+	}
+	run := func(t *testing.T, tr *alert.Tracker, steps []cstep) {
+		t.Helper()
+		for i, c := range steps {
+			act, a := tr.Update(5, c.st, c.watched, t0.Add(time.Duration(i)*s))
+			if act != c.want {
+				t.Fatalf("step %d (%+v, watched %v): %v, want %v", i, c.st.Command, c.watched, act, c.want)
+			}
+			if act == alert.Send && c.st.State == session.AgentNone && (!a.Command || !strings.HasPrefix(a.Title, c.st.Command.Name+" ")) {
+				t.Fatalf("step %d: alert %+v", i, a)
+			}
+		}
+	}
+	t.Run("a long command alerts once and stays until watched", func(t *testing.T) {
+		run(t, &alert.Tracker{Settings: alert.Default()}, []cstep{
+			{session.Status{}, false, alert.Keep},
+			{ended(long, 10*s), false, alert.Send},
+			{ended(long, 10*s), false, alert.Keep},
+			{ended(short, 20*s), false, alert.Keep}, // a short one leaves it up
+			{ended(short, 20*s), true, alert.Withdraw},
+			{ended(short, 20*s), false, alert.Keep},
+		})
+	})
+	t.Run("a newer long command replaces it", func(t *testing.T) {
+		run(t, &alert.Tracker{Settings: alert.Default()}, []cstep{
+			{ended(long, 10*s), false, alert.Send},
+			{ended(long, 50*s), false, alert.Send},
+		})
+	})
+	t.Run("seen while watched", func(t *testing.T) {
+		run(t, &alert.Tracker{Settings: alert.Default()}, []cstep{
+			{session.Status{}, false, alert.Keep},
+			{ended(long, 10*s), true, alert.Keep},
+			{ended(long, 10*s), false, alert.Keep},
+		})
+	})
+	t.Run("shorter than CommandAfter", func(t *testing.T) {
+		run(t, &alert.Tracker{Settings: alert.Settings{Enabled: true, CommandAfter: 31 * s}}, []cstep{
+			{ended(long, 10*s), false, alert.Keep},
+		})
+		run(t, &alert.Tracker{Settings: alert.Settings{Enabled: true, CommandAfter: 30 * s}}, []cstep{
+			{ended(long, 10*s), false, alert.Send},
+		})
+	})
+	t.Run("off", func(t *testing.T) {
+		run(t, &alert.Tracker{Settings: alert.Settings{Enabled: false, CommandAfter: s}}, []cstep{
+			{ended(long, 10*s), false, alert.Keep},
+		})
+		run(t, &alert.Tracker{Settings: alert.Settings{Enabled: true}}, []cstep{
+			{ended(long, 10*s), false, alert.Keep},
+		})
+	})
+	t.Run("turned off withdraws it", func(t *testing.T) {
+		tr := &alert.Tracker{Settings: alert.Default()}
+		run(t, tr, []cstep{{ended(long, 10*s), false, alert.Send}})
+		tr.Settings.CommandAfter = 0
+		run(t, tr, []cstep{{ended(long, 10*s), false, alert.Withdraw}})
+	})
+	t.Run("agent alerts and command alerts replace each other", func(t *testing.T) {
+		agentDone := ended(long, 10*s)
+		agentDone.Agent, agentDone.State = "claude", done
+		agentIdle := ended(long, 50*s)
+		agentIdle.Agent, agentIdle.State = "claude", idle
+		run(t, &alert.Tracker{Settings: alert.Default()}, []cstep{
+			{ended(long, 10*s), false, alert.Send},
+			{agentDone, false, alert.Send},
+			{agentIdle, false, alert.Send}, // the agent left done as a newer command ended
+			{agentIdle, false, alert.Keep},
+		})
+	})
+	t.Run("an agent leaving its state withdraws only its own alert", func(t *testing.T) {
+		agentNeeds := session.Status{Agent: "claude", State: needs}
+		run(t, &alert.Tracker{Settings: alert.Default()}, []cstep{
+			{agentNeeds, false, alert.Send},
+			{session.Status{}, false, alert.Withdraw},
+		})
+	})
+	t.Run("removed", func(t *testing.T) {
+		tr := &alert.Tracker{Settings: alert.Default()}
+		run(t, tr, []cstep{{ended(long, 10*s), false, alert.Send}})
+		if act := tr.Remove(5); act != alert.Withdraw {
+			t.Errorf("remove with a command alert up: %v", act)
+		}
 	})
 }
 

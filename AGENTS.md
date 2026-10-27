@@ -79,6 +79,8 @@ internal/session/   One terminal session, shared by front ends
   ptystream.go      Bounded streaming UTF-8/control framing before parsing
   osc.go            OSC pre-scanner and sanitising (7, 52, 133)
   process.go        Foreground process, SSH host and container detection
+  command.go        Commands the shell runs, from OSC 133;C/D marks or the
+                    process poll; the last one that ended (Status.Command)
   search.go         Case-insensitive search over scrollback and the live grid
   status.go         Agent status: AgentSpec detection, attention requests
                     (OSC 9/99/777, BEL), failures (OSC 133;D), done after a
@@ -105,9 +107,10 @@ internal/notify/    Agent hook reports: Unix socket server (token → Session),
   wire/             The report line, its OSC 1337 in-band form, tmux/screen
                     wrapping; imported by notify and session alike
 
-internal/alert/     Agent notifications for both front ends: when a state
-                    change notifies (Tracker), the text, [notifications]
-                    settings, the sanitised OSC 777 sequence and desktop text
+internal/alert/     Agent and command notifications for both front ends:
+                    when a state change or a long command's end notifies
+                    (Tracker), the text, [notifications] settings, the
+                    sanitised OSC 777 sequence and desktop text
 
 internal/desktop/   Desktop notifications for bunk's TUI through the gdbus
                     command: session bus choice (SessionBus), one per pane,
@@ -421,9 +424,11 @@ These are the key fields agents may need to know about:
   next_needs_you; "none" disables an action and sends its key to the pane.
 - `[ui]` holds hex colour overrides for borders and scrollbar. An invalid
   value is logged, and the theme's colour stays.
-- `[notifications]` turns notifications on or off (`enabled`) and picks
+- `[notifications]` turns notifications on or off (`enabled`), picks
   the agent states that send one (`states`, default needs-you, done and
-  failed). A state name bunk does not know fails at startup.
+  failed), and sets how many seconds a command must run for its end to
+  send one (`command_after`, default 10; 0 turns that off). A state name
+  bunk does not know or a negative `command_after` fails at startup.
 
 `config.go` is the authoritative reference for every field and its default.
 
@@ -732,6 +737,21 @@ its default; Design Decisions says where the defaults come from.
     The same state notifies again only 10 s (`alert.DefaultRepeat`) after
     the last one unless the user watched the source; until then it is held,
     and `Tracker.Next` says when to look again.
+  - A command that ran `command_after` (`Settings.CommandAfter`) or longer
+    notifies once when it ends while its pane is not watched: "tar
+    finished after 2m 14s", or "failed" with a non-zero exit status, the
+    command line as the body. It stays until the user watches the pane, a
+    newer alert replaces it or command alerts are turned off; a later
+    short command leaves it up.
+  - `Status.Command` is the last command that ended (`command.go`). With
+    OSC 133 marks (vte.sh, which runs only when `VTE_VERSION` is set), a
+    command runs from 133;C to 133;D, loops and lists included, and has
+    an exit status. Without marks, it runs while a group other than the
+    shell's holds the foreground, as the process poll sees it, without an
+    exit status. The poll names it after the first group it sees that
+    started after the last prompt, so the ssh carrying a remote shell's
+    marks names nothing. A command an agent ran in is not recorded: the
+    agent's states notify instead.
   - bunk-gui keeps one notification per pane on org.freedesktop.Notifications
     (`desknotify.go`), keyed by the pane's ID. The user watches a pane while
     it is the focused pane of the selected tab in the active window, as in

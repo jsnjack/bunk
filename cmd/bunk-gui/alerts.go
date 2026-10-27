@@ -1,14 +1,17 @@
 package main
 
-// Desktop notifications for agent states, one per pane, as in the TUI
-// (bunk's alerts.go): two agents split in one tab each send their own.
+// Desktop notifications for agent states and long commands, one per pane,
+// as in the TUI (bunk's alerts.go): two agents split in one tab each send
+// their own.
 //
 //   - internal/alert decides: an agent enters needs-you, done or failed
-//     ([notifications] states) while the user is not looking at its pane:
-//     the window is inactive, or the pane is not the focused pane of the
-//     selected tab. A newer state replaces the pane's notification;
-//     looking at the pane, the state leaving those states, turning
-//     notifications off and closing the pane withdraw it.
+//     ([notifications] states), or a command that ran command_after
+//     seconds ends, while the user is not looking at its pane: the window
+//     is inactive, or the pane is not the focused pane of the selected
+//     tab. A newer state replaces the pane's notification; looking at the
+//     pane, the state leaving those states, turning notifications off and
+//     closing the pane withdraw it. A command's notification stays until
+//     the user looks at the pane.
 //   - syncAlerts runs whenever a pane's status, the selection, the
 //     focused pane or the window's focus changes (refreshChrome and the
 //     is-active notify).
@@ -59,7 +62,7 @@ type alertRecord struct {
 	Pane   int    `json:"pane"` // the pane's ID: the notification's key and its action's target
 	Title  string `json:"title,omitempty"`
 	Body   string `json:"body,omitempty"`
-	State  string `json:"state,omitempty"`  // needs-you, done or failed
+	State  string `json:"state,omitempty"`  // needs-you, done, failed or command
 	Action string `json:"action,omitempty"` // the default action
 	Token  bool   `json:"token,omitempty"`  // activate: the click came with an activation token
 	TMs    int64  `json:"t_ms"`
@@ -69,7 +72,7 @@ type alertRecord struct {
 // one it has. Tests replace it. It records the call in --report.
 var postAlert = func(a *App, pane int, al alert.Alert) {
 	a.recordAlert(alertRecord{Op: "send", Pane: pane, Title: al.Title, Body: al.Body(),
-		State: alert.StateName(al.State), Action: "app." + showPaneAction})
+		State: al.Name(), Action: "app." + showPaneAction})
 	if a.alerts.desk != nil {
 		a.alerts.desk.send(pane, al)
 	}
@@ -234,8 +237,9 @@ func (a *App) decoy(open bool) error {
 
 // notifyPrefs are the preferences window's notification controls.
 type notifyPrefs struct {
-	on     *gtk.Switch
-	states []*gtk.CheckButton // in alert.AlertingStates order
+	on           *gtk.Switch
+	states       []*gtk.CheckButton // in alert.AlertingStates order
+	commandAfter *gtk.SpinButton    // seconds; 0 sends none for commands
 }
 
 // notifyLabels name the states in the preferences window.
@@ -244,8 +248,9 @@ var notifyLabels = map[session.AgentState]string{
 }
 
 // addNotifications adds the Notifications section to the preferences:
-// a switch for desktop notifications and the states that send one,
-// saved to [notifications] as they change.
+// a switch for desktop notifications, the states that send one and how
+// long a command must run for its end to send one, saved to
+// [notifications] as they change.
 func (w *prefsWindow) addNotifications(box *gtk.Box) {
 	st := w.a.fileSettings.alerts
 	np := &notifyPrefs{on: gtk.NewSwitch()}
@@ -275,6 +280,19 @@ func (w *prefsWindow) addNotifications(box *gtk.Box) {
 		w.controls["notify-"+alert.StateName(s)] = c
 		np.states = append(np.states, c)
 	}
+	hint = label("Sent when a command in a tab you are not looking at ends after running at least:", "statelabel")
+	hint.SetWrap(true)
+	hint.SetXAlign(0)
+	box.Append(hint)
+	np.commandAfter = gtk.NewSpinButtonWithRange(0, 24*60*60, 1)
+	np.commandAfter.SetValue(st.CommandAfter.Seconds())
+	np.commandAfter.ConnectValueChanged(func() {
+		if !w.syncing {
+			w.saveNotify(keysEdit{action: "command_after", value: strconv.Itoa(np.commandAfter.ValueAsInt())})
+		}
+	})
+	box.Append(prefRow("Seconds (0: never)", np.commandAfter))
+	w.controls["notify-command-after"] = np.commandAfter
 	w.notify = np
 }
 

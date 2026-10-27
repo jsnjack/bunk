@@ -238,6 +238,64 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
+// TestGUICommandNotifications: a command that ran command_after seconds
+// or longer in a tab the user is not looking at sends one notification
+// when it ends, titled after the command, with its line as the body;
+// selecting the tab withdraws it. The same command in the selected tab
+// sends none. The preferences window saves command_after.
+func TestGUICommandNotifications(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost:   8,
+		config: "[notifications]\ncommand_after = 1\n",
+		args:   []string{"--size", "100x30", "--tab", ""},
+		script: []string{
+			"maximize", "wait window.maximized=true window.w>1800",
+			"kbd alt+2",
+			"wait selected_tab=2 focused.line=$",
+			"type sleep 3\\r",
+			"wait tab.2.status.process=sleep",
+			"kbd alt+1",
+			"wait selected_tab=1 run.notifications.#=1 tab.2.notified=true",
+			"snap sent",
+			"kbd alt+2",
+			"wait selected_tab=2 run.notifications.#=2 tab.2.notified=false",
+			"type sleep 3\\r",
+			"wait tab.2.status.process=sleep",
+			"wait tab.2.status.process=sh tab.2.status.command=sleep",
+			"kbd ctrl+comma",
+			"wait prefs!=null",
+			"snap prefs",
+			"pref-scroll notify-command-after",
+			"ptr-at pref notify-command-after -30 0", "ptr-click", "kbd ctrl+a", "kbd-type 30\\r",
+			"wait prefs.notify_command_after=30 run.reloads>=1",
+			"dialog-close",
+			"wait prefs=null",
+			"quit",
+		},
+		limit: 30e9,
+	})
+	if p := g.snap("prefs").Prefs; p == nil || p.NotifyCommandAfter != 1 {
+		t.Fatalf("preferences opened with %+v", p)
+	}
+	pane := g.snap("sent").tab(t, 2).Panes[0]
+	if len(g.Notifications) != 2 {
+		t.Fatalf("%d notification calls, want 2: %+v", len(g.Notifications), g.Notifications)
+	}
+	sent := g.Notifications[0]
+	if sent.Op != "send" || sent.Pane != pane || !strings.HasPrefix(sent.Title, "sleep finished after ") ||
+		sent.Body != "sleep 3" || sent.State != "command" || sent.Action != "app.show-pane" {
+		t.Errorf("notification 0: %+v, want sleep 3 in pane %d", sent, pane)
+	}
+	checkRecord(t, g, 1, pane, alertRecord{Op: "withdraw"})
+	if n, _ := g.Settings["notifications"].(map[string]any); n == nil || n["command_after"] != 30.0 {
+		t.Errorf("settings at exit: %+v", g.Settings["notifications"])
+	}
+	if got, want := readFile(t, g.file("config.toml")), "[notifications]\ncommand_after = 30\n"; got != want {
+		t.Errorf("config.toml:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // TestGUINotificationSettings: [notifications] enabled = false sends
 // nothing. The preferences window turns notifications on and leaves out
 // done; both apply at once and are saved to config.toml. A needs-you seen

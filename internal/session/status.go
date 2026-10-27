@@ -54,6 +54,9 @@ type Status struct {
 	// "" for local agents. With a remote agent, Agent, Cwd, Repo and Branch
 	// come from its report too.
 	Host string
+	// Command is the last command that ended in the foreground, for
+	// notifications about long ones; its Ended is zero before the first.
+	Command Command
 }
 
 // Status returns the session's current status. It takes the session lock.
@@ -72,6 +75,7 @@ func (s *Session) Status() Status {
 		Repo:     s.repo,
 		Branch:   s.branch,
 		SSHHost:  s.SSHHost,
+		Command:  s.ended,
 	}
 	if r := v.remote; r != (remoteAgent{}) {
 		st.Host, st.Cwd, st.Repo, st.Branch = r.host, r.cwd, r.repo, r.branch
@@ -117,16 +121,17 @@ type remoteAgent struct {
 // started through a wrapper).
 const reportingAgent = "agent"
 
-// takeAgentChange reports whether the agent view differs from the one
-// StatusChanged last announced, and records it as announced. Every path
-// that runs StatusChanged for the agent's state goes through it, so each
-// change is announced once. It requires the session lock.
+// takeAgentChange reports whether the agent view or the last ended
+// command differs from what StatusChanged last announced, and records it
+// as announced. Every path that runs StatusChanged for the agent's state
+// or a command's end goes through it, so each change is announced once.
+// It requires the session lock.
 func (s *Session) takeAgentChange(now time.Time) bool {
 	v := s.view(now)
-	if v == s.shown {
+	if v == s.shown && s.ended.Ended.Equal(s.shownEnded) {
 		return false
 	}
-	s.shown = v
+	s.shown, s.shownEnded = v, s.ended.Ended
 	return true
 }
 
@@ -335,10 +340,11 @@ func GitHead(dir string) (repo, branch string) {
 
 // statusOSC is what an OSC sequence says about the agent.
 type statusOSC struct {
-	notice   string // attention request text
-	started  bool   // a command started (OSC 133;C)
-	finished bool   // a command finished (OSC 133;D)
-	exitCode int
+	notice    string // attention request text
+	started   bool   // a command started (OSC 133;C)
+	finished  bool   // a command finished (OSC 133;D)
+	exitCode  int
+	exitKnown bool // the 133;D mark carried a numeric exit status
 }
 
 // noticeLimit caps the notice text kept for tab labels.
@@ -406,7 +412,7 @@ func parseStatusOSC(num int, p []byte) (statusOSC, bool) {
 			if err != nil && code != "" {
 				L().Log(context.Background(), LevelTrace, "OSC 133;D: exit code is not a number", "code", code, "err", err)
 			}
-			return statusOSC{finished: true, exitCode: n}, true
+			return statusOSC{finished: true, exitCode: n, exitKnown: err == nil}, true
 		}
 	}
 	return statusOSC{}, false
@@ -459,6 +465,7 @@ func (s *Session) onStatusOSC(num int, payload []byte) {
 	if !ok {
 		return
 	}
+	now := time.Now()
 	s.Lock()
 	defer s.Unlock()
 	switch {
@@ -469,11 +476,16 @@ func (s *Session) onStatusOSC(num int, payload []byte) {
 			s.agent, s.agentGone = "", false
 		}
 		s.failed = false
-	case st.finished && st.exitCode != 0:
+		s.commandStarted(now)
+	case st.finished:
+		s.commandFinished(st.exitCode, st.exitKnown, now)
+		if st.exitCode == 0 {
+			break
+		}
 		switch {
 		case s.agent != "" && !s.agentGone:
 			s.failed = true
-		case s.agent == "" && s.lastAgent != "" && time.Since(s.agentLeft) < s.timing.recentlyLeft():
+		case s.agent == "" && s.lastAgent != "" && now.Sub(s.agentLeft) < s.timing.recentlyLeft():
 			// The agent already left; show its failure until the next command.
 			s.agent, s.failed, s.agentGone = s.lastAgent, true, true
 		}
@@ -498,16 +510,19 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 	s.Lock()
 	agent := s.agent
 	s.Unlock()
+	var argv []string
 	if pgidChanged {
 		agent = ""
 		if pgid > 0 {
-			agent = s.agentFromProcess(name, FgProcessCmdline(shellPid))
+			argv = FgProcessCmdline(shellPid)
+			agent = s.agentFromProcess(name, argv)
 		}
 	}
 	cwd := s.Cwd()
 	repo, branch := GitHead(cwd)
 	remote := isRemoteClient(name)
 
+	now := time.Now()
 	s.Lock()
 	defer s.Unlock()
 	if s.remoteClient && (pgidChanged || !remote) && s.agent == "" {
@@ -548,13 +563,14 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 	}
 	if agent != s.agent {
 		if s.agent != "" {
-			s.lastAgent, s.agentLeft = s.agent, time.Now()
+			s.lastAgent, s.agentLeft = s.agent, now
 		}
 		// A new agent starts with a clean slate.
 		s.needsYou, s.failed, s.notice = false, false, ""
 	}
 	s.agent, s.cwd, s.repo, s.branch = agent, cwd, repo, branch
-	if s.takeAgentChange(time.Now()) {
+	s.noteForeground(shellPid, pgid, name, argv, pgidChanged, now)
+	if s.takeAgentChange(now) {
 		changed = true
 	}
 	return changed

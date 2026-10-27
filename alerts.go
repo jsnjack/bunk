@@ -2,8 +2,9 @@
 // terminal.
 //
 // When an agent in a pane the user is not looking at needs them, is done
-// or failed, bunk notifies the user. internal/alert decides when, from
-// [notifications] in config.toml, and cleans the program-controlled text.
+// or failed, or a long command there ends, bunk notifies the user.
+// internal/alert decides when, from [notifications] in config.toml, and
+// cleans the program-controlled text.
 //
 //   - On the desktop's own machine, with a session bus and gdbus, bunk
 //     keeps one desktop notification per pane through D-Bus
@@ -61,9 +62,9 @@ func (app *App) closeDesktopAlerts() {
 }
 
 // forwardAlerts shows or withdraws the notification of each pane whose
-// agent entered or left an alerting state, or that the user started or
-// stopped looking at: the active pane while the host terminal has the
-// focus. render calls it under app.mu, before any early return, so a
+// agent entered or left an alerting state, where a long command ended, or
+// that the user started or stopped looking at: the active pane while the
+// host terminal has the focus. render calls it under app.mu, before any early return, so a
 // pane's status is read in lock order on every frame.
 func (app *App) forwardAlerts(root *Node, active *Pane) {
 	now := time.Now()
@@ -87,7 +88,7 @@ func (app *App) forwardAlerts(root *Node, active *Pane) {
 // sendAlert shows pane id's alert: a desktop notification, or OSC 777 to
 // the host terminal. Called under app.mu; desktop calls run elsewhere.
 func (app *App) sendAlert(id int, al alert.Alert) {
-	L.Debug("alert: notify", "pane", id, "state", alert.StateName(al.State), "desktop", app.desktop != nil)
+	L.Debug("alert: notify", "pane", id, "about", al.Name(), "desktop", app.desktop != nil)
 	if app.desktop != nil {
 		app.desktop.Send(id, al)
 		return

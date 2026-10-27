@@ -114,7 +114,8 @@ type statusReport struct {
 	Cwd       string `json:"cwd"`
 	Container string `json:"container"`
 	SSHHost   string `json:"ssh_host"`
-	Host      string `json:"host"` // a remote agent's machine, from its in-band report
+	Host      string `json:"host"`    // a remote agent's machine, from its in-band report
+	Command   string `json:"command"` // name of the last command that ended
 }
 
 type tabReport struct {
@@ -301,9 +302,10 @@ type prefsReport struct {
 	Themes   []string               `json:"themes"` // the themes offered, in order
 	Agents   [][3]string            `json:"agents"` // name, processes, scripts as the rows show them
 	Controls map[string]*rectReport `json:"controls"`
-	// Notifications as the switch and check buttons show them.
-	Notify       bool     `json:"notify"`
-	NotifyStates []string `json:"notify_states"`
+	// Notifications as the switch, check buttons and spin button show them.
+	Notify             bool     `json:"notify"`
+	NotifyStates       []string `json:"notify_states"`
+	NotifyCommandAfter int      `json:"notify_command_after"` // seconds
 }
 
 type findReport struct {
@@ -382,6 +384,7 @@ func statusOf(st session.Status) statusReport {
 	return statusReport{
 		Reported: st.Reported, Agent: st.Agent, State: stateName[st.State], Process: st.Process, Notice: st.Notice,
 		Repo: st.Repo, Branch: st.Branch, Cwd: st.Cwd, Container: st.Container, SSHHost: st.SSHHost, Host: st.Host,
+		Command: st.Command.Name,
 	}
 }
 
@@ -564,6 +567,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			pr.Controls[k] = a.widgetRect(g, c)
 		}
 		pr.Notify, pr.NotifyStates = w.notifyShown()
+		pr.NotifyCommandAfter = w.notify.commandAfter.ValueAsInt()
 		s.Prefs = pr
 	}
 	if f := a.find; f != nil {
@@ -892,7 +896,8 @@ func (a *App) writeReport(reason string) {
 	r.Settings = map[string]any{
 		"tabs": a.settings.Tabs, "rail_open": a.settings.RailOpen, "font": a.settings.Font,
 		"font_size": a.settings.FontSize, "agents": a.settings.Agents, "theme": a.settings.Theme,
-		"notifications": map[string]any{"enabled": a.settings.alerts.Enabled, "states": alert.Names(a.settings.alerts.States)},
+		"notifications": map[string]any{"enabled": a.settings.alerts.Enabled, "states": alert.Names(a.settings.alerts.States),
+			"command_after": a.settings.alerts.CommandAfter.Seconds()},
 	}
 	if a.configErr != nil {
 		r.ConfigError = a.configErr.Error()

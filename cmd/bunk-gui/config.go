@@ -45,6 +45,7 @@ import (
 //	[notifications]          # desktop notifications for tabs you are not looking at
 //	enabled = true
 //	states = ["needs-you", "done", "failed"]
+//	command_after = 10       # a command that ran this many seconds ends; 0 = never
 //
 // The file is watched: edits apply to the running window.
 type Settings struct {

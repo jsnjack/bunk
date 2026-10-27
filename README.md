@@ -67,7 +67,7 @@ bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, 
 | Agent status | | Dot, state, repo ⎇ branch, container or SSH host, and the agent's notice; see [Agent status and hooks](#agent-status-and-hooks) |
 | Switcher | Ctrl+Shift+O | Lists needs-you tabs first; type to filter, Up and Down pick a row, Enter opens it |
 | Next needing you | Alt+A | Visits needs-you tabs, then done tabs, and acknowledges each |
-| Notifications | | A desktop notification when an agent in a tab you are not looking at needs you, is done or failed; clicking it opens the tab |
+| Notifications | | A desktop notification when an agent in a tab you are not looking at needs you, is done or failed, or when a command there that ran 10 s or longer ends; clicking it opens the tab |
 | Split | F1 / Alt+F1 | Side by side or stacked by pane shape; Alt+F1 opens a shell in the same container. While you drag a divider, a label shows each side's share |
 | Zoom pane | F12 | |
 | Move between panes | Alt+arrows | |
@@ -110,7 +110,7 @@ Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. b
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program |
 | Agent status | | A badge per pane: working, idle, needs you (amber), done (green) or failed, with the agent's notice |
 | Next needing you | Alt+A | Focuses the next pane whose agent needs you, else one that is done |
-| Notifications | | A desktop notification when an agent in a pane you are not looking at needs you, is done or failed; over SSH, OSC 777 to the host terminal |
+| Notifications | | A desktop notification when an agent in a pane you are not looking at needs you, is done or failed, or when a command there that ran 10 s or longer ends; over SSH, OSC 777 to the host terminal |
 | Re-initialise host terminal | Alt+R | Recovers after binary output corrupts the host |
 | Quit | Ctrl+Q | Ctrl+D or `exit` closes one pane |
 | Mouse | | Click focuses, drag selects, double click selects a word; Shift overrides program mouse mode |
@@ -210,8 +210,9 @@ theme = "default"      # terminal, default, solarized-dark, dracula, nord, or a 
 active_border = ""
 
 [notifications]        # for panes you are not looking at
-enabled = true
-states  = ["needs-you", "done", "failed"]
+enabled       = true
+states        = ["needs-you", "done", "failed"]
+command_after = 10     # seconds a command must run to notify when it ends; 0 = never
 
 [themes.paper]         # a theme of your own: background, foreground and 16 palette colours
 background = "#FDF6E3"
@@ -257,6 +258,7 @@ scripts = ["@me/myagent"]  # for agents that run under node, python, bun, deno o
 [notifications]            # desktop notifications for tabs you are not looking at
 enabled = true
 states = ["needs-you", "done", "failed"]
+command_after = 10         # seconds a command must run to notify when it ends; 0 = never
 ```
 
 - bunk-gui watches the file and applies edits to the running window.
@@ -289,6 +291,13 @@ When an agent you are not looking at needs you, is done or failed, both front en
 - Over SSH, without a session bus or without `gdbus`, bunk sends an OSC 777 notification to the host terminal instead. foot, WezTerm, Ghostty and urxvt show it. GNOME Terminal and Ptyxis with VTE 0.84 do not.
 - The same state notifies again only 10 s after the last notification, so an agent that flaps between states does not flood the desktop.
 - `[notifications]` in either config.toml turns notifications off or picks the states, and bunk-gui's preferences window edits it.
+
+Long commands notify you the same way. When a command that ran for at least `command_after` seconds (default 10) ends in a pane you are not looking at, you get a notification such as "tar finished after 2m 14s" with the command line. It stays until you look at the pane.
+
+- With shell integration that sends OSC 133 marks, a command runs from its start mark to the next prompt, so a loop or a list of commands counts as one. A non-zero exit status shows as "failed" with the status. Fedora's `vte.sh` sends the marks when `VTE_VERSION` is set, as it is in a terminal started from Ptyxis or GNOME Terminal.
+- Without marks, a command runs while a program other than the shell holds the terminal, as bunk sees it once a second, and its exit status is unknown.
+- An agent's own run does not notify as a command: the agent's states notify instead.
+- Commands on the other end of ssh notify only when the remote shell sends the marks.
 
 With hooks, the agent reports its own state, and the report takes priority over inference:
 

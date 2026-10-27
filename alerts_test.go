@@ -7,6 +7,7 @@ import (
 	"bunk/internal/session"
 	"bunk/internal/vt10x"
 	"bytes"
+	"cmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,6 +144,61 @@ func TestAlertsToHost(t *testing.T) {
 	}
 }
 
+// markedBash is an interactive bash whose prompts carry OSC 133 marks, as
+// vte.sh sets them: 133;C as a command line starts, 133;D with its exit
+// status at the next prompt.
+var markedBash = []string{"env", "HISTFILE=", `PS0=\e]133;C\e\\`, `PS1=\[\e]133;D;$?\e\\\]$ `,
+	"bash", "--norc", "--noprofile", "-i"}
+
+// TestAlertsForCommands: a command that ran command_after or longer in a
+// pane the user is not looking at sends one OSC 777 notification to the
+// host terminal when it ends, with the exit status the shell's marks
+// report; the same command in the active pane sends none.
+func TestAlertsForCommands(t *testing.T) {
+	const w, h = 81, 10
+	app, _ := newStatusApp(t, w, h)
+	var host bytes.Buffer
+	app.hostOut = &host
+	app.timing = session.Timing{Poll: 20 * time.Millisecond}
+	app.alerts.Settings = alert.Settings{Enabled: true, CommandAfter: 300 * time.Millisecond}
+	a := spawn(t, app, 0, 0, w/2, h, markedBash...)
+	b := spawn(t, app, w/2+1, 0, w-w/2-1, h, markedBash...)
+	app.root = newLeaf(a, 0, 0, w, h)
+	app.root.split(b, splitVertical)
+	app.active = a
+
+	// run types a command line into p and renders until it ended.
+	run := func(p *Pane) []string {
+		t.Helper()
+		if err := p.WriteInput([]byte("sleep 0.4; (exit 3)\r")); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for deadline := time.Now().Add(10 * time.Second); p.Status().Command.Ended.IsZero(); {
+			if time.Now().After(deadline) {
+				t.Fatalf("pane %d: no command ended: %+v", p.ID, p.Status())
+			}
+			select {
+			case <-app.redraw:
+			case <-time.After(20 * time.Millisecond):
+			}
+			app.render()
+			got = append(got, notifications(&host)...)
+		}
+		app.render()
+		return append(got, notifications(&host)...)
+	}
+
+	got := run(b)
+	const head = "\x1b]777;notify;sleep failed after "
+	if len(got) != 1 || !strings.HasPrefix(got[0], head) || !strings.Contains(got[0], ";sleep 0.4 (exit status 3)") {
+		t.Errorf("a command ended in the inactive pane: %q, want one notification that starts %q", got, head)
+	}
+	if got := run(a); len(got) != 0 {
+		t.Errorf("a command ended in the active pane: %q", got)
+	}
+}
+
 // TestAlertsFollowZoom: while another pane fills the screen, an agent in
 // a hidden pane still notifies.
 func TestAlertsFollowZoom(t *testing.T) {
@@ -158,17 +214,21 @@ func TestAlertsFollowZoom(t *testing.T) {
 // TestLoadConfigNotifications: [notifications] in bunk's config.toml sets
 // the alerts; a state name it does not know fails at startup.
 func TestLoadConfigNotifications(t *testing.T) {
+	all := []string{"needs-you", "done", "failed"}
 	for _, tc := range []struct {
 		name, content string
 		enabled       bool
 		states        []string
+		after         time.Duration // command_after; zero means the default
 		err           string
 	}{
-		{name: "no table", enabled: true, states: []string{"needs-you", "done", "failed"}},
-		{name: "documented defaults", content: DefaultConfigTOML(), enabled: true, states: []string{"needs-you", "done", "failed"}},
-		{name: "off", content: "[notifications]\nenabled = false\n", states: []string{"needs-you", "done", "failed"}},
+		{name: "no table", enabled: true, states: all},
+		{name: "documented defaults", content: DefaultConfigTOML(), enabled: true, states: all},
+		{name: "off", content: "[notifications]\nenabled = false\n", states: all},
 		{name: "needs-you only", content: "[notifications]\nstates = [\"needs-you\"]\n", enabled: true, states: []string{"needs-you"}},
 		{name: "unknown state", content: "[notifications]\nstates = [\"idle\"]\n", err: `unknown state "idle"`},
+		{name: "command_after", content: "[notifications]\ncommand_after = 60\n", enabled: true, states: all, after: time.Minute},
+		{name: "negative command_after", content: "[notifications]\ncommand_after = -1\n", err: "command_after: -1 is negative"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")
@@ -185,8 +245,9 @@ func TestLoadConfigNotifications(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cfg.Alerts.Enabled != tc.enabled || !slices.Equal(alert.Names(cfg.Alerts.States), tc.states) {
-				t.Errorf("alerts %+v, want enabled %v states %q", cfg.Alerts, tc.enabled, tc.states)
+			after := cmp.Or(tc.after, alert.DefaultCommandAfter)
+			if cfg.Alerts.Enabled != tc.enabled || !slices.Equal(alert.Names(cfg.Alerts.States), tc.states) || cfg.Alerts.CommandAfter != after {
+				t.Errorf("alerts %+v, want enabled %v states %q command after %v", cfg.Alerts, tc.enabled, tc.states, after)
 			}
 		})
 	}
