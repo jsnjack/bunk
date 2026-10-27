@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 )
 
@@ -12,7 +13,7 @@ import (
 
 // makePane returns a Pane with only the fields layout code needs.
 func makePane(id, x, y, w, h int) *Pane {
-	return &Pane{id: id, x: x, y: y, w: w, h: h}
+	return &Pane{Session: &session.Session{ID: id}, x: x, y: y, w: w, h: h}
 }
 
 // makePaneWithTerm returns a Pane that has a valid vt10x.Terminal so
@@ -23,7 +24,7 @@ func makePaneWithTerm(id, x, y, w, h int) *Pane {
 		cols = 1
 	}
 	t := vt10x.New(vt10x.WithSize(cols, h))
-	return &Pane{id: id, x: x, y: y, w: w, h: h, term: t}
+	return &Pane{Session: &session.Session{ID: id, Term: t}, x: x, y: y, w: w, h: h}
 }
 
 // ---------------------------------------------------------------------------

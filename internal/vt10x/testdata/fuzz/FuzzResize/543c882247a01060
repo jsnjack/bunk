@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x00')
+byte('`')
+byte('\x1c')
+byte('0')
+uint16(154)
+[]byte("́́👨\u200d𰑩\u200d👧︃00🇩🇪000")

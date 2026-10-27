@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x0f')
+byte('\x01')
+byte('*')
+byte('\x12')
+uint16(34)
+[]byte("\x1b]00\x1b\\\x1b]8;;\x1b\\\x1b\x00\x00\x00\x1b")

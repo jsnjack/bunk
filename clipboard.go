@@ -22,8 +22,11 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
+	"bunk/internal/input"
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 )
 
@@ -40,7 +43,7 @@ func (app *App) copyToClipboard(text string) {
 	app.oscBuf.append([]byte(osc))
 
 	// Native clipboard as best-effort fallback.
-	go copyTextToNativeClipboard(text)
+	queueNativeClipboard(text)
 }
 
 // mirrorOSC52ToNativeClipboard mirrors a child application's OSC 52 clipboard
@@ -51,13 +54,53 @@ func mirrorOSC52ToNativeClipboard(seq []byte) {
 	if !ok {
 		return
 	}
-	go func() {
-		if copyTextToNativeClipboard(text) {
-			L.Debug("osc52: mirrored to native clipboard", "bytes", len(text))
-		} else {
-			L.Debug("osc52: native clipboard mirror failed", "bytes", len(text))
+	queueNativeClipboard(text)
+}
+
+// nativeClipboard queues writes to the desktop clipboard: the newest text
+// not yet written, and whether a goroutine is writing.
+var nativeClipboard struct {
+	sync.Mutex
+	pending string
+	queued  bool
+	running bool
+}
+
+// queueNativeClipboard copies text to the desktop clipboard in the
+// background. One goroutine at a time runs the native tool and only the
+// newest pending text is kept, so a pane that floods OSC 52 starts one
+// clipboard process after another, not a goroutine and a process for
+// every sequence.
+func queueNativeClipboard(text string) {
+	nativeClipboard.Lock()
+	nativeClipboard.pending, nativeClipboard.queued = text, true
+	start := !nativeClipboard.running
+	nativeClipboard.running = true
+	nativeClipboard.Unlock()
+	if start {
+		go writeQueuedClipboard()
+	}
+}
+
+// writeQueuedClipboard writes queued texts until none is left.
+func writeQueuedClipboard() {
+	for {
+		nativeClipboard.Lock()
+		if !nativeClipboard.queued {
+			nativeClipboard.running = false
+			nativeClipboard.Unlock()
+			return
 		}
-	}()
+		text := nativeClipboard.pending
+		nativeClipboard.pending, nativeClipboard.queued = "", false
+		write := writeNativeClipboard
+		nativeClipboard.Unlock()
+		if write(text) {
+			L.Debug("clipboard: copied to native clipboard", "bytes", len(text))
+		} else {
+			L.Debug("clipboard: native clipboard copy failed", "bytes", len(text))
+		}
+	}
 }
 
 // osc52ClipboardText decodes an OSC 52 clipboard text write. It ignores
@@ -67,13 +110,13 @@ func osc52ClipboardText(seq []byte) (string, bool) {
 	if len(seq) < 3 || seq[0] != 0x1b || seq[1] != ']' {
 		return "", false
 	}
-	body := oscPayloadStripTerm(seq[2:])
+	body := session.StripOSCTerminator(seq[2:])
 	semi := bytes.IndexByte(body, ';')
 	if semi < 0 || string(body[:semi]) != "52" {
 		return "", false
 	}
 	payload := body[semi+1:]
-	if !isSafeOSC52(payload) {
+	if !session.IsSafeOSC52(payload) {
 		return "", false
 	}
 	semi = bytes.IndexByte(payload, ';')
@@ -110,6 +153,11 @@ func osc52TargetsClipboard(selection []byte) bool {
 	return bytes.IndexByte(selection, 'c') >= 0
 }
 
+// writeNativeClipboard copies text to the desktop clipboard. Tests replace
+// it, holding nativeClipboard's lock, so they never change the user's
+// clipboard.
+var writeNativeClipboard = copyTextToNativeClipboard
+
 func copyTextToNativeClipboard(text string) bool {
 	if tryClipboardCmd(exec.Command("wl-copy"), text) {
 		return true
@@ -129,7 +177,7 @@ func (app *App) pasteFromClipboard() bool {
 	app.mu.Lock()
 	active := app.active
 	app.mu.Unlock()
-	if active == nil || active.isDead() {
+	if active == nil || active.IsDead() {
 		return true // consumed, nothing useful to forward
 	}
 
@@ -150,17 +198,20 @@ func (app *App) pasteFromClipboard() bool {
 	text = strings.ReplaceAll(text, "\r\n", "\r")
 	text = strings.ReplaceAll(text, "\n", "\r")
 
-	active.mu.Lock()
-	bracketed := active.term.Mode()&vt10x.ModeSetPaste != 0
-	active.mu.Unlock()
+	active.Lock()
+	bracketed := active.Term.Mode()&vt10x.ModeSetPaste != 0
+	active.Unlock()
 
+	// One input event: the markers and the text reach the PTY together.
+	data := make([]byte, 0, len(text)+len(input.PasteStart)+len(input.PasteEnd))
 	if bracketed {
-		active.writeInput([]byte("\x1b[200~"))
+		data = append(data, input.PasteStart...)
 	}
-	active.writeInput([]byte(text))
+	data = append(data, text...)
 	if bracketed {
-		active.writeInput([]byte("\x1b[201~"))
+		data = append(data, input.PasteEnd...)
 	}
+	app.sendInput(active, data)
 	return true
 }
 

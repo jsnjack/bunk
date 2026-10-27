@@ -16,6 +16,11 @@
 #   - `all` runs every grouped script in order.
 #   - Set TERMINAL_FEATURES_AUTO=1 to auto-advance interactive pauses.
 #   - Query-heavy scripts need a real interactive terminal on stdin/stdout.
+#   - Queries wait for the terminal's DA1 reply instead of sleeping;
+#     TERMINAL_FEATURES_QUERY_TIMEOUT (seconds, default 2) bounds the wait.
+#   - `go test -run TestTerminalFeatures .` runs every group inside a bunk
+#     pane and checks the result; see AGENTS.md.
+#   - `integration` copies "bunk OSC 52 test" to the clipboard.
 
 set -u
 
@@ -39,8 +44,8 @@ Groups:
   text         SGR attributes and underline styles
   colors       ANSI, 256-color, truecolor, colored underlines
   cursor       Cursor shapes and Unicode width/alignment
-  integration  Hyperlinks, bracketed paste, OSC 133 prompt markers
-  queries      DA/DA2/XTVERSION/CPR/XTGETTCAP/DECRQM/OSC color queries/kitty
+  integration  Hyperlinks, bracketed paste, OSC 7/52/133
+  queries      DA/DA2/XTVERSION/CPR/DECRQSS/window size/XTGETTCAP/DECRQM/OSC colors/kitty
   osc          Automated PASS/FAIL OSC set/query/reset and DECRQM assertions
   graphics     SIXEL, Kitty, and iTerm2 cell-rendered static images
 EOF
@@ -54,11 +59,11 @@ Available grouped diagnostics:
   colors       ${SCRIPT_DIR}/02_colors.sh
                ANSI palette, 256-color, truecolor, underline colour
   cursor       ${SCRIPT_DIR}/03_cursor_unicode.sh
-               DECSCUSR cursor shapes and wide-character alignment
+               DECSCUSR cursor shapes, wide-character alignment, mode 2027
   integration  ${SCRIPT_DIR}/04_host_integration.sh
-               OSC 8 hyperlinks, bracketed paste, OSC 133 markers
+               OSC 8 hyperlinks, bracketed paste, OSC 7/52/133
   queries      ${SCRIPT_DIR}/05_queries.sh
-               DA/DA2/XTVERSION/CPR/XTGETTCAP/DECRQM/OSC/kitty queries
+               DA/DA2/XTVERSION/CPR/DECRQSS/window size/XTGETTCAP/DECRQM/OSC/kitty
   osc          ${SCRIPT_DIR}/06_osc_smoke.sh
                Automated OSC 10/11/12 set/query/reset and DECRQM assertions
   graphics     ${SCRIPT_DIR}/07_graphics.sh

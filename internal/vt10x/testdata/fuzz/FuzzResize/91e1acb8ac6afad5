@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('.')
+byte('\t')
+byte('\a')
+byte(';')
+uint16(1)
+[]byte("\x1b[7;0r\x1b[S")

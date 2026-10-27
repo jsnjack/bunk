@@ -16,11 +16,11 @@ printf "  FG (30-37):  "
 for c in 30 31 32 33 34 35 36 37; do
     printf "${CSI}${c}m█${R}"
 done
-printf "   ${CSI}1m"
+printf "   bold: "
 for c in 30 31 32 33 34 35 36 37; do
-    printf "${CSI}${c}m█${R}"
+    printf "${CSI}1;${c}m█${R}"
 done
-printf "${R}\n"
+printf "\n"
 
 printf "  BG (40-47):  "
 for c in 40 41 42 43 44 45 46 47; do
@@ -33,7 +33,7 @@ for c in 100 101 102 103 104 105 106 107; do
     printf "${CSI}${c}m  ${R}"
 done
 printf "\n"
-expect "All palette entries should be visibly different. Bright entries should not collapse to the dark set."
+expect "All palette entries should be visibly different. Bright entries should not collapse to the dark set. Bold FG blocks use the bright colours 8-15."
 diagnose "If reverse video or default colors look wrong here, inspect render-side default fg/bg mapping."
 
 section "256-Color Palette"

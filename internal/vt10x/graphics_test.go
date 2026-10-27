@@ -50,7 +50,7 @@ func TestGraphicsCellsCursorAndDeletion(t *testing.T) {
 
 func TestGraphicsClippingScrollingAndAltScreen(t *testing.T) {
 	var history [][]Glyph
-	term := New(WithSize(3, 2), WithScrollCallback(func(row []Glyph) { history = append(history, append([]Glyph(nil), row...)) }))
+	term := New(WithSize(3, 2), WithScrollCallback(func(row Row) { history = append(history, row.AppendGlyphs(nil)) }))
 	writeGraphics(t, term, "\x1b[1;3H\x1b_Ga=T,f=24,s=1,v=1,c=4,r=3,C=1;/wAA\x1b\\")
 	if len(history) != 0 || term.Cell(0, 1).Image != nil || term.Cell(2, 1).Image == nil {
 		t.Fatal("image wrapped or scrolled with C=1")
@@ -97,13 +97,13 @@ func TestLongOSCHyperlinkBudget(t *testing.T) {
 	term := New(WithSize(5, 2))
 	state := term.(*terminal).State
 	// Simulate an almost-full table without allocating its entire byte budget.
-	state.linkBytes = maxLinkBytes - 8
+	state.links.bytes = maxLinkBytes - 8
 	writeGraphics(t, term, "\x1b]8;;123456789\x1b\\X")
-	if term.Cell(0, 0).Link != 0 || len(state.links) != 0 {
+	if term.Cell(0, 0).Link != 0 || len(state.links.urls) != 0 {
 		t.Fatal("hyperlink exceeded byte budget")
 	}
 	writeGraphics(t, term, "\x1b]8;;12345678\x1b\\Y")
-	if term.Cell(1, 0).Link == 0 || state.linkBytes != maxLinkBytes {
+	if term.Cell(1, 0).Link == 0 || state.links.bytes != maxLinkBytes {
 		t.Fatal("bounded hyperlink was not interned")
 	}
 	writeGraphics(t, term, "\x1b]8;;12345678\x1b\\Z")

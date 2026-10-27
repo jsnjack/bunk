@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/creack/pty"
@@ -13,8 +14,10 @@ import (
 )
 
 func TestResizeRedrawUsesNotifiedSize(t *testing.T) {
+	t.Parallel()
 	for _, alternate := range []bool{false, true} {
 		t.Run(fmt.Sprintf("alternate=%t", alternate), func(t *testing.T) {
+			t.Parallel()
 			master, slave, err := pty.Open()
 			if err != nil {
 				t.Fatal(err)
@@ -33,11 +36,11 @@ func TestResizeRedrawUsesNotifiedSize(t *testing.T) {
 			}
 			defer screen.Fini()
 			p := regressionPane(160, 24)
-			p.ptmx = master
+			p.PTY = master
 			p.resize(0, 0, 161, 24)
-			p.captureAndWrite([]byte("existing output\r\n"))
+			p.CaptureAndWrite([]byte("existing output\r\n"))
 			if alternate {
-				p.captureAndWrite([]byte("\x1b[?1049h"))
+				p.CaptureAndWrite([]byte("\x1b[?1049h"))
 			}
 			app := &App{screen: screen, root: &Node{pane: p}, active: p}
 			defer func() {
@@ -57,20 +60,20 @@ func TestResizeRedrawUsesNotifiedSize(t *testing.T) {
 						t.Fatal(err)
 					}
 					if notifiedCols == cols {
-						p.mu.Lock()
-						actualCols, actualRows := p.term.Size()
+						p.Lock()
+						actualCols, actualRows := p.Term.Size()
 						if actualCols != cols || actualRows != rows {
-							p.mu.Unlock()
+							p.Unlock()
 							t.Fatalf("application notified of %dx%d while emulator is %dx%d", cols, rows, actualCols, actualRows)
 						}
 						// A redraw positions at the new margin and relies on autowrap.
 						output := fmt.Sprintf("\x1b[2J\x1b[H%s!", strings.Repeat("x", cols))
-						p.captureAndWrite([]byte(output))
-						if p.term.Cell(0, 1).Char != '!' {
-							p.mu.Unlock()
+						p.CaptureAndWrite([]byte(output))
+						if p.Term.Cell(0, 1).Char != '!' {
+							p.Unlock()
 							t.Fatal("redraw did not wrap at the notified width")
 						}
-						p.mu.Unlock()
+						p.Unlock()
 						break
 					}
 					if time.Now().After(deadline) {
@@ -80,10 +83,10 @@ func TestResizeRedrawUsesNotifiedSize(t *testing.T) {
 				}
 				// Let any deferred replay run before checking the completed redraw.
 				time.Sleep(80 * time.Millisecond)
-				p.mu.Lock()
-				got := p.term.Cell(0, 1).Char
-				mode := p.term.Mode()
-				p.mu.Unlock()
+				p.Lock()
+				got := p.Term.Cell(0, 1).Char
+				mode := p.Term.Mode()
+				p.Unlock()
 				if got != '!' {
 					t.Fatalf("deferred resize damaged redraw: got %q", got)
 				}
@@ -99,12 +102,12 @@ func TestResizeDoesNotReplayCursorPositions(t *testing.T) {
 	for _, width := range []int{80, 40} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			p := regressionPane(160, 24)
-			p.captureAndWrite([]byte("prefix\x1b[120Ghistory\r\n\x1b[120Gis\r\n\x1b[120Gkept."))
+			p.CaptureAndWrite([]byte("prefix\x1b[120Ghistory\r\n\x1b[120Gis\r\n\x1b[120Gkept."))
 			for _, cols := range []int{width, 160, width} {
 				p.resize(0, 0, cols+1, 24)
 				var output strings.Builder
 				for y := 0; y < 24; y++ {
-					row := captureRow(p.term, y, cols)
+					row := session.CaptureRow(p.Term, y, cols)
 					if row[cols-1].Mode&vt10x.AttrWrap != 0 {
 						for _, g := range row {
 							if g.Width >= 0 {

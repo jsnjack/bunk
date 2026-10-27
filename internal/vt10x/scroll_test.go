@@ -15,18 +15,16 @@ package vt10x
 import "testing"
 
 // newTestTermWithCb builds a terminal with a scroll callback installed.
-func newTestTermWithCb(cols, rows int, cb func(row []Glyph)) *terminal {
+func newTestTermWithCb(cols, rows int, cb func(row Row)) *terminal {
 	return newTerminal(TerminalInfo{cols: cols, rows: rows, scrollCb: cb})
 }
 
 // collectRow copies a callback row and appends it to a slice.
 // The callback row slice is only valid for the duration of the call, so a
 // copy is required for any test that inspects content after the write.
-func collectRow(dst *[][]Glyph) func([]Glyph) {
-	return func(row []Glyph) {
-		cp := make([]Glyph, len(row))
-		copy(cp, row)
-		*dst = append(*dst, cp)
+func collectRow(dst *[][]Glyph) func(Row) {
+	return func(row Row) {
+		*dst = append(*dst, row.AppendGlyphs(nil))
 	}
 }
 
@@ -103,7 +101,7 @@ func TestScrollCallback_MultiRowCSIS(t *testing.T) {
 func TestScrollCallback_InPlaceRewriteNoCallback(t *testing.T) {
 	const cols, rows = 10, 5
 	fired := 0
-	term := newTestTermWithCb(cols, rows, func(_ []Glyph) { fired++ })
+	term := newTestTermWithCb(cols, rows, func(Row) { fired++ })
 
 	// Write two lines (no overflow).
 	term.Write([]byte("AAAAAAAAAA\r\nBBBBBBBBBB")) //nolint:errcheck
@@ -130,7 +128,7 @@ func TestScrollCallback_InPlaceRewriteNoCallback(t *testing.T) {
 func TestScrollCallback_PartialScrollRegionNoCallback(t *testing.T) {
 	const cols, rows = 8, 6
 	fired := 0
-	term := newTestTermWithCb(cols, rows, func(_ []Glyph) { fired++ })
+	term := newTestTermWithCb(cols, rows, func(Row) { fired++ })
 
 	// Set scroll region to rows 2–5 (1-indexed), i.e., 0-indexed rows 1–4.
 	// t.top will be 1, not 0.

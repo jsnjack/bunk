@@ -2,7 +2,8 @@
 //
 // The render loop waits for redraw signals, then:
 //  1. Iterates every leaf's vt10x virtual grid and copies cells to tcell.
-//  2. Draws separator borders (gray for inactive, green for active).
+//  2. Draws separator borders (gray for inactive, green for active, amber
+//     or green around a pane whose agent needs you or is done).
 //  3. Positions the terminal cursor inside the active pane.
 //
 // VT100 parsing bridge (read side):
@@ -19,6 +20,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +28,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
@@ -144,15 +147,17 @@ func (app *App) render() {
 	}
 
 	rt := app.theme
+	app.forwardAlerts(root, active)
+	app.relayAgents(root, active)
 
 	// Zoomed mode: draw only the zoomed pane, no borders.
 	if zp := app.zoomedPane; zp != nil {
 		// Skip rendering mid DEC 2026 sync update — avoids flushing a blank
 		// frame after \x1b[2J but before the app has drawn its content.
 		// readPTY triggers a fresh redraw when the end marker arrives.
-		zp.mu.Lock()
-		syncing := zp.term.Mode()&vt10x.ModeSync != 0
-		zp.mu.Unlock()
+		zp.Lock()
+		syncing := zp.Term.Mode()&vt10x.ModeSync != 0
+		zp.Unlock()
 		if syncing {
 			return
 		}
@@ -165,29 +170,29 @@ func (app *App) render() {
 		drawScrollbars(app.screen, zNode, rt)
 		drawAllPaneStatus(app.screen, zNode, active, rt, true)
 
-		zp.mu.Lock()
-		dead := zp.dead
-		sbOff := zp.sbOff
-		cur := zp.term.Cursor()
+		zp.Lock()
+		dead := zp.Dead
+		sbOff := zp.ScrollOffset
+		cur := zp.Term.Cursor()
 		curDisplayX := cursorDisplayX(zp, cur)
-		visible := zp.term.CursorVisible()
+		visible := zp.Term.CursorVisible()
 		transientLineClear := zp.transientLineClear
 		progressCursorHidden := zp.progressCursorHiddenUntil.After(time.Now())
-		zp.mu.Unlock()
+		zp.Unlock()
 		if !dead && visible && sbOff == 0 && !transientLineClear && !progressCursorHidden {
 			app.screen.ShowCursor(zp.x+curDisplayX, zp.y+cur.Y)
 		} else {
 			app.screen.HideCursor()
 		}
 
-		app.oscBuf.flush(os.Stdout)
+		app.oscBuf.flush(app.host())
 		app.emitTitle(active)
 		app.emitCursorStyle(zp)
-		closeHostHyperlink(os.Stdout)
-		zp.mu.Lock()
-		needsSync := zp.needsSync
-		zp.needsSync = false
-		zp.mu.Unlock()
+		closeHostHyperlink(app.host())
+		zp.Lock()
+		needsSync := zp.NeedsSync
+		zp.NeedsSync = false
+		zp.Unlock()
 		if needsSync {
 			app.screen.Sync()
 		} else {
@@ -210,6 +215,9 @@ func (app *App) render() {
 		paintActiveBorders(app.screen, root, active, activeStyle)
 	}
 
+	// Step 3.1 - borders around panes whose agent needs you or is done.
+	paintAgentBorders(app.screen, root, rt)
+
 	// Step 3.5 - scrollbars.
 	drawScrollbars(app.screen, root, rt)
 
@@ -220,15 +228,15 @@ func (app *App) render() {
 	// Hidden when the pane is in scrollback mode (cursor is in live view,
 	// not in the scrolled-back view the user is reading).
 	if active != nil {
-		active.mu.Lock()
-		dead := active.dead
-		sbOff := active.sbOff
-		cur := active.term.Cursor()
+		active.Lock()
+		dead := active.Dead
+		sbOff := active.ScrollOffset
+		cur := active.Term.Cursor()
 		curDisplayX := cursorDisplayX(active, cur)
-		visible := active.term.CursorVisible() && active.term.Mode()&vt10x.ModeSync == 0
+		visible := active.Term.CursorVisible() && active.Term.Mode()&vt10x.ModeSync == 0
 		transientLineClear := active.transientLineClear
 		progressCursorHidden := active.progressCursorHiddenUntil.After(time.Now())
-		active.mu.Unlock()
+		active.Unlock()
 		if !dead && visible && sbOff == 0 && !transientLineClear && !progressCursorHidden {
 			app.screen.ShowCursor(active.x+curDisplayX, active.y+cur.Y)
 		} else {
@@ -245,10 +253,10 @@ func (app *App) render() {
 	}
 
 	// Step 5 - drain OSC passthrough sequences and update host tab title.
-	app.oscBuf.flush(os.Stdout)
+	app.oscBuf.flush(app.host())
 	app.emitTitle(active)
 	app.emitCursorStyle(active)
-	closeHostHyperlink(os.Stdout)
+	closeHostHyperlink(app.host())
 
 	if checkAndClearNeedsSync(root) {
 		app.screen.Sync()
@@ -265,10 +273,10 @@ func checkAndClearNeedsSync(n *Node) bool {
 		return false
 	}
 	if n.isLeaf() {
-		n.pane.mu.Lock()
-		v := n.pane.needsSync
-		n.pane.needsSync = false
-		n.pane.mu.Unlock()
+		n.pane.Lock()
+		v := n.pane.NeedsSync
+		n.pane.NeedsSync = false
+		n.pane.Unlock()
 		return v
 	}
 	l := checkAndClearNeedsSync(n.left)
@@ -277,15 +285,24 @@ func checkAndClearNeedsSync(n *Node) bool {
 }
 
 func paneHasTransientLineClear(p *Pane) bool {
-	p.mu.Lock()
+	p.Lock()
 	v := p.transientLineClear
-	p.mu.Unlock()
+	p.Unlock()
 	return v
 }
 
 // cursorDisplayX uses the emulator's display-cell coordinates.
 func cursorDisplayX(_ *Pane, cur vt10x.Cursor) int {
 	return cur.X
+}
+
+// host returns the writer for bytes bunk sends to the host terminal outside
+// tcell: OSC passthrough, titles and hyperlink closes.
+func (app *App) host() io.Writer {
+	if app.hostOut != nil {
+		return app.hostOut
+	}
+	return os.Stdout
 }
 
 // closeHostHyperlink writes an OSC 8 close to w.  The render loop calls this
@@ -328,14 +345,14 @@ func (app *App) emitTitle(active *Pane) {
 	if active == nil {
 		return
 	}
-	active.mu.Lock()
-	title := active.term.Title()
-	fgProc := active.fgProcess
-	active.mu.Unlock()
+	active.Lock()
+	title := active.Term.Title()
+	fgProc := active.FgProcess
+	active.Unlock()
 
 	if title == "" {
 		// Construct a basic title from process + cwd.
-		cwd := active.cwd()
+		cwd := active.Cwd()
 		if cwd != "" {
 			// Show only the last two path components to keep it short.
 			parts := strings.Split(strings.TrimRight(cwd, "/"), "/")
@@ -382,7 +399,9 @@ func (app *App) emitTitle(active *Pane) {
 	}
 	app.lastEmittedTitle = title
 	// OSC 0 sets both icon name and window title; BEL-terminated.
-	os.Stdout.Write([]byte("\x1b]0;" + title + "\x07")) //nolint:errcheck
+	if _, err := app.host().Write([]byte("\x1b]0;" + title + "\x07")); err != nil {
+		L.Log(context.Background(), LevelTrace, "write window title", "err", err)
+	}
 }
 
 // sanitizeTitle keeps only printable runes (no C0/C1 controls), validates
@@ -416,13 +435,13 @@ func (app *App) emitCursorStyle(p *Pane) {
 	if p == nil {
 		return
 	}
-	p.mu.Lock()
-	style := p.term.Cursor().Shape
-	color := oscCursorColor(p.themeCursorColor)
-	if c, ok := p.term.ColorOverride(vt10x.DefaultCursor); ok {
+	p.Lock()
+	style := p.Term.Cursor().Shape
+	color := oscCursorColor(p.ThemeCursor)
+	if c, ok := p.Term.ColorOverride(vt10x.DefaultCursor); ok {
 		color = tcell.NewRGBColor(int32(c>>16&255), int32(c>>8&255), int32(c&255))
 	}
-	p.mu.Unlock()
+	p.Unlock()
 	if style == app.lastCursorStyle && color == app.lastCursorColor {
 		return
 	}
@@ -466,24 +485,28 @@ func drawPaneContents(scr tcell.Screen, n *Node, rt resolvedTheme) {
 //
 // With sbOff = N we display virtual lines [p.sb.count-N, p.sb.count-N+h).
 func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	// Status takes the session lock itself. The badge and the borders show
+	// what it returns, so the overlay key below sees agent changes.
+	st := p.Status()
+	p.Lock()
+	defer p.Unlock()
+	p.agent = paneAgent{name: st.Agent, state: st.State, notice: st.Notice}
 
 	// Second guard: close the TOCTOU window between render()'s top-level
 	// check and this vt10x read. readPTY may have started a new sync frame
 	// (blanking vt10x) in between. Returning here leaves tcell's cell buffer
 	// unchanged, so Show() sends nothing — no blank flash reaches the terminal.
-	if p.term.Mode()&vt10x.ModeSync != 0 || p.transientLineClear {
+	if p.Term.Mode()&vt10x.ModeSync != 0 || p.transientLineClear {
 		return
 	}
 
-	cols, rows := p.term.Size()
-	sbOff := p.sbOff
-	sbCount := p.sb.count
-	hasSel := p.selActive
-	hasSearch := p.searchHL != nil
+	cols, rows := p.Term.Size()
+	sbOff := p.ScrollOffset
+	sbCount := p.Scrollback.Count
+	hasSel := p.SelActive
+	hasSearch := p.SearchHL != nil
 	statusKey := statusOverlayKeyLocked(p, time.Now())
-	colorGen := p.term.ColorGen()
+	colorGen := p.Term.ColorGen()
 
 	// Determine whether a full repaint is needed.
 	//
@@ -498,22 +521,22 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 		sbOff > 0 ||
 		sbOff != p.lastRenderSbOff ||
 		hasSel != p.lastRenderSelActive ||
-		p.selAnchor != p.lastRenderSelAnchor ||
-		p.selCursor != p.lastRenderSelCursor ||
-		p.searchHLGen != p.lastRenderSearchHLGen ||
+		p.SelAnchor != p.lastRenderSelAnchor ||
+		p.SelCursor != p.lastRenderSelCursor ||
+		p.SearchHLGen != p.lastRenderSearchHLGen ||
 		statusKey != p.lastRenderStatusKey ||
 		colorGen != p.lastRenderColorGen
 
 	// Always consume dirty to keep vt10x state clean (avoids accumulating
 	// dirty rows while the pane is scrolled that would confuse later renders).
-	dirty, anyDirty := p.term.ConsumeDirty()
+	dirty, anyDirty := p.Term.ConsumeDirty()
 
 	// Record the overlay state we are rendering with.
 	p.lastRenderSbOff = sbOff
 	p.lastRenderSelActive = hasSel
-	p.lastRenderSelAnchor = p.selAnchor
-	p.lastRenderSelCursor = p.selCursor
-	p.lastRenderSearchHLGen = p.searchHLGen
+	p.lastRenderSelAnchor = p.SelAnchor
+	p.lastRenderSelCursor = p.SelCursor
+	p.lastRenderSearchHLGen = p.SearchHLGen
 	p.lastRenderStatusKey = statusKey
 	p.lastRenderColorGen = colorGen
 	p.forceFullRepaint = false
@@ -544,7 +567,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			case vRow < 0:
 				// Before the oldest captured line - render blank.
 			case vRow < sbCount:
-				cells = p.sb.get(vRow)
+				cells = p.Scrollback.View(vRow)
 			default:
 				// In the live grid.  vRow - sbCount is the actual terminal row,
 				// which is NOT the same as screen row when sbOff > 0.
@@ -556,10 +579,10 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 		// Fetch per-row search spans once before the column loop so the
 		// inner loop does a short linear scan instead of a hash lookup per
 		// cell.
-		var regSpans, curSpans []searchSpan
+		var regSpans, curSpans []session.Span
 		if hasSearch {
-			regSpans = p.searchHL.regular[vRow]
-			curSpans = p.searchHL.current[vRow]
+			regSpans = p.SearchHL.Regular[vRow]
+			curSpans = p.SearchHL.Current[vRow]
 		}
 
 		for col := 0; col < min(cols, p.w-1); col++ {
@@ -571,15 +594,15 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			if cells != nil && col < len(cells) {
 				cell = cells[col]
 			} else if useTermDirect {
-				cell = p.term.RawCell(col, termRow)
+				cell = p.Term.RawCell(col, termRow)
 			}
 			if cell.Width == -1 {
 				continue
 			}
-			if fg, ok := p.term.ColorOverride(cell.FG); ok {
+			if fg, ok := p.Term.ColorOverride(cell.FG); ok {
 				cell.FG = fg
 			}
-			if bg, ok := p.term.ColorOverride(cell.BG); ok {
+			if bg, ok := p.Term.ColorOverride(cell.BG); ok {
 				cell.BG = bg
 			}
 
@@ -605,7 +628,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			}
 			if cell.Mode&vtAttrInvisible == 0 {
 				if cell.Link != 0 {
-					if url := p.term.Link(cell.Link); url != "" {
+					if url := p.Term.Link(cell.Link); url != "" {
 						style = style.Url(url)
 					}
 				}
@@ -672,7 +695,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 
 			// Selection highlight: toggle reverse video so selected text is
 			// always visually distinct regardless of the cell's original style.
-			if hasSel && p.selContainsUnlocked(vRow, col) {
+			if hasSel && p.SelContains(vRow, col) {
 				style = style.Reverse(true)
 			}
 
@@ -680,10 +703,10 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			// Current-match spans take priority over regular spans.
 			if hasSearch {
 				switch {
-				case spanContains(curSpans, col):
+				case session.SpanContains(curSpans, col):
 					style = style.Background(tcell.NewRGBColor(0xff, 0xa5, 0x00)).
 						Foreground(tcell.ColorBlack)
-				case spanContains(regSpans, col):
+				case session.SpanContains(regSpans, col):
 					style = style.Background(tcell.NewRGBColor(0x80, 0x60, 0x00)).
 						Foreground(tcell.NewRGBColor(0xff, 0xe0, 0x80))
 				}
@@ -695,6 +718,14 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 			var combining []rune
 			if ch == cell.Char {
 				combining = []rune(cell.Combining)
+			}
+			// With DECRST 2027 a one-column cell can hold a cluster that
+			// tcell measures as two columns (VS16, keycaps). Paint only the
+			// base character so later cells keep the emulator's columns.
+			if cell.Width == 1 && len(combining) > 0 {
+				if _, w := scr.Put(p.x+col, p.y+row, cell.Text(), style); w > 1 {
+					combining = nil
+				}
 			}
 			scr.SetContent(p.x+col, p.y+row, ch, combining, style)
 			if cell.Width == 2 && isBlank && col+1 < p.w-1 {
@@ -729,11 +760,11 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 func drawScrollbars(scr tcell.Screen, n *Node, rt resolvedTheme) {
 	if n.isLeaf() {
 		p := n.pane
-		p.mu.Lock()
-		sbCount := p.sb.count
-		sbOff := p.sbOff
-		_, rows := p.term.Size()
-		p.mu.Unlock()
+		p.Lock()
+		sbCount := p.Scrollback.Count
+		sbOff := p.ScrollOffset
+		_, rows := p.Term.Size()
+		p.Unlock()
 		bx := p.x + p.w - 1
 		if sbOff > 0 {
 			drawScrollbar(scr, bx, p.y, rows, sbCount, sbOff, rt)
@@ -1022,7 +1053,7 @@ func vtColor(c vt10x.Color, def tcell.Color, rt resolvedTheme) tcell.Color {
 		return tcell.PaletteColor(int(c))
 	}
 	if c < vt10x.DefaultFG {
-		// True-color RGB: packed as r<<16 | g<<8 | b by vt10x.
+		// True-color RGB from vt10x.RGB: r<<16 | g<<8 | b in the low 24 bits.
 		return tcell.NewRGBColor(int32(c>>16&0xff), int32(c>>8&0xff), int32(c&0xff))
 	}
 	return def

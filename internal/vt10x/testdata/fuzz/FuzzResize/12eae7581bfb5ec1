@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x14')
+byte('\x01')
+byte('M')
+byte('!')
+uint16(1)
+[]byte("\x1bE")

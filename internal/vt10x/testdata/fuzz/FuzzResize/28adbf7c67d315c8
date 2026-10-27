@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('m')
+byte('\x01')
+byte('\x1f')
+byte('~')
+uint16(16)
+[]byte("\x1b(A")

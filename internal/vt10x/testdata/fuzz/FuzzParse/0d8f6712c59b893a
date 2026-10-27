@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('\f')
+byte('\x05')
+[]byte("0")
+[]byte("000000ｗｉｄａ\x1b80\x1b[P")

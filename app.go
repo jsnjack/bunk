@@ -2,7 +2,13 @@
 package main
 
 import (
+	"bunk/internal/alert"
+	"bunk/internal/badges"
+	"bunk/internal/desktop"
+	"bunk/internal/notify"
+	"bunk/internal/session"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"sync"
@@ -51,6 +57,10 @@ type App struct {
 	// receives OSC 7/8/52/133 (CWD, hyperlinks, clipboard, prompt markers).
 	oscBuf *oscBuffer
 
+	// hostOut receives what bunk writes to the host terminal outside tcell
+	// (see host). nil means os.Stdout; tests capture it.
+	hostOut io.Writer
+
 	// lastEmittedTitle is the most recent title we wrote to the host terminal
 	// via OSC 0.  Compared each frame to avoid redundant writes.
 	lastEmittedTitle string
@@ -71,9 +81,19 @@ type App struct {
 
 	// Double-click detection (event loop goroutine only - no lock needed).
 	lastClickTime  time.Time
-	lastClickPos   selPos
+	lastClickPos   session.SelPos
 	lastClickPane  *Pane
 	dblClickActive bool // release should not overwrite word selection
+
+	// A paste from the host terminal being collected into one input event
+	// (handlePaste): its bytes so far (nil when none is open), its pane, the
+	// end marker to add, the timer that ends it without an end marker, and
+	// its number. Protected by mu.
+	paste      []byte
+	pastePane  *Pane
+	pasteEnd   string
+	pasteTimer *time.Timer
+	pasteGen   uint64
 
 	// dragPane is the pane where the current Button1 drag started.
 	// All drag-select and release events are clamped to this pane so that
@@ -99,7 +119,7 @@ type App struct {
 	searchMode    bool
 	searchQuery   string
 	searchPane    *Pane
-	searchMatches []searchMatch
+	searchMatches []session.Match
 	searchIdx     int
 	searchGen     int // incremented on every search state change; guards async goroutines
 	searchWake    chan struct{}
@@ -114,6 +134,30 @@ type App struct {
 	// are coalesced together so redraws use the notified dimensions.
 	resizeTimer *time.Timer
 	resizeGen   uint64
+
+	// notify receives agent hook reports ("bunk notify") and routes them to
+	// the panes' sessions. nil when the socket could not be created.
+	notify *notify.Server
+
+	// relay reports the most urgent pane to the host terminal when that is
+	// a bunk front end or the far end of ssh; nil otherwise. Used under mu.
+	relay *agentRelay
+
+	// timing sets the intervals of new panes' session timers. bunk leaves
+	// it zero, the defaults; tests shorten it.
+	timing session.Timing
+
+	// alerts decides when a pane's agent state reaches the host terminal
+	// as a notification (alerts.go). hostBlurred is set while the host
+	// terminal reports that it lost the focus, and alertWake is when a
+	// held alert is due. Protected by mu.
+	alerts      alert.Tracker
+	hostBlurred bool
+	alertWake   time.Time
+	// desktop shows the alerts as desktop notifications through D-Bus
+	// when bunk runs on the user's desktop; nil sends them to the host
+	// terminal (alerts.go).
+	desktop *desktop.Notifier
 }
 
 // shutdown is safe to call multiple times.  It closes every pane (sending
@@ -155,7 +199,7 @@ func (app *App) closeAllPanes() {
 	}
 	app.mu.Unlock()
 	for _, p := range panes {
-		p.close()
+		p.Close()
 	}
 }
 
@@ -202,7 +246,7 @@ func (app *App) reinitHost() {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
-	if _, err := os.Stdout.Write([]byte("\x1b[m\x1b(B\x1b]8;;\x1b\\")); err != nil {
+	if _, err := app.host().Write([]byte("\x1b[m\x1b(B\x1b]8;;\x1b\\")); err != nil {
 		L.Warn("reinitHost: reset write failed", "err", err)
 	}
 
@@ -292,12 +336,12 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 	pane := app.active
 	passthrough := false
 	if pane != nil {
-		pane.mu.Lock()
+		pane.Lock()
 		if app.keys.Passthrough.Matches(ev) {
 			pane.passthrough = !pane.passthrough
 		}
 		passthrough = pane.passthrough
-		pane.mu.Unlock()
+		pane.Unlock()
 	}
 	app.mu.Unlock()
 	if app.keys.Passthrough.Matches(ev) {
@@ -324,20 +368,20 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		active := app.active
 		app.mu.Unlock()
 		if active != nil {
-			active.mu.Lock()
-			text := active.selText()
+			active.Lock()
+			text := active.SelText()
 			if text != "" {
-				active.selActive = false
+				active.SelActive = false
 			}
-			active.mu.Unlock()
+			active.Unlock()
 			if text != "" {
 				app.copyToClipboard(text)
-				active.SetStatus("COPIED", 3*time.Second)
+				active.SetStatus(badges.Copied, badges.FlashFor)
 				app.triggerRedraw()
 				// Schedule a redraw after the badge expires so it clears
 				// even if the terminal is idle.
 				go func() {
-					time.Sleep(3 * time.Second)
+					time.Sleep(badges.FlashFor)
 					app.triggerRedraw()
 				}()
 				return true
@@ -398,6 +442,10 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 		app.zoomOut()
 		app.navigate(dirRight)
 		return true
+	case kb.NextNeedsYou.Matches(ev):
+		L.Debug("handleKey: next pane needing you", "key", kb.NextNeedsYou)
+		app.jumpNeedingYou()
+		return true
 	}
 
 	// Scrollback keys.
@@ -411,15 +459,15 @@ func (app *App) handleKey(ev *tcell.EventKey) bool {
 	switch {
 	case kb.ScrollUp.Matches(ev):
 		if active != nil {
-			L.Debug("handleKey: scrollback up", "pane", active.id, "amount", max(1, h/2))
-			active.scrollUp(max(1, h/2))
+			L.Debug("handleKey: scrollback up", "pane", active.ID, "amount", max(1, h/2))
+			active.ScrollUp(max(1, h/2))
 			app.triggerRedraw()
 		}
 		return true
 	case kb.ScrollDown.Matches(ev):
 		if active != nil {
-			L.Debug("handleKey: scrollback down", "pane", active.id, "amount", max(1, h/2))
-			active.scrollDown(max(1, h/2))
+			L.Debug("handleKey: scrollback down", "pane", active.ID, "amount", max(1, h/2))
+			active.ScrollDown(max(1, h/2))
 			app.triggerRedraw()
 		}
 		return true
@@ -433,34 +481,55 @@ func (app *App) forwardKey(ev *tcell.EventKey) {
 	app.mu.Lock()
 	active := app.active
 	app.mu.Unlock()
-	if active != nil && !active.isDead() {
-		needRedraw := false
-		if active.inScrollback() {
-			L.Debug("handleKey: leaving scrollback on keypress", "pane", active.id)
-			active.scrollReset()
+	if active != nil && !active.IsDead() {
+		// Typing into the pane answers its agent's request.
+		needRedraw := acknowledge(active)
+		if active.InScrollback() {
+			L.Debug("handleKey: leaving scrollback on keypress", "pane", active.ID)
+			active.ScrollReset()
 			needRedraw = true
 		}
-		active.mu.Lock()
-		if active.selActive {
-			active.selActive = false
+		active.Lock()
+		if active.SelActive {
+			active.SelActive = false
 			needRedraw = true
 		}
-		active.mu.Unlock()
+		active.Unlock()
 		if needRedraw {
 			app.triggerRedraw()
 		}
 		kittyFlags := 0
-		active.mu.Lock()
-		if len(active.kittyStack) > 0 {
-			kittyFlags = active.kittyStack[len(active.kittyStack)-1]
+		active.Lock()
+		if len(active.KittyStack) > 0 {
+			kittyFlags = active.KittyStack[len(active.KittyStack)-1]
 		}
-		mode := active.term.Mode()
-		active.mu.Unlock()
-		if data := keyToBytesMode(ev, kittyFlags, mode); len(data) > 0 {
-			L.Debug("handleKey: forwarding to PTY", "pane", active.id, "bytes", len(data))
-			active.writeInput(data)
+		mode := active.Term.Mode()
+		active.Unlock()
+		if data := keyToBytesMode(ev, kittyFlags, mode); len(data) > 0 && !app.collectPaste(active, data) {
+			L.Debug("handleKey: forwarding to PTY", "pane", active.ID, "bytes", len(data))
+			app.sendInput(active, data)
 		}
 	}
+}
+
+// inputRefused is the flash message of a pane whose program stopped
+// reading its input while the input queue filled up.
+const inputRefused = "input not sent"
+
+// sendInput queues one input event (a key, a paste, a mouse report) for
+// p's program. When the program has stopped reading and its input queue
+// is full, the event is dropped and the pane flashes inputRefused. It must
+// not be called with p's session locked.
+func (app *App) sendInput(p *Pane, data []byte) {
+	err := p.WriteInput(data)
+	if err == nil {
+		return
+	}
+	L.Debug("input refused", "pane", p.ID, "bytes", len(data), "err", err)
+	const flash = 2 * time.Second
+	p.SetStatus(inputRefused, flash)
+	app.triggerRedraw()
+	time.AfterFunc(flash, app.triggerRedraw)
 }
 
 // ---------------------------------------------------------------------------
@@ -494,7 +563,7 @@ func (app *App) splitActive(inheritContext bool) {
 		d = splitHorizontal
 	}
 	L.Debug("splitActive: direction decision",
-		"pane", app.active.id,
+		"pane", app.active.ID,
 		"node_cols", node.w, "node_rows", node.h,
 		"cell_aspect", app.cellAspect,
 		"pixel_w", int(pixelW), "pixel_h", int(pixelH),
@@ -521,17 +590,17 @@ func (app *App) splitActive(inheritContext bool) {
 	nx, ny := rx, ry
 
 	// Inherit the working directory from the active pane's foreground process.
-	dir := app.active.cwd()
+	dir := app.active.Cwd()
 
-	app.active.mu.Lock()
-	cid := app.active.containerID
-	ct := app.active.containerType
-	fgProc := app.active.fgProcess
+	app.active.Lock()
+	cid := app.active.ContainerID
+	ct := app.active.ContainerType
+	fgProc := app.active.FgProcess
 	shellPid := 0
-	if app.active.cmd.Process != nil {
-		shellPid = app.active.cmd.Process.Pid
+	if app.active.Cmd.Process != nil {
+		shellPid = app.active.Cmd.Process.Pid
 	}
-	app.active.mu.Unlock()
+	app.active.Unlock()
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"
@@ -539,17 +608,17 @@ func (app *App) splitActive(inheritContext bool) {
 	var spawnArgs []string
 	if inheritContext {
 		L.Debug("splitActive: context inherit requested",
-			"pane", app.active.id, "fgProc", fgProc, "shellPid", shellPid,
+			"pane", app.active.ID, "fgProc", fgProc, "shellPid", shellPid,
 			"containerType", ct, "containerID", cid, "dir", dir)
 		switch {
 		case (ct == "lxc" || ct == "incus") && cid != "" && shellPid > 0:
 			// `lxc exec` is the foreground process — reuse its exact cmdline
 			// so that `lxc exec xx -- su --login jsn` is preserved verbatim.
-			if args := fgProcessCmdline(shellPid); len(args) > 0 {
+			if args := session.FgProcessCmdline(shellPid); len(args) > 0 {
 				spawnArgs = args
 				L.Debug("splitActive: cloning lxc/incus exec cmdline", "spawnArgs", spawnArgs)
-			} else if isRunningContainer(cid, ct) {
-				spawnArgs = containerSpawnArgs(cid, ct, shell)
+			} else if session.IsRunningContainer(cid, ct) {
+				spawnArgs = session.ContainerSpawnArgs(cid, ct, shell)
 				L.Debug("splitActive: lxc/incus fallback to containerSpawnArgs", "spawnArgs", spawnArgs)
 			}
 		case ct == "lxd" && shellPid > 0:
@@ -557,32 +626,32 @@ func (app *App) splitActive(inheritContext bool) {
 			// Walk the process tree up from the foreground to find the
 			// `lxc exec` ancestor and reuse its full cmdline — this preserves
 			// any `su --login <user>` or other entry command.
-			fgPid := termFgPGID(shellPid)
+			fgPid := session.TermFgPGID(shellPid)
 			if fgPid <= 0 {
 				fgPid = shellPid
 			}
-			if args := findLXCAncestorCmdline(fgPid); len(args) > 0 {
+			if args := session.FindLXCAncestorCmdline(fgPid); len(args) > 0 {
 				spawnArgs = args
 				L.Debug("splitActive: cloning lxc exec ancestor", "spawnArgs", spawnArgs)
 			} else {
 				L.Debug("splitActive: lxd container but no lxc ancestor found (bunk is inside container), using host shell")
 			}
-		case cid != "" && ct != "" && isRunningContainer(cid, ct):
-			spawnArgs = containerSpawnArgs(cid, ct, shell)
+		case cid != "" && ct != "" && session.IsRunningContainer(cid, ct):
+			spawnArgs = session.ContainerSpawnArgs(cid, ct, shell)
 			L.Debug("splitActive: using container context", "spawnArgs", spawnArgs)
 		case (ct == "podman" || ct == "docker") && shellPid > 0:
 			// "podman run <image>" — cid is an image name, not a running
 			// container ID.  Try two strategies:
 			// 1. Walk child process tree looking for libpod cgroup entry.
 			// 2. Ask podman/docker to list containers with the ancestor image.
-			fgPid := termFgPGID(shellPid)
+			fgPid := session.TermFgPGID(shellPid)
 			if fgPid <= 0 {
 				fgPid = shellPid
 			}
-			containerID := findRunningContainerFromPID(fgPid)
+			containerID := session.FindRunningContainerFromPID(fgPid)
 			L.Debug("splitActive: process-tree walk result", "containerID", containerID, "fgPid", fgPid)
 			if containerID == "" && cid != "" {
-				containerID = findContainerByAncestor(cid, ct)
+				containerID = session.FindContainerByAncestor(cid, ct)
 				L.Debug("splitActive: ancestor filter result", "containerID", containerID, "image", cid)
 			}
 			if containerID != "" {
@@ -592,14 +661,14 @@ func (app *App) splitActive(inheritContext bool) {
 				L.Debug("splitActive: podman/docker run but could not resolve container ID", "fgPid", fgPid, "image", cid)
 			}
 		case (fgProc == "ssh" || fgProc == "mosh") && shellPid > 0:
-			if args := fgProcessCmdline(shellPid); len(args) > 0 {
+			if args := session.FgProcessCmdline(shellPid); len(args) > 0 {
 				spawnArgs = args
 				L.Debug("splitActive: cloning ssh/mosh session", "spawnArgs", spawnArgs)
 			} else {
 				L.Debug("splitActive: ssh/mosh detected but cmdline empty", "shellPid", shellPid)
 			}
 		case fgProc == "sudo" && shellPid > 0:
-			if args := fgProcessCmdline(shellPid); len(args) > 0 {
+			if args := session.FgProcessCmdline(shellPid); len(args) > 0 {
 				spawnArgs = args
 				L.Debug("splitActive: cloning sudo session", "spawnArgs", spawnArgs)
 			} else {
@@ -610,22 +679,32 @@ func (app *App) splitActive(inheritContext bool) {
 		}
 	}
 
-	newPane, err := NewPane(
-		app.nextID, nx, ny, nw, nh, app.scrollback, dir, spawnArgs,
-		app.paneOSCColors(),
-		app.redraw, app.paneDead, app.done, app.oscBuf,
-		app.cellAspect,
-	)
+	newPane, err := app.newPane(nx, ny, nw, nh, dir, spawnArgs)
 	if err != nil {
 		L.Error("splitActive: NewPane", "err", err, "dir", dir, "spawnArgs", spawnArgs, "container", ct, "containerID", cid)
 		return
 	}
-	L.Debug("splitActive: new pane created", "new_pane", newPane.id, "x", nx, "y", ny, "w", nw, "h", nh)
-	app.nextID++
+	L.Debug("splitActive: new pane created", "new_pane", newPane.ID, "x", nx, "y", ny, "w", nw, "h", nh)
 
 	node.split(newPane, d)
 	app.active = newPane
 	app.triggerRedraw()
+}
+
+// newPane starts pane app.nextID at the given place, with the app's
+// scrollback, colours and notify socket, and advances nextID. app.mu must
+// be held.
+func (app *App) newPane(x, y, w, h int, dir string, args []string) (*Pane, error) {
+	p, err := startPane(paneSpec{
+		id: app.nextID, x: x, y: y, w: w, h: h, scrollback: app.scrollback, dir: dir, args: args,
+		colors: app.paneOSCColors(), redraw: app.redraw, paneDead: app.paneDead, done: app.done,
+		oscBuf: app.oscBuf, cellAspect: []float64{app.cellAspect}, notify: app.notify, timing: app.timing,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pane %d: %w", app.nextID, err)
+	}
+	app.nextID++
+	return p, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -663,7 +742,7 @@ func (app *App) zoomIn() {
 	app.zoomGeom = [4]int{p.x, p.y, p.w, p.h}
 
 	w, h := app.screen.Size()
-	L.Debug("zoomIn", "pane", p.id, "screen", w, "x", h)
+	L.Debug("zoomIn", "pane", p.ID, "screen", w, "x", h)
 	p.resize(0, 0, w, h)
 	app.triggerRedraw()
 }
@@ -682,7 +761,7 @@ func (app *App) zoomOut() {
 	app.zoomedPane = nil
 
 	g := app.zoomGeom
-	L.Debug("zoomOut", "pane", p.id, "restore", g)
+	L.Debug("zoomOut", "pane", p.ID, "restore", g)
 	p.resize(g[0], g[1], g[2], g[3])
 
 	// While zoomed, the zoomed pane's frame filled the entire tcell cell
@@ -711,7 +790,7 @@ func (app *App) navigate(d dir) {
 
 			for _, leaf := range leaves {
 				p := leaf.pane
-				if p == app.active || p.isDead() {
+				if p == app.active || p.IsDead() {
 					continue
 				}
 				cx := float64(p.x) + float64(p.w)/2
@@ -746,7 +825,7 @@ func (app *App) navigate(d dir) {
 
 	if best != nil {
 		prev = app.active
-		L.Debug("navigate: focus change", "dir", d, "from_pane", prev.id, "to_pane", best.id)
+		L.Debug("navigate: focus change", "dir", d, "from_pane", prev.ID, "to_pane", best.ID)
 		app.active = best
 		app.triggerRedraw()
 	} else {
@@ -756,8 +835,110 @@ func (app *App) navigate(d dir) {
 
 	if best != nil {
 		sendFocusOut(prev)
-		sendFocusIn(best)
+		app.focusIn(best)
 	}
+}
+
+// focusIn tells p it gained focus (DECSET 1004) and acknowledges its
+// agent's request, as focusing a tab does in bunk-gui. Call it after
+// making p the active pane, without app.mu.
+func (app *App) focusIn(p *Pane) {
+	sendFocusIn(p)
+	if acknowledge(p) {
+		app.triggerRedraw()
+	}
+}
+
+// acknowledge records that the user has seen p when its agent needs the
+// user or is done, and reports whether it did. Other states stay, so an
+// agent's working or failed report survives a focus change. It takes the
+// session lock; callers must not hold it.
+func acknowledge(p *Pane) bool {
+	if p == nil {
+		return false
+	}
+	switch p.Status().State {
+	case session.AgentNeedsYou, session.AgentDone:
+		p.Acknowledge()
+		L.Debug("acknowledge: agent request seen", "pane", p.ID)
+		return true
+	}
+	return false
+}
+
+// noAgentNeedsYou is the flash message of next_needs_you without a target.
+const noAgentNeedsYou = "no agent needs you"
+
+// jumpNeedingYou focuses the next pane after the active one, in layout
+// order, whose agent needs the user, else the next one whose agent is done
+// (next_needs_you), as bunk-gui does with tabs. The active pane comes last,
+// so a request that arrived while it had focus is found too. Focusing the
+// pane acknowledges it. Without such a pane it flashes a message.
+func (app *App) jumpNeedingYou() {
+	app.mu.Lock()
+	var panes []*Pane
+	if app.root != nil {
+		for _, leaf := range app.root.leaves() {
+			panes = append(panes, leaf.pane)
+		}
+	}
+	active := app.active
+	app.mu.Unlock()
+
+	start := len(panes) - 1 // no active pane: begin with the first
+	for i, p := range panes {
+		if p == active {
+			start = i
+		}
+	}
+	var target *Pane
+	for _, want := range []session.AgentState{session.AgentNeedsYou, session.AgentDone} {
+		for k := 1; k <= len(panes) && target == nil; k++ {
+			p := panes[(start+k)%len(panes)]
+			if !p.IsDead() && p.Status().State == want {
+				target = p
+			}
+		}
+		if target != nil {
+			break
+		}
+	}
+	if target == nil {
+		L.Debug("jumpNeedingYou: no agent needs you")
+		if active != nil {
+			const flash = 2 * time.Second
+			active.SetStatus(noAgentNeedsYou, flash)
+			app.triggerRedraw()
+			time.AfterFunc(flash, app.triggerRedraw)
+		}
+		return
+	}
+	L.Debug("jumpNeedingYou: focus", "pane", target.ID)
+	app.focusPane(target)
+}
+
+// focusPane makes p the active pane, leaving zoom when another pane fills
+// the screen, and acknowledges p.
+func (app *App) focusPane(p *Pane) {
+	app.mu.Lock()
+	zoomedOther := app.zoomedPane != nil && app.zoomedPane != p
+	app.mu.Unlock()
+	if zoomedOther {
+		app.zoomOut()
+	}
+	app.mu.Lock()
+	if app.root == nil || app.root.findPane(p) == nil {
+		app.mu.Unlock()
+		return // removed meanwhile
+	}
+	prev := app.active
+	app.active = p
+	app.mu.Unlock()
+	if prev != p {
+		sendFocusOut(prev)
+	}
+	app.focusIn(p)
+	app.triggerRedraw()
 }
 
 // deathWatcher waits for dead-pane notifications and cleans them up.
@@ -774,7 +955,7 @@ func (app *App) deathWatcher() {
 
 // removePane removes a dead pane from the layout and re-focuses if needed.
 func (app *App) removePane(p *Pane) {
-	L.Debug("removePane: removing pane", "pane", p.id)
+	L.Debug("removePane: removing pane", "pane", p.ID)
 	app.mu.Lock()
 
 	if app.root == nil {
@@ -791,9 +972,9 @@ func (app *App) removePane(p *Pane) {
 	var newActive *Pane
 	if app.active == p {
 		newActive = bestFocusAfterRemove(app.root, p)
-		L.Debug("removePane: refocusing", "from_pane", p.id, "to_pane", func() int {
+		L.Debug("removePane: refocusing", "from_pane", p.ID, "to_pane", func() int {
 			if newActive != nil {
-				return newActive.id
+				return newActive.ID
 			}
 			return -1
 		}())
@@ -801,6 +982,12 @@ func (app *App) removePane(p *Pane) {
 	}
 
 	app.root = removeFromTree(app.root, p)
+	if app.alerts.Remove(p.ID) == alert.Withdraw {
+		app.withdrawAlert(p.ID)
+	}
+	if app.notify != nil && p.token != "" {
+		app.notify.Unregister(p.token)
+	}
 	shutdown := app.root == nil
 	if wasZoomed && !shutdown {
 		// Same staleness as zoomOut: the dead pane's fullscreen frame is
@@ -811,6 +998,11 @@ func (app *App) removePane(p *Pane) {
 	}
 	app.mu.Unlock()
 
+	// The shell has exited, but a process it left behind (`server &`) may
+	// still hold the PTY. Close the master so the pane's reader goroutine,
+	// descriptor and emulator do not outlive the pane.
+	p.Close()
+
 	if shutdown {
 		L.Info("removePane: last pane removed, shutting down")
 		go app.shutdown()
@@ -818,7 +1010,7 @@ func (app *App) removePane(p *Pane) {
 	}
 
 	if newActive != nil {
-		sendFocusIn(newActive)
+		app.focusIn(newActive)
 	}
 
 	app.triggerRedraw()
@@ -849,7 +1041,7 @@ func closestLivePane(n *Node, cx, cy float64, exclude *Pane) *Pane {
 	bestDist := math.MaxFloat64
 	for _, leaf := range n.leaves() {
 		p := leaf.pane
-		if p == exclude || p.isDead() {
+		if p == exclude || p.IsDead() {
 			continue
 		}
 		px := float64(p.x) + float64(p.w)/2
@@ -878,255 +1070,6 @@ const (
 // ---------------------------------------------------------------------------
 // Key → PTY byte translation
 // ---------------------------------------------------------------------------
-
-func keyToBytes(ev *tcell.EventKey, kittyFlags int) []byte {
-	mod := ev.Modifiers()
-
-	// Kitty keyboard protocol: when the child app has pushed disambiguate
-	// mode (flags bit 0), encode keys as CSI u sequences so the app can
-	// tell Alt+key from ESC+key, Ctrl+I from Tab, etc.
-	useCSIu := kittyFlags&1 != 0
-
-	// Kitty modifier parameter: 1 + bitmask (shift=1, alt=2, ctrl=4).
-	kittyMod := 1
-	if mod&tcell.ModShift != 0 {
-		kittyMod += 1
-	}
-	if mod&tcell.ModAlt != 0 {
-		kittyMod += 2
-	}
-	if mod&tcell.ModCtrl != 0 {
-		kittyMod += 4
-	}
-
-	if ev.Key() == tcell.KeyRune {
-		r := ev.Rune()
-		if useCSIu && kittyMod > 1 {
-			return fmt.Appendf(nil, "\x1b[%d;%du", r, kittyMod)
-		}
-		if mod&tcell.ModAlt != 0 {
-			return append([]byte{'\x1b'}, []byte(string(r))...)
-		}
-		return []byte(string(r))
-	}
-
-	k := ev.Key()
-
-	// CSI u encoding for special keys whose legacy form is ambiguous.
-	if useCSIu {
-		cp := 0
-		km := kittyMod
-		switch k {
-		case tcell.KeyEnter:
-			cp = 13
-		case tcell.KeyTab:
-			cp = 9
-		case tcell.KeyBacktab:
-			cp = 9
-			km = 1 + ((km - 1) | 1) // BackTab always implies Shift
-		case tcell.KeyBackspace, tcell.KeyBackspace2:
-			cp = 127
-		case tcell.KeyEsc:
-			cp = 27
-		}
-		if cp > 0 {
-			if km > 1 {
-				return fmt.Appendf(nil, "\x1b[%d;%du", cp, km)
-			}
-			return fmt.Appendf(nil, "\x1b[%du", cp)
-		}
-		// Ctrl+letter: codepoint is the lowercase letter.
-		if k >= tcell.KeyCtrlA && k <= tcell.KeyCtrlZ {
-			cp = int('a' + (k - tcell.KeyCtrlA))
-			km = 1 + ((km - 1) | 4) // modifier parameters are one-based
-			return fmt.Appendf(nil, "\x1b[%d;%du", cp, km)
-		}
-		// Fall through to legacy for arrows, F-keys, etc. which already
-		// have unambiguous CSI representations.
-	}
-
-	// Legacy encoding.
-	if mod&tcell.ModAlt != 0 && (k >= tcell.KeyCtrlA && k <= tcell.KeyCtrlZ || k == tcell.KeyBackspace || k == tcell.KeyBackspace2 || k == tcell.KeyEsc || k == tcell.KeyEnter || k == tcell.KeyTab) {
-		plain := tcell.NewEventKey(k, ev.Rune(), mod&^tcell.ModAlt)
-		return append([]byte{27}, keyToBytes(plain, 0)...)
-	}
-	if k >= tcell.KeyCtrlA && k <= tcell.KeyCtrlZ {
-		return []byte{byte(k-tcell.KeyCtrlA) + 1}
-	}
-
-	// xtermMod returns the xterm modifier parameter (1 + shift + alt*2 + ctrl*4).
-	// Identical encoding to kittyMod — reuse the already-computed value.
-	// When kittyMod == 1 (no modifiers), omit the parameter entirely (bare seq).
-	xm := kittyMod
-
-	switch k {
-	case tcell.KeyBackspace:
-		return []byte{'\x08'}
-	case tcell.KeyBackspace2:
-		return []byte{'\x7f'}
-	case tcell.KeyEnter:
-		return []byte{'\r'}
-	case tcell.KeyTab:
-		return []byte{'\t'}
-	case tcell.KeyBacktab: // Shift+Tab
-		return []byte{'\x1b', '[', 'Z'}
-	case tcell.KeyEsc:
-		return []byte{'\x1b'}
-
-	// Arrow keys — bare CSI when unmodified, CSI 1;<mod> when modified.
-	// The `return nil` guards that used to be here for Alt+arrows are removed:
-	// handleKey already consumed them as keybindings before reaching keyToBytes.
-	// Any key that arrives here must be forwarded.
-	case tcell.KeyUp:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dA", xm)
-		}
-		return []byte{'\x1b', '[', 'A'}
-	case tcell.KeyDown:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dB", xm)
-		}
-		return []byte{'\x1b', '[', 'B'}
-	case tcell.KeyRight:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dC", xm)
-		}
-		return []byte{'\x1b', '[', 'C'}
-	case tcell.KeyLeft:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dD", xm)
-		}
-		return []byte{'\x1b', '[', 'D'}
-
-	// Home / End
-	case tcell.KeyHome:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dH", xm)
-		}
-		return []byte{'\x1b', '[', 'H'}
-	case tcell.KeyEnd:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dF", xm)
-		}
-		return []byte{'\x1b', '[', 'F'}
-
-	// PgUp / PgDn / Insert / Delete
-	case tcell.KeyPgUp:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[5;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '5', '~'}
-	case tcell.KeyPgDn:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[6;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '6', '~'}
-	case tcell.KeyInsert:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[2;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '2', '~'}
-	case tcell.KeyDelete:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[3;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '3', '~'}
-
-	// F1–F4: SS3 form when unmodified, CSI 1;<mod> form when modified.
-	case tcell.KeyF1:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dP", xm)
-		}
-		return []byte{'\x1b', 'O', 'P'}
-	case tcell.KeyF2:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dQ", xm)
-		}
-		return []byte{'\x1b', 'O', 'Q'}
-	case tcell.KeyF3:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dR", xm)
-		}
-		return []byte{'\x1b', 'O', 'R'}
-	case tcell.KeyF4:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[1;%dS", xm)
-		}
-		return []byte{'\x1b', 'O', 'S'}
-
-	// F5–F12: tilde form when unmodified, <code>;<mod>~ when modified.
-	case tcell.KeyF5:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[15;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '1', '5', '~'}
-	case tcell.KeyF6:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[17;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '1', '7', '~'}
-	case tcell.KeyF7:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[18;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '1', '8', '~'}
-	case tcell.KeyF8:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[19;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '1', '9', '~'}
-	case tcell.KeyF9:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[20;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '2', '0', '~'}
-	case tcell.KeyF10:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[21;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '2', '1', '~'}
-	case tcell.KeyF11:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[23;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '2', '3', '~'}
-	case tcell.KeyF12:
-		if xm > 1 {
-			return fmt.Appendf(nil, "\x1b[24;%d~", xm)
-		}
-		return []byte{'\x1b', '[', '2', '4', '~'}
-
-	// F13–F24: these are the standard xterm Shift+F1–F12 encodings.
-	// tcell may report Shift+F1 as either KeyF1+ModShift (handled above via
-	// the xm>1 path) or as KeyF13 directly, depending on the host terminal's
-	// terminfo.  We handle both so apps receive the correct sequence either way.
-	case tcell.KeyF13:
-		return []byte{'\x1b', '[', '1', ';', '2', 'P'} // Shift+F1
-	case tcell.KeyF14:
-		return []byte{'\x1b', '[', '1', ';', '2', 'Q'} // Shift+F2
-	case tcell.KeyF15:
-		return []byte{'\x1b', '[', '1', ';', '2', 'R'} // Shift+F3
-	case tcell.KeyF16:
-		return []byte{'\x1b', '[', '1', ';', '2', 'S'} // Shift+F4
-	case tcell.KeyF17:
-		return []byte{'\x1b', '[', '1', '5', ';', '2', '~'} // Shift+F5
-	case tcell.KeyF18:
-		return []byte{'\x1b', '[', '1', '7', ';', '2', '~'} // Shift+F6
-	case tcell.KeyF19:
-		return []byte{'\x1b', '[', '1', '8', ';', '2', '~'} // Shift+F7
-	case tcell.KeyF20:
-		return []byte{'\x1b', '[', '1', '9', ';', '2', '~'} // Shift+F8
-	case tcell.KeyF21:
-		return []byte{'\x1b', '[', '2', '0', ';', '2', '~'} // Shift+F9
-	case tcell.KeyF22:
-		return []byte{'\x1b', '[', '2', '1', ';', '2', '~'} // Shift+F10
-	case tcell.KeyF23:
-		return []byte{'\x1b', '[', '2', '3', ';', '2', '~'} // Shift+F11
-	case tcell.KeyF24:
-		return []byte{'\x1b', '[', '2', '4', ';', '2', '~'} // Shift+F12
-	}
-	return nil
-}
 
 // tcellColorToXParse converts a tcell.Color to XParseColor format
 // "rgb:<rrrr>/<gggg>/<bbbb>" for use in OSC 10/11 terminal colour query

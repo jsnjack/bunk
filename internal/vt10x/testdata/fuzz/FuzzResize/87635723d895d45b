@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x01')
+byte('\x01')
+byte('\u009b')
+byte('$')
+uint16(17)
+[]byte("\x1bP\x1b\x1b")

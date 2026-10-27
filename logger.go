@@ -9,9 +9,11 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"os"
+	"time"
 )
 
 // LevelTrace is below Debug — logs raw PTY byte chunks for deep inspection.
@@ -63,5 +65,15 @@ func initLogger(path, level string) (cleanup func()) {
 		if f != nil {
 			f.Close() //nolint:errcheck // logger shutdown; nothing to log the error to
 		}
+	}
+}
+
+// logAlways writes msg to the log file whatever the log level, for lines
+// such as the address a server listens on. Like every log line of the TUI,
+// it never reaches stderr.
+func logAlways(msg string) {
+	r := slog.NewRecord(time.Now(), slog.LevelInfo, msg, 0)
+	if err := L.Handler().Handle(context.Background(), r); err != nil {
+		L.Log(context.Background(), LevelTrace, "log", "msg", msg, "err", err)
 	}
 }

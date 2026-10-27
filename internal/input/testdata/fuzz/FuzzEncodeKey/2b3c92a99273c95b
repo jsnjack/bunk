@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\x01')
+rune('T')
+byte('[')
+int(-30)
+bool(false)
+bool(true)

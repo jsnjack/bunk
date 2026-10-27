@@ -4,8 +4,8 @@ import (
 	"bunk/internal/graphics"
 	"io"
 	"log"
-	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rivo/uniseg"
 )
@@ -115,20 +115,8 @@ type Glyph struct {
 	Mode      int16
 	FG, BG    Color
 	UL        Color      // SGR 58 underline color; DefaultUL means inherit from FG
-	Link      uint16     // OSC 8 hyperlink ID; 0 = no link, otherwise index into State.links (1-based)
+	Link      uint16     // OSC 8 hyperlink ID (State.Link); 0 = no link
 	Image     *ImageCell // immutable cell-local raster data, shared by scrollback snapshots
-}
-
-type line []Glyph
-
-// makeLine allocates a line of n Glyphs with UL pre-set to DefaultUL so that
-// the zero value of Color (Black) is never confused with "no underline color".
-func makeLine(n int) line {
-	l := make(line, n)
-	for i := range l {
-		l[i].UL = DefaultUL
-	}
-	return l
 }
 
 type Cursor struct {
@@ -139,7 +127,19 @@ type Cursor struct {
 	// 3=blinking underline, 4=steady underline, 5=blinking bar, 6=steady bar.
 }
 
-type parseState func(c rune)
+// parseState selects the handler for the next rune. A small enum keeps state
+// changes free of the closure allocation a bound method value needs.
+type parseState uint8
+
+const (
+	stateGround parseState = iota
+	stateEsc
+	stateEscCSI
+	stateEscStr
+	stateEscStrEnd
+	stateEscAltCharset
+	stateEscTest
+)
 
 // State represents the terminal emulation state. Use Lock/Unlock
 // methods to synchronize data access with VT.
@@ -150,16 +150,18 @@ type State struct {
 	mu                 sync.Mutex
 	changed            ChangeFlag
 	cols, rows         int
-	lines              []line
-	altLines           []line
+	lines              []*Row // pointers, so scrolling moves 8 bytes per row
+	altLines           []*Row
 	dirty              []bool // line dirtiness
 	anydirty           bool
+	allDirty           bool // every row is dirty; dirty is not updated
 	cur, curSaved      Cursor
 	top, bottom        int // scroll limits
 	mode               ModeFlag
 	state              parseState
 	clusterOpen        bool
 	clusterX, clusterY int
+	clusters           clusterCache
 	str                strEscape
 	csi                csiEscape
 	numlock            bool
@@ -172,49 +174,43 @@ type State struct {
 	// blank ones the renderer would otherwise skip via dirty tracking.  The
 	// renderer watches this counter to force a full repaint when it changes.
 	colorGen uint64
-	// links / linkIDs together form the OSC 8 hyperlink intern table.
-	//
-	// links[id-1] = URL gives the slice for ID→URL lookup (used by render).
-	// linkIDs[url] = id gives O(1) dedup when the same URL is seen multiple
-	// times — without it, ls --hyperlink in a 5k-file directory does
-	// quadratic string compares.
-	//
-	// Index 0 is reserved for "no link" so a zero-valued Glyph.Link means
-	// "this cell isn't part of a hyperlink". Slots are append-only —
-	// scrollback rows keep their IDs valid for the lifetime of the State.
-	// Capped at 0xFFFF (uint16 max) per pane; past that new URLs degrade
-	// silently to "no link", which is the right failure mode (rendering
-	// stays correct, just no clickable link for the overflow URLs).
-	links     []string
-	linkIDs   map[string]uint16
-	linkBytes int
 	// scrollRowCb, if non-nil, is called once per row that scrolls off the
 	// top of the primary screen (orig == 0 in scrollUp).  It fires before
 	// the row's backing storage is cleared, so the content is still intact.
-	// The caller must copy any data it wants to retain after the call.
-	scrollRowCb func(row []Glyph)
+	scrollRowCb func(row Row)
 	// sbClearCb, if non-nil, is called when the application requests
 	// scrollback erasure via ED 3 (CSI 3 J) or RIS (ESC c).  Scrollback
 	// lives outside this State (which only holds the visible grid), so
 	// erasure is delegated to the owner.  Not fired by init-time reset().
 	sbClearCb             func()
+	bellCb                func() // BEL outside escape strings
 	graphics              *graphics.Decoder
 	graphicsReply         func([]byte)
 	cellWidth, cellHeight int
-	graphicsRows          int // replay viewport height; zero uses the live grid
+	graphicsRows          int             // replay viewport height; zero uses the live grid
+	images                *graphics.Store // bitmaps of placements; nil keeps only cell samples
+	links                 linkTable       // OSC 8 hyperlink URLs by Glyph.Link ID (links.go)
 }
 
 func newState(w io.Writer) *State {
 	return &State{
 		w:             w,
 		colorOverride: make(map[Color]Color),
-		linkIDs:       make(map[string]uint16),
+		links:         newLinkTable(),
 	}
 }
 
 func (t *State) logf(format string, args ...interface{}) {
 	if t.DebugLogger != nil {
 		t.DebugLogger.Printf(format, args...)
+	}
+}
+
+// logRune logs one parsed rune. The nil check comes before string(c), so the
+// parser allocates nothing when debug logging is off.
+func (t *State) logRune(c rune) {
+	if t.DebugLogger != nil {
+		t.DebugLogger.Printf("%q", string(c))
 	}
 }
 
@@ -246,7 +242,7 @@ func (t *State) Unlock() {
 // Cell returns the glyph containing the character code, foreground color, and
 // background color at position (x, y) relative to the top left of the terminal.
 func (t *State) Cell(x, y int) Glyph {
-	cell := t.lines[y][x]
+	cell := t.lines[y].Glyph(x)
 	fg, ok := t.colorOverride[cell.FG]
 	if ok {
 		cell.FG = fg
@@ -259,7 +255,7 @@ func (t *State) Cell(x, y int) Glyph {
 }
 
 // RawCell returns a glyph without resolving dynamic colour overrides.
-func (t *State) RawCell(x, y int) Glyph { return t.lines[y][x] }
+func (t *State) RawCell(x, y int) Glyph { return t.lines[y].Glyph(x) }
 
 // ImportGlyph translates hyperlink identities. The caller must synchronize
 // access to both terminals, as for Cell and Link.
@@ -287,7 +283,8 @@ func (t *State) ReplaceScreen(cols, rows int, cells [][]Glyph, cursor Cursor, so
 	blank := t.defaultCursor().Attr
 	blank.Char = ' '
 	for y := range t.lines {
-		for x := range t.lines[y] {
+		t.lines[y].clearExtras() // every cell is rewritten below
+		for x := 0; x < cols; x++ {
 			g := blank
 			if y < len(cells) && x < len(cells[y]) {
 				g = cells[y][x]
@@ -296,7 +293,7 @@ func (t *State) ReplaceScreen(cols, rows int, cells [][]Glyph, cursor Cursor, so
 				}
 				g = t.ImportGlyph(g, source)
 			}
-			t.lines[y][x] = g
+			t.lines[y].set(x, g)
 		}
 		t.repairWideRow(y)
 	}
@@ -419,43 +416,6 @@ func (t *State) Title() string {
 	return t.title
 }
 
-// Link returns the OSC 8 hyperlink URL for the given ID, or "" if id is 0
-// (meaning "no link") or out of range. Callers must hold the State lock.
-func (t *State) Link(id uint16) string {
-	if id == 0 || int(id) > len(t.links) {
-		return ""
-	}
-	return t.links[id-1]
-}
-
-// internLink interns url and returns its 1-based ID. Returns 0 for "" or when
-// the per-pane table is full (uint16 max ≈ 65k unique URLs). The table is
-// append-only so existing IDs remain valid for scrollback rows.
-//
-// Lookup is O(1) via linkIDs; ls --hyperlink in a large directory used to
-// be quadratic before this map was added.
-func (t *State) internLink(url string) uint16 {
-	if url == "" {
-		return 0
-	}
-	if id, ok := t.linkIDs[url]; ok {
-		return id
-	}
-	// The graphics-capable string parser also accepts longer OSC strings.
-	// Bound total URL bytes independently of the number of interned IDs.
-	if len(t.links) >= 0xFFFF || len(url) > maxLinkBytes-t.linkBytes {
-		return 0
-	}
-	url = strings.Clone(url) // do not retain a larger OSC header backing string
-	t.linkBytes += len(url)
-	t.links = append(t.links, url)
-	id := uint16(len(t.links))
-	t.linkIDs[url] = id
-	return id
-}
-
-const maxLinkBytes = 16 << 20
-
 /*
 // ChangeMask returns a bitfield of changes that have occured by VT.
 func (t *State) ChangeMask() ChangeFlag {
@@ -476,12 +436,42 @@ func (t *State) ConsumeDirty() ([]bool, bool) {
 		return nil, false
 	}
 	out := make([]bool, len(t.dirty))
-	copy(out, t.dirty)
-	for i := range t.dirty {
-		t.dirty[i] = false
-	}
-	t.anydirty = false
+	t.takeDirty(out)
 	return out, true
+}
+
+// takeDirty moves the dirty flags into dst, which has one entry per row.
+func (t *State) takeDirty(dst []bool) {
+	if t.allDirty {
+		for i := range dst {
+			dst[i] = true
+		}
+	} else {
+		copy(dst, t.dirty)
+	}
+	clear(t.dirty)
+	t.anydirty, t.allDirty = false, false
+}
+
+// ConsumeDirtyInto copies the dirty flags into dst, clears them, and returns
+// dst resliced to the row count. It allocates only when dst is too short.
+func (t *State) ConsumeDirtyInto(dst []bool) ([]bool, bool) {
+	if cap(dst) < len(t.dirty) {
+		dst = make([]bool, len(t.dirty))
+	}
+	dst = dst[:len(t.dirty)]
+	if !t.anydirty {
+		clear(dst)
+		return dst, false
+	}
+	t.takeDirty(dst)
+	return dst, true
+}
+
+// CopyRow copies live row y into dst, reusing dst's storage.
+func (t *State) CopyRow(y int, dst *Row) {
+	src := t.lines[y]
+	dst.CopyFrom(*src, src.Len())
 }
 
 // markDirty marks row y as dirty and sets the anydirty flag.
@@ -490,12 +480,23 @@ func (t *State) markDirty(y int) {
 	t.anydirty = true
 }
 
+// markDirtyRange marks rows y0 through y1. A full-screen range sets one flag,
+// so scrolling the whole screen costs the same for any height.
+func (t *State) markDirtyRange(y0, y1 int) {
+	t.anydirty = true
+	if y0 == 0 && y1 == len(t.dirty)-1 {
+		t.allDirty = true
+		return
+	}
+	for y := y0; y <= y1; y++ {
+		t.dirty[y] = true
+	}
+}
+
 // resetChanges resets the change mask and dirtiness.
 func (t *State) resetChanges() {
-	for i := range t.dirty {
-		t.dirty[i] = false
-	}
-	t.anydirty = false
+	clear(t.dirty)
+	t.anydirty, t.allDirty = false, false
 	t.changed = 0
 }
 
@@ -509,7 +510,22 @@ func (t *State) restoreCursor() {
 }
 
 func (t *State) put(c rune) {
-	t.state(c)
+	switch t.state {
+	case stateGround:
+		t.parse(c)
+	case stateEsc:
+		t.parseEsc(c)
+	case stateEscCSI:
+		t.parseEscCSI(c)
+	case stateEscStr:
+		t.parseEscStr(c)
+	case stateEscStrEnd:
+		t.parseEscStrEnd(c)
+	case stateEscAltCharset:
+		t.parseEscAltCharset(c)
+	case stateEscTest:
+		t.parseEscTest(c)
+	}
 }
 
 func (t *State) putTab(forward bool) {
@@ -575,22 +591,38 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	if width == 2 {
 		t.eraseWideAt(x+1, y)
 	}
-	t.lines[y][x] = *attr
-	t.lines[y][x].Char = c
-	t.lines[y][x].Combining = ""
-	t.lines[y][x].Width = int8(width)
+	fg, bg := attr.FG, attr.BG
 	//if t.options.BrightBold && attr.Mode&attrBold != 0 && attr.FG < 8 {
 	if attr.Mode&attrBold != 0 && attr.FG < 8 {
-		t.lines[y][x].FG = attr.FG + 8
+		fg = attr.FG + 8
 	}
 	if attr.Mode&attrReverse != 0 {
-		t.lines[y][x].FG = attr.BG
-		t.lines[y][x].BG = attr.FG
+		fg, bg = attr.BG, attr.FG
 	}
+	if attr.UL == DefaultUL && attr.Link == 0 && attr.Image == nil {
+		// No side-table data: store the cell directly.
+		cl := cell{Char: c, FG: fg, BG: bg, Mode: attr.Mode}
+		cl.setWidth(int8(width))
+		t.lines[y].cells[x] = cl
+		t.lines[y].touch(x)
+		if width == 2 {
+			cl.Char = 0
+			cl.setWidth(-1)
+			t.lines[y].cells[x+1] = cl
+			t.lines[y].touch(x + 1)
+		}
+		return
+	}
+	g := *attr
+	g.Char = c
+	g.Combining = ""
+	g.Width = int8(width)
+	g.FG, g.BG = fg, bg
+	t.lines[y].set(x, g)
 	if width == 2 {
-		t.lines[y][x+1] = t.lines[y][x]
-		t.lines[y][x+1].Char = 0
-		t.lines[y][x+1].Width = -1
+		g.Char = 0
+		g.Width = -1
+		t.lines[y].set(x+1, g)
 	}
 }
 
@@ -598,19 +630,82 @@ func runeCellWidth(c rune) int {
 	if c < 0x80 {
 		return 1
 	}
-	return max(1, uniseg.StringWidth(string(c)))
+	if c >= cachedWidthRunes {
+		return uncachedCellWidth(c)
+	}
+	return int(runeInfo(c) & infoWidth)
 }
 
-func (t *State) eraseCell(x, y int) {
+// uncachedCellWidth is the width of c in cells. Cells hold at most two
+// columns; uniseg gives U+2E3A and U+2E3B three and four.
+func uncachedCellWidth(c rune) int {
+	return min(2, max(1, uniseg.StringWidth(string(c))))
+}
+
+// cachedWidthRunes covers the BMP, emoji and CJK extension planes.
+const cachedWidthRunes = 0x30000
+
+// A runeInfo entry holds a rune's cell width in its low two bits,
+// infoSimple when the rune is a simple grapheme (simpleGrapheme), and
+// infoEndsCluster when no simple grapheme extends a cluster ending with it
+// (endsCluster). Every computed entry is non-zero, because the width is 1
+// or 2.
+const (
+	infoWidth       = 3
+	infoSimple      = 4
+	infoEndsCluster = 8
+)
+
+// runeInfos caches runeInfo, filled on first use. Each uint32 holds eight
+// 4-bit entries; 0 means not computed. Panes parse concurrently, so entries
+// are read and set atomically.
+var runeInfos [cachedWidthRunes / 8]atomic.Uint32
+
+// runeInfo returns the cached width and class of c < cachedWidthRunes.
+func runeInfo(c rune) uint32 {
+	word, shift := &runeInfos[c>>3], uint(c&7)*4
+	if info := word.Load() >> shift & 15; info != 0 {
+		return info
+	}
+	info := uint32(uncachedCellWidth(c))
+	if simpleGrapheme(c) {
+		info |= infoSimple
+	}
+	if endsCluster(c) {
+		info |= infoEndsCluster
+	}
+	for {
+		old := word.Load()
+		if word.CompareAndSwap(old, old|info<<shift) {
+			return info
+		}
+	}
+}
+
+// blankCell returns the glyph that erase operations write: the current
+// colours without character attributes, link or image.
+func (t *State) blankCell() Glyph {
 	g := t.cur.Attr
 	g.Char, g.Width, g.Link = ' ', 1, 0
 	g.Mode, g.Combining, g.UL = 0, "", DefaultUL
 	g.Image = nil
-	t.lines[y][x] = g
+	return g
+}
+
+// blankStored is blankCell as a stored cell. A blank has no side-table
+// data, so it needs no encoding.
+func (t *State) blankStored() cell {
+	c := cell{Char: ' ', FG: t.cur.Attr.FG, BG: t.cur.Attr.BG}
+	c.setWidth(1)
+	return c
+}
+
+func (t *State) eraseCell(x, y int) {
+	t.lines[y].set(x, t.blankCell())
 }
 
 func (t *State) eraseWideAt(x, y int) {
-	switch t.lines[y][x].Width {
+	switch t.lines[y].cells[x].width() {
 	case -1:
 		if x > 0 {
 			t.eraseCell(x-1, y)
@@ -622,17 +717,36 @@ func (t *State) eraseWideAt(x, y int) {
 	}
 }
 
+// eraseSplitWide erases the wide character that a boundary between columns
+// x-1 and x cuts in two, as xterm does before ICH and DCH shift cells.
+// Without it a shift could pair one character's lead with another's
+// continuation, which carries that other character's colours and link.
+func (t *State) eraseSplitWide(x, y int) {
+	if x > 0 && x < t.cols && t.lines[y].cells[x].width() == -1 {
+		t.eraseCell(x-1, y)
+		t.eraseCell(x, y)
+	}
+}
+
+// repairWideRow erases halves of wide characters that shifting or resizing
+// row y split, and turns wrap padding that is no longer the last cell of a
+// wrapped row into a blank.
 func (t *State) repairWideRow(y int) {
 	for x := 0; x < t.cols; x++ {
-		switch t.lines[y][x].Width {
+		switch t.lines[y].cells[x].width() {
 		case 2:
-			if x+1 < t.cols && t.lines[y][x+1].Width == -1 {
+			if x+1 < t.cols && t.lines[y].cells[x+1].width() == -1 {
 				x++
 			} else {
 				t.eraseCell(x, y)
 			}
 		case -1:
 			t.eraseCell(x, y)
+		case -2:
+			if x != t.cols-1 || t.lines[y].cells[x].Mode&attrWrap == 0 {
+				t.lines[y].cells[x].setWidth(1)
+				t.lines[y].touch(x)
+			}
 		}
 	}
 }
@@ -679,8 +793,8 @@ func (t *State) resize(cols, rows int) bool {
 	}
 
 	lines, altLines, tabs := t.lines, t.altLines, t.tabs
-	t.lines = make([]line, rows)
-	t.altLines = make([]line, rows)
+	t.lines = make([]*Row, rows)
+	t.altLines = make([]*Row, rows)
 	t.dirty = make([]bool, rows)
 	t.tabs = make([]bool, cols)
 
@@ -689,12 +803,12 @@ func (t *State) resize(cols, rows int) bool {
 	t.changed |= ChangedScreen
 	for i := 0; i < rows; i++ {
 		t.markDirty(i)
-		t.lines[i] = makeLine(cols)
-		t.altLines[i] = makeLine(cols)
+		t.lines[i] = newRow(cols)
+		t.altLines[i] = newRow(cols)
 	}
 	for i := 0; i < minrows; i++ {
-		copy(t.lines[i], lines[i])
-		copy(t.altLines[i], altLines[i])
+		t.lines[i].copyCells(*lines[i])
+		t.altLines[i].copyCells(*altLines[i])
 	}
 	copy(t.tabs, tabs)
 	if cols > t.cols {
@@ -738,18 +852,17 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 	y0 = clamp(y0, 0, t.rows-1)
 	y1 = clamp(y1, 0, t.rows-1)
 	t.changed |= ChangedScreen
+	blank := t.blankStored()
 	for y := y0; y <= y1; y++ {
 		t.markDirty(y)
 		start, end := x0, x1
-		if t.lines[y][start].Width == -1 && start > 0 {
+		if t.lines[y].cells[start].width() == -1 && start > 0 {
 			start--
 		}
-		if t.lines[y][end].Width == 2 && end+1 < t.cols {
+		if t.lines[y].cells[end].width() == 2 && end+1 < t.cols {
 			end++
 		}
-		for x := start; x <= end; x++ {
-			t.eraseCell(x, y)
-		}
+		t.lines[y].fill(start, end+1, blank)
 	}
 }
 
@@ -785,10 +898,7 @@ func (t *State) swapScreen() {
 
 func (t *State) dirtyAll() {
 	t.changed |= ChangedScreen
-	t.anydirty = true
-	for y := 0; y < t.rows; y++ {
-		t.dirty[y] = true
-	}
+	t.markDirtyRange(0, t.rows-1)
 }
 
 func (t *State) setScroll(top, bottom int) {
@@ -851,11 +961,19 @@ func (t *State) scrollUp(orig, n int) {
 	// Only fire when orig == 0 — rows leaving the top of the visible screen.
 	if t.scrollRowCb != nil && orig == 0 {
 		for i := 0; i < n; i++ {
-			t.scrollRowCb([]Glyph(t.lines[i]))
+			t.scrollRowCb(*t.lines[i])
 		}
 	}
 	t.clear(0, orig, t.cols-1, orig+n-1)
 	t.changed |= ChangedScreen
+	if n == 1 {
+		// Rotate the region up by one row, the common newline case.
+		first := t.lines[orig]
+		copy(t.lines[orig:t.bottom], t.lines[orig+1:t.bottom+1])
+		t.lines[t.bottom] = first
+		t.markDirtyRange(orig, t.bottom)
+		return
+	}
 	for i := orig; i <= t.bottom-n; i++ {
 		t.lines[i], t.lines[i+n] = t.lines[i+n], t.lines[i]
 		t.markDirty(i)
@@ -1109,7 +1227,7 @@ func (t *State) setAttr(attr []int) {
 					if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
 						t.logf("bad fg rgb color (%d,%d,%d)\n", r, g, b)
 					} else {
-						t.cur.Attr.FG = Color(r<<16 | g<<8 | b)
+						t.cur.Attr.FG = RGB(uint8(r), uint8(g), uint8(b))
 					}
 				}
 			default:
@@ -1143,7 +1261,7 @@ func (t *State) setAttr(attr []int) {
 					if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
 						t.logf("bad bg rgb color (%d,%d,%d)\n", r, g, b)
 					} else {
-						t.cur.Attr.BG = Color(r<<16 | g<<8 | b)
+						t.cur.Attr.BG = RGB(uint8(r), uint8(g), uint8(b))
 					}
 				}
 			default:
@@ -1179,7 +1297,7 @@ func (t *State) setAttr(attr []int) {
 					if !between(r, 0, 255) || !between(g, 0, 255) || !between(b, 0, 255) {
 						t.logf("bad ul rgb color (%d,%d,%d)\n", r, g, b)
 					} else {
-						t.cur.Attr.UL = Color(r<<16 | g<<8 | b)
+						t.cur.Attr.UL = RGB(uint8(r), uint8(g), uint8(b))
 						t.cur.Attr.Mode |= attrHasULColor
 					}
 				}
@@ -1216,7 +1334,11 @@ func (t *State) insertBlanks(n int) {
 	if dst >= t.cols {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
-		copy(t.lines[t.cur.Y][dst:dst+size], t.lines[t.cur.Y][src:src+size])
+		// The insert point and the column where cells fall off the end.
+		t.eraseSplitWide(src, t.cur.Y)
+		t.eraseSplitWide(t.cols-n, t.cur.Y)
+		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
+		t.lines[t.cur.Y].touchAll()
 		for x := src; x < dst; x++ {
 			t.eraseCell(x, t.cur.Y)
 		}
@@ -1249,7 +1371,11 @@ func (t *State) deleteChars(n int) {
 	if src >= t.cols {
 		t.clear(t.cur.X, t.cur.Y, t.cols-1, t.cur.Y)
 	} else {
-		copy(t.lines[t.cur.Y][dst:dst+size], t.lines[t.cur.Y][src:src+size])
+		// Both edges of the deleted range.
+		t.eraseSplitWide(dst, t.cur.Y)
+		t.eraseSplitWide(src, t.cur.Y)
+		copy(t.lines[t.cur.Y].cells[dst:dst+size], t.lines[t.cur.Y].cells[src:src+size])
+		t.lines[t.cur.Y].touchAll()
 		for x := t.cols - n; x < t.cols; x++ {
 			t.eraseCell(x, t.cur.Y)
 		}

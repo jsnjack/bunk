@@ -1,6 +1,6 @@
 # Bunk Terminal Feature Audit
 
-Date: 2026-03-12 (updated 2026-09-21)
+Date: 2026-03-12 (updated 2026-10-25)
 
 ## Legend
 - **OK** — fully handled
@@ -28,11 +28,11 @@ Date: 2026-03-12 (updated 2026-09-21)
 | 21 | Double underline | OK | Same style as SGR 4:2; does not clear bold/dim |
 | 53 | Overline | OK | Stored through reflow and emitted as SGR 53 by the pinned tcell fork; SGR 55/0 clear it. Host must support overline |
 | 58;5;N | Colored underline (256) | OK | attrHasULColor flag + UL Color field; vtColor mapping; tcell style.Underline(color) |
-| 58;2;R;G;B | Colored underline (RGB) | OK | Same |
+| 58;2;R;G;B | Colored underline (RGB) | **FIXED** | Same; RGB values below 256 were palette indexes (see 38;2) |
 | 30-37, 90-97 | ANSI FG colors | OK | |
 | 40-47, 100-107 | ANSI BG colors | OK | |
 | 38;5;N / 48;5;N | 256 colors | OK | |
-| 38;2;R;G;B / 48;2;R;G;B | True color (24-bit) | OK | |
+| 38;2;R;G;B / 48;2;R;G;B | True color (24-bit) | **FIXED** | Was stored as `r<<16\|g<<8\|b`, so zero red and green with blue below 256 equalled a palette index: `38;2;0;0;255` painted palette 255 (grey) and DECRQSS reported `38;5;255`. Truecolour now carries a flag bit (`vt10x.RGB`), and so do OSC 4/10/11/12 overrides |
 
 Root cause (resolved): vt10x vendored to `internal/vt10x`; SGR 2/8/9 attr bits added and wired.
 
@@ -45,14 +45,17 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | OSC | Feature | Status | Notes |
 |-----|---------|--------|-------|
 | 0/1/2 | Window title | OK | vt10x handles; bunk supplements with process/cwd |
-| 4 | Set palette color | OK | vt10x handles |
+| 4 | Set palette color | **FIXED** | vt10x handles indices 0-255 and rejects others without changing state; an index equal to a truecolour value used to recolour those cells. A query (`4;N;?`) answers with N and the override; a colour without an override is unknown and gets no reply |
 | 7 | CWD notification | OK | Forwarded to host |
-| 8 | Hyperlinks | OK | Stored on glyphs and emitted inline with text; hyperlink identities survive reflow |
+| 8 | Hyperlinks | OK | Stored on glyphs and emitted inline with text; hyperlink identities survive reflow. Link IDs no cell refers to are swept and reused, so a pane keeps new links clickable after any number of unique URLs; only live links count against the 65,535-ID and 16 MiB limits. In bunk-gui, Ctrl+hover underlines a link and Ctrl+click opens it (http, https, file, mailto, ftp); plain-text http/https/file URLs work too |
+| 9/99/777 | Attention requests | OK | Mark a pane's agent as needing you; not forwarded. When an agent in a pane the user is not looking at needs you, is done or failed (`[notifications]`), bunk shows a desktop notification through D-Bus on the user's desktop, and otherwise (over SSH, without a session bus or gdbus) sends its own OSC 777 notify to the host, with control and bidi characters removed and the text cut short |
 | 10/11/12 | Query/set fg/bg/cursor color | OK (host-dependent) | In-stream replies in both screen modes, including SSH/mosh. FG/BG changes repaint existing cells; cursor colour follows the active pane via tcell. Terminal-theme defaults are probed at startup; a genuinely unknown default is not fabricated |
 | 52 | Clipboard | OK | Forwarded to host |
-| 104 | Reset palette color | OK | vt10x handles |
+| 104 | Reset palette color | OK | vt10x handles indices 0-255 |
 | 110/111/112 | Reset fg/bg/cursor color | OK | Clears dynamic overrides, repaints FG/BG, and restores the pane's cursor-colour baseline (or the host default when unknown) |
-| 133 | Shell integration/prompt marking | OK | Forwarded to host so semantic prompt integration and jump-to-prompt can work when the outer terminal supports it |
+| 133 | Shell integration/prompt marking | OK | Forwarded to host so semantic prompt integration and jump-to-prompt can work when the outer terminal supports it; C and D also time commands and give their exit status for long-command notifications |
+| 9/99/777 | Notifications | OK | Read as an agent's attention request, from a known agent or while ssh/mosh runs in the pane; not forwarded |
+| 1337 SetUserVar=bunk_notify | In-band agent report | OK | Read as an agent status report (docs/remote-agent-status.md); other user variables are ignored; not forwarded |
 
 Host limitation: an outer terminal that does not disclose a default colour cannot
 be queried accurately for that value. Explicit pane colour overrides remain queryable.
@@ -74,7 +77,7 @@ be queried accurately for that value. Explicit pane colour overrides remain quer
 | 1049 | Alt screen + save cursor | OK | |
 | 2004 | Bracketed paste | OK | |
 | 2026 | Synchronized updates | OK | Suppresses only the updating pane; a one-second timeout releases abandoned updates |
-| 2027 | Grapheme clustering | OK | Enabled by default; incremental Unicode grapheme assembly with bounded cell storage and legacy per-codepoint mode on reset |
+| 2027 | Grapheme clustering | **FIXED** | Enabled by default; incremental Unicode grapheme assembly with bounded cell storage and legacy per-codepoint mode on reset. In legacy mode VS16 and keycap marks widened their cell to two columns; they now join it without widening, and render paints the base character only |
 
 ---
 
@@ -128,13 +131,20 @@ be queried accurately for that value. Explicit pane colour overrides remain quer
 | Kitty graphics | OK (cell-rendered subset) | Direct RGB/RGBA/PNG, zlib, chunking, query replies, cached placement, cropping/scaling, cursor policy, ID/coordinate deletion |
 | iTerm2 inline images | OK (cell-rendered subset) | Inline PNG/JPEG/GIF first frame; multipart uploads; cell/pixel/percentage sizing and aspect preservation |
 
-Images are downsampled into RGB half-block cells, not native pixels. They clip to
-the pane, scroll into history, survive resize, and are overwritten/erased like
-text. Transparent samples blend against the cell background; fully transparent
+bunk's TUI downsamples images into RGB half-block cells, not native pixels.
+bunk-gui draws them at full resolution. The session keeps each placement's
+bitmap in a bounded store of 64 MiB per pane, which evicts the least recently
+used bitmap first. Each cell draws its own sub-rectangle as a textured quad,
+at 1:1 when the cell size matches the placement's and scaled otherwise. A cell
+whose bitmap was evicted, or that blends a translucent image over another,
+draws its half-block samples. In both front ends, images clip to the pane,
+scroll into history, survive resize, and are overwritten/erased like text.
+Transparent samples blend against the cell background; fully transparent
 cells leave existing text intact. Deletion removes visible image cells without
 restoring covered text or editing archived scrollback. Layering, animation,
-Unicode placeholders, relative placements, non-square SIXEL pixel aspects, and
-native-pixel fidelity are outside this rendering mode. Unsupported Kitty actions
+Unicode placeholders, relative placements and non-square SIXEL pixel aspects are
+outside this rendering mode, and the TUI also lacks native-pixel fidelity.
+Unsupported Kitty actions
 receive an error (subject to `q`); file/shared-memory transfers are rejected.
 iTerm2 downloads are never written to disk. Explicit protocol selection may be
 needed in clients that rely on host-brand environment variables.
@@ -187,9 +197,10 @@ an exhaustive claim of terminal-protocol conformance.
   are not exposed. DECRQSS reports only implemented settings; other requests are
   rejected.
   Additional replies must describe behaviour bunk actually supports.
-- **Graphics extensions:** native-pixel output, animation, layering, Unicode
-  placeholders, relative placements, and non-square SIXEL pixel aspects remain
-  unsupported. Native-pixel output requires a different rendering approach.
+- **Graphics extensions:** animation, layering, Unicode placeholders, relative
+  placements, and non-square SIXEL pixel aspects remain unsupported. bunk's TUI
+  has no native-pixel output, which bunk-gui has. Native-pixel output in the
+  TUI would need a different rendering approach.
 - **Host dependencies:** unknown default colours, physical keypad identity when
   the host sends ordinary keys, and font/emoji shaping cannot be recovered from
   information the host does not provide.
@@ -270,3 +281,100 @@ Graphics references: [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/g
   column wide, matching the emulator's handling of new output at that width.
 - When narrowing would move the cursor into scrollback, the cursor's line
   stays visible and excess rows below it are clipped, as with screen shrinking.
+
+### Parser throughput (2026-10-24)
+
+- Runs of printable ASCII skip grapheme segmentation and fill row segments in
+  block copies. Parser state is an enum, and CSI parameters parse in place.
+- Steady-state parsing makes no allocations; before, it made about 2 per byte.
+- `TestASCIIFastPathMatchesRuneParser` compares the fast path with the
+  rune-at-a-time parser on random streams, including wide-cell invariants.
+- Grapheme clusters are capped at two cells. uniseg adds Prepend widths
+  (`\u0600\u0600a` reported 3), which left orphan continuation cells.
+- PTY framing reuses its output buffer. Scrollback rows drop trailing blank
+  cells that render, copy and search like missing ones.
+- The grid and scrollback store 16-byte cells without pointers instead of
+  56-byte glyphs; rare data sits in a per-row side table. Scrollback for
+  10 000 lines in a 200-column pane takes 16 MB (90-character lines) or
+  33 MB (full lines) instead of 55 or 124 MB, and a full GC cycle over it
+  dropped from 3–5 ms to about 1 ms.
+- Rune widths are cached for code points below U+30000.
+- These results were measured pinned to a Zen 5 core (`taskset -c 0`),
+  master → now: `BenchmarkPaneOutput` ASCII 9.7 → 154 MB/s, full-width lines 11.9 →
+  357 MB/s, SGR-heavy 11.0 → 55 MB/s; `BenchmarkWrite` ASCII 11.9 → 493,
+  SGR 14.8 → 146, Unicode 14.6 → 36, TUI redraws 13.3 → 266 MB/s.
+  On the Zen 5c CPUs (4–11, 16–23) the same code runs about 35% slower, so
+  pin benchmarks before comparing.
+
+### Parser throughput for coloured and Unicode output (2026-10-25)
+
+- `Write` hands text and CSI sequences to `scan` instead of parsing rune by
+  rune. CSI parameters are collected in one pass; plain decimal parameters
+  are read without splitting.
+- Runes that can never join a neighbour skip grapheme segmentation: CJK,
+  box drawing, Hangul syllables and most emoji. Their class and width share
+  one cached 4-bit entry per code point. The classes come from probing
+  uniseg, and `TestSimpleGraphemesNeverJoin` and `TestEndsCluster` check
+  them over random pairs and clusters.
+- Joining runes (accents, VS16, skin tones, ZWJ sequences, flags, keycaps)
+  still segment, but each State keeps 64 recent segmentations, so repeated
+  sequences cost no uniseg call and no allocation.
+- U+2E3A and U+2E3B are two cells wide. uniseg reports three and four, which
+  stored a negative width and joined the next character to the dash.
+- In the session, PTY framing appends CSI parameters in bulk, the OSC and
+  query scanners skip to the next ESC, and query matching switches on the
+  byte after `ESC [`.
+- `TestFastPathsMatchRuneParser` and `FuzzFastPaths` compare the fast paths
+  with the rune parser on streams of mixed runes and sequences;
+  `FuzzCSIParams` and `FuzzFraming` compare against the previous code.
+- These results are medians of ten interleaved runs pinned to a Zen 5 core,
+  before → after. `BenchmarkWrite` (MB/s): ASCII 622 → 698, SGR 150 → 311, Unicode
+  31 → 186, TUI 271 → 617, agent transcript 74 → 367, highlighted Go
+  100 → 337, box drawing 96 → 486, CJK 32 → 294, emoji 56 → 156.
+  `BenchmarkOutput`: ASCII 290 → 402, full rows 345 → 549, SGR 68 → 148,
+  Go source 110 → 135, agent transcript 47 → 180, highlighted Go 51 → 156,
+  box drawing 56 → 195, CJK 28 → 200, emoji 47 → 117.
+
+### Automated feature scripts (2026-10-25)
+
+- All seven `terminal_features.sh` groups run as Go tests
+  (`terminal_features_test.go`). Each test runs the real script in a bunk
+  pane on a PTY, answers its pauses through bunk's key and paste handling,
+  and checks painted cells, cursor shape and position, printed query
+  replies, and OSC 7/52/133 reaching the host through `app.oscBuf`.
+- Query helpers wait for a DA1 fence instead of sleeping; the query and OSC
+  groups dropped from about 15 s of sleeps to under 0.3 s.
+- The tests found two bugs. Truecolour below 256 rendered as a palette
+  colour (see the SGR row above), and DECRST 2027 widened cells for VS16 and
+  keycaps (see the mode 2027 row).
+- Bugs in the scripts were fixed. The OSC 8 line and other sequences put ST
+  (`ESC \`) inside printf formats, so `\b` became a backspace and the link
+  text and newline were lost. The bold colour row reset bold after its first
+  block, and the bracketed-paste message toggled 2004 instead of printing it.
+- The scripts now also check DECRQSS cursor style, margins and negative
+  reply; CSI 14/16/18 t; Kitty push and pop; per-codepoint widths with 2027
+  reset; OSC 7 and OSC 52; and the pasted bytes echoed back with their
+  200~/201~ markers.
+
+### Scroll path (2026-10-25)
+
+- Rows record how far their text reaches, so clearing a recycled row and
+  trimming a scrolled-off row cost the text length instead of the width.
+  Screen rows are pointers, and a full-screen scroll marks rows dirty with
+  one flag. A differential run against the previous emulator (4000 random
+  streams with erases, insert/delete, scroll regions, coloured blanks, wide
+  cells, links, images and resizes) matched every cell, dirty row and
+  scrolled row.
+- `BenchmarkOutput` results pinned to a Zen 5 core at 200x50, before → after: ASCII
+  144–157 → 338–344 MB/s, Go source (about 33-byte lines) 54 → 117–127,
+  SGR-heavy 56 → 77–78, full-width lines 360–364 → 406–408.
+
+### Wide characters under ICH and DCH (2026-10-26)
+
+- ICH and DCH erase a wide character that an edge of the shifted range cuts
+  in two, as xterm does. Before, DCH 2 on the second half of one wide
+  character left its lead next to the next character's continuation,
+  which carried that character's colours and link.
+- The fuzz invariants now require a continuation to match its lead's
+  colours, attributes, underline colour and link. Every ICH and DCH count
+  at every column of mixed wide/narrow rows is tested.

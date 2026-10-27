@@ -1,0 +1,5 @@
+go test fuzz v1
+byte('\x17')
+byte('i')
+[]byte("0")
+[]byte("\x1b>\x1b>\x1b[u")

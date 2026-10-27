@@ -1,0 +1,9 @@
+go test fuzz v1
+byte('?')
+byte('Y')
+[]byte("\x1b(\x00\x00")
+string("0")
+int16(-107)
+int16(0)
+int16(-73)
+int16(111)

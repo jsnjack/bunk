@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\a')
+rune('\x1d')
+byte('\x03')
+int(0)
+bool(true)
+bool(false)

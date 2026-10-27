@@ -8,76 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
 )
-
-// ---------------------------------------------------------------------------
-// scanDECRQM
-//
-// scanDECRQM replaced the old per-mode DECRQM list with a generic scanner
-// that finds all \x1b[?N$p queries in a chunk and calls a callback for each.
-// ---------------------------------------------------------------------------
-
-func TestScanDECRQM_Single(t *testing.T) {
-	var modes []int
-	scanDECRQM([]byte("\x1b[?2026$p"), func(n int) { modes = append(modes, n) })
-	if len(modes) != 1 || modes[0] != 2026 {
-		t.Errorf("got %v, want [2026]", modes)
-	}
-}
-
-func TestScanDECRQM_Multiple(t *testing.T) {
-	var modes []int
-	scanDECRQM([]byte("\x1b[?2004$p some junk \x1b[?1049$p"), func(n int) { modes = append(modes, n) })
-	if len(modes) != 2 || modes[0] != 2004 || modes[1] != 1049 {
-		t.Errorf("got %v, want [2004 1049]", modes)
-	}
-}
-
-func TestScanDECRQM_NotPresent(t *testing.T) {
-	var modes []int
-	scanDECRQM([]byte("hello world"), func(n int) { modes = append(modes, n) })
-	if len(modes) != 0 {
-		t.Errorf("expected no modes, got %v", modes)
-	}
-}
-
-func TestScanDECRQM_MultiDigitMode(t *testing.T) {
-	var modes []int
-	scanDECRQM([]byte("\x1b[?1000$p\x1b[?2026$p"), func(n int) { modes = append(modes, n) })
-	if len(modes) != 2 || modes[0] != 1000 || modes[1] != 2026 {
-		t.Errorf("got %v, want [1000 2026]", modes)
-	}
-}
-
-func TestParseDECRQM_OverflowRejected(t *testing.T) {
-	// A mode number exceeding 65535 must be rejected to prevent int overflow.
-	data := []byte("\x1b[?99999999999999999$p")
-	_, _, ok := parseDECRQM(data, 0)
-	if ok {
-		t.Error("parseDECRQM accepted overflowing mode number, want rejection")
-	}
-}
-
-func feedSplitPTYChunks(t *testing.T, p *Pane, chunks ...[]byte) {
-	t.Helper()
-	var stream ptyStream
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	for _, chunk := range chunks {
-		complete := stream.scan(chunk)
-		if len(complete) > 0 {
-			p.captureAndWrite(complete)
-		}
-	}
-
-	if len(stream.pending)+len(stream.utf8) != 0 {
-		t.Fatalf("PTY stream left buffered control or UTF-8 data")
-	}
-}
 
 func TestIsTransientLineClear(t *testing.T) {
 	cases := []struct {
@@ -172,6 +107,7 @@ func TestClearTransientLineClearIfUntilIgnoresStaleTimer(t *testing.T) {
 	oldUntil := time.Unix(100, 0)
 	newUntil := time.Unix(101, 0)
 	p := &Pane{
+		Session:                 &session.Session{},
 		transientLineClear:      true,
 		transientLineClearUntil: newUntil,
 	}
@@ -193,141 +129,6 @@ func TestClearTransientLineClearIfUntilIgnoresStaleTimer(t *testing.T) {
 	}
 }
 
-func TestSplitPTYChunk_PartialControlCarry(t *testing.T) {
-	tests := []struct {
-		name         string
-		input        []byte
-		wantComplete []byte
-		wantCarry    []byte
-	}{
-		{
-			name:         "plain text",
-			input:        []byte("hello"),
-			wantComplete: []byte("hello"),
-		},
-		{
-			name:         "partial csi",
-			input:        []byte("abc\x1b[>0"),
-			wantComplete: []byte("abc"),
-			wantCarry:    []byte("\x1b[>0"),
-		},
-		{
-			name:         "partial osc",
-			input:        []byte("abc\x1b]10"),
-			wantComplete: []byte("abc"),
-			wantCarry:    []byte("\x1b]10"),
-		},
-		{
-			name:      "partial dcs",
-			input:     []byte("\x1bP+q536d"),
-			wantCarry: []byte("\x1bP+q536d"),
-		},
-		{
-			name:      "partial utf8",
-			input:     []byte{0xe2, 0x96},
-			wantCarry: []byte{0xe2, 0x96},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var stream ptyStream
-			complete := stream.scan(tc.input)
-			carry := append(stream.pending, stream.utf8...)
-			if string(complete) != string(tc.wantComplete) {
-				t.Fatalf("complete = %q, want %q", complete, tc.wantComplete)
-			}
-			if string(carry) != string(tc.wantCarry) {
-				t.Fatalf("carry = %q, want %q", carry, tc.wantCarry)
-			}
-		})
-	}
-}
-
-func TestCaptureAndWrite_SplitXTVersionResponse(t *testing.T) {
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer pr.Close() //nolint:errcheck // test pipe cleanup
-	defer pw.Close() //nolint:errcheck // test pipe cleanup
-
-	p := &Pane{
-		term:            vt10x.New(vt10x.WithSize(40, 10)),
-		ptmx:            pw,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-	}
-
-	feedSplitPTYChunks(t, p, []byte("\x1b[>"), []byte("0q"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
-
-	buf, _ := io.ReadAll(pr)
-	want := "\x1bP>|VTE(8203)\x1b\\"
-	if string(buf) != want {
-		t.Fatalf("split XTVERSION response = %q, want %q", string(buf), want)
-	}
-}
-
-func TestCaptureAndWrite_SplitXTGETTCAPResponse(t *testing.T) {
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer pr.Close() //nolint:errcheck // test pipe cleanup
-	defer pw.Close() //nolint:errcheck // test pipe cleanup
-
-	p := &Pane{
-		term:            vt10x.New(vt10x.WithSize(40, 10)),
-		ptmx:            pw,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-	}
-
-	feedSplitPTYChunks(t, p, []byte("\x1bP+q536d"), []byte("756c78\x1b\\"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
-
-	buf, _ := io.ReadAll(pr)
-	wantHexVal := "1b5b343a25703125646d"
-	want := "\x1bP1+r536d756c78=" + wantHexVal + "\x1b\\"
-	if string(buf) != want {
-		t.Fatalf("split XTGETTCAP response = %q, want %q", string(buf), want)
-	}
-}
-
-// TestCaptureAndWrite_SplitOSC10Response verifies that a split OSC 10 query
-// (arriving in two chunks) receives a response in alt-screen mode.
-// OSC 10/11 responses are only sent in alt-screen mode — full-screen TUI apps
-// (neovim, helix) own their event loop and safely consume terminal responses.
-func TestCaptureAndWrite_SplitOSC10Response(t *testing.T) {
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer pr.Close() //nolint:errcheck // test pipe cleanup
-	defer pw.Close() //nolint:errcheck // test pipe cleanup
-
-	p := &Pane{
-		term:            vt10x.New(vt10x.WithSize(40, 10)),
-		ptmx:            pw,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
-	}
-
-	// Enter alt-screen before the OSC 10 query; the DECSET 1049 and the start
-	// of the OSC are in the first chunk so splitPTYChunk carries the partial
-	// OSC into the second chunk — this exercises the carry/split path.
-	feedSplitPTYChunks(t, p, []byte("\x1b[?1049h\x1b]10"), []byte(";?\x1b\\"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
-
-	buf, _ := io.ReadAll(pr)
-	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
-	if string(buf) != want {
-		t.Fatalf("split OSC 10 response = %q, want %q", string(buf), want)
-	}
-}
-
 func TestCaptureAndWrite_OSC10NormalModeResponse(t *testing.T) {
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -337,20 +138,22 @@ func TestCaptureAndWrite_OSC10NormalModeResponse(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
-		term:            vt10x.New(vt10x.WithSize(40, 10)),
-		ptmx:            pw,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
-		themeBGColor:    "rgb:1c1c/1c1c/1f1f",
+		Session: &session.Session{
+			Term:            vt10x.New(vt10x.WithSize(40, 10)),
+			PTY:             pw,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+			ThemeFG:         "rgb:d0d0/d0d0/d0d0",
+			ThemeBG:         "rgb:1c1c/1c1c/1f1f",
+		},
 	}
 
 	// Send OSC 10 and OSC 11 queries in normal screen mode (no alt-screen).
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b]10;?\x1b\\"))
-	p.captureAndWrite([]byte("\x1b]11;?\x1b\\"))
-	p.mu.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b]10;?\x1b\\"))
+	p.CaptureAndWrite([]byte("\x1b]11;?\x1b\\"))
+	p.Unlock()
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\\x1b]11;rgb:1c1c/1c1c/1f1f\x1b\\"
@@ -368,17 +171,19 @@ func TestCaptureAndWrite_OSC10SameChunkAltScreenResponse(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
-		term:            vt10x.New(vt10x.WithSize(40, 10)),
-		ptmx:            pw,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
+		Session: &session.Session{
+			Term:            vt10x.New(vt10x.WithSize(40, 10)),
+			PTY:             pw,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+			ThemeFG:         "rgb:d0d0/d0d0/d0d0",
+		},
 	}
 
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
-	p.mu.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
+	p.Unlock()
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
@@ -396,17 +201,19 @@ func TestCaptureAndWrite_OSC10QueryUsesDynamicOverride(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
-		term:            vt10x.New(vt10x.WithSize(40, 10)),
-		ptmx:            pw,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
+		Session: &session.Session{
+			Term:            vt10x.New(vt10x.WithSize(40, 10)),
+			PTY:             pw,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+			ThemeFG:         "rgb:d0d0/d0d0/d0d0",
+		},
 	}
 
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]10;?\x1b\\"))
-	p.mu.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]10;?\x1b\\"))
+	p.Unlock()
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:1111/2222/3333\x1b\\"
@@ -424,17 +231,19 @@ func TestCaptureAndWrite_OSC10ResetRestoresTheme(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
-		term:            vt10x.New(vt10x.WithSize(40, 10)),
-		ptmx:            pw,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
-		themeFGColor:    "rgb:d0d0/d0d0/d0d0",
+		Session: &session.Session{
+			Term:            vt10x.New(vt10x.WithSize(40, 10)),
+			PTY:             pw,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+			ThemeFG:         "rgb:d0d0/d0d0/d0d0",
+		},
 	}
 
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]110\x07\x1b]10;?\x1b\\"))
-	p.mu.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b[?1049h\x1b]10;rgb:1111/2222/3333\x1b\\\x1b]110\x07\x1b]10;?\x1b\\"))
+	p.Unlock()
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b]10;rgb:d0d0/d0d0/d0d0\x1b\\"
@@ -452,16 +261,18 @@ func TestCaptureAndWrite_DECRQMSameChunkUsesUpdatedState(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
-		term:            vt10x.New(vt10x.WithSize(40, 10)),
-		ptmx:            pw,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            vt10x.New(vt10x.WithSize(40, 10)),
+			PTY:             pw,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
 
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b[?2004h\x1b[?2004$p\x1b[?2004l\x1b[?2004$p"))
-	p.mu.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b[?2004h\x1b[?2004$p\x1b[?2004l\x1b[?2004$p"))
+	p.Unlock()
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1b[?2004;1$y\x1b[?2004;2$y"
@@ -479,16 +290,18 @@ func TestCaptureAndWrite_OSC10UnknownThemeNoResponse(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	p := &Pane{
-		term:            vt10x.New(vt10x.WithSize(40, 10)),
-		ptmx:            pw,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            vt10x.New(vt10x.WithSize(40, 10)),
+			PTY:             pw,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
 
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
-	p.mu.Unlock()
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b[?1049h\x1b]10;?\x1b\\"))
+	p.Unlock()
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	if len(buf) != 0 {
@@ -513,11 +326,14 @@ func TestCaptureAndWrite_OSC10UnknownThemeNoResponse(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReadPTYSingleLock_ClaudeCursorRace(t *testing.T) {
+	t.Parallel()
 	term := vt10x.New(vt10x.WithSize(20, 5))
 	p := &Pane{
-		term:            term,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
 
 	const iterations = 5000
@@ -535,9 +351,9 @@ func TestReadPTYSingleLock_ClaudeCursorRace(t *testing.T) {
 			// DECSCUSR: ESC [ shape SP q; cursor home: ESC [ H; marker char.
 			seq := []byte{0x1b, '[', shape, ' ', 'q', 0x1b, '[', 'H', marker}
 
-			p.mu.Lock()
-			p.term.Write(seq) //nolint:errcheck
-			p.mu.Unlock()
+			p.Lock()
+			p.Term.Write(seq) //nolint:errcheck
+			p.Unlock()
 
 			runtime.Gosched() // yield to give reader a chance to observe
 		}
@@ -560,10 +376,10 @@ func TestReadPTYSingleLock_ClaudeCursorRace(t *testing.T) {
 		default:
 		}
 
-		p.mu.Lock()
-		shape := p.term.Cursor().Shape
-		cell := p.term.Cell(0, 0)
-		p.mu.Unlock()
+		p.Lock()
+		shape := p.Term.Cursor().Shape
+		cell := p.Term.Cell(0, 0)
+		p.Unlock()
 
 		checks++
 		if shape > 0 && cell.Char != 0 {
@@ -588,56 +404,22 @@ func makeGlyphRow(chars ...rune) []vt10x.Glyph {
 }
 
 func TestSbRing_PushMaxZero(t *testing.T) {
-	var r sbRing // maxLines == 0
-	r.push(makeGlyphRow('A'))
-	if r.count != 0 {
-		t.Errorf("push with maxLines=0: count = %d, want 0", r.count)
-	}
-}
-
-func TestSbRing_PushNotFull(t *testing.T) {
-	r := sbRing{maxLines: 4}
-	r.push(makeGlyphRow('A'))
-	r.push(makeGlyphRow('B'))
-	if r.count != 2 {
-		t.Errorf("count after 2 pushes = %d, want 2", r.count)
-	}
-	if r.head != 0 {
-		t.Errorf("head after 2 pushes = %d, want 0", r.head)
-	}
-}
-
-func TestSbRing_PushWhenFull(t *testing.T) {
-	r := sbRing{maxLines: 3}
-	r.push(makeGlyphRow('A'))
-	r.push(makeGlyphRow('B'))
-	r.push(makeGlyphRow('C'))
-	// Ring is now full. Push a 4th element; head should advance.
-	r.push(makeGlyphRow('D'))
-	if r.count != 3 {
-		t.Errorf("count after overflow = %d, want 3", r.count)
-	}
-	if r.head != 1 {
-		t.Errorf("head after overflow = %d, want 1", r.head)
-	}
-	// Oldest surviving element should be 'B' (index 0), then 'C', then 'D'.
-	if got := r.get(0); got == nil || got[0].Char != 'B' {
-		t.Errorf("get(0) after wrap: got %v, want 'B'", got)
-	}
-	if got := r.get(2); got == nil || got[0].Char != 'D' {
-		t.Errorf("get(2) after wrap: got %v, want 'D'", got)
+	var r session.Ring // maxLines == 0
+	r.Push(makeGlyphRow('A'))
+	if r.Count != 0 {
+		t.Errorf("push with maxLines=0: count = %d, want 0", r.Count)
 	}
 }
 
 func TestSbRing_GetValid(t *testing.T) {
-	r := sbRing{maxLines: 4}
-	r.push(makeGlyphRow('X'))
-	r.push(makeGlyphRow('Y'))
-	r.push(makeGlyphRow('Z'))
+	r := session.Ring{MaxLines: 4}
+	r.Push(makeGlyphRow('X'))
+	r.Push(makeGlyphRow('Y'))
+	r.Push(makeGlyphRow('Z'))
 
 	want := []rune{'X', 'Y', 'Z'}
 	for i, ch := range want {
-		got := r.get(i)
+		got := r.Get(i)
 		if got == nil || got[0].Char != ch {
 			t.Errorf("get(%d) = %v, want '%c'", i, got, ch)
 		}
@@ -645,32 +427,32 @@ func TestSbRing_GetValid(t *testing.T) {
 }
 
 func TestSbRing_GetOutOfRange(t *testing.T) {
-	r := sbRing{maxLines: 4}
-	r.push(makeGlyphRow('A'))
-	if got := r.get(-1); got != nil {
+	r := session.Ring{MaxLines: 4}
+	r.Push(makeGlyphRow('A'))
+	if got := r.Get(-1); got != nil {
 		t.Errorf("get(-1) = %v, want nil", got)
 	}
-	if got := r.get(1); got != nil {
+	if got := r.Get(1); got != nil {
 		t.Errorf("get(1) with count=1 = %v, want nil", got)
 	}
-	if got := r.get(100); got != nil {
+	if got := r.Get(100); got != nil {
 		t.Errorf("get(100) = %v, want nil", got)
 	}
 }
 
 func TestSbRing_GetWrapped(t *testing.T) {
-	r := sbRing{maxLines: 3}
+	r := session.Ring{MaxLines: 3}
 	// Push 5 items into a ring of capacity 3: A, B, C, D, E.
 	// After wrapping, the ring should hold C, D, E.
 	for _, ch := range []rune{'A', 'B', 'C', 'D', 'E'} {
-		r.push(makeGlyphRow(ch))
+		r.Push(makeGlyphRow(ch))
 	}
-	if r.count != 3 {
-		t.Fatalf("count = %d, want 3", r.count)
+	if r.Count != 3 {
+		t.Fatalf("count = %d, want 3", r.Count)
 	}
 	want := []rune{'C', 'D', 'E'}
 	for i, ch := range want {
-		got := r.get(i)
+		got := r.Get(i)
 		if got == nil || got[0].Char != ch {
 			t.Errorf("get(%d) after wrapping = %v, want '%c'", i, got, ch)
 		}
@@ -697,14 +479,14 @@ func makeGlyphRowN(n int, ch rune) []vt10x.Glyph {
 // TestSbRing_PushCopiesRow: mutating the source after push must not affect
 // the ring.  Fails with the reference-store implementation.
 func TestSbRing_PushCopiesRow(t *testing.T) {
-	r := sbRing{maxLines: 3}
+	r := session.Ring{MaxLines: 3}
 	src := makeGlyphRowN(4, 'A')
-	r.push(src)
+	r.Push(src)
 
 	// Mutate the source after pushing.
 	src[0].Char = 'Z'
 
-	got := r.get(0)
+	got := r.Get(0)
 	if got == nil {
 		t.Fatal("get(0) returned nil")
 	}
@@ -727,10 +509,10 @@ func TestSbRing_SlabNotRetained(t *testing.T) {
 	row0 := slab[0:cols] // sub-slice into slab
 	row0[0].Char = 'A'
 
-	r := sbRing{maxLines: 3}
-	r.push(row0)
+	r := session.Ring{MaxLines: 3}
+	r.Push(row0)
 
-	got := r.get(0)
+	got := r.Get(0)
 	if got == nil {
 		t.Fatal("get(0) returned nil")
 	}
@@ -746,22 +528,17 @@ func TestSbRing_SlabNotRetained(t *testing.T) {
 // same width should reuse the slot's existing backing array (no new allocation).
 func TestSbRing_SlotReusedWhenFull(t *testing.T) {
 	const width = 6
-	r := sbRing{maxLines: 2}
-	r.push(makeGlyphRowN(width, 'A')) // slot 0
-	r.push(makeGlyphRowN(width, 'B')) // slot 1 — ring now full
+	r := session.Ring{MaxLines: 2}
+	r.Push(makeGlyphRowN(width, 'A')) // slot 0
+	r.Push(makeGlyphRowN(width, 'B')) // slot 1 — ring now full
 
-	// Record the backing-array pointer of physical slot 0.
-	ptr0 := &r.lines[0][0]
-
-	// Push again: ring is full, head=0, so slot 0 is overwritten.
-	r.push(makeGlyphRowN(width, 'C'))
-
-	// Slot 0 must have been reused (same backing array).
-	if &r.lines[0][0] != ptr0 {
-		t.Error("SlotReusedWhenFull: push allocated new backing array instead of reusing slot")
+	// Push again: ring is full, so the oldest slot is overwritten in place.
+	row := makeGlyphRowN(width, 'C')
+	if n := testing.AllocsPerRun(10, func() { r.Push(row) }); n != 0 {
+		t.Errorf("SlotReusedWhenFull: push allocated %.0f times instead of reusing slots", n)
 	}
 	// Content must be correct.
-	got := r.get(1) // newest is at logical index 1
+	got := r.Get(1) // newest is at logical index 1
 	if got == nil || got[0].Char != 'C' {
 		t.Errorf("SlotReusedWhenFull: newest row = %v, want 'C'", got)
 	}
@@ -772,19 +549,16 @@ func TestSbRing_SlotReusedWhenFull(t *testing.T) {
 // allocating a fresh slice.
 func TestSbRing_SlotReusedOnShrink(t *testing.T) {
 	const wideW, narrowW = 8, 3
-	r := sbRing{maxLines: 2}
-	r.push(makeGlyphRowN(wideW, 'W')) // slot 0, cap=8
-	r.push(makeGlyphRowN(wideW, 'W')) // slot 1, cap=8 — ring full
-
-	ptr0 := &r.lines[0][0]
+	r := session.Ring{MaxLines: 2}
+	r.Push(makeGlyphRowN(wideW, 'W')) // slot 0, cap=8
+	r.Push(makeGlyphRowN(wideW, 'W')) // slot 1, cap=8 — ring full
 
 	narrow := makeGlyphRowN(narrowW, 'N')
-	r.push(narrow) // slot 0 overwritten, cap 8 >= len 3 → should reuse
-
-	if &r.lines[0][0] != ptr0 {
-		t.Error("SlotReusedOnShrink: push allocated new backing array despite sufficient capacity")
+	// Both slots have capacity 8 >= 3, so overwriting them must not allocate.
+	if n := testing.AllocsPerRun(10, func() { r.Push(narrow) }); n != 0 {
+		t.Errorf("SlotReusedOnShrink: push allocated %.0f times despite sufficient capacity", n)
 	}
-	got := r.get(1) // newest
+	got := r.Get(1) // newest
 	if got == nil || len(got) != narrowW {
 		t.Errorf("SlotReusedOnShrink: len = %d, want %d", len(got), narrowW)
 	}
@@ -797,17 +571,17 @@ func TestSbRing_SlotReusedOnShrink(t *testing.T) {
 // allocate new backing storage and store the content correctly.
 func TestSbRing_SlotReallocOnGrow(t *testing.T) {
 	const narrowW, wideW = 3, 8
-	r := sbRing{maxLines: 2}
-	r.push(makeGlyphRowN(narrowW, 'N')) // slot 0, cap=3
-	r.push(makeGlyphRowN(narrowW, 'N')) // slot 1, cap=3 — ring full
+	r := session.Ring{MaxLines: 2}
+	r.Push(makeGlyphRowN(narrowW, 'N')) // slot 0, cap=3
+	r.Push(makeGlyphRowN(narrowW, 'N')) // slot 1, cap=3 — ring full
 
 	wide := makeGlyphRowN(wideW, 'W')
 	for i := range wide {
 		wide[i].Char = rune('A' + i)
 	}
-	r.push(wide) // slot 0, cap 3 < len 8 → must reallocate
+	r.Push(wide) // slot 0, cap 3 < len 8 → must reallocate
 
-	got := r.get(1) // newest
+	got := r.Get(1) // newest
 	if got == nil || len(got) != wideW {
 		t.Fatalf("SlotReallocOnGrow: len = %d, want %d", len(got), wideW)
 	}
@@ -815,138 +589,6 @@ func TestSbRing_SlotReallocOnGrow(t *testing.T) {
 		if g.Char != rune('A'+i) {
 			t.Errorf("SlotReallocOnGrow: got[%d].Char = %q, want %q", i, g.Char, rune('A'+i))
 		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// adjustAfterScrollbackPush — selection stability during scrollback
-//
-// Bug: selecting text while logs scroll causes selection to jump
-//
-// When new rows are pushed to the scrollback ring, selection virtual-row
-// coordinates must be adjusted so they keep pointing at the same content.
-// The tricky case is when the ring is FULL: sb.count stays constant but
-// sbOff rises, changing the virtual-top (sbCount - sbOff).
-// ---------------------------------------------------------------------------
-
-func TestAdjustAfterScrollbackPush_RingNotFull(t *testing.T) {
-	// Ring capacity 100, 5 rows pushed, ring not yet full.
-	// sbOff=3 means user is reading scrollback.
-	p := &Pane{
-		sb:    sbRing{maxLines: 100},
-		sbOff: 3,
-	}
-	// Pre-fill 10 rows.
-	for i := 0; i < 10; i++ {
-		p.sb.push(makeGlyphRow(rune('A' + i)))
-	}
-	p.selActive = true
-	p.selAnchor = selPos{row: 7, col: 0}
-	p.selCursor = selPos{row: 9, col: 5}
-
-	oldCount := p.sb.count // 10
-	oldSbOff := p.sbOff    // 3
-	// Push 2 more rows (ring not full, count goes 10→12).
-	p.sb.push(makeGlyphRow('K'))
-	p.sb.push(makeGlyphRow('L'))
-	p.adjustAfterScrollbackPush(2, oldCount, oldSbOff)
-
-	// sbOff should advance: 3+2=5
-	if p.sbOff != 5 {
-		t.Errorf("sbOff = %d, want 5", p.sbOff)
-	}
-	// Virtual-top: old = 10-3=7, new = 12-5=7.  Delta = 0.
-	// Selection should be unchanged.
-	if p.selAnchor.row != 7 || p.selCursor.row != 9 {
-		t.Errorf("selection shifted when it shouldn't: anchor.row=%d cursor.row=%d",
-			p.selAnchor.row, p.selCursor.row)
-	}
-}
-
-func TestAdjustAfterScrollbackPush_RingFull(t *testing.T) {
-	// Ring capacity 5, already full.  Pushing more rows causes count to stay
-	// constant while sbOff grows → virtual-top decreases.
-	p := &Pane{
-		sb:    sbRing{maxLines: 5},
-		sbOff: 2,
-	}
-	for i := 0; i < 5; i++ {
-		p.sb.push(makeGlyphRow(rune('A' + i)))
-	}
-	// count=5, sbOff=2 → virtual-top = 5-2 = 3
-	p.selActive = true
-	p.selAnchor = selPos{row: 4, col: 0}
-	p.selCursor = selPos{row: 4, col: 10}
-
-	oldCount := p.sb.count // 5
-	oldSbOff := p.sbOff    // 2
-	// Push 1 row.  Ring is full so count stays 5; sbOff → 3.
-	p.sb.push(makeGlyphRow('F'))
-	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
-
-	// sbOff: 2+1=3 (clamped to count=5 → 3)
-	if p.sbOff != 3 {
-		t.Errorf("sbOff = %d, want 3", p.sbOff)
-	}
-	// Virtual-top: old = 5-2=3, new = 5-3=2.  Delta = -1.
-	// Selection rows should have decreased by 1.
-	if p.selAnchor.row != 3 {
-		t.Errorf("selAnchor.row = %d, want 3", p.selAnchor.row)
-	}
-	if p.selCursor.row != 3 {
-		t.Errorf("selCursor.row = %d, want 3", p.selCursor.row)
-	}
-}
-
-func TestAdjustAfterScrollbackPush_NoScrollback(t *testing.T) {
-	// sbOff=0 (user looking at live view) → sbOff should not change.
-	p := &Pane{
-		sb:    sbRing{maxLines: 100},
-		sbOff: 0,
-	}
-	for i := 0; i < 3; i++ {
-		p.sb.push(makeGlyphRow(rune('A' + i)))
-	}
-	p.selActive = true
-	p.selAnchor = selPos{row: 2, col: 0}
-	p.selCursor = selPos{row: 2, col: 5}
-
-	oldCount := p.sb.count
-	oldSbOff := p.sbOff
-	p.sb.push(makeGlyphRow('D'))
-	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
-
-	if p.sbOff != 0 {
-		t.Errorf("sbOff = %d, want 0", p.sbOff)
-	}
-	// count: 3→4, sbOff stays 0 → virtual-top: 3-0=3 → 4-0=4, delta=+1
-	if p.selAnchor.row != 3 {
-		t.Errorf("selAnchor.row = %d, want 3 (shifted by +1)", p.selAnchor.row)
-	}
-}
-
-func TestAdjustAfterScrollbackPush_NoSelection(t *testing.T) {
-	// selActive=false → should not panic or modify anything.
-	p := &Pane{
-		sb:    sbRing{maxLines: 100},
-		sbOff: 2,
-	}
-	for i := 0; i < 5; i++ {
-		p.sb.push(makeGlyphRow(rune('A' + i)))
-	}
-	p.selActive = false
-	p.selAnchor = selPos{row: 3, col: 0}
-	p.selCursor = selPos{row: 4, col: 0}
-
-	oldCount := p.sb.count
-	oldSbOff := p.sbOff
-	p.sb.push(makeGlyphRow('F'))
-	p.adjustAfterScrollbackPush(1, oldCount, oldSbOff)
-
-	// Selection coordinates should be untouched.
-	if p.selAnchor.row != 3 || p.selCursor.row != 4 {
-		t.Errorf("selection modified when selActive=false: anchor=%d cursor=%d",
-			p.selAnchor.row, p.selCursor.row)
 	}
 }
 
@@ -970,9 +612,11 @@ func TestCaptureAndWrite_InPlaceOverwrite_NoSentinelPush(t *testing.T) {
 	const cols, rows = 20, 8
 	term := vt10x.New(vt10x.WithSize(cols, rows))
 	p := &Pane{
-		term:            term,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
 
 	// Write 8 distinct rows directly (bypasses captureAndWrite so p.sb
@@ -987,20 +631,20 @@ func TestCaptureAndWrite_InPlaceOverwrite_NoSentinelPush(t *testing.T) {
 		"GGGG_ROW6_UNCHANGED_\r\n" + // sample at rows*3/4 = 6
 		"HHHH_ROW7_CURSOR____"
 	term.Write([]byte(setup)) //nolint:errcheck
-	if p.sb.count != 0 {
-		t.Fatalf("setup: expected sb.count=0, got %d", p.sb.count)
+	if p.Scrollback.Count != 0 {
+		t.Fatalf("setup: expected sb.count=0, got %d", p.Scrollback.Count)
 	}
 
 	// In-place update: only row 0 changes.  Middle rows are unchanged.
 	// Large-burst sentinel must NOT fire.
 	chunk := []byte("\x1b[1;1HNEWPROGRESS_ROW0\x1b[K")
-	p.mu.Lock()
-	p.captureAndWrite(chunk)
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite(chunk)
+	p.Unlock()
 
-	if p.sb.count != 0 {
+	if p.Scrollback.Count != 0 {
 		t.Errorf("in-place row-0 overwrite triggered scrollback push: sb.count = %d, want 0",
-			p.sb.count)
+			p.Scrollback.Count)
 	}
 }
 
@@ -1019,27 +663,29 @@ func TestCaptureAndWrite_InPlaceOverwrite_NoSentinelPush(t *testing.T) {
 func TestCaptureAndWrite_NativeCallback_NormalScroll(t *testing.T) {
 	const cols, rows = 6, 3
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
-	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
-	p.term = term
+	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.OnScrollRow))
+	p.Term = term
 
 	// Write 5 rows into a 3-row terminal → 2 rows scroll off the top.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("AAAAAA\r\nBBBBBB\r\nCCCCCC\r\nDDDDDD\r\nEEEEEE"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("AAAAAA\r\nBBBBBB\r\nCCCCCC\r\nDDDDDD\r\nEEEEEE"))
+	p.Unlock()
 
-	if p.sb.count != 2 {
-		t.Fatalf("want 2 rows in scrollback, got %d", p.sb.count)
+	if p.Scrollback.Count != 2 {
+		t.Fatalf("want 2 rows in scrollback, got %d", p.Scrollback.Count)
 	}
 	// First captured row should be the original row 0: all 'A's.
-	row := p.sb.get(0)
+	row := p.Scrollback.Get(0)
 	if row == nil || row[0].Char != 'A' {
 		t.Errorf("sb.get(0): got %v, want all 'A'", row)
 	}
 	// Second captured row should be row 1: all 'B's.
-	row = p.sb.get(1)
+	row = p.Scrollback.Get(1)
 	if row == nil || row[0].Char != 'B' {
 		t.Errorf("sb.get(1): got %v, want all 'B'", row)
 	}
@@ -1050,28 +696,30 @@ func TestCaptureAndWrite_NativeCallback_NormalScroll(t *testing.T) {
 func TestCaptureAndWrite_NativeCallback_InPlaceNoScrollback(t *testing.T) {
 	const cols, rows = 10, 4
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
-	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
-	p.term = term
+	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.OnScrollRow))
+	p.Term = term
 
 	// Fill the screen without scrolling.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD"))
+	p.Unlock()
 
-	if p.sb.count != 0 {
-		t.Fatalf("after fill (no scroll): want 0, got %d", p.sb.count)
+	if p.Scrollback.Count != 0 {
+		t.Fatalf("after fill (no scroll): want 0, got %d", p.Scrollback.Count)
 	}
 
 	// In-place update: cursor to row 0, overwrite — no scroll should occur.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b[1;1HNEWCONTENT\x1b[K"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b[1;1HNEWCONTENT\x1b[K"))
+	p.Unlock()
 
-	if p.sb.count != 0 {
-		t.Errorf("in-place overwrite via callback: want 0 in scrollback, got %d", p.sb.count)
+	if p.Scrollback.Count != 0 {
+		t.Errorf("in-place overwrite via callback: want 0 in scrollback, got %d", p.Scrollback.Count)
 	}
 }
 
@@ -1080,35 +728,37 @@ func TestCaptureAndWrite_NativeCallback_InPlaceNoScrollback(t *testing.T) {
 func TestCaptureAndWrite_NativeCallback_AltScreenNoScrollback(t *testing.T) {
 	const cols, rows = 8, 3
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
-	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
-	p.term = term
+	term := vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.OnScrollRow))
+	p.Term = term
 
 	// Enter alt-screen, scroll heavily, exit.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("\x1b[?1049h"))
+	p.Lock()
+	p.CaptureAndWrite([]byte("\x1b[?1049h"))
 	for i := 0; i < 10; i++ {
-		p.captureAndWrite([]byte("XXXXXXXX\r\n"))
+		p.CaptureAndWrite([]byte("XXXXXXXX\r\n"))
 	}
-	p.captureAndWrite([]byte("\x1b[?1049l"))
-	p.mu.Unlock()
+	p.CaptureAndWrite([]byte("\x1b[?1049l"))
+	p.Unlock()
 
-	if p.sb.count != 0 {
-		t.Errorf("alt-screen scroll populated primary scrollback: sb.count = %d, want 0", p.sb.count)
+	if p.Scrollback.Count != 0 {
+		t.Errorf("alt-screen scroll populated primary scrollback: sb.count = %d, want 0", p.Scrollback.Count)
 	}
 }
 
 func TestResizeAndReflow_ReflowsScrollbackOnWiden(t *testing.T) {
 	p := regressionPane(6, 3)
-	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n"))
-	p.resizeAndReflow(10, 3)
-	if p.sb.count != 3 {
-		t.Fatalf("scrollback count = %d, want 3", p.sb.count)
+	p.CaptureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n"))
+	p.ResizeAndReflow(10, 3)
+	if p.Scrollback.Count != 3 {
+		t.Fatalf("scrollback count = %d, want 3", p.Scrollback.Count)
 	}
-	for i := 0; i < p.sb.count; i++ {
-		row := p.sb.get(i)
+	for i := 0; i < p.Scrollback.Count; i++ {
+		row := p.Scrollback.Get(i)
 		if len(row) != 10 || row[0].Char != rune('A'+i) {
 			t.Fatalf("unexpected row %d: %v", i, row)
 		}
@@ -1119,11 +769,11 @@ func TestResizeAndReflow_ScrollAnchor(t *testing.T) {
 	for _, tc := range []struct{ offset, want int }{{8, 3}, {4, 2}, {1, 0}} {
 		t.Run(fmt.Sprint(tc.offset), func(t *testing.T) {
 			p := regressionPane(6, 3)
-			p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n"))
-			p.sbOff = tc.offset
-			p.resizeAndReflow(20, 3)
-			if p.sbOff != tc.want {
-				t.Fatalf("scroll offset = %d, want %d", p.sbOff, tc.want)
+			p.CaptureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\n"))
+			p.ScrollOffset = tc.offset
+			p.ResizeAndReflow(20, 3)
+			if p.ScrollOffset != tc.want {
+				t.Fatalf("scroll offset = %d, want %d", p.ScrollOffset, tc.want)
 			}
 		})
 	}
@@ -1133,141 +783,47 @@ func TestResizeAndReflow_ContentAnchorWiden(t *testing.T) {
 	const narrowCols, wideCols, rows = 6, 20, 5
 	rawBuf := []byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\nFFFFFFFFFF\r\nGGGGGGGGGG\r\n")
 
-	p := &Pane{scrollbackLines: 200, sb: sbRing{maxLines: 200}}
-	p.term = vt10x.New(vt10x.WithSize(narrowCols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p := &Pane{Session: &session.Session{ScrollbackLines: 200, Scrollback: session.Ring{MaxLines: 200}}}
+	p.Term = vt10x.New(vt10x.WithSize(narrowCols, rows), vt10x.WithScrollCallback(p.OnScrollRow))
 
 	// Feed the content so the scroll callback populates the ring with real rows.
-	p.mu.Lock()
-	p.captureAndWrite(rawBuf)
+	p.Lock()
+	p.CaptureAndWrite(rawBuf)
 	// Scroll back so "CCCCCCCCCC" (split into "CCCCCC"+"CCCC") is near centre.
 	// Ring holds the rows that scrolled off; live terminal holds the last 5.
 	// Push sbOff high enough that the C-rows are visible in the centre.
-	p.sbOff = p.sb.count // scroll to very top for simplicity
-	preCount := p.sb.count
-	p.mu.Unlock()
+	p.ScrollOffset = p.Scrollback.Count // scroll to very top for simplicity
+	preCount := p.Scrollback.Count
+	p.Unlock()
 
 	if preCount == 0 {
 		t.Skip("no scrollback captured; rawBuf may not have caused enough scrolling")
 	}
 
-	p.mu.Lock()
-	p.resizeAndReflow(wideCols, rows)
-	p.mu.Unlock()
+	p.Lock()
+	p.ResizeAndReflow(wideCols, rows)
+	p.Unlock()
 
 	// After widening, the ring must not be empty (content exists).
-	if p.sb.count == 0 && p.sbOff != 0 {
+	if p.Scrollback.Count == 0 && p.ScrollOffset != 0 {
 		t.Error("sbOff > 0 but ring is empty after widen")
 	}
 	// sbOff must be valid.
-	if p.sbOff > p.sb.count {
-		t.Errorf("sbOff=%d > sb.count=%d after widen", p.sbOff, p.sb.count)
+	if p.ScrollOffset > p.Scrollback.Count {
+		t.Errorf("sbOff=%d > sb.count=%d after widen", p.ScrollOffset, p.Scrollback.Count)
 	}
 	// The viewport centre row must contain a known content character.
 	// With content matching, the centre of the viewport should contain one of
 	// our known lines (A–G repeated 10 times).
-	centerRingIdx := p.sb.count - p.sbOff + rows/2
-	if centerRingIdx >= 0 && centerRingIdx < p.sb.count {
-		row := p.sb.get(centerRingIdx)
+	centerRingIdx := p.Scrollback.Count - p.ScrollOffset + rows/2
+	if centerRingIdx >= 0 && centerRingIdx < p.Scrollback.Count {
+		row := p.Scrollback.Get(centerRingIdx)
 		if len(row) > 0 {
 			ch := row[0].Char
 			if ch == 0 || ch == ' ' {
-				t.Errorf("centre row is blank after widen (sbOff=%d sb.count=%d)", p.sbOff, p.sb.count)
+				t.Errorf("centre row is blank after widen (sbOff=%d sb.count=%d)", p.ScrollOffset, p.Scrollback.Count)
 			}
 		}
-	}
-}
-
-// (rows added) keeps the user's scroll position, adjusted for the pulled rows.
-func TestResizeHeightOnly_GrowPreservesScrollOffset(t *testing.T) {
-	const cols, oldRows, newRows = 10, 4, 7
-	// pull = extra = 3; scrollback needs ≥ 3 rows.
-	p := &Pane{scrollbackLines: 100, sb: sbRing{maxLines: 100}}
-	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollCallback(p.onScrollRow))
-	for i := 0; i < 5; i++ {
-		row := make([]vt10x.Glyph, cols)
-		row[0] = vt10x.Glyph{Char: rune('A' + i)}
-		p.sb.push(row)
-	}
-	p.sbOff = 5 // scrolled to very top (sb.count = 5)
-
-	p.mu.Lock()
-	p.resizeHeightOnly(cols, oldRows, newRows) // extra=3, pull=3
-	p.mu.Unlock()
-
-	// Pulled 3 rows from scrollback into live terminal.
-	// new sbOff = max(0, 5 - 3) = 2.
-	if p.sbOff != 2 {
-		t.Errorf("grow: sbOff = %d, want 2 (old 5 - pull 3)", p.sbOff)
-	}
-}
-
-// TestResizeHeightOnly_GrowClampsScrollOffsetToZero verifies that when the
-// user was looking at rows that are now in the live terminal, sbOff becomes 0.
-func TestResizeHeightOnly_GrowClampsScrollOffsetToZero(t *testing.T) {
-	const cols, oldRows, newRows = 10, 4, 10
-	// extra = 6, but only 2 rows in scrollback → pull = 2.
-	p := &Pane{scrollbackLines: 100, sb: sbRing{maxLines: 100}}
-	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollCallback(p.onScrollRow))
-	for i := 0; i < 2; i++ {
-		row := make([]vt10x.Glyph, cols)
-		p.sb.push(row)
-	}
-	p.sbOff = 1 // 1 row above live view, but pull=2 absorbs it
-
-	p.mu.Lock()
-	p.resizeHeightOnly(cols, oldRows, newRows)
-	p.mu.Unlock()
-
-	if p.sbOff != 0 {
-		t.Errorf("grow (pull >= sbOff): sbOff = %d, want 0", p.sbOff)
-	}
-}
-
-// TestResizeHeightOnly_ShrinkPreservesScrollOffset verifies that shrinking a
-// pane (rows removed → excess pushed into scrollback) keeps the scroll offset
-// adjusted so the user is still viewing the same content.
-func TestResizeHeightOnly_ShrinkPreservesScrollOffset(t *testing.T) {
-	const cols, oldRows, newRows = 10, 8, 5
-	// 6 content rows; excess = 6 - 5 = 1.
-	p := &Pane{scrollbackLines: 100, sb: sbRing{maxLines: 100}}
-	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollCallback(p.onScrollRow))
-	// Write 6 lines of content so findContentRows returns 6.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\nFFFFFFFFFF"))
-	p.mu.Unlock()
-	// Set sbOff to 2 (scrolled back 2 rows).
-	p.mu.Lock()
-	p.sbOff = 2
-	oldSbCount := p.sb.count
-
-	p.resizeHeightOnly(cols, oldRows, newRows)
-	p.mu.Unlock()
-
-	// excess rows were pushed into scrollback; sbOff must increase by excess.
-	excess := p.sb.count - oldSbCount
-	want := 2 + excess
-	if want > p.sb.count {
-		want = p.sb.count
-	}
-	if p.sbOff != want {
-		t.Errorf("shrink: sbOff = %d, want %d (old 2 + excess %d)", p.sbOff, want, excess)
-	}
-}
-
-// TestResizeHeightOnly_ShrinkLiveViewStaysLive verifies that a pane in live
-// view (sbOff=0) stays at sbOff=0 after a height shrink.
-func TestResizeHeightOnly_ShrinkLiveViewStaysLive(t *testing.T) {
-	const cols, oldRows, newRows = 10, 8, 5
-	p := &Pane{scrollbackLines: 100, sb: sbRing{maxLines: 100}}
-	p.term = vt10x.New(vt10x.WithSize(cols, oldRows), vt10x.WithScrollCallback(p.onScrollRow))
-	p.mu.Lock()
-	p.captureAndWrite([]byte("AAAAAAAAAA\r\nBBBBBBBBBB\r\nCCCCCCCCCC\r\nDDDDDDDDDD\r\nEEEEEEEEEE\r\nFFFFFFFFFF"))
-	p.sbOff = 0
-	p.resizeHeightOnly(cols, oldRows, newRows)
-	p.mu.Unlock()
-
-	if p.sbOff != 0 {
-		t.Errorf("shrink from live view: sbOff = %d, want 0", p.sbOff)
 	}
 }
 
@@ -1282,31 +838,33 @@ func TestResizeHeightOnly_ShrinkLiveViewStaysLive(t *testing.T) {
 func TestScrollCallback_PreservedAfterResize(t *testing.T) {
 	const cols, rows = 6, 3
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.OnScrollRow))
 
 	// Trigger one scroll so p.sb has at least 1 row.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("AAAAAA\r\nBBBBBB\r\nCCCCCC\r\nDDDDDD"))
-	p.mu.Unlock()
-	if p.sb.count < 1 {
-		t.Fatalf("pre-resize: want ≥1 row in scrollback, got %d", p.sb.count)
+	p.Lock()
+	p.CaptureAndWrite([]byte("AAAAAA\r\nBBBBBB\r\nCCCCCC\r\nDDDDDD"))
+	p.Unlock()
+	if p.Scrollback.Count < 1 {
+		t.Fatalf("pre-resize: want ≥1 row in scrollback, got %d", p.Scrollback.Count)
 	}
 
 	// Resize (new column width forces resizeAndReflow).
-	p.mu.Lock()
-	p.resizeAndReflow(8, rows)
-	p.mu.Unlock()
+	p.Lock()
+	p.ResizeAndReflow(8, rows)
+	p.Unlock()
 
 	// After resize, send more content that scrolls → callback must still fire.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("EEEEEEEE\r\nFFFFFFFF\r\nGGGGGGGG\r\nHHHHHHHH"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("EEEEEEEE\r\nFFFFFFFF\r\nGGGGGGGG\r\nHHHHHHHH"))
+	p.Unlock()
 
-	if p.sb.count < 2 {
-		t.Errorf("post-resize: scroll callback lost after resizeAndReflow; sb.count=%d want ≥2", p.sb.count)
+	if p.Scrollback.Count < 2 {
+		t.Errorf("post-resize: scroll callback lost after resizeAndReflow; sb.count=%d want ≥2", p.Scrollback.Count)
 	}
 }
 
@@ -1315,25 +873,27 @@ func TestScrollCallback_PreservedAfterResize(t *testing.T) {
 func TestScrollCallback_PreservedAfterHeightResize(t *testing.T) {
 	const cols, rows = 6, 4
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.onScrollRow))
+	p.Term = vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithScrollCallback(p.OnScrollRow))
 
 	// Preserve the rows that shrink into scrollback.
 
 	// Shrink height → resizeHeightOnly (same cols, fewer rows).
-	p.mu.Lock()
-	p.resizeAndReflow(cols, 2)
-	p.mu.Unlock()
+	p.Lock()
+	p.ResizeAndReflow(cols, 2)
+	p.Unlock()
 
 	// Now send content that scrolls in the 2-row terminal.
-	p.mu.Lock()
-	p.captureAndWrite([]byte("CCCCCC\r\nDDDDDD\r\nEEEEEE"))
-	p.mu.Unlock()
+	p.Lock()
+	p.CaptureAndWrite([]byte("CCCCCC\r\nDDDDDD\r\nEEEEEE"))
+	p.Unlock()
 
-	if p.sb.count < 1 {
-		t.Errorf("post-height-resize: scroll callback lost; sb.count=%d want ≥1", p.sb.count)
+	if p.Scrollback.Count < 1 {
+		t.Errorf("post-height-resize: scroll callback lost; sb.count=%d want ≥1", p.Scrollback.Count)
 	}
 }
 
@@ -1349,58 +909,29 @@ func TestScrollCallback_PreservedAfterHeightResize(t *testing.T) {
 func TestNeedsSync_AltScreenExit(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(40, 10))
 	p := &Pane{
-		term:            term,
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			Term:            term,
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
 
 	// Write a line then enter alt-screen.
-	p.captureAndWrite([]byte("hello\r\n\x1b[?1049h"))
-	if p.needsSync {
+	p.CaptureAndWrite([]byte("hello\r\n\x1b[?1049h"))
+	if p.NeedsSync {
 		t.Error("needsSync should be false after alt-screen entry")
 	}
 
 	// Exit alt-screen.
-	p.captureAndWrite([]byte("\x1b[?1049l"))
-	if !p.needsSync {
+	p.CaptureAndWrite([]byte("\x1b[?1049l"))
+	if !p.NeedsSync {
 		t.Error("needsSync should be true after alt-screen exit")
 	}
 
 	// Clearing it manually (simulating render consuming it).
-	p.needsSync = false
-	if p.needsSync {
+	p.NeedsSync = false
+	if p.NeedsSync {
 		t.Error("needsSync should be false after manual clear")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// findContentRows
-// ---------------------------------------------------------------------------
-
-func TestFindContentRows_CursorBelowContent(t *testing.T) {
-	// Simulate a terminal where content is on rows 0-2, cursor on row 3
-	// (empty row after a trailing \r\n), and rows 3-9 are blank.
-	term := vt10x.New(vt10x.WithSize(20, 10))
-	term.Write([]byte("line1\r\nline2\r\nline3\r\n")) //nolint:errcheck
-
-	got := findContentRows(term, 20, 10)
-	// Cursor is on row 3 (the blank row after "line3\r\n").
-	// findContentRows starts from max(cursor.Y+1, ...) and scans backward,
-	// so it should return at least 4 (rows 0-3), but row 3 is blank so
-	// content is rows 0-2 → the function returns cursor.Y+1 = 4 as minimum.
-	if got < 3 {
-		t.Errorf("findContentRows = %d, want >= 3", got)
-	}
-}
-
-func TestFindContentRows_CursorOnContent(t *testing.T) {
-	term := vt10x.New(vt10x.WithSize(20, 10))
-	term.Write([]byte("prompt$ ")) //nolint:errcheck
-
-	got := findContentRows(term, 20, 10)
-	// Cursor is on row 0, which has content → should return 1.
-	if got != 1 {
-		t.Errorf("findContentRows = %d, want 1", got)
 	}
 }
 
@@ -1420,7 +951,7 @@ func TestXParseColor_Standard(t *testing.T) {
 		{"ff0080", "rgb:ffff/0000/8080"},
 	}
 	for _, tc := range tests {
-		got := xParseColor(tc.input)
+		got := session.XParseColor(tc.input)
 		if got != tc.want {
 			t.Errorf("xParseColor(%q) = %q, want %q", tc.input, got, tc.want)
 		}
@@ -1428,7 +959,7 @@ func TestXParseColor_Standard(t *testing.T) {
 }
 
 func TestXParseColor_InvalidLength(t *testing.T) {
-	got := xParseColor("ff00")
+	got := session.XParseColor("ff00")
 	if got != "rgb:0000/0000/0000" {
 		t.Errorf("xParseColor invalid length: got %q, want fallback", got)
 	}
@@ -1457,10 +988,10 @@ func TestXTVersion_Response(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
-	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	p := &Pane{Session: &session.Session{Term: term, PTY: pw, ScrollbackLines: 100, Scrollback: session.Ring{MaxLines: 100}}}
 
-	p.captureAndWrite([]byte("\x1b[>0q"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.CaptureAndWrite([]byte("\x1b[>0q"))
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP>|VTE(8203)\x1b\\"
@@ -1478,10 +1009,10 @@ func TestXTVersion_ShortForm(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
-	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	p := &Pane{Session: &session.Session{Term: term, PTY: pw, ScrollbackLines: 100, Scrollback: session.Ring{MaxLines: 100}}}
 
-	p.captureAndWrite([]byte("\x1b[>q"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.CaptureAndWrite([]byte("\x1b[>q"))
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP>|VTE(8203)\x1b\\"
@@ -1499,11 +1030,11 @@ func TestXTGETTCAP_Smulx(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
-	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	p := &Pane{Session: &session.Session{Term: term, PTY: pw, ScrollbackLines: 100, Scrollback: session.Ring{MaxLines: 100}}}
 
 	// "Smulx" hex-encoded = 536d756c78
-	p.captureAndWrite([]byte("\x1bP+q536d756c78\x1b\\"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.CaptureAndWrite([]byte("\x1bP+q536d756c78\x1b\\"))
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	// value = "\x1b[4:%p1%dm" hex-encoded
@@ -1523,43 +1054,16 @@ func TestXTGETTCAP_Unknown(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
-	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	p := &Pane{Session: &session.Session{Term: term, PTY: pw, ScrollbackLines: 100, Scrollback: session.Ring{MaxLines: 100}}}
 
 	// "unknown" hex-encoded = 756e6b6e6f776e
-	p.captureAndWrite([]byte("\x1bP+q756e6b6e6f776e\x1b\\"))
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	p.CaptureAndWrite([]byte("\x1bP+q756e6b6e6f776e\x1b\\"))
+	closeWriter(t, p.Session, pw)
 
 	buf, _ := io.ReadAll(pr)
 	want := "\x1bP0+r756e6b6e6f776e\x1b\\"
 	if string(buf) != want {
 		t.Errorf("XTGETTCAP unknown cap = %q, want %q", string(buf), want)
-	}
-}
-
-func TestXTGETTCAPResponse_Smulx(t *testing.T) {
-	// Smulx hex = 536d756c78; value = "\x1b[4:%p1%dm"
-	got := xtgettcapResponse("536d756c78", 0, 0)
-	wantHexVal := "1b5b343a25703125646d"
-	want := "\x1bP1+r536d756c78=" + wantHexVal + "\x1b\\"
-	if got != want {
-		t.Errorf("xtgettcapResponse(Smulx) = %q, want %q", got, want)
-	}
-}
-
-func TestXTGETTCAPResponse_Setulc(t *testing.T) {
-	// Setulc hex = 5365 74756c63
-	got := xtgettcapResponse("5365 74756c63", 0, 0)
-	// invalid hex (space) — should return empty string (no response)
-	if got != "" {
-		t.Errorf("xtgettcapResponse(invalid hex) = %q, want \"\"", got)
-	}
-}
-
-func TestXTGETTCAPResponse_Setulc_Valid(t *testing.T) {
-	// "Setulc" hex-encoded = 5365 74756c63 without space = 536574756c63
-	got := xtgettcapResponse("536574756c63", 0, 0)
-	if got == "" || got[2] != '1' {
-		t.Errorf("xtgettcapResponse(Setulc) should be found, got %q", got)
 	}
 }
 
@@ -1640,44 +1144,44 @@ func TestHandleKittyKeyboard_PushQueryPop(t *testing.T) {
 	defer pw.Close() //nolint:errcheck // test pipe cleanup
 
 	term := vt10x.New(vt10x.WithSize(40, 10))
-	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	p := &Pane{Session: &session.Session{Term: term, PTY: pw, ScrollbackLines: 100, Scrollback: session.Ring{MaxLines: 100}}}
 
 	// Push flags=1 (\x1b[>1u) — the spec form used by Claude Code and Neovim.
-	p.captureAndWrite([]byte("\x1b[>1u"))
-	p.mu.Lock()
-	if len(p.kittyStack) != 1 || p.kittyStack[0] != 1 {
-		t.Errorf("after push: kittyStack = %v, want [1]", p.kittyStack)
+	p.CaptureAndWrite([]byte("\x1b[>1u"))
+	p.Lock()
+	if len(p.KittyStack) != 1 || p.KittyStack[0] != 1 {
+		t.Errorf("after push: kittyStack = %v, want [1]", p.KittyStack)
 	}
-	p.mu.Unlock()
+	p.Unlock()
 
 	// Push again with flags=3 to verify nesting.
-	p.captureAndWrite([]byte("\x1b[>3u"))
-	p.mu.Lock()
-	if len(p.kittyStack) != 2 || p.kittyStack[1] != 3 {
-		t.Errorf("after second push: kittyStack = %v, want [1 3]", p.kittyStack)
+	p.CaptureAndWrite([]byte("\x1b[>3u"))
+	p.Lock()
+	if len(p.KittyStack) != 2 || p.KittyStack[1] != 3 {
+		t.Errorf("after second push: kittyStack = %v, want [1 3]", p.KittyStack)
 	}
-	p.mu.Unlock()
+	p.Unlock()
 
 	// Query (\x1b[?u) — response must be \x1b[?3u (top of stack).
-	p.captureAndWrite([]byte("\x1b[?u"))
+	p.CaptureAndWrite([]byte("\x1b[?u"))
 
 	// Pop one level (\x1b[<u) — stack should shrink by 1.
-	p.captureAndWrite([]byte("\x1b[<u"))
-	p.mu.Lock()
-	if len(p.kittyStack) != 1 || p.kittyStack[0] != 1 {
-		t.Errorf("after pop: kittyStack = %v, want [1]", p.kittyStack)
+	p.CaptureAndWrite([]byte("\x1b[<u"))
+	p.Lock()
+	if len(p.KittyStack) != 1 || p.KittyStack[0] != 1 {
+		t.Errorf("after pop: kittyStack = %v, want [1]", p.KittyStack)
 	}
-	p.mu.Unlock()
+	p.Unlock()
 
 	// Pop all remaining levels (\x1b[<2u with count > depth — should clamp to 0).
-	p.captureAndWrite([]byte("\x1b[<2u"))
-	p.mu.Lock()
-	if len(p.kittyStack) != 0 {
-		t.Errorf("after over-pop: kittyStack = %v, want []", p.kittyStack)
+	p.CaptureAndWrite([]byte("\x1b[<2u"))
+	p.Lock()
+	if len(p.KittyStack) != 0 {
+		t.Errorf("after over-pop: kittyStack = %v, want []", p.KittyStack)
 	}
-	p.mu.Unlock()
+	p.Unlock()
 
-	pw.Close() //nolint:errcheck // test pipe cleanup
+	closeWriter(t, p.Session, pw)
 	buf, _ := io.ReadAll(pr)
 	// Only the query should have produced a response.
 	want := "\x1b[?3u"
@@ -1699,12 +1203,12 @@ func TestHandleKittyKeyboard_PushQueryPop(t *testing.T) {
 // and bleeding the mascot's eyes into its top border.
 func TestHandleKittyKeyboard_SetFlagsForm(t *testing.T) {
 	term := vt10x.New(vt10x.WithSize(40, 10))
-	p := &Pane{term: term, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
+	p := &Pane{Session: &session.Session{Term: term, ScrollbackLines: 100, Scrollback: session.Ring{MaxLines: 100}}}
 
 	// Park the cursor away from the origin, then send the set-flags sequence
 	// followed by a printable char.  If \x1b[=1;1u leaks to vt10x it triggers
 	// DECRC and 'X' lands at (0,0); when stripped, 'X' lands at the cursor.
-	p.captureAndWrite([]byte("\x1b[5;5H\x1b[=1;1uX"))
+	p.CaptureAndWrite([]byte("\x1b[5;5H\x1b[=1;1uX"))
 
 	if got := term.Cell(0, 0).Char; got == 'X' {
 		t.Fatalf("'X' rendered at (0,0): \\x1b[=1;1u leaked to vt10x as DECRC")
@@ -1714,68 +1218,10 @@ func TestHandleKittyKeyboard_SetFlagsForm(t *testing.T) {
 	}
 
 	// The "set" form replaces the current flags rather than nesting forever.
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.kittyStack) != 1 || p.kittyStack[0] != 1 {
-		t.Errorf("after set-flags: kittyStack = %v, want [1]", p.kittyStack)
-	}
-}
-
-// TestKittyStack_StaleAfterExit is the regression test for the bug where a
-// non-alt-screen app (e.g. Claude Code) enables KKP but exits without sending
-// \x1b[<u.  The stale kittyStack causes bunk to encode all subsequent
-// keystrokes as CSI-u sequences; the shell echoes them as garbage text.
-//
-// trackFgProcess clears kittyStack on foreground PGID change.  This test
-// verifies that a cleared stack restores legacy key encoding.
-func TestKittyStack_StaleAfterExit(t *testing.T) {
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer pr.Close() //nolint:errcheck // test pipe cleanup
-	pw.Close()       //nolint:errcheck // no responses expected
-
-	term := vt10x.New(vt10x.WithSize(40, 10))
-	p := &Pane{term: term, ptmx: pw, scrollbackLines: 100, sb: sbRing{maxLines: 100}}
-
-	// Simulate app enabling KKP but exiting without cleanup.
-	p.captureAndWrite([]byte("\x1b[>1u"))
-
-	p.mu.Lock()
-	staleFlags := 0
-	if len(p.kittyStack) > 0 {
-		staleFlags = p.kittyStack[len(p.kittyStack)-1]
-	}
-	p.mu.Unlock()
-
-	if staleFlags == 0 {
-		t.Fatal("precondition: expected non-zero kittyFlags after push")
-	}
-
-	// With stale stack, Enter encodes as CSI-u — the broken state.
-	gotStale := keyToBytes(keyEv(tcell.KeyEnter, tcell.ModNone), staleFlags)
-	if string(gotStale) != "\x1b[13u" {
-		t.Errorf("stale KKP: Enter = %q, want \\x1b[13u", gotStale)
-	}
-
-	// The negotiation belongs to the exited foreground process.
-	p.mu.Lock()
-	p.kittyOwnerPGID = 11
-	p.clearStaleKittyMode(12)
-	p.mu.Unlock()
-
-	p.mu.Lock()
-	clearedFlags := 0
-	if len(p.kittyStack) > 0 {
-		clearedFlags = p.kittyStack[len(p.kittyStack)-1]
-	}
-	p.mu.Unlock()
-
-	// After clear, Enter must encode as a plain carriage return.
-	gotCleared := keyToBytes(keyEv(tcell.KeyEnter, tcell.ModNone), clearedFlags)
-	if string(gotCleared) != "\r" {
-		t.Errorf("after clear: Enter = %q, want \\r", gotCleared)
+	p.Lock()
+	defer p.Unlock()
+	if len(p.KittyStack) != 1 || p.KittyStack[0] != 1 {
+		t.Errorf("after set-flags: kittyStack = %v, want [1]", p.KittyStack)
 	}
 }
 
@@ -1790,12 +1236,14 @@ func TestKittyStack_StaleAfterExit(t *testing.T) {
 
 func newScrollbackClearPane(cols, rows int) *Pane {
 	p := &Pane{
-		scrollbackLines: 100,
-		sb:              sbRing{maxLines: 100},
+		Session: &session.Session{
+			ScrollbackLines: 100,
+			Scrollback:      session.Ring{MaxLines: 100},
+		},
 	}
-	p.term = vt10x.New(vt10x.WithSize(cols, rows),
-		vt10x.WithScrollCallback(p.onScrollRow),
-		vt10x.WithScrollbackClearCallback(p.onScrollbackClear))
+	p.Term = vt10x.New(vt10x.WithSize(cols, rows),
+		vt10x.WithScrollCallback(p.OnScrollRow),
+		vt10x.WithScrollbackClearCallback(p.OnScrollbackClear))
 	return p
 }
 
@@ -1806,8 +1254,8 @@ func fillScrollback(t *testing.T, p *Pane) {
 	for i := 0; i < 12; i++ {
 		burst = append(burst, []byte("history-line\r\n")...)
 	}
-	p.captureAndWrite(burst)
-	if p.sb.count == 0 {
+	p.CaptureAndWrite(burst)
+	if p.Scrollback.Count == 0 {
 		t.Fatal("setup: expected scrollback rows after overflow")
 	}
 }
@@ -1815,19 +1263,19 @@ func fillScrollback(t *testing.T, p *Pane) {
 func TestScrollbackClear_ED3(t *testing.T) {
 	p := newScrollbackClearPane(20, 5)
 	fillScrollback(t, p)
-	p.sbOff = 2 // user is scrolled back
+	p.ScrollOffset = 2 // user is scrolled back
 
 	// clear(1) output: cursor home + erase display + erase saved lines,
 	// with the follow-up prompt coalesced into the same PTY chunk.
-	p.captureAndWrite([]byte("\x1b[H\x1b[2J\x1b[3J$ "))
+	p.CaptureAndWrite([]byte("\x1b[H\x1b[2J\x1b[3J$ "))
 
-	if p.sb.count != 0 {
-		t.Errorf("sb.count = %d after CSI 3 J, want 0", p.sb.count)
+	if p.Scrollback.Count != 0 {
+		t.Errorf("sb.count = %d after CSI 3 J, want 0", p.Scrollback.Count)
 	}
-	if p.sbOff != 0 {
-		t.Errorf("sbOff = %d after CSI 3 J, want 0 (live view)", p.sbOff)
+	if p.ScrollOffset != 0 {
+		t.Errorf("sbOff = %d after CSI 3 J, want 0 (live view)", p.ScrollOffset)
 	}
-	if got := string(rowChars(captureRow(p.term, 0, 20))); got != "$" {
+	if got := string(rowChars(session.CaptureRow(p.Term, 0, 20))); got != "$" {
 		t.Errorf("prompt = %q, want $", got)
 	}
 }
@@ -1835,13 +1283,13 @@ func TestScrollbackClear_ED3(t *testing.T) {
 func TestScrollbackClear_ED2KeepsHistory(t *testing.T) {
 	p := newScrollbackClearPane(20, 5)
 	fillScrollback(t, p)
-	before := p.sb.count
+	before := p.Scrollback.Count
 
 	// Readline Ctrl+L sends only cursor home + CSI 2 J.
-	p.captureAndWrite([]byte("\x1b[H\x1b[2J"))
+	p.CaptureAndWrite([]byte("\x1b[H\x1b[2J"))
 
-	if p.sb.count != before {
-		t.Errorf("sb.count = %d after CSI 2 J, want %d (2J must not touch scrollback)", p.sb.count, before)
+	if p.Scrollback.Count != before {
+		t.Errorf("sb.count = %d after CSI 2 J, want %d (2J must not touch scrollback)", p.Scrollback.Count, before)
 	}
 }
 
@@ -1849,12 +1297,12 @@ func TestScrollbackClear_RIS(t *testing.T) {
 	p := newScrollbackClearPane(20, 5)
 	fillScrollback(t, p)
 
-	p.captureAndWrite([]byte("\x1bc$ "))
+	p.CaptureAndWrite([]byte("\x1bc$ "))
 
-	if p.sb.count != 0 {
-		t.Errorf("sb.count = %d after RIS, want 0", p.sb.count)
+	if p.Scrollback.Count != 0 {
+		t.Errorf("sb.count = %d after RIS, want 0", p.Scrollback.Count)
 	}
-	if got := string(rowChars(captureRow(p.term, 0, 20))); got != "$" {
+	if got := string(rowChars(session.CaptureRow(p.Term, 0, 20))); got != "$" {
 		t.Errorf("prompt = %q, want $", got)
 	}
 }
@@ -1863,13 +1311,13 @@ func TestScrollbackClear_SurvivesReflow(t *testing.T) {
 	p := newScrollbackClearPane(20, 5)
 	fillScrollback(t, p)
 
-	p.captureAndWrite([]byte("\x1b[H\x1b[2J\x1b[3J$ "))
+	p.CaptureAndWrite([]byte("\x1b[H\x1b[2J\x1b[3J$ "))
 
 	// Erased history must stay absent after a width change.
-	p.resizeAndReflow(40, 5)
+	p.ResizeAndReflow(40, 5)
 
-	if p.sb.count != 0 {
-		t.Errorf("sb.count = %d after reflow, want 0 — erased history must not be resurrected", p.sb.count)
+	if p.Scrollback.Count != 0 {
+		t.Errorf("sb.count = %d after reflow, want 0 — erased history must not be resurrected", p.Scrollback.Count)
 	}
 }
 
@@ -1879,16 +1327,16 @@ func TestScrollbackClear_RingReuse(t *testing.T) {
 	p := newScrollbackClearPane(20, 5)
 	fillScrollback(t, p)
 
-	p.captureAndWrite([]byte("\x1b[3J"))
-	if p.sb.count != 0 {
-		t.Fatalf("sb.count = %d after clear, want 0", p.sb.count)
+	p.CaptureAndWrite([]byte("\x1b[3J"))
+	if p.Scrollback.Count != 0 {
+		t.Fatalf("sb.count = %d after clear, want 0", p.Scrollback.Count)
 	}
-	if row := p.sb.get(0); row != nil {
+	if row := p.Scrollback.Get(0); row != nil {
 		t.Errorf("sb.get(0) = %v after clear, want nil", row)
 	}
 
 	fillScrollback(t, p)
-	if got := p.sb.get(0); got == nil {
+	if got := p.Scrollback.Get(0); got == nil {
 		t.Error("sb.get(0) = nil after post-clear refill, want a row")
 	}
 }

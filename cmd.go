@@ -5,9 +5,13 @@
 package main
 
 import (
+	"bunk/internal/notify"
+	"bunk/internal/theme"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/spf13/cobra"
@@ -39,9 +43,11 @@ func bunkLogo() string {
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "", "config file path (default: ~/.config/bunk/config.toml)")
-	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "built-in theme name: terminal, default, solarized-dark, dracula, nord")
+	rootCmd.PersistentFlags().StringVar(&flagTheme, "theme", "", "theme `NAME`: "+strings.Join(theme.BuiltinNames(), ", ")+", or a [themes.NAME] table of the config")
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug-level logging")
 	rootCmd.PersistentFlags().BoolVar(&flagTrace, "trace", false, "enable trace-level logging (logs raw PTY byte chunks)")
+	// Declared here so cobra does not add its -v shorthand.
+	rootCmd.Flags().Bool("version", false, "print the version and exit")
 
 	// Override help to load the config first so effective (user-overridden)
 	// keybindings are shown rather than built-in defaults.
@@ -70,11 +76,24 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// Execute is called by main.  It runs the cobra command tree.
+// exitStatus is the error of a command that has already printed why it
+// failed; Execute exits with it and prints nothing more.
+type exitStatus int
+
+func (s exitStatus) Error() string { return fmt.Sprintf("exit status %d", int(s)) }
+
+// Execute is called by main.  It runs the cobra command tree and exits
+// with a failing command's status.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+	err := rootCmd.Execute()
+	if err == nil {
+		return
 	}
+	var status exitStatus
+	if errors.As(err, &status) {
+		os.Exit(int(status))
+	}
+	os.Exit(1)
 }
 
 // run initialises the screen, spawns the first pane, and blocks until the
@@ -109,7 +128,10 @@ func run(configPath, themeName string, debug, trace bool) error {
 	cleanup := initLogger(logFile, logLevel)
 	defer cleanup()
 
-	L.Info("bunk starting", "theme", themeName, "log_level", logLevel)
+	L.Info("bunk starting", "theme", cfg.ThemeName, "log_level", logLevel)
+	if cfg.ThemeErr != nil {
+		L.Warn("config: theme settings", "err", cfg.ThemeErr)
+	}
 
 	// Query cell aspect ratio BEFORE screen.Init() — after Init tcell owns
 	// stdin and we must not read from it directly.
@@ -143,6 +165,23 @@ func run(configPath, themeName string, debug, trace bool) error {
 		paneDead:      make(chan *Pane, 8),
 		done:          make(chan struct{}),
 		oscBuf:        newOSCBuffer(),
+		relay:         newAgentRelay(os.Getenv),
+	}
+	app.alerts.Settings = cfg.Alerts
+	app.startDesktopAlerts(os.Getenv)
+
+	// Agent hooks in the panes report through this socket ("bunk notify").
+	// Without it bunk still infers each agent's state.
+	if srv, err := notify.Listen(); err != nil {
+		L.Warn("notify: running without agent hook reports", "err", err)
+	} else {
+		app.notify = srv
+		logAlways("Listening on " + srv.Path())
+		defer func() {
+			if err := srv.Close(); err != nil {
+				L.Warn("notify: close", "err", err)
+			}
+		}()
 	}
 
 	screen.EnableMouse(tcell.MouseMotionEvents)
@@ -155,17 +194,13 @@ func run(configPath, themeName string, debug, trace bool) error {
 	w, h := screen.Size()
 	L.Debug("startup: screen size", "w", w, "h", h)
 
-	p, err := NewPane(
-		app.nextID, 0, 0, w, h, app.scrollback, "", nil,
-		app.paneOSCColors(),
-		app.redraw, app.paneDead, app.done, app.oscBuf,
-		app.cellAspect,
-	)
+	app.mu.Lock()
+	p, err := app.newPane(0, 0, w, h, "", nil)
+	app.mu.Unlock()
 	if err != nil {
 		screen.Fini()
 		return err
 	}
-	app.nextID++
 	app.root = newLeaf(p, 0, 0, w, h)
 	app.active = p
 
@@ -174,6 +209,7 @@ func run(configPath, themeName string, debug, trace bool) error {
 	go app.renderLoop()
 
 	app.eventLoop()
+	app.closeDesktopAlerts()
 
 	// Terminal cleanup runs HERE, synchronously in the main goroutine, AFTER
 	// Fini() has already been called.  This is the only safe place: when the
@@ -190,10 +226,16 @@ func run(configPath, themeName string, debug, trace bool) error {
 		"\033]112\007" + // restore outer terminal cursor colour
 		"\033[0m" + // reset all SGR attributes
 		"\033[2J\033[H" // clear screen + cursor home
+	// The outer bunk pane stops showing this bunk's agent.
+	app.mu.Lock()
+	final := app.relay.finish()
+	app.mu.Unlock()
 	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
+		tty.Write(final)         //nolint:errcheck
 		tty.WriteString(vtreset) //nolint:errcheck
 		tty.Close()              //nolint:errcheck // /dev/tty close on shutdown path
 	} else {
+		os.Stdout.Write(final)         //nolint:errcheck
 		os.Stdout.WriteString(vtreset) //nolint:errcheck
 	}
 	exec.Command("stty", "sane").Run() //nolint:errcheck

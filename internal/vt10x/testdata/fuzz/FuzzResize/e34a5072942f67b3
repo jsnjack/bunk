@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\f')
+byte('\x02')
+byte('\x18')
+byte('\t')
+uint16(13)
+[]byte("0000界\x1b[0;4H\x1b[:C0")

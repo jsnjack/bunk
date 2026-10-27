@@ -46,11 +46,12 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"time"
 	"unicode"
 
+	"bunk/internal/input"
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
@@ -93,15 +94,15 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	if target != nil && btn != tcell.ButtonNone &&
 		btn != tcell.WheelUp && btn != tcell.WheelDown &&
 		btn != tcell.WheelLeft && btn != tcell.WheelRight &&
-		target != app.active && !target.isDead() &&
+		target != app.active && !target.IsDead() &&
 		app.dragPane == nil {
 		prevActive = app.active
 		L.Debug("mouse: click-to-focus", "from_pane", func() int {
 			if prevActive != nil {
-				return prevActive.id
+				return prevActive.ID
 			}
 			return -1
-		}(), "to_pane", target.id, "x", x, "y", y)
+		}(), "to_pane", target.ID, "x", x, "y", y)
 		app.active = target
 		app.triggerRedraw()
 	}
@@ -116,17 +117,17 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	// ── Focus events ──────────────────────────────────────────────────────
 	if prevActive != nil {
 		sendFocusOut(prevActive)
-		sendFocusIn(target)
+		app.focusIn(target)
 	}
 
-	if target == nil || target.isDead() {
+	if target == nil || target.IsDead() {
 		return
 	}
 
 	// ── Resolve mouse mode once ───────────────────────────────────────────
-	target.mu.Lock()
-	mode := target.term.Mode()
-	target.mu.Unlock()
+	target.Lock()
+	mode := target.Term.Mode()
+	target.Unlock()
 	wantsMouse := mode&vt10x.ModeMouseMask != 0
 
 	// ── Mouse wheel: scrollback vs. passthrough ───────────────────────────
@@ -134,26 +135,26 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		if !wantsMouse {
 			// 3 lines per notch — matches standard terminal / browser behaviour.
 			const scrollAmt = 3
-			L.Debug("mouse: wheel scroll", "pane", target.id, "btn", btn, "amount", scrollAmt)
+			L.Debug("mouse: wheel scroll", "pane", target.ID, "btn", btn, "amount", scrollAmt)
 			if btn == tcell.WheelUp {
-				target.scrollUp(scrollAmt)
+				target.ScrollUp(scrollAmt)
 			} else {
-				target.scrollDown(scrollAmt)
+				target.ScrollDown(scrollAmt)
 			}
 
 			// If button1 is currently held (drag-select in progress), extend
 			// the selection to the mouse's current position. screenToVirtual
 			// uses the post-scroll sbOff, so a stationary cursor naturally
 			// walks back through history as the viewport shifts.
-			target.mu.Lock()
-			extend := target.selActive && prevBtn == tcell.Button1
-			target.mu.Unlock()
+			target.Lock()
+			extend := target.SelActive && prevBtn == tcell.Button1
+			target.Unlock()
 			if extend {
 				vPos := screenToVirtual(target, x, y)
-				target.mu.Lock()
-				target.selCursor = vPos
-				target.mu.Unlock()
-				L.Debug("mouse: wheel-extend selection", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
+				target.Lock()
+				target.SelCursor = vPos
+				target.Unlock()
+				L.Debug("mouse: wheel-extend selection", "pane", target.ID, "vrow", vPos.Row, "vcol", vPos.Col)
 			}
 
 			app.triggerRedraw()
@@ -189,10 +190,10 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		dy := app.sbDragLastY - y // up = positive sbOff (further back in history)
 		app.sbDragLastY = y
 		if dy != 0 {
-			p.mu.Lock()
-			sbCount := p.sb.count
-			_, rows := p.term.Size()
-			p.mu.Unlock()
+			p.Lock()
+			sbCount := p.Scrollback.Count
+			_, rows := p.Term.Size()
+			p.Unlock()
 			if rows > 0 && sbCount > 0 {
 				// Natural ratio: (sbCount+rows)/rows lines per cell of drag.
 				// This ensures the full scrollback is reachable in exactly
@@ -209,9 +210,9 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 					newOff = sbCount
 					app.sbDragAccum = float64(sbCount)
 				}
-				p.mu.Lock()
-				p.sbOff = newOff
-				p.mu.Unlock()
+				p.Lock()
+				p.ScrollOffset = newOff
+				p.Unlock()
 			}
 		}
 		app.triggerRedraw()
@@ -220,10 +221,10 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 	// Detect a Button1 press on the scrollbar column of any pane.
 	// Start a drag from the current sbOff — no position jump on click.
 	if isPress && target != nil {
-		target.mu.Lock()
-		sbCount := target.sb.count
-		curSbOff := target.sbOff
-		target.mu.Unlock()
+		target.Lock()
+		sbCount := target.Scrollback.Count
+		curSbOff := target.ScrollOffset
+		target.Unlock()
 		if sbCount > 0 && x == target.x+target.w-1 {
 			app.sbDragPane = target
 			app.sbDragLastY = y
@@ -253,7 +254,7 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			app.lastClickPane = target
 
 			if isDouble {
-				L.Debug("mouse: double-click word select", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
+				L.Debug("mouse: double-click word select", "pane", target.ID, "vrow", vPos.Row, "vcol", vPos.Col)
 				selectWord(target, vPos)
 				app.dblClickActive = true
 				app.mu.Lock()
@@ -263,18 +264,18 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				return
 			}
 
-			L.Debug("mouse: button1 press (clear selection)", "pane", target.id, "vrow", vPos.row, "vcol", vPos.col)
+			L.Debug("mouse: button1 press (clear selection)", "pane", target.ID, "vrow", vPos.Row, "vcol", vPos.Col)
 			// Record the pane where the drag starts.
 			app.mu.Lock()
 			app.dragPane = target
 			app.mu.Unlock()
 			// Clear any existing selection immediately on press.
 			// Selection is only activated once the user starts dragging.
-			target.mu.Lock()
-			target.selActive = false
-			target.selAnchor = vPos
-			target.selCursor = vPos
-			target.mu.Unlock()
+			target.Lock()
+			target.SelActive = false
+			target.SelAnchor = vPos
+			target.SelCursor = vPos
+			target.Unlock()
 			app.triggerRedraw()
 			return
 
@@ -295,11 +296,11 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				app.stopDragEdgeScroll()
 			}
 			vPos := screenToVirtual(sel, x, y)
-			L.Debug("mouse: drag select", "pane", sel.id, "vrow", vPos.row, "vcol", vPos.col)
-			sel.mu.Lock()
-			sel.selActive = true // engage selection on real drag
-			sel.selCursor = vPos
-			sel.mu.Unlock()
+			L.Debug("mouse: drag select", "pane", sel.ID, "vrow", vPos.Row, "vcol", vPos.Col)
+			sel.Lock()
+			sel.SelActive = true // engage selection on real drag
+			sel.SelCursor = vPos
+			sel.Unlock()
 			app.triggerRedraw()
 			return
 
@@ -324,9 +325,9 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 			// For a drag-select: finalise the cursor position.
 			// We hold sel.mu here, so inline the virtual-coord math
 			// instead of calling screenToVirtual (which also locks sel.mu).
-			sel.mu.Lock()
-			if sel.selActive {
-				cols, rows := sel.term.Size()
+			sel.Lock()
+			if sel.SelActive {
+				cols, rows := sel.Term.Size()
 				col := x - sel.x
 				row := y - sel.y
 				// Clamp coordinates to the terminal grid bounds (excludes scrollbar).
@@ -340,13 +341,13 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 				} else if row >= rows {
 					row = rows - 1
 				}
-				vRow := (sel.sb.count - sel.sbOff) + row
-				sel.selCursor = selPos{row: vRow, col: col}
-				L.Debug("mouse: drag-select released", "pane", sel.id, "vrow", vRow, "vcol", col)
+				vRow := (sel.Scrollback.Count - sel.ScrollOffset) + row
+				sel.SelCursor = session.SelPos{Row: vRow, Col: col}
+				L.Debug("mouse: drag-select released", "pane", sel.ID, "vrow", vRow, "vcol", col)
 			}
 			// If selActive is false this was a plain click - selection
 			// was already cleared on press, nothing more to do.
-			sel.mu.Unlock()
+			sel.Unlock()
 			app.triggerRedraw()
 			return
 		}
@@ -355,9 +356,9 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		app.mu.Lock()
 		app.dragPane = nil
 		app.mu.Unlock()
-		target.mu.Lock()
-		target.selActive = false
-		target.mu.Unlock()
+		target.Lock()
+		target.SelActive = false
+		target.Unlock()
 	} else if isRelease {
 		app.mu.Lock()
 		app.dragPane = nil
@@ -393,11 +394,11 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 		// an alt-screen exit chunk that disables mouse reporting.  Without
 		// this second check the shell receives raw SGR mouse sequences as
 		// visible garbage text (e.g. "51;80;29M51;77;28M…").
-		target.mu.Lock()
-		stillWants := target.term.Mode()&vt10x.ModeMouseMask != 0
-		target.mu.Unlock()
+		target.Lock()
+		stillWants := target.Term.Mode()&vt10x.ModeMouseMask != 0
+		target.Unlock()
 		if stillWants {
-			target.writeInput(data)
+			app.sendInput(target, data)
 		}
 	}
 }
@@ -405,12 +406,12 @@ func (app *App) handleMouse(ev *tcell.EventMouse) {
 // screenToVirtual converts a host-screen position into the pane's unified
 // virtual coordinate (scrollback row 0 … sb.count-1, then live rows).
 // Must NOT be called with p.mu held.
-func screenToVirtual(p *Pane, screenX, screenY int) selPos {
-	p.mu.Lock()
-	sbOff := p.sbOff
-	sbCount := p.sb.count
-	cols, _ := p.term.Size()
-	p.mu.Unlock()
+func screenToVirtual(p *Pane, screenX, screenY int) session.SelPos {
+	p.Lock()
+	sbOff := p.ScrollOffset
+	sbCount := p.Scrollback.Count
+	cols, _ := p.Term.Size()
+	p.Unlock()
 
 	col := screenX - p.x
 	row := screenY - p.y
@@ -424,123 +425,80 @@ func screenToVirtual(p *Pane, screenX, screenY int) selPos {
 	} else if row >= p.h {
 		row = p.h - 1
 	}
-	return selPos{row: (sbCount - sbOff) + row, col: col}
+	return session.SelPos{Row: (sbCount - sbOff) + row, Col: col}
 }
 
-// handlePaste forwards a tcell bracketed-paste event to the active pane.
+// pasteTimeout ends a host paste whose end marker never came: what was
+// collected is sent, and later keys go to the pane one by one again.
+const pasteTimeout = time.Second
+
+// handlePaste collects a paste from the host terminal into one input event
+// for the active pane.
 //
 // tcell v2 represents bracketed paste as a pair of EventPaste events:
 //   - EventPaste.Start() == true  marks the beginning of paste content
 //   - EventPaste.Start() == false marks the end
 //
 // The actual paste text arrives as regular *tcell.EventKey events between
-// the two EventPaste events; handleKey forwards them to the pane's PTY as
-// usual.  Our job here is to wrap that content in ESC[200~…ESC[201~ for
-// panes that have enabled DECSET 2004 (tracked via vt10x.ModeSetPaste).
-// Panes that haven't opted in receive the content as plain keystrokes.
+// the two EventPaste events; handleKey encodes them as usual and
+// collectPaste adds them to the paste instead of sending each. The end
+// sends the paste whole, so no reply to a query lands inside it. Panes that
+// enabled DECSET 2004 (vt10x.ModeSetPaste) get it wrapped in
+// ESC[200~…ESC[201~; others get the plain keystrokes.
 func (app *App) handlePaste(ev *tcell.EventPaste) {
 	app.mu.Lock()
-	active := app.active
+	active, gen := app.active, app.pasteGen
 	app.mu.Unlock()
-	if active == nil || active.isDead() {
+	app.endPaste(gen) // a paste still open lost its end marker
+	if !ev.Start() || active == nil || active.IsDead() {
 		return
 	}
 
-	active.mu.Lock()
-	bracketed := active.term.Mode()&vt10x.ModeSetPaste != 0
-	active.mu.Unlock()
+	active.Lock()
+	bracketed := active.Term.Mode()&vt10x.ModeSetPaste != 0
+	active.Unlock()
 
-	L.Debug("handlePaste", "pane", active.id, "start", ev.Start(), "bracketed", bracketed)
+	L.Debug("handlePaste", "pane", active.ID, "bracketed", bracketed)
 
-	if !bracketed {
-		// Pane hasn't requested bracketed paste; content arrives as key events
-		// and gets forwarded verbatim by handleKey.  Nothing to do here.
-		return
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.pasteGen++
+	gen = app.pasteGen
+	app.paste, app.pastePane, app.pasteEnd = make([]byte, 0, 256), active, ""
+	if bracketed {
+		app.paste = append(app.paste, input.PasteStart...)
+		app.pasteEnd = input.PasteEnd
 	}
-
-	if ev.Start() {
-		active.writeInput([]byte("\x1b[200~"))
-	} else {
-		active.writeInput([]byte("\x1b[201~"))
-	}
+	app.pasteTimer = time.AfterFunc(pasteTimeout, func() { app.endPaste(gen) })
 }
 
-// mouseToBytes encodes a tcell mouse event into the raw ANSI byte sequence
-// the PTY expects.  x and y are 1-indexed pane-local coordinates.
-//
-// Release detection: when btn is ButtonNone and prevBtn was a real button,
-// we generate a release for the button that was just released.
-func mouseToBytes(btn, prevBtn tcell.ButtonMask, mod tcell.ModMask, x, y int, sgr bool) []byte {
-	release := btn == tcell.ButtonNone && prevBtn != tcell.ButtonNone
+// collectPaste adds the bytes of a pasted key for p to the open paste and
+// reports whether one was open. A paste larger than an input queue stops
+// growing there; the pane refuses it whole at the end.
+func (app *App) collectPaste(p *Pane, data []byte) bool {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.paste == nil || app.pastePane != p {
+		return false
+	}
+	if len(app.paste) <= session.DefaultInputBytes {
+		app.paste = append(app.paste, data...)
+	}
+	return true
+}
 
-	// Which button is relevant for this event?
-	activebtn := btn
-	if release {
-		activebtn = prevBtn
+// endPaste sends paste gen, if it is still open, as one input event.
+func (app *App) endPaste(gen uint64) {
+	app.mu.Lock()
+	if gen != app.pasteGen || app.paste == nil {
+		app.mu.Unlock()
+		return
 	}
-
-	// Map tcell buttons to ANSI button codes.
-	// Note: tcell.Button2=right, tcell.Button3=middle (not the usual ordering).
-	var cb int
-	switch activebtn {
-	case tcell.Button1:
-		cb = 0 // left
-	case tcell.Button3:
-		cb = 1 // middle
-	case tcell.Button2:
-		cb = 2 // right
-	case tcell.WheelUp:
-		cb = 64
-	case tcell.WheelDown:
-		cb = 65
-	case tcell.WheelLeft:
-		cb = 66
-	case tcell.WheelRight:
-		cb = 67
-	case tcell.ButtonNone:
-		cb = 35 // pure motion: base code 3 + 32
-	default:
-		return nil
-	}
-
-	if mod&tcell.ModShift != 0 {
-		cb |= 4
-	}
-	if mod&tcell.ModAlt != 0 {
-		cb |= 8
-	}
-	if mod&tcell.ModCtrl != 0 {
-		cb |= 16
-	}
-
-	// Set the motion bit (32) for button-held drag events.
-	// ANSI protocol: bit 5 indicates "motion" — same button as last event,
-	// not a fresh press.  Without this, every drag position looks like a
-	// new press and apps restart selection at each intermediate point.
-	// Pure motion (ButtonNone) already has it embedded in cb=35 above.
-	// Wheel events don't need it — they never produce drag sequences.
-	isWheel := activebtn == tcell.WheelUp || activebtn == tcell.WheelDown ||
-		activebtn == tcell.WheelLeft || activebtn == tcell.WheelRight
-	if !release && !isWheel && activebtn != tcell.ButtonNone && prevBtn == btn {
-		cb |= 32
-	}
-
-	if sgr {
-		final := 'M'
-		if release {
-			final = 'm'
-		}
-		return []byte(fmt.Sprintf("\x1b[<%d;%d;%d%c", cb, x, y, final))
-	}
-
-	// X10/normal encoding - coordinates capped at 223 (byte limit).
-	if x > 223 || y > 223 {
-		return nil
-	}
-	if release {
-		cb = 3
-	}
-	return []byte{'\x1b', '[', 'M', byte(cb + 32), byte(x + 32), byte(y + 32)}
+	p, data := app.pastePane, append(app.paste, app.pasteEnd...)
+	app.paste, app.pastePane, app.pasteEnd = nil, nil, ""
+	app.pasteTimer.Stop()
+	app.mu.Unlock()
+	app.sendInput(p, data)
 }
 
 // sendFocusIn sends ESC[I (focus gained) to p if it has DECSET 1004 enabled
@@ -549,12 +507,14 @@ func sendFocusIn(p *Pane) {
 	if p == nil {
 		return
 	}
-	p.mu.Lock()
-	wants := p.term.Mode()&vt10x.ModeFocus != 0
-	p.mu.Unlock()
+	p.Lock()
+	wants := p.Term.Mode()&vt10x.ModeFocus != 0
+	p.Unlock()
 	if wants {
-		L.Debug("sendFocusIn", "pane", p.id)
-		p.writeInput([]byte("\x1b[I"))
+		L.Debug("sendFocusIn", "pane", p.ID)
+		if err := p.WriteInput([]byte("\x1b[I")); err != nil {
+			L.Debug("sendFocusIn: focus report refused", "pane", p.ID, "err", err)
+		}
 	}
 }
 
@@ -563,12 +523,14 @@ func sendFocusOut(p *Pane) {
 	if p == nil {
 		return
 	}
-	p.mu.Lock()
-	wants := p.term.Mode()&vt10x.ModeFocus != 0
-	p.mu.Unlock()
+	p.Lock()
+	wants := p.Term.Mode()&vt10x.ModeFocus != 0
+	p.Unlock()
 	if wants {
-		L.Debug("sendFocusOut", "pane", p.id)
-		p.writeInput([]byte("\x1b[O"))
+		L.Debug("sendFocusOut", "pane", p.ID)
+		if err := p.WriteInput([]byte("\x1b[O")); err != nil {
+			L.Debug("sendFocusOut: focus report refused", "pane", p.ID, "err", err)
+		}
 	}
 }
 
@@ -579,50 +541,50 @@ func sendFocusOut(p *Pane) {
 // selectWord selects the word that contains vPos in pane p.
 // Word characters: letters, digits, underscore, hyphen, dot, slash, tilde,
 // at-sign, plus, colon - covers shell identifiers, file paths, and URLs.
-func selectWord(p *Pane, vPos selPos) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func selectWord(p *Pane, vPos session.SelPos) {
+	p.Lock()
+	defer p.Unlock()
 
-	cols, rows := p.term.Size()
-	sbCount := p.sb.count
+	cols, rows := p.Term.Size()
+	sbCount := p.Scrollback.Count
 
 	// Fetch the row cells at vPos.
 	var cells []vt10x.Glyph
-	if vPos.row < sbCount {
-		cells = p.sb.get(vPos.row)
-	} else if tr := vPos.row - sbCount; tr >= 0 && tr < rows {
-		cells = captureRow(p.term, tr, cols)
+	if vPos.Row < sbCount {
+		cells = p.Scrollback.Get(vPos.Row)
+	} else if tr := vPos.Row - sbCount; tr >= 0 && tr < rows {
+		cells = session.CaptureRow(p.Term, tr, cols)
 	}
 	if cells == nil {
-		L.Debug("selectWord: no cells at position", "pane", p.id, "vrow", vPos.row, "vcol", vPos.col)
+		L.Debug("selectWord: no cells at position", "pane", p.ID, "vrow", vPos.Row, "vcol", vPos.Col)
 		return
 	}
-	if vPos.col > 0 && vPos.col < len(cells) && cells[vPos.col].Width == -1 {
-		vPos.col--
+	if vPos.Col > 0 && vPos.Col < len(cells) && cells[vPos.Col].Width == -1 {
+		vPos.Col--
 	}
 
 	// If clicked on whitespace, clear selection.
-	if vPos.col >= len(cells) || !isWordChar(cells[vPos.col].Char) {
-		L.Debug("selectWord: whitespace, clearing selection", "pane", p.id)
-		p.selActive = false
+	if vPos.Col >= len(cells) || !isWordChar(cells[vPos.Col].Char) {
+		L.Debug("selectWord: whitespace, clearing selection", "pane", p.ID)
+		p.SelActive = false
 		return
 	}
 
 	// Expand left.
-	start := vPos.col
+	start := vPos.Col
 	for start > 0 && (cells[start-1].Width == -1 || isWordChar(cells[start-1].Char)) {
 		start--
 	}
 	// Expand right.
-	end := vPos.col
+	end := vPos.Col
 	for end+1 < len(cells) && (cells[end+1].Width == -1 || isWordChar(cells[end+1].Char)) {
 		end++
 	}
 
-	L.Debug("selectWord: selected", "pane", p.id, "row", vPos.row, "start_col", start, "end_col", end)
-	p.selActive = true
-	p.selAnchor = selPos{row: vPos.row, col: start}
-	p.selCursor = selPos{row: vPos.row, col: end}
+	L.Debug("selectWord: selected", "pane", p.ID, "row", vPos.Row, "start_col", start, "end_col", end)
+	p.SelActive = true
+	p.SelAnchor = session.SelPos{Row: vPos.Row, Col: start}
+	p.SelCursor = session.SelPos{Row: vPos.Row, Col: end}
 }
 
 // isWordChar reports whether r is part of a "word" for selection purposes.
@@ -661,27 +623,27 @@ func (app *App) startDragEdgeScroll(sel *Pane, scrollUp bool) {
 				return
 			case <-ticker.C:
 				if scrollUp {
-					sel.scrollUp(1)
+					sel.ScrollUp(1)
 				} else {
-					sel.scrollDown(1)
+					sel.ScrollDown(1)
 				}
 				// Extend selCursor to the visible edge after scrolling.
-				sel.mu.Lock()
-				if sel.selActive {
-					cols, rows := sel.term.Size()
-					sbCount := sel.sb.count
-					sbOff := sel.sbOff
+				sel.Lock()
+				if sel.SelActive {
+					cols, rows := sel.Term.Size()
+					sbCount := sel.Scrollback.Count
+					sbOff := sel.ScrollOffset
 					if scrollUp {
 						// Extend to the new top-left of the view.
 						vRow := sbCount - sbOff
-						sel.selCursor = selPos{row: vRow, col: 0}
+						sel.SelCursor = session.SelPos{Row: vRow, Col: 0}
 					} else {
 						// Extend to the new bottom-right of the view.
 						vRow := (sbCount - sbOff) + rows - 1
-						sel.selCursor = selPos{row: vRow, col: cols - 1}
+						sel.SelCursor = session.SelPos{Row: vRow, Col: cols - 1}
 					}
 				}
-				sel.mu.Unlock()
+				sel.Unlock()
 				app.triggerRedraw()
 			}
 		}

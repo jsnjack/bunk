@@ -5,8 +5,6 @@ package vt10x
 
 import (
 	"bufio"
-	"bytes"
-	"io"
 	"unicode"
 	"unicode/utf8"
 )
@@ -18,17 +16,20 @@ type terminal struct {
 func newTerminal(info TerminalInfo) *terminal {
 	t := &terminal{newState(info.w)}
 	t.scrollRowCb = info.scrollCb
+	t.links.referenced = info.linkRefs
 	t.sbClearCb = info.sbClearCb
+	t.bellCb = info.bellCb
 	t.init(info.cols, info.rows)
 	t.graphics, t.graphicsReply = info.graphics, info.graphicsReply
 	t.cellWidth, t.cellHeight = info.cellWidth, info.cellHeight
 	t.graphicsRows = info.graphicsRows
+	t.images = info.images
 	return t
 }
 
 func (t *terminal) init(cols, rows int) {
 	t.numlock = true
-	t.state = t.parse
+	t.state = stateGround
 	t.cur.Attr.FG = DefaultFG
 	t.cur.Attr.BG = DefaultBG
 	t.Resize(cols, rows)
@@ -37,30 +38,27 @@ func (t *terminal) init(cols, rows int) {
 
 // Write parses input and writes terminal changes to state.
 func (t *terminal) Write(p []byte) (int, error) {
-	var written int
-	r := bytes.NewReader(p)
 	t.lock()
 	defer t.unlock()
-	for {
-		c, sz, err := r.ReadRune()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return written, err
-		}
-		written += sz
-		if c == unicode.ReplacementChar && sz == 1 {
-			if r.Len() == 0 {
-				// not enough bytes for a full rune
-				return written - 1, nil
-			}
-			t.logln("invalid utf8 sequence")
+	for i := 0; i < len(p); {
+		if n := t.scan(p[i:]); n > 0 {
+			i += n
 			continue
 		}
+		c, sz := utf8.DecodeRune(p[i:])
+		if c == utf8.RuneError && sz == 1 {
+			if !utf8.FullRune(p[i:]) {
+				// The rest of the character comes with the next write.
+				return i, nil
+			}
+			t.logln("invalid utf8 sequence")
+			i++
+			continue
+		}
+		i += sz
 		t.put(c)
 	}
-	return written, nil
+	return len(p), nil
 }
 
 // TODO: add tests for expected blocking behavior

@@ -19,6 +19,9 @@ func TestWideCellOperations(t *testing.T) {
 		{"insert inside wide", "界X\x1b[2G\x1b[@", 5, 0, 0, ' '},
 		{"delete lead", "界X\r\x1b[P", 5, 0, 0, ' '},
 		{"delete continuation", "界X\x1b[2G\x1b[P", 5, 0, 0, ' '},
+		{"prepend cluster wider than two", "\u0600\u0600aB", 6, 2, 0, 'B'},
+		{"three-column dash", "\u2e3aB", 5, 2, 0, 'B'},
+		{"four-column dash", "\u2e3bB", 5, 2, 0, 'B'},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			term := New(WithSize(tc.cols, 3))
@@ -66,7 +69,7 @@ func TestReplaceScreenPreservesState(t *testing.T) {
 	if got := term.Link(term.Cell(0, 0).Link); got != "https://new.example" {
 		t.Fatalf("remapped link = %q", got)
 	}
-	if term.RawCell(0, 0).BG != DefaultBG || term.Cell(0, 0).BG != Color(0x112233) {
+	if term.RawCell(0, 0).BG != DefaultBG || term.Cell(0, 0).BG != RGB(0x11, 0x22, 0x33) {
 		t.Fatal("default colour identity/override was lost")
 	}
 	if _, err := term.Write([]byte("\x1b]111\x07")); err != nil {

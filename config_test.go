@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bunk/internal/session"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,7 @@ func TestLoadConfig(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := defaultScrollbackLines
+			want := session.DefaultScrollbackLines
 			if tc.name == "valid explicit" {
 				want = 123
 			}

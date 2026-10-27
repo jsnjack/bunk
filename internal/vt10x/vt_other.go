@@ -18,13 +18,15 @@ type terminal struct {
 func newTerminal(info TerminalInfo) *terminal {
 	t := &terminal{newState(info.w)}
 	t.scrollRowCb = info.scrollCb
+	t.links.referenced = info.linkRefs
+	t.bellCb = info.bellCb
 	t.init(info.cols, info.rows)
 	return t
 }
 
 func (t *terminal) init(cols, rows int) {
 	t.numlock = true
-	t.state = t.parse
+	t.state = stateGround
 	t.cur.Attr.FG = DefaultFG
 	t.cur.Attr.BG = DefaultBG
 	t.Resize(cols, rows)

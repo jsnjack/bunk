@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
 	"github.com/gdamore/tcell/v2"
@@ -32,14 +33,11 @@ func TestAuditQueryReplies(t *testing.T) {
 			}
 			t.Cleanup(func() { pr.Close(); pw.Close() }) //nolint:errcheck // test pipe cleanup
 			p := regressionPane(20, 5)
-			p.ptmx, p.fgProcess = pw, tc.process
-			var stream ptyStream
+			p.PTY, p.FgProcess = pw, tc.process
 			for _, b := range []byte(tc.input) {
-				p.captureAndWrite(stream.scan([]byte{b}))
+				p.Feed([]byte{b})
 			}
-			if err := pw.Close(); err != nil {
-				t.Fatal(err)
-			}
+			closeWriter(t, p.Session, pw)
 			got, err := io.ReadAll(pr)
 			if err != nil {
 				t.Fatal(err)
@@ -86,19 +84,19 @@ func TestAuditKeypadAndCursorInput(t *testing.T) {
 
 func TestAuditGraphemeCopySearchReflow(t *testing.T) {
 	p := regressionPane(20, 4)
-	p.captureAndWrite([]byte("é❤️👩‍👩‍👧‍👦X"))
-	p.selActive, p.selAnchor, p.selCursor = true, selPos{0, 0}, selPos{0, 5}
-	if got := p.selText(); got != "é❤️👩‍👩‍👧‍👦X" {
+	p.CaptureAndWrite([]byte("é❤️👩‍👩‍👧‍👦X"))
+	p.SelActive, p.SelAnchor, p.SelCursor = true, session.SelPos{Row: 0, Col: 0}, session.SelPos{Row: 0, Col: 5}
+	if got := p.SelText(); got != "é❤️👩‍👩‍👧‍👦X" {
 		t.Fatalf("copy=%q", got)
 	}
 	app := &App{searchPane: p, searchQuery: "👩‍👩‍👧‍👦", searchMode: true}
 	app.runSearchScan()
-	if len(app.searchMatches) != 1 || app.searchMatches[0].col != 3 || app.searchMatches[0].length != 2 {
+	if len(app.searchMatches) != 1 || app.searchMatches[0].Col != 3 || app.searchMatches[0].Length != 2 {
 		t.Fatalf("matches=%v", app.searchMatches)
 	}
 	p.resize(0, 0, 11, 4)
-	if p.term.Cell(0, 0).Text() != "é" || p.term.Cell(3, 0).Text() != "👩‍👩‍👧‍👦" {
-		t.Fatalf("reflow=%q", p.term.String())
+	if p.Term.Cell(0, 0).Text() != "é" || p.Term.Cell(3, 0).Text() != "👩‍👩‍👧‍👦" {
+		t.Fatalf("reflow=%q", p.Term.String())
 	}
 }
 
@@ -123,7 +121,7 @@ func TestAuditCursorColorAndDecorations(t *testing.T) {
 	defer scr.Fini()
 	scr.SetSize(20, 5)
 	p := regressionPane(19, 5)
-	p.captureAndWrite([]byte("\x1b[21;53mA\x1b[0mB\x1b]12;#112233\a\x1b[5 q\x1b[?12l"))
+	p.CaptureAndWrite([]byte("\x1b[21;53mA\x1b[0mB\x1b]12;#112233\a\x1b[5 q\x1b[?12l"))
 	renderPane(scr, p, testTheme())
 	_, style, _ := scr.Get(0, 0)
 	_, _, attrs := style.Decompose()
@@ -141,26 +139,10 @@ func TestAuditCursorColorAndDecorations(t *testing.T) {
 	if cs.style != tcell.CursorStyleSteadyBar || cs.color != tcell.NewRGBColor(0x11, 0x22, 0x33) {
 		t.Fatal("cursor shape or color not forwarded")
 	}
-	p.captureAndWrite([]byte("\x1b]112\a"))
+	p.CaptureAndWrite([]byte("\x1b]112\a"))
 	app.emitCursorStyle(p)
 	if cs.color != tcell.ColorReset {
 		t.Fatal("cursor color not reset")
-	}
-}
-
-func TestAuditKittySetOperations(t *testing.T) {
-	p := regressionPane(10, 2)
-	p.handleKittyKeyboard([]byte("\x1b[=1u\x1b[=4;2u"))
-	if len(p.kittyStack) != 1 || p.kittyStack[0] != 5 {
-		t.Fatalf("set bits: %v", p.kittyStack)
-	}
-	p.handleKittyKeyboard([]byte("\x1b[=1;3u"))
-	if p.kittyStack[0] != 4 {
-		t.Fatalf("clear bits: %v", p.kittyStack)
-	}
-	p.handleKittyKeyboard([]byte("\x1b]2;title\x1b[=9u\a"))
-	if p.kittyStack[0] != 4 {
-		t.Fatal("title changed keyboard negotiation")
 	}
 }
 
@@ -172,7 +154,7 @@ func TestAuditPrintedAndErasedSpaces(t *testing.T) {
 	defer scr.Fini()
 	scr.SetSize(8, 2)
 	p := regressionPane(7, 2)
-	p.captureAndWrite([]byte("\x1b[21;53m \x1b[K"))
+	p.CaptureAndWrite([]byte("\x1b[21;53m \x1b[K"))
 	renderPane(scr, p, testTheme())
 	for x := 0; x < 7; x++ {
 		_, style, _ := scr.Get(x, 0)
@@ -209,15 +191,13 @@ func TestAuditHostFocusForwarding(t *testing.T) {
 	}
 	t.Cleanup(func() { pr.Close(); pw.Close() }) //nolint:errcheck // test cleanup
 	p := regressionPane(10, 2)
-	p.ptmx = pw
+	p.PTY = pw
 	app := &App{active: p}
 	app.handleFocus(true)
-	p.captureAndWrite([]byte("\x1b[?1004h"))
+	p.CaptureAndWrite([]byte("\x1b[?1004h"))
 	app.handleFocus(false)
 	app.handleFocus(true)
-	if err := pw.Close(); err != nil {
-		t.Fatal(err)
-	}
+	closeWriter(t, p.Session, pw)
 	got, err := io.ReadAll(pr)
 	if err != nil {
 		t.Fatal(err)

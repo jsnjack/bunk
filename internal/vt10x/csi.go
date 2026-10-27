@@ -1,9 +1,9 @@
 package vt10x
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 )
 
 // CSI (Control Sequence Introducer)
@@ -22,9 +22,13 @@ func (c *csiEscape) reset() {
 	c.priv = false
 }
 
+// maxCSIBytes ends a control sequence that grows this long without a
+// final byte.
+const maxCSIBytes = 256
+
 func (c *csiEscape) put(b byte) bool {
 	c.buf = append(c.buf, b)
-	if b >= 0x40 && b <= 0x7E || len(c.buf) >= 256 {
+	if b >= 0x40 && b <= 0x7E || len(c.buf) >= maxCSIBytes {
 		c.parse()
 		return true
 	}
@@ -36,50 +40,113 @@ func (c *csiEscape) parse() {
 	if len(c.buf) == 1 {
 		return
 	}
-	s := string(c.buf)
+	s := c.buf
 	c.args = c.args[:0]
 	if s[0] == '?' {
 		c.priv = true
 		s = s[1:]
 	}
 	s = s[:len(s)-1]
-	ss := strings.Split(s, ";")
-	for _, p := range ss {
+	// Parameters are split on ';' without converting the buffer to a string.
+	// The first unparseable parameter, including an empty one, ends the list.
+	// Plain decimal parameters, the common case, are read in one pass.
+	for {
+		n, j := 0, 0
+		for j < len(s) && s[j]-'0' <= 9 {
+			n = min(n*10+int(s[j]-'0'), maxParam)
+			j++
+		}
+		if j < len(s) && s[j] != ';' {
+			break // the parameter holds sub-parameters or other bytes
+		}
+		if j == 0 {
+			return
+		}
+		c.args = append(c.args, n)
+		if j == len(s) {
+			return
+		}
+		s = s[j+1:]
+	}
+	c.parseParams(s)
+}
+
+// parseParams appends the parameters in s to args, splitting sub-parameters.
+func (c *csiEscape) parseParams(s []byte) {
+	for {
+		p, rest, more := cutByte(s, ';')
 		// Handle sub-parameters separated by ':' (e.g. "4:3" for curly underline,
 		// "38:2:R:G:B" for RGB colour).  Encode as main*10000+sub so setAttr can
 		// distinguish them from plain parameters without a separate data structure.
 		// Only the FIRST sub-parameter is encoded; deeper sub-params (e.g. the
 		// R:G:B in 38:2:R:G:B) are passed as separate ';'-equivalent args below.
-		if idx := strings.IndexByte(p, ':'); idx >= 0 {
-			main, err := strconv.Atoi(p[:idx])
+		if idx := bytes.IndexByte(p, ':'); idx >= 0 {
+			main, err := atoi(p[:idx])
 			if err != nil {
-				break
+				return
 			}
-			rest := p[idx+1:]
 			// For multi-sub-param forms (e.g. "38:2:255:0:128"), flatten all
 			// sub-params into individual args so the existing colour-parsing
 			// logic in setAttr can handle them identically to the ';' form.
-			subParts := strings.Split(rest, ":")
-			sub, err := strconv.Atoi(subParts[0])
+			first, subRest, subMore := cutByte(p[idx+1:], ':')
+			sub, err := atoi(first)
 			if err != nil {
 				sub = 0
 			}
 			c.args = append(c.args, main*10000+sub+1) // +1: distinguishes 4:0 (→40001) from plain 4 (→4)
-			for _, sp := range subParts[1:] {
-				v, err := strconv.Atoi(sp)
+			for subMore {
+				var sp []byte
+				sp, subRest, subMore = cutByte(subRest, ':')
+				v, err := atoi(sp)
 				if err != nil {
 					break
 				}
 				c.args = append(c.args, v)
 			}
 		} else {
-			i, err := strconv.Atoi(p)
+			i, err := atoi(p)
 			if err != nil {
-				break
+				return
 			}
 			c.args = append(c.args, i)
 		}
+		if !more {
+			return
+		}
+		s = rest
 	}
+}
+
+// cutByte splits s around the first sep, like bytes.Cut with a one-byte
+// separator.
+func cutByte(s []byte, sep byte) (before, after []byte, found bool) {
+	if i := bytes.IndexByte(s, sep); i >= 0 {
+		return s[:i], s[i+1:], true
+	}
+	return s, nil, false
+}
+
+// maxParam caps numeric parameters, as xterm does (MAX_I_PARAM in ptyx.h).
+// Counts near 2^63 would otherwise wrap negative when added to the cursor
+// position.
+const maxParam = 65535
+
+var errParam = errors.New("parameter is not a decimal number")
+
+// atoi parses a parameter of decimal digits, capped at maxParam. A sign is
+// an intermediate byte in a control sequence, not part of a number.
+func atoi(b []byte) (int, error) {
+	if len(b) == 0 {
+		return 0, errParam
+	}
+	n := 0
+	for _, c := range b {
+		if c < '0' || c > '9' {
+			return 0, errParam
+		}
+		n = min(n*10+int(c-'0'), maxParam)
+	}
+	return n, nil
 }
 
 func (c *csiEscape) arg(i, def int) int {
@@ -134,7 +201,9 @@ func (t *State) handleCSI() {
 	case 'H', 'f': // CUP, HVP - move to <row> <col>
 		t.moveAbsTo(c.arg(1, 1)-1, c.arg(0, 1)-1)
 	case 'I': // CHT - cursor forward tabulation <n> tab stops
-		n := c.arg(0, 1)
+		// After cols stops the cursor no longer moves; a huge count must
+		// not keep the terminal locked.
+		n := min(c.arg(0, 1), t.cols)
 		for i := 0; i < n; i++ {
 			t.putTab(true)
 		}
@@ -157,6 +226,8 @@ func (t *State) handleCSI() {
 			if t.sbClearCb != nil {
 				t.sbClearCb()
 			}
+			t.sweepImages()
+			t.sweepLinks()
 		default:
 			goto unknown
 		}
@@ -184,7 +255,7 @@ func (t *State) handleCSI() {
 	case 'P': // DCH - delete <n> chars
 		t.deleteChars(c.arg(0, 1))
 	case 'Z': // CBT - cursor backward tabulation <n> tab stops
-		n := c.arg(0, 1)
+		n := min(c.arg(0, 1), t.cols)
 		for i := 0; i < n; i++ {
 			t.putTab(false)
 		}
@@ -225,7 +296,7 @@ func (t *State) handleCSI() {
 			ps := 0
 			for _, b := range c.buf[:len(c.buf)-2] {
 				if b >= '0' && b <= '9' {
-					ps = ps*10 + int(b-'0')
+					ps = min(ps*10+int(b-'0'), maxParam)
 				}
 			}
 			t.cur.Shape = ps
