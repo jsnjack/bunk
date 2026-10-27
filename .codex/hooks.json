@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.claude/hooks/check-all-on-stop.sh\"",
+            "timeout": 1800,
+            "statusMessage": "make check-all (code changed since last green run)"
+          }
+        ]
+      }
+    ]
+  }
+}
