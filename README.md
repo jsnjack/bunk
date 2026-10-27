@@ -81,7 +81,8 @@ bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, 
 | Links | Ctrl+click | Opens OSC 8 links and plain http, https and file URLs; Ctrl+hover underlines them |
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
 | Shortcuts window | Ctrl+Shift+? / Ctrl+? | Rebind or turn off any action, and give it more than one key; ⚠ marks keys terminal programs may use |
-| Preferences | Ctrl+, | Layout, rail, font, text zoom, theme, notifications and extra agent CLIs |
+| Preferences | Ctrl+, | Layout, rail, font, text zoom, theme, notifications, agent hooks and extra agent CLIs |
+| Agent hooks | | Preferences shows which agents report their own state, installs the Codex and Copilot CLI hooks and copies the others; a toast reminds you once when an agent runs without them |
 | Options menu | F10 | The ≡ button at the bottom of the rail, or at the right of the bar |
 | Fullscreen | F11 | |
 | Themes | | bunk's themes; picking one in Preferences repaints the panes at once |
@@ -245,6 +246,7 @@ font = "Noto Sans Mono"
 font_size = 11             # points
 text_zoom = 100            # % of font_size at start and after Ctrl+0
 theme = "default"          # as in bunk, with [themes.NAME] tables of your own
+hooks_hint = true          # a toast when an agent runs without bunk's hooks
 
 [keys]                     # one key or a list; actions in cmd/bunk-gui/bindings.go
 next_tab = ["ctrl+right", "ctrl+pgdn"]
@@ -300,12 +302,17 @@ Long commands notify you the same way. When a command that ran for at least `com
 - An agent's own run does not notify as a command: the agent's states notify instead.
 - Commands on the other end of ssh notify only when the remote shell sends the marks.
 
-With hooks, the agent reports its own state, and the report takes priority over inference:
+With hooks, the agent reports its own state, and the report takes priority over inference. Set them up once per machine:
 
 ```bash
-bunk notify hooks claude        # print the hook snippet for Claude Code
-bunk-gui notify hooks claude    # the same, where only bunk-gui is installed
+bunk notify hooks                  # each agent: installed, outdated or missing, and the next step
+bunk notify hooks install codex    # Codex and Copilot CLI: write the hooks file; trust it with /hooks in Codex
+bunk notify hooks claude           # Claude Code and Gemini CLI: print the snippet to merge into settings.json
 ```
+
+- In bunk-gui, Preferences (Ctrl+,) → Agent hooks does the same: it shows each agent's state, installs the Codex and Copilot CLI hooks with a click and copies the snippets of Claude Code and Gemini CLI, whose settings file bunk never writes.
+- bunk-gui reminds you with a toast, once per agent and window, when an agent runs without its hooks. `hooks_hint = false` turns the reminder off.
+- [docs/agent-hooks.md](docs/agent-hooks.md#set-up) walks through the setup for each agent.
 
 - `bunk notify` and `bunk-gui notify` take the same arguments, and the snippets call bunk-gui when it is installed, else bunk.
 - The Claude Code snippet also reports a question (AskUserQuestion) or a plan waiting for approval as needs you, with the question as the notice. A turn that ends while a background shell or subagent still runs stays working until Claude finishes after it.

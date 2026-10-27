@@ -42,6 +42,7 @@ type prefsWindow struct {
 	scroll            *gtk.ScrolledWindow
 	content           *gtk.Box // the scrolled content
 	notify            *notifyPrefs
+	hooks             *hooksPrefs // the Agent hooks section (prefs_hooks.go)
 }
 
 type agentRow struct {
@@ -125,6 +126,7 @@ func (a *App) showPreferences() {
 
 	w.addThemeSection(box, st)
 	w.addNotifications(box)
+	w.addHooks(box)
 
 	box.Append(heading("Agents"))
 	hint := label("Agent CLIs to recognise besides the built-in ones: a name, and process names or script paths (comma separated).", "statelabel")

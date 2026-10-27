@@ -26,15 +26,47 @@ type hook struct {
 	event   string // the agent's event name
 	matcher string // "" matches every occurrence
 	args    string // notify arguments, such as "needs-you -"
+	timeout int    // seconds; 0 is hookTimeout
+}
+
+func (h hook) seconds() int {
+	if h.timeout > 0 {
+		return h.timeout
+	}
+	return hookTimeout
 }
 
 // agentHooks is one agent's recipe for "notify hooks <agent>".
 type agentHooks struct {
-	name   string
-	dest   string // where the snippet goes
+	name    string // also the agent's command
+	homeDir string // the agent's configuration directory under the home directory
+	envDir  string // the variable that moves it, or ""
+	file    string // where the snippet goes, in that directory
+	// own: the snippet is a file of its own, so InstallHooks may write it.
+	// Otherwise it is merged into a file with other settings.
+	own    bool
+	how    string // the setup step after the file, with %[1]s for the program
+	after  string // what to do once InstallHooks wrote the file, or ""
 	hooks  []hook
 	render func([]hook) (string, error)
+	read   func(dir string) ([]foundHook, error) // the hooks the agent has now
 }
+
+// dest names the snippet's file and how it gets there, for listings.
+func (r agentHooks) dest(prog string) string {
+	return "~/" + r.homeDir + "/" + r.file + " (" + fmt.Sprintf(r.how, prog) + ")"
+}
+
+// step is the setup step of a snippet that is not installed.
+func (r agentHooks) step(prog string) string {
+	if r.own {
+		return fmt.Sprintf(r.how, prog)
+	}
+	return fmt.Sprintf(`merge the "hooks" key of "%s notify hooks %s" into it`, prog, r.name)
+}
+
+// mergeKey is the setup step of a snippet merged into a settings file.
+const mergeKey = `merge the "hooks" key`
 
 // claudeQuestionTools are Claude Code's tools that wait for the user: a
 // multiple-choice question and the approval of a plan. No notification
@@ -52,7 +84,8 @@ const (
 // recipes are the agents "notify hooks" knows, in listing order.
 var recipes = []agentHooks{
 	{
-		name: "claude", dest: "~/.claude/settings.json (merge the \"hooks\" key)",
+		name: "claude", homeDir: ".claude", envDir: "CLAUDE_CONFIG_DIR", file: "settings.json", how: mergeKey,
+		read: readSettingsHooks("settings.json"),
 		hooks: []hook{
 			{event: "UserPromptSubmit", args: "working"},
 			{event: "PreToolUse", matcher: claudeQuestionTools, args: "needs-you -"},
@@ -65,18 +98,24 @@ var recipes = []agentHooks{
 		render: renderClaude,
 	},
 	{
-		name: "codex", dest: "~/.codex/config.toml (then trust the hooks with /hooks)",
+		name: "codex", homeDir: ".codex", envDir: "CODEX_HOME", file: "hooks.json", own: true,
+		how:   "%[1]s notify hooks install codex, then trust the hooks with /hooks in Codex",
+		after: "Run /hooks in Codex once to trust the hooks.",
+		read:  readCodexHooks,
 		hooks: []hook{
 			{event: "UserPromptSubmit", args: "working"},
 			{event: "PermissionRequest", args: "needs-you Approval requested"},
 			{event: "Stop", args: "done -"},
-			{event: "Interrupt", args: "idle"},
-			{event: "SessionEnd", args: "clear"},
+			// Codex allows Interrupt and SessionEnd hooks 3 s at most.
+			{event: "Interrupt", args: "idle", timeout: 3},
+			{event: "SessionEnd", args: "clear", timeout: 3},
 		},
-		render: renderCodex,
+		render: renderClaude, // hooks.json has the form of Claude Code's settings
 	},
 	{
-		name: "copilot", dest: "~/.copilot/hooks/bunk.json",
+		name: "copilot", homeDir: ".copilot", envDir: "COPILOT_HOME", file: "hooks/bunk.json", own: true,
+		how:  "%[1]s notify hooks install copilot",
+		read: readCopilotHooks,
 		hooks: []hook{
 			{event: "userPromptSubmitted", args: "working"},
 			{event: "notification", matcher: "permission_prompt|elicitation_dialog", args: "needs-you -"},
@@ -86,7 +125,8 @@ var recipes = []agentHooks{
 		render: renderCopilot,
 	},
 	{
-		name: "gemini", dest: "~/.gemini/settings.json (merge the \"hooks\" key)",
+		name: "gemini", homeDir: ".gemini", file: "settings.json", how: mergeKey,
+		read: readSettingsHooks("settings.json"),
 		hooks: []hook{
 			{event: "BeforeAgent", args: "working"},
 			{event: "Notification", args: "needs-you -"},
@@ -113,11 +153,11 @@ func HookSnippet(agent string) (string, bool) {
 }
 
 // HookAgents lists the agents HookSnippet knows, one "name  destination"
-// line each.
-func HookAgents() string {
+// line each; prog names the program in setup steps.
+func HookAgents(prog string) string {
 	var b strings.Builder
 	for _, r := range recipes {
-		fmt.Fprintf(&b, "%-8s %s\n", r.name, r.dest)
+		fmt.Fprintf(&b, "%-8s %s\n", r.name, r.dest(prog))
 	}
 	return b.String()
 }
@@ -179,7 +219,7 @@ func renderClaude(hs []hook) (string, error) {
 		if h.matcher != "" {
 			group = append(group, field{"matcher", h.matcher})
 		}
-		handler := object{{"type", "command"}, {"command", shellCommand(h.args)}, {"timeout", hookTimeout}}
+		handler := object{{"type", "command"}, {"command", shellCommand(h.args)}, {"timeout", h.seconds()}}
 		group = append(group, field{"hooks", []any{handler}})
 		events = append(events, field{h.event, []any{group}})
 	}
@@ -192,7 +232,7 @@ func renderGemini(hs []hook) (string, error) {
 	events := object{}
 	for _, h := range hs {
 		name := "bunk-" + strings.Fields(h.args)[0]
-		handler := object{{"name", name}, {"type", "command"}, {"command", shellCommand(h.args)}, {"timeout", hookTimeout * 1000}}
+		handler := object{{"name", name}, {"type", "command"}, {"command", shellCommand(h.args)}, {"timeout", h.seconds() * 1000}}
 		group := object{}
 		if h.matcher != "" {
 			group = append(group, field{"matcher", h.matcher})
@@ -212,31 +252,15 @@ func renderCopilot(hs []hook) (string, error) {
 		if h.matcher != "" {
 			handler = append(handler, field{"matcher", h.matcher})
 		}
-		handler = append(handler, field{"bash", shellCommand(h.args)}, field{"timeoutSec", hookTimeout})
+		handler = append(handler, field{"bash", shellCommand(h.args)}, field{"timeoutSec", h.seconds()})
 		events = append(events, field{h.event, []any{handler}})
 	}
 	return indentJSON(object{{"version", 1}, {"hooks", events}})
 }
 
-// renderCodex writes inline [hooks] tables for Codex's config.toml, with
-// the notify program as a commented alternative. Codex appends its JSON
-// payload to the program's arguments, so sh passes it on as "$1".
-func renderCodex(hs []hook) (string, error) {
-	var b strings.Builder
-	b.WriteString("# bunk agent status. Run /hooks in Codex once to trust these hooks.\n")
-	b.WriteString("# Codex without hooks: use the notify program instead, as a top-level\n")
-	b.WriteString("# key above the first [table]:\n")
-	fmt.Fprintf(&b, "# notify = [\"sh\", \"-c\", %s, \"sh\"]\n", strconv.Quote(shellCommand(`done "$1"`)))
-	for _, h := range hs {
-		cmd := shellCommand(h.args)
-		if strings.Contains(cmd, "'") {
-			return "", fmt.Errorf("render hooks: quote in %q", cmd)
-		}
-		fmt.Fprintf(&b, "\n[[hooks.%s]]\n", h.event)
-		if h.matcher != "" {
-			fmt.Fprintf(&b, "matcher = %q\n", h.matcher)
-		}
-		fmt.Fprintf(&b, "[[hooks.%s.hooks]]\ntype = \"command\"\ncommand = '%s'\ntimeout = %d\n", h.event, cmd, hookTimeout)
-	}
-	return b.String(), nil
+// codexNotifyLine is the notify program for the config.toml of Codex
+// releases without hooks, a top-level key. Codex appends its JSON payload
+// to the program's arguments, so sh passes it on as "$1".
+func codexNotifyLine() string {
+	return fmt.Sprintf("notify = [\"sh\", \"-c\", %s, \"sh\"]\n", strconv.Quote(shellCommand(`done "$1"`)))
 }

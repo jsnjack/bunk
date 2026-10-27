@@ -32,6 +32,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"bunk/internal/notify"
 )
 
 const wrapper = "../../scripts/headless-gui.sh"
@@ -99,12 +101,32 @@ func guiBinary(t *testing.T) string {
 		out, err := exec.Command("go", append(args, ".")...).CombinedOutput()
 		if err != nil {
 			guiErr = fmt.Errorf("go build: %v\n%s", err, out)
+			return
 		}
+		guiErr = installAllHooks(filepath.Join(guiDir, "agent-home"))
 	})
 	if guiErr != nil {
 		t.Fatal(guiErr)
 	}
 	return guiBin
+}
+
+// installAllHooks writes every agent's hook snippet under home, the
+// --agent-home of scenarios that pass none of their own: their agents
+// have hooks, so no reminder toast comes between a scenario and its
+// waits.
+func installAllHooks(home string) error {
+	d := notify.Dirs{Home: home}
+	for _, h := range notify.CheckHooks(d) {
+		snippet, _ := notify.HookSnippet(h.Agent)
+		if err := os.MkdirAll(filepath.Dir(h.Path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(h.Path, []byte(snippet), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // scenario is one bunk-gui launch.
@@ -232,7 +254,8 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	if limit == 0 {
 		limit = 30 * time.Second
 	}
-	args := append([]string{"--wait-focus", "--do", "@" + do, "--report", rep, "--config", cfg, "--timeout", limit.String()}, sc.args...)
+	args := append([]string{"--wait-focus", "--do", "@" + do, "--report", rep, "--config", cfg, "--timeout", limit.String(),
+		"--agent-home", filepath.Join(filepath.Dir(bin), "agent-home")}, sc.args...)
 	cmd := exec.Command(w, append([]string{bin}, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // a timeout kills the compositor too
 	cmd.Dir = dir

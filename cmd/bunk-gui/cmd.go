@@ -41,6 +41,7 @@ type config struct {
 	maximize   time.Duration
 	script     string
 	gsk        string
+	agentHome  string // tests: the home directory whose agent hooks count
 
 	imageBytes    int // per pane: bitmaps of image placements (session.Options.ImageBytes)
 	inputBytes    int // per pane: input queued for a program not reading it (session.Options.InputBytes)
@@ -55,7 +56,7 @@ var (
 
 // testFlags only serve the window tests and other automated runs, so
 // --help leaves them out.
-var testFlags = []string{"do", "report", "verify", "wait-focus", "alloc-probe", "dump", "dump-size", "maximize-after"}
+var testFlags = []string{"do", "report", "verify", "wait-focus", "alloc-probe", "dump", "dump-size", "maximize-after", "agent-home"}
 
 func init() {
 	pf := rootCmd.PersistentFlags()
@@ -83,6 +84,7 @@ func init() {
 
 	f.StringVar(&opts.script, "do", "", "run test `ACTIONS` on the main thread, e.g. '1s scroll 10; 2s dump x.png' (see script.go)")
 	f.StringVar(&opts.report, "report", "", "on exit, write a JSON record of the run (state snapshots, marks, latencies) to `FILE`")
+	f.StringVar(&opts.agentHome, "agent-home", "", "read the agents' hook configuration under `DIR`, not the home directory")
 	f.BoolVar(&opts.verify, "verify", false, "on exit, check texel:pixel mapping through GSK")
 	f.BoolVar(&opts.waitFocus, "wait-focus", false, "headless tests: give the compositor a keyboard, wait for keyboard focus, then start --do")
 	f.BoolVar(&opts.allocProbe, "alloc-probe", false, "record every allocation, so marks count objects allocated by the frame path (slow)")

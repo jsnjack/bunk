@@ -205,7 +205,7 @@ func handlerCommands(t *testing.T, agent, snippet string) map[string]string {
 	t.Helper()
 	cmds := map[string]string{}
 	switch agent {
-	case "claude", "gemini":
+	case "claude", "codex", "gemini":
 		var cfg struct {
 			Hooks map[string][]struct {
 				Matcher string `json:"matcher"`
@@ -225,6 +225,10 @@ func handlerCommands(t *testing.T, agent, snippet string) map[string]string {
 				for _, h := range g.Hooks {
 					if h.Type != "command" || h.Timeout <= 0 || (agent == "gemini" && h.Name == "") {
 						t.Errorf("%s %s: handler %+v", agent, ev, h)
+					}
+					// Codex allows these two 3 s at most.
+					if agent == "codex" && (ev == "Interrupt" || ev == "SessionEnd") && h.Timeout > 3 {
+						t.Errorf("codex %s: timeout %d s, Codex allows 3", ev, h.Timeout)
 					}
 					cmds[ev] = h.Command
 				}
@@ -253,42 +257,17 @@ func handlerCommands(t *testing.T, agent, snippet string) map[string]string {
 				cmds[ev] = h.Bash
 			}
 		}
-	case "codex":
-		var cfg struct {
-			Hooks map[string][]struct {
-				Matcher string
-				Hooks   []struct {
-					Type    string
-					Command string
-					Timeout int
-				}
-			}
-		}
-		if _, err := toml.Decode(snippet, &cfg); err != nil {
-			t.Fatalf("codex snippet is not TOML: %v", err)
-		}
-		for ev, groups := range cfg.Hooks {
-			for _, g := range groups {
-				for _, h := range g.Hooks {
-					if h.Type != "command" || h.Timeout <= 0 {
-						t.Errorf("codex %s: handler %+v", ev, h)
-					}
-					cmds[ev] = h.Command
-				}
-			}
-		}
 	}
 	return cmds
 }
 
-// codexNotifyArgv returns the notify program in the Codex snippet's
-// commented line, which is valid TOML once uncommented.
-func codexNotifyArgv(t *testing.T, snippet string) []string {
+// codexNotifyArgv returns the notify program of codexNotifyLine, the
+// config.toml key for Codex releases without hooks.
+func codexNotifyArgv(t *testing.T) []string {
 	t.Helper()
 	var cfg struct{ Notify []string }
-	uncommented := strings.TrimPrefix(strings.Split(snippet, "\n")[3], "# ")
-	if _, err := toml.Decode(uncommented, &cfg); err != nil || len(cfg.Notify) == 0 {
-		t.Fatalf("codex notify line %q: %v, %q", uncommented, err, cfg.Notify)
+	if _, err := toml.Decode(codexNotifyLine(), &cfg); err != nil || len(cfg.Notify) == 0 {
+		t.Fatalf("codex notify line %q: %v, %q", codexNotifyLine(), err, cfg.Notify)
 	}
 	return cfg.Notify
 }
@@ -365,7 +344,7 @@ func TestHookSnippets(t *testing.T) {
 			if r.name != "codex" {
 				return
 			}
-			argv := append(codexNotifyArgv(t, snippet), codexNotify)
+			argv := append(codexNotifyArgv(t), codexNotify)
 			for _, tc := range []struct {
 				name string
 				env  []string
@@ -461,5 +440,8 @@ func TestHookDocs(t *testing.T) {
 		if !ok || !strings.Contains(string(doc), snippet) {
 			t.Errorf("docs/agent-hooks.md lacks the current %s snippet; paste the output of `bunk notify hooks %s`", r.name, r.name)
 		}
+	}
+	if !strings.Contains(string(doc), codexNotifyLine()) {
+		t.Errorf("docs/agent-hooks.md lacks the current Codex notify line:\n%s", codexNotifyLine())
 	}
 }

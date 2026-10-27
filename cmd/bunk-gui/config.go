@@ -26,6 +26,7 @@ import (
 //	font_size = 11           # points
 //	text_zoom = 100          # text size at start and after Ctrl+0, % of font_size
 //	theme = "default"        # a built-in theme or a [themes.NAME] table (internal/theme)
+//	hooks_hint = true        # a toast when an agent runs without bunk's hooks
 //
 //	[themes.paper]           # a custom theme, as in bunk's config (theme.Def)
 //	background = "#FDF6E3"
@@ -60,11 +61,15 @@ type Settings struct {
 	Keys     map[string]any       `toml:"keys"`
 	// Notifications is the [notifications] table as written.
 	Notifications alert.Config `toml:"notifications"`
+	// HooksHint is hooks_hint as written: remind the user of an agent that
+	// runs without bunk's hooks (prefs_hooks.go).
+	HooksHint *bool `toml:"hooks_hint"`
 
-	keymap keymap              // Keys applied to the defaults
-	was    map[string][]string // bindings of disabled actions, from "# was" comments
-	themes *theme.Registry     // the built-in themes and the valid ones of Themes
-	alerts alert.Settings      // Notifications applied to the defaults
+	keymap    keymap              // Keys applied to the defaults
+	was       map[string][]string // bindings of disabled actions, from "# was" comments
+	themes    *theme.Registry     // the built-in themes and the valid ones of Themes
+	alerts    alert.Settings      // Notifications applied to the defaults
+	hooksHint bool                // HooksHint applied to the default, true
 }
 
 // startSize is the text size at start and after Ctrl+0: font_size at
@@ -76,7 +81,7 @@ func (st Settings) startSize() float64 {
 func defaultSettings() Settings {
 	km, _ := resolveKeys(nil)
 	return Settings{Tabs: "rail", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
-		keymap: km, was: map[string][]string{}, alerts: alert.Default()}
+		keymap: km, was: map[string][]string{}, alerts: alert.Default(), hooksHint: true}
 }
 
 // configPath is $XDG_CONFIG_HOME/bunk-gui/config.toml.
@@ -125,6 +130,9 @@ func loadSettings(path string) (Settings, error) {
 	}
 	if md.IsDefined("rail_open") {
 		st.RailOpen = f.RailOpen
+	}
+	if f.HooksHint != nil {
+		st.HooksHint, st.hooksHint = f.HooksHint, *f.HooksHint
 	}
 	if f.Font != "" {
 		st.Font = f.Font

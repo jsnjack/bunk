@@ -80,8 +80,11 @@ type App struct {
 	cfgMonitor   gio.FileMonitorrer
 	fileSettings Settings // as the config file last read had them
 	toastLog     []string
-	chromeKey    string // what the tab items show, to skip identical rebuilds
-	layout       string // "bar" or "rail"
+	toastButton  string          // the button label of the last toast, "" without one
+	toastAct     func()          // what that button does
+	hinted       map[string]bool // agents hooksHint looked at (prefs_hooks.go)
+	chromeKey    string          // what the tab items show, to skip identical rebuilds
+	layout       string          // "bar" or "rail"
 	railOpen     bool
 	fontSize     float64          // points; settings.FontSize is 100 %
 	fontDesc     string           // Pango description at fontSize; atlases are keyed by it

@@ -458,6 +458,13 @@ func (a *App) doAction(action string, done func()) {
 		a.jumpNeedingYou()
 	case "status", "status-clear":
 		a.scriptStatus(verb == "status-clear", arg)
+	case "toast-action":
+		// The last toast's button, clicked.
+		if a.toastAct == nil {
+			a.reportError("%s: the last toast has no button", action)
+			return
+		}
+		a.toastAct()
 	case "alert-click":
 		check(a.alertClick(num(0, 0)))
 	case "decoy":

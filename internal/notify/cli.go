@@ -37,6 +37,7 @@ var hookTextFields = []string{"message", "last_assistant_message", "last-assista
 // usage is the help text; %[1]s is the program name, bunk or bunk-gui.
 const usage = `usage: %[1]s notify <event> [message | -]
        %[1]s notify hooks [agent]
+       %[1]s notify hooks install <agent>
 
 Reports an agent's state to the bunk session it runs in, in bunk's
 terminal UI or in bunk-gui.
@@ -51,8 +52,10 @@ socket, with BUNK_NOTIFY_SESSION set or on a host reached over ssh
 (SSH_CONNECTION set), it writes the report to its terminal for the bunk
 pane ssh runs in. Elsewhere it does nothing and exits 0.
 
-"hooks" lists the agents with ready hook snippets; "hooks <agent>"
-prints one.
+"hooks" shows, for each agent with a hook snippet, whether its hooks are
+installed, where they go and how. "hooks <agent>" prints the snippet;
+"hooks install <agent>" writes it for an agent whose hooks are a file of
+their own (codex, copilot). docs/agent-hooks.md describes the setup.
 `
 
 // RunCLI runs the notify command; args exclude the "notify" word itself,
@@ -79,17 +82,19 @@ func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.
 		write(stdout, help)
 		return 0
 	case "hooks":
-		switch len(args) {
-		case 1:
-			write(stdout, HookAgents())
+		switch {
+		case len(args) == 1:
+			write(stdout, hookStatus(prog, envDirs(env)))
 			return 0
-		case 2:
+		case len(args) == 2:
 			if snippet, ok := HookSnippet(args[1]); ok {
 				write(stdout, snippet)
 				return 0
 			}
+		case len(args) == 3 && args[1] == "install":
+			return installHooks(prog, args[2], envDirs(env), stdout, stderr)
 		}
-		write(stderr, prog+" notify: hooks takes one of:\n"+HookAgents())
+		write(stderr, prog+" notify: hooks takes one of:\n"+HookAgents(prog))
 		return exitError
 	}
 	ev, ok := session.ParseEvent(args[0])
@@ -248,4 +253,58 @@ func toolQuestion(obj map[string]json.RawMessage) string {
 		return planNotice
 	}
 	return ""
+}
+
+// envDirs locates the agents' configuration from the environment env.
+func envDirs(env []string) Dirs {
+	home := lookupEnv(env, "HOME")
+	if home == "" {
+		home = UserDirs().Home
+	}
+	return Dirs{Home: home, Getenv: func(k string) string { return lookupEnv(env, k) }}
+}
+
+// hookStatus lists each agent's hook setup: its state and file, and the
+// step that sets it up when it is not.
+func hookStatus(prog string, d Dirs) string {
+	var b strings.Builder
+	for _, h := range CheckHooks(d) {
+		r, _ := recipe(h.Agent)
+		line := fmt.Sprintf("%-8s %-10s %s", h.Agent, h.State, d.Short(h.Path))
+		if !h.CLI {
+			line += fmt.Sprintf(" (%s is not on PATH)", h.Agent)
+		}
+		b.WriteString(line + "\n")
+		if h.State == HooksOutdated {
+			fmt.Fprintf(&b, "%-19s lacks the %s hooks of the current snippet\n", "", strings.Join(h.Missing, ", "))
+		}
+		if h.Problem != "" {
+			fmt.Fprintf(&b, "%-19s %s\n", "", h.Problem)
+		}
+		if h.State != HooksInstalled {
+			fmt.Fprintf(&b, "%-19s %s\n", "", r.step(prog))
+		}
+	}
+	fmt.Fprintf(&b, "\n%s notify hooks <agent> prints a snippet; docs/agent-hooks.md describes the setup.\n", prog)
+	return b.String()
+}
+
+// installHooks runs "hooks install <agent>".
+func installHooks(prog, agent string, d Dirs, stdout, stderr io.Writer) int {
+	r, ok := recipe(agent)
+	if !ok {
+		write(stderr, prog+" notify: hooks install takes one of:\n"+HookAgents(prog))
+		return exitError
+	}
+	path, err := InstallHooks(d, agent)
+	if err != nil {
+		write(stderr, fmt.Sprintf("%s notify: %v\n", prog, err))
+		return exitError
+	}
+	msg := "Installed " + d.Short(path) + "."
+	if r.after != "" {
+		msg += " " + r.after
+	}
+	write(stdout, msg+"\n")
+	return 0
 }

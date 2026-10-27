@@ -12,6 +12,54 @@ Run `bunk notify hooks <agent>` (or `bunk-gui notify hooks <agent>`) to print
 a snippet. The snippets on this page are that output; a test keeps them in
 sync.
 
+## Set up
+
+Do this once per machine, and on every host you reach over ssh where an
+agent runs.
+
+1. See where each agent stands. `bunk notify hooks` (or `bunk-gui notify
+   hooks`) lists every agent with its hooks file and its state: installed,
+   outdated or missing, and the next step for the ones that need one.
+   bunk-gui shows the same list in Preferences (Ctrl+,) under Agent hooks.
+2. Install the hooks of each agent you use:
+
+   | Agent | File | How |
+   | :- | :- | :- |
+   | Claude Code | `~/.claude/settings.json` | Merge the `"hooks"` key of `bunk notify hooks claude` |
+   | Codex | `~/.codex/hooks.json` | `bunk notify hooks install codex`, then `/hooks` in Codex to trust the hooks |
+   | Copilot CLI | `~/.copilot/hooks/bunk.json` | `bunk notify hooks install copilot` |
+   | Gemini CLI | `~/.gemini/settings.json` | Merge the `"hooks"` key of `bunk notify hooks gemini` |
+
+   - Codex and Copilot CLI read hooks from a file of their own, so `install`
+     (or Install in bunk-gui's preferences) writes it. It replaces a file
+     with older bunk hooks, and it leaves alone a file that holds hooks of
+     your own: merge the snippet into that one by hand.
+   - Claude Code and Gemini CLI keep hooks in their settings file, next to
+     your other settings, so bunk never writes it. Copy the snippet (Copy
+     snippet in bunk-gui, or the command above) and merge it: add the
+     `"hooks"` key if the file has none, else add each event's entries to
+     the lists already there.
+   - `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `COPILOT_HOME` move those files,
+     and bunk looks for them there.
+3. Check again: `bunk notify hooks` shows `installed`. A running agent
+   picks the hooks up when it starts, so restart it.
+
+When bunk's snippets change in a new release, `bunk notify hooks` shows the
+agent as outdated, with the hooks it lacks. Repeat step 2 for it.
+
+- bunk-gui reminds you once per agent and window, with a toast, when a tab
+  shows an agent whose hooks are missing or outdated. The toast's Set up
+  button opens Agent hooks in the preferences. `hooks_hint = false` in
+  bunk-gui's config.toml, or the switch in that section, turns the reminder
+  off.
+- The hooks files are plain files, so a dotfile manager can keep them in
+  sync between machines. The Codex and Copilot files hold only bunk's hooks;
+  the settings files of Claude Code and Gemini CLI hold your other settings
+  too.
+- Without hooks, bunk still shows the agent's state, inferred from its
+  output; [How reports and inference combine](#how-reports-and-inference-combine)
+  says what changes with hooks.
+
 ## How bunk's terminal UI shows the state
 
 A badge at the top right of the pane names the agent and its state. The
@@ -265,6 +313,16 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
   done -` reports `working` until a later Stop lists none. Scheduled
   wakeups (`session_crons`, such as the next round of `/loop`) do not
   count, because they can be far off.
+- Claude Code runs all Stop hooks at once. A long one, such as a test
+  suite that blocks the stop when it fails, runs while the pane already
+  shows done, and Claude resumes after a block with nothing to report
+  working. Such a hook can report `working` a second after it starts, so
+  that the report lands after done, and `done -` with its own input when
+  it lets Claude stop. This repository's
+  `.claude/hooks/check-all-on-stop.sh` does both, for Codex and Copilot
+  CLI too. It blocks with `{"decision": "block", "reason": …}` on stdout,
+  which all three agents take; Copilot CLI treats exit code 2 only as a
+  warning.
 - Stop does not run when the user interrupts a turn. The keypress
   acknowledges the pane, so inference takes over until the next prompt.
 - The snippet leaves out the `idle_prompt` notification. It arrives 60
@@ -278,44 +336,70 @@ including events, input fields, matchers, exit codes and the environment.
 
 ## Codex
 
-Add to `~/.codex/config.toml`, then run `/hooks` in Codex once to trust the
-hooks:
+Save as `~/.codex/hooks.json`, then run `/hooks` in Codex once to trust the
+hooks. Codex reads this file next to `config.toml` and merges the hooks of
+both, so the file can be deployed whole:
 
-```toml
-# bunk agent status. Run /hooks in Codex once to trust these hooks.
-# Codex without hooks: use the notify program instead, as a top-level
-# key above the first [table]:
-# notify = ["sh", "-c", "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify done \"$1\"", "sh"]
-
-[[hooks.UserPromptSubmit]]
-[[hooks.UserPromptSubmit.hooks]]
-type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk-gui || command -v bunk) || "$b" notify working'
-timeout = 5
-
-[[hooks.PermissionRequest]]
-[[hooks.PermissionRequest.hooks]]
-type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk-gui || command -v bunk) || "$b" notify needs-you Approval requested'
-timeout = 5
-
-[[hooks.Stop]]
-[[hooks.Stop.hooks]]
-type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk-gui || command -v bunk) || "$b" notify done -'
-timeout = 5
-
-[[hooks.Interrupt]]
-[[hooks.Interrupt.hooks]]
-type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk-gui || command -v bunk) || "$b" notify idle'
-timeout = 5
-
-[[hooks.SessionEnd]]
-[[hooks.SessionEnd.hooks]]
-type = "command"
-command = '[ -z "$BUNK_NOTIFY_SESSION$SSH_CONNECTION" ] || ! b=$(command -v bunk-gui || command -v bunk) || "$b" notify clear'
-timeout = 5
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify needs-you Approval requested",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify done -",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify idle",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify clear",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
 
 | Codex hook | Event | Message |
@@ -328,10 +412,17 @@ timeout = 5
 
 - Codex skips new or changed user hooks until you review them with `/hooks`.
 - Codex releases without hooks support only the `notify` program, which
-  reports `agent-turn-complete`. Codex appends a JSON payload as the last
-  argument. `sh` passes it on as `"$1"`, and the CLI takes its
-  `last-assistant-message`. `notify` is a top-level key, so place it above
-  the first `[table]` in `config.toml`.
+  reports `agent-turn-complete`. `notify` is a top-level key of
+  `config.toml`, so place it above the first `[table]`:
+
+  ```toml
+  notify = ["sh", "-c", "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify done \"$1\"", "sh"]
+  ```
+
+  Codex appends a JSON payload as the last argument. `sh` passes it on as
+  `"$1"`, and the CLI takes its `last-assistant-message`.
+- Codex allows Interrupt and SessionEnd hooks 3 seconds at most, so their
+  snippet timeout is 3.
 - With hooks and `notify` together, `done` arrives twice. The second report
   changes nothing and runs no hook.
 
@@ -390,6 +481,10 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
 
 - The snippet leaves out `errorOccurred`. Its input marks some errors as
   recoverable, and a retried error would show the pane as failed.
+- Copilot CLI also runs the hooks of a repository's
+  `.claude/settings.json`, after its own and one after another. They get
+  Claude Code's input format and `CLAUDE_PROJECT_DIR`, and their `timeout`
+  holds (Copilot CLI 1.0.104).
 - The Copilot CLI docs do not say whether hooks inherit the CLI's
   environment. If no reports arrive, add a hook running `env > /tmp/hook-env`
   and look for `BUNK_NOTIFY_SESSION`.

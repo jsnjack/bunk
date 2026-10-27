@@ -276,6 +276,7 @@ type uiSnapshot struct {
 	MenuOpen      bool                `json:"menu_open"`
 	AboutOpen     bool                `json:"about_open"`
 	LastToast     string              `json:"last_toast"`
+	ToastButton   string              `json:"toast_button"` // the last toast's button, "" without one
 	Clipboard     *string             `json:"clipboard"`
 	Primary       *string             `json:"primary"`
 	Pointer       [2]float64          `json:"pointer"` // last position seen by the window, logical
@@ -308,6 +309,10 @@ type prefsReport struct {
 	Notify             bool     `json:"notify"`
 	NotifyStates       []string `json:"notify_states"`
 	NotifyCommandAfter int      `json:"notify_command_after"` // seconds
+	// Agent hooks as the section shows them, its switch and its last note.
+	Hooks     []hooksReport `json:"hooks"`
+	HooksHint bool          `json:"hooks_hint"`
+	HooksNote string        `json:"hooks_note"`
 }
 
 type findReport struct {
@@ -462,7 +467,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		CloseWindow: a.widgetRect(g, a.closeWinBtn),
 		FocusedPane: -1, ZoomedPane: -1,
 		Font: a.fontDesc, FontSize: a.fontSize, TextPercent: int(a.fontSize/a.settings.FontSize*100 + 0.5),
-		LastToast: a.lastToast, Pointer: [2]float64{a.ptrX, a.ptrY},
+		LastToast: a.lastToast, ToastButton: a.toastButton, Pointer: [2]float64{a.ptrX, a.ptrY},
 	}
 	if a.optionsBtn != nil {
 		s.Options = a.widgetRect(g, a.optionsBtn)
@@ -584,6 +589,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		}
 		pr.Notify, pr.NotifyStates = w.notifyShown()
 		pr.NotifyCommandAfter = w.notify.commandAfter.ValueAsInt()
+		pr.Hooks, pr.HooksHint, pr.HooksNote = w.hooksShown(), w.hooks.hint.Active(), w.hooks.note.Text()
 		s.Prefs = pr
 	}
 	if f := a.find; f != nil {
@@ -920,6 +926,7 @@ func (a *App) writeReport(reason string) {
 		"font_size": a.settings.FontSize, "agents": a.settings.Agents, "theme": a.settings.Theme,
 		"notifications": map[string]any{"enabled": a.settings.alerts.Enabled, "states": alert.Names(a.settings.alerts.States),
 			"command_after": a.settings.alerts.CommandAfter.Seconds()},
+		"hooks_hint": a.settings.hooksHint,
 	}
 	if a.configErr != nil {
 		r.ConfigError = a.configErr.Error()

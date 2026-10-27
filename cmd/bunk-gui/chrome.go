@@ -871,7 +871,7 @@ func (a *App) toast(text string) {
 	t := adw.NewToast(text)
 	t.SetTimeout(3)
 	a.toasts.AddToast(t)
-	a.lastToast = text
+	a.lastToast, a.toastButton, a.toastAct = text, "", nil
 	a.toastLog = append(a.toastLog, text)
 }
 

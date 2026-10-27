@@ -130,7 +130,7 @@ func TestRootCommandConventions(t *testing.T) {
 		}
 	})
 	t.Run("test flags are hidden", func(t *testing.T) {
-		want := []string{"alloc-probe", "do", "dump", "dump-size", "maximize-after", "report", "verify", "wait-focus"}
+		want := []string{"agent-home", "alloc-probe", "do", "dump", "dump-size", "maximize-after", "report", "verify", "wait-focus"}
 		var hidden []string
 		rootCmd.Flags().VisitAll(func(f *pflag.Flag) {
 			if f.Hidden {

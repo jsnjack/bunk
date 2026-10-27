@@ -103,7 +103,9 @@ internal/theme/     Colour themes for both front ends: the built-in themes,
 
 internal/notify/    Agent hook reports: Unix socket server (token → Session),
                     client, `notify` CLI (RunCLI), hook snippets per agent,
-                    the in-band writer without a socket, `ssh` (RunSSH)
+                    whether they are installed and installing the
+                    standalone ones (hookstatus.go), the in-band writer
+                    without a socket, `ssh` (RunSSH)
   wire/             The report line, its OSC 1337 in-band form, tmux/screen
                     wrapping; imported by notify and session alike
 
@@ -144,6 +146,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
   newwindow.go      New window: another bunk-gui process in the pane's
                     directory, with an activation token
   tabname.go        Tab names: rename dialog, double-click on a tab
+  prefs_hooks.go    Agent hooks in Preferences (state, Install, Copy
+                    snippet) and the toast for an agent without hooks
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
@@ -361,6 +365,12 @@ Run `make check-all FRESH=1` before a merge or commit, because the plain form
 reuses Go's test cache for unchanged packages and runs goimports only on
 files changed since HEAD (gofmt still sees every file).
 
+Claude Code, Codex and Copilot CLI run `make check-all` themselves when a
+turn ends with changed code: `.claude/hooks/check-all-on-stop.sh` is their
+Stop hook (`.claude/settings.json`, which Copilot CLI reads too, and
+`.codex/hooks.json`). A failure sends the log tail back as the next prompt;
+a green run stamps the tree in `.git/claude-check-all`.
+
 While working, iterate with the tests of the package you change
 (`go test -race ./internal/session -run TestX`) rather than the gate, and
 run check-all once when done. Several agents running check-all at once slow
@@ -434,9 +444,10 @@ These are the key fields agents may need to know about:
 `config.go` is the authoritative reference for every field and its default.
 
 bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
-`rail_open`, `font`, `font_size`, `text_zoom`, `theme`, `[themes.NAME]`,
-`[[agents]]`, `[notifications]` and `[keys]`. `theme` and `[themes.NAME]`
-work as in bunk's config, and `--theme` overrides `theme` for one run.
+`rail_open`, `font`, `font_size`, `text_zoom`, `theme`, `hooks_hint`,
+`[themes.NAME]`, `[[agents]]`, `[notifications]` and `[keys]`. `theme` and
+`[themes.NAME]` work as in bunk's config, and `--theme` overrides `theme`
+for one run.
 `[notifications]` has the same keys as in bunk's config. `[keys]` uses
 bunk's action names and key syntax where they overlap; "none" sends the key
 to the terminal. The file is watched and reloads live, and a bad value shows
@@ -710,6 +721,26 @@ its default; Design Decisions says where the defaults come from.
     from PreToolUse, with the question as the notice, and work again from
     PostToolUse. `notify done` reports working instead when the Stop input
     lists `background_tasks`: Claude resumes when they end.
+- Users set up agent hooks with guidance, not behind their back.
+  - `notify.CheckHooks` reads each agent's configuration (honouring
+    `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`) and calls an agent's
+    hooks installed when every hook of the current snippet is there by
+    event, matcher and command, outdated when only some bunk hooks are, and
+    missing otherwise. Codex's `config.toml` counts beside its
+    `hooks.json`, and every `*.json` in Copilot CLI's `hooks/`.
+  - `bunk notify hooks` lists the states and next steps; `bunk notify hooks
+    install codex|copilot` writes the snippets that are files of their own.
+    It replaces older bunk hooks and refuses a file with other hooks. The
+    settings files of Claude Code and Gemini CLI hold other settings, so
+    bunk only prints or copies their snippet.
+  - bunk-gui's Preferences show the same states with Install and Copy
+    snippet buttons and a link to the setup guide. A toast, once per agent
+    and window process, names an agent a tab shows whose hooks are missing
+    or outdated, unless the agent is remote or has reported; its button
+    opens that section. `hooks_hint = false` turns it off.
+  - Window tests pass `--agent-home`, a directory with every agent's hooks
+    installed, so no reminder toast comes between a scenario's steps; the
+    hook tests pass an empty one.
 - Agents on hosts reached over ssh report in-band
   (`docs/remote-agent-status.md`). Without a reachable socket, `bunk notify`
   writes the report line as `OSC 1337 ; SetUserVar=bunk_notify=<base64>` to
@@ -846,7 +877,7 @@ its default; Design Decisions says where the defaults come from.
 - Only `-d` and `-c` have short forms (plus cobra's `-h`); every other flag
   is long-form. bunk-gui's test flags (`--do`, `--report`, `--verify`,
   `--wait-focus`, `--alloc-probe`, `--dump`, `--dump-size`,
-  `--maximize-after`) are hidden from `--help`.
+  `--maximize-after`, `--agent-home`) are hidden from `--help`.
 - Vendored vt10x has local patches. Prefer fixing bugs there over working
   around them in the main code.
 - `TERMINAL_AUDIT.md` is the authoritative reference for which terminal

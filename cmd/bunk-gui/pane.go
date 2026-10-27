@@ -142,6 +142,7 @@ func (p *Pane) setStatus(st session.Status) {
 	ring := p.st.State == session.AgentNeedsYou
 	p.st = st
 	if p.statusOverride == nil {
+		p.app.hooksHint(st)
 		if ring != (st.State == session.AgentNeedsYou) {
 			p.queueRender()
 		}
