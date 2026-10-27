@@ -852,7 +852,10 @@ its default; Design Decisions says where the defaults come from.
     command runs from 133;C to 133;D, loops and lists included, and has
     an exit status. Without marks, it runs while a group other than the
     shell's holds the foreground, as the process poll sees it, without an
-    exit status. The poll names it after the first group it sees that
+    exit status. A 133;C marks a command only after a 133;D since the
+    previous 133;C: vte.sh puts 133;D in PS1, so a PS1 set after it drops
+    that mark alone, and a command its 133;C starts then ends through the
+    poll. The poll names it after the first group it sees that
     started after the last prompt, so the ssh carrying a remote shell's
     marks names nothing. A command an agent ran in is not recorded: the
     agent's states notify instead.

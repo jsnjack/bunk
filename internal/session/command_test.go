@@ -60,8 +60,9 @@ func runCommandSteps(t *testing.T, t0 time.Time, steps []cmdStep) *Session {
 // marks where the shell sends them and from the process poll where it
 // does not. A marked command runs from 133;C to 133;D, whatever groups
 // come and go between; the poll names it after the first group it sees
-// that started after the last prompt. Commands an agent ran in are not
-// reported.
+// that started after the last prompt. A 133;C without a 133;D since the
+// one before marks nothing, so the poll ends its command. Commands an
+// agent ran in are not reported.
 func TestCommandEnds(t *testing.T) {
 	t.Parallel()
 	const ms = time.Millisecond
@@ -79,7 +80,7 @@ func TestCommandEnds(t *testing.T) {
 			shellPoll(3 * sec), mark(3100*ms, "D;2"),
 		}, Command{Name: "tar", Line: "tar czf 'my backup.tgz' src", Took: 2100 * ms, Exit: 2, ExitKnown: true}, 3100 * ms},
 		{"a loop between marks", []cmdStep{
-			mark(0, "C"), poll(500*ms, 200, "gzip", "gzip", "a"), shellPoll(sec),
+			mark(0, "D;0"), mark(0, "C"), poll(500*ms, 200, "gzip", "gzip", "a"), shellPoll(sec),
 			poll(1500*ms, 201, "gzip", "gzip", "b"), shellPoll(2 * sec), mark(3*sec, "D;0"),
 		}, Command{Name: "gzip", Line: "gzip a", Took: 3 * sec, ExitKnown: true}, 3 * sec},
 		{"the poll sees the group before the mark", []cmdStep{
@@ -97,6 +98,17 @@ func TestCommandEnds(t *testing.T) {
 		{"a mark without a status", []cmdStep{mark(0, "C"), mark(sec, "D")}, Command{Took: sec}, sec},
 		{"a new mark restarts the command", []cmdStep{mark(0, "C"), mark(2*sec, "C"), mark(3*sec, "D;0")},
 			Command{Took: sec, ExitKnown: true}, 3 * sec},
+		{"133;C alone", []cmdStep{
+			shellPoll(0), mark(sec, "C"), poll(1500*ms, 200, "gdiff", "./gdiff"), shellPoll(5 * sec),
+		}, Command{Name: "gdiff", Line: "./gdiff", Took: 4 * sec}, 5 * sec},
+		{"133;C alone, the next command", []cmdStep{
+			shellPoll(0), mark(sec, "C"), poll(1500*ms, 200, "gdiff", "./gdiff"), shellPoll(5 * sec),
+			mark(6*sec, "C"), poll(6500*ms, 201, "make", "make"), shellPoll(9 * sec),
+		}, Command{Name: "make", Line: "make", Took: 3 * sec}, 9 * sec},
+		{"133;C alone, a loop ends early", []cmdStep{
+			mark(0, "C"), poll(500*ms, 200, "gzip", "gzip", "a"), shellPoll(sec),
+			poll(1500*ms, 201, "gzip", "gzip", "b"), shellPoll(2 * sec),
+		}, Command{Name: "gzip", Line: "gzip b", Took: 500 * ms}, 2 * sec},
 		{"prompts alone end nothing", []cmdStep{mark(0, "D;0"), mark(sec, "D;1"), shellPoll(2 * sec)}, Command{}, 0},
 		{"no marks", []cmdStep{
 			shellPoll(0), poll(sec, 200, "make", "make", "-j8"), poll(2*sec, 200, "make", "make", "-j8"),
@@ -198,6 +210,10 @@ func TestCommandRunning(t *testing.T) {
 		{"no marks", []cmdStep{shellPoll(0), poll(sec, 200, "make", "make", "-j8")}, nil,
 			Command{Name: "make", Line: "make -j8"}, sec},
 		{"at the prompt", []cmdStep{mark(0, "C"), mark(sec, "D;0")}, nil, Command{}, 0},
+		{"at the prompt after 133;C alone", []cmdStep{
+			shellPoll(0), mark(sec, "C"), poll(1500*ms, 200, "gdiff", "./gdiff"), shellPoll(3 * sec),
+		}, nil, Command{}, 0},
+		{"133;C alone, before the poll", []cmdStep{shellPoll(0), mark(sec, "C")}, nil, Command{}, sec},
 		{"an agent", []cmdStep{shellPoll(0), {at: sec, pgid: 200, name: "claude", argv: []string{"claude"}, agent: "claude"}}, nil, Command{}, 0},
 		{"ssh", []cmdStep{mark(0, "C"), poll(500*ms, 200, "ssh", "ssh", "build01")}, nil, Command{}, 0},
 		{"ssh without marks", []cmdStep{shellPoll(0), poll(sec, 200, "ssh", "ssh", "build01")}, nil, Command{}, 0},
@@ -271,23 +287,30 @@ func TestCarrier(t *testing.T) {
 }
 
 // TestCommandsOnPTY runs an interactive bash on a PTY, with OSC 133 marks
-// in its prompts as vte.sh sets them and without, and checks the command
-// it reports when a command line ends: the poll names it, and only the
+// in its prompts as vte.sh sets them, without them, and with 133;C alone
+// as vte.sh leaves it under a PS1 set later. It checks the command bash
+// reports when a command line ends: the poll names it, and only both
 // marks give its exit status.
 func TestCommandsOnPTY(t *testing.T) {
 	t.Parallel()
 	const ps0 = `PS0=\e]133;C\e\\`
 	const ps1 = `PS1=\[\e]133;D;$?\e\\\]$ `
 	for _, tm := range timings(fastTiming) {
-		for _, marks := range []bool{true, false} {
-			t.Run(fmt.Sprintf("%s/marks %v", tm.name, marks), func(t *testing.T) {
+		for _, prompt := range []struct {
+			name  string
+			vars  []string
+			marks bool // the command runs from mark to mark, with its exit status
+		}{
+			{"marks", []string{ps0, ps1}, true},
+			{"no marks", nil, false},
+			{"133;C alone", []string{ps0}, false},
+		} {
+			marks := prompt.marks
+			t.Run(tm.name+"/"+prompt.name, func(t *testing.T) {
 				t.Parallel()
 				// The poll must see the command run at least once.
 				nap := max(300*time.Millisecond, tm.timing.poll()*3/2)
-				args := []string{"env", "HISTFILE=", "PS1=$ "}
-				if marks {
-					args = append(args, ps0, ps1)
-				}
+				args := append([]string{"env", "HISTFILE=", "PS1=$ "}, prompt.vars...)
 				args = append(args, "bash", "--norc", "--noprofile", "-i")
 				s, err := Start(Options{Cols: 60, Rows: 10, Scrollback: 100, Args: args, Timing: tm.timing})
 				if err != nil {

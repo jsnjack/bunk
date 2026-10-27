@@ -142,11 +142,12 @@ type Session struct {
 	shown             agentView   // the agent state StatusChanged last announced
 
 	// Commands the shell runs (command.go). Protected by mu.
-	cmd        runningCommand // the command the shell runs now
-	fg         foreground     // the foreground group the last process poll saw
-	promptAt   time.Time      // the shell's last OSC 133;D mark: its prompt
-	ended      Command        // the last command that ended
-	shownEnded time.Time      // ended.Ended as StatusChanged last announced it
+	cmd          runningCommand // the command the shell runs now
+	fg           foreground     // the foreground group the last process poll saw
+	promptAt     time.Time      // the shell's last OSC 133;D mark: its prompt
+	promptMarked bool           // a 133;D came since the last 133;C, so the next 133;C marks
+	ended        Command        // the last command that ended
+	shownEnded   time.Time      // ended.Ended as StatusChanged last announced it
 	// shownRunning is Status.Running.Started as StatusChanged last
 	// announced it.
 	shownRunning time.Time

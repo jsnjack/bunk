@@ -306,6 +306,7 @@ Long commands notify you the same way. When a command that ran for at least `com
 
 - With shell integration that sends OSC 133 marks, a command runs from its start mark to the next prompt, so a loop or a list of commands counts as one. A non-zero exit status shows as "failed" with the status. Fedora's `vte.sh` sends the marks when `VTE_VERSION` is set, as it is in a terminal started from Ptyxis or GNOME Terminal.
 - Without marks, a command runs while a program other than the shell holds the terminal, as bunk sees it once a second, and its exit status is unknown.
+- `vte.sh` puts the end mark in `PS1`, so a `PS1` set later in `~/.bashrc` drops it and keeps only the start mark. bunk then treats commands as unmarked. To keep the marks, add them back after your `PS1` line: `PS1='\[\e]133;D;$?\e\\\e]133;A\e\\\]'"$PS1"'\[\e]133;B\e\\\]'`.
 - An agent's own run does not notify as a command: the agent's states notify instead.
 - Commands on the other end of ssh notify only when the remote shell sends the marks.
 

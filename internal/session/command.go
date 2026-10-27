@@ -10,6 +10,12 @@
 // exit status is unknown. Either way the poll names the command after the
 // first process group it sees run in it.
 //
+// A 133;C counts as a mark only after a 133;D since the shell's previous
+// 133;C, which shows that its prompts send the end mark. vte.sh puts
+// 133;D in PS1 and 133;C in PS0, so a PS1 set after it, as many bashrc
+// files do, drops 133;D alone. Such a command starts at its 133;C and ends
+// as an unmarked one does, when the shell's group holds the foreground.
+//
 // While a command runs, Status.Running shows it if it is one the user may
 // wait on: not an agent, not a full-screen program, and not a session that
 // runs commands of its own, such as ssh or a nested shell.
@@ -43,7 +49,7 @@ func (c Command) Failed() bool { return c.ExitKnown && c.Exit != 0 }
 // the shell waits at its prompt.
 type runningCommand struct {
 	start  time.Time
-	marked bool // OSC 133;C started it, so only the shell's 133;D ends it
+	marked bool // OSC 133;C after a 133;D started it, so only the next 133;D ends it
 	named  bool // name and line come from a process group bunk saw run in it
 	name   string
 	line   string
@@ -83,13 +89,16 @@ func commandLine(argv []string) string {
 	return cleanNotice(b.String(), "")
 }
 
-// commandStarted handles OSC 133;C: the shell starts a command line. A
+// commandStarted handles OSC 133;C: the shell starts a command line. It
+// marks the command only when a 133;D came since the previous 133;C, so a
+// shell whose prompt lost its 133;D cannot leave a command running. A
 // group the poll first saw after the last prompt is the command's own, in
 // case the poll ran before this mark arrived; one seen before, such as the
 // ssh that carries a remote shell's marks, names nothing. It requires the
 // session lock.
 func (s *Session) commandStarted(now time.Time) {
-	s.cmd = runningCommand{start: now, marked: true}
+	s.cmd = runningCommand{start: now, marked: s.promptMarked}
+	s.promptMarked = false
 	if f := s.fg; f.pgid > 0 && !f.shell && f.since.After(s.promptAt) {
 		s.cmd.named, s.cmd.name, s.cmd.line = true, f.name, f.line
 		s.cmd.agent = s.agent != ""
@@ -101,7 +110,7 @@ func (s *Session) commandStarted(now time.Time) {
 // running command, such as the first prompt's, ends nothing. It requires
 // the session lock.
 func (s *Session) commandFinished(exit int, exitKnown bool, now time.Time) {
-	s.promptAt = now
+	s.promptAt, s.promptMarked = now, true
 	if !s.cmd.start.IsZero() {
 		s.endCommand(now, exit, exitKnown)
 	}
