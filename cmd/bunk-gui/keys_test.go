@@ -88,6 +88,7 @@ var defaultKeys = map[string][]string{
 	"new_tab":           {"f2"},
 	"close_tab":         {"ctrl+shift+w"},
 	"new_window":        {"ctrl+shift+n"},
+	"rename_tab":        nil,
 	"next_tab":          {"ctrl+right", "ctrl+down"},
 	"prev_tab":          {"ctrl+left", "ctrl+up"},
 	"move_tab_left":     {"ctrl+shift+pgup"},

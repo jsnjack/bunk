@@ -73,7 +73,8 @@ type App struct {
 	prefsWin     *prefsWindow
 	find         *finder // the find bar, nil when closed
 	quitDialog   *adw.AlertDialog
-	quitBody     []string // the quit dialog's list of busy tabs
+	quitBody     []string      // the quit dialog's list of busy tabs
+	rename       *renameDialog // the rename dialog (tabname.go), nil when closed
 
 	notify       *notify.Server // agent hook reports; nil when the socket failed
 	cfgMonitor   gio.FileMonitorrer

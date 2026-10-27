@@ -29,6 +29,9 @@ type Tab struct {
 	// id names the tab in desktop notifications: the ID of the pane it
 	// opened with, which no other tab can have.
 	id int
+	// name is the user's name for the tab (tabname.go); "" shows the
+	// agent or process.
+	name string
 }
 
 // node is a BSP tree node: a pane (leaf) or a split of two subtrees.

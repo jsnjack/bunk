@@ -506,6 +506,8 @@ func (a *App) doAction(action string, done func()) {
 			a.prefsWin.dlg.Close()
 		case a.about != nil:
 			a.about.Close()
+		case a.rename != nil:
+			a.rename.dlg.Close()
 		default:
 			a.reportError("%s: no dialog", action)
 		}

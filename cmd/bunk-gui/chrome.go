@@ -164,7 +164,8 @@ type tabInfo struct {
 	notice             string // of the agent in state; "agent: notice" when not the agent pane's
 	more               int    // agents in the tab's other panes, shown as "+N"
 	look               look
-	agent, repo, loc   string
+	agent, repo, loc   string // agent: the agent, else the process, else "shell"
+	name               string // the user's name for the tab; shown in place of agent
 	locGlyph           string
 	active, needs      bool
 	pass               bool // a pane of the tab sends all keys to the terminal
@@ -183,7 +184,7 @@ func (a *App) tabInfos() []tabInfo {
 			continue
 		}
 		st := p.status()
-		in := tabInfo{t: t, index: i, st: st, state: st.State, notice: st.Notice, active: t == a.active}
+		in := tabInfo{t: t, index: i, st: st, state: st.State, notice: st.Notice, active: t == a.active, name: t.name}
 		var others []string // tooltip lines and names of the other panes' agents
 		for _, q := range t.panes() {
 			in.pass = in.pass || q.passthrough
@@ -237,6 +238,9 @@ func (a *App) tabInfos() []tabInfo {
 			in.loc, in.locGlyph = "⇄ "+st.Host, "⇄"
 		}
 		parts := []string{in.agent, in.repo}
+		if in.name != "" {
+			parts = append([]string{in.name}, parts...)
+		}
 		if in.loc != "" {
 			parts = append(parts, in.loc)
 		}
@@ -253,17 +257,21 @@ func (a *App) tabInfos() []tabInfo {
 		for _, line := range others {
 			in.tooltip += "\n" + line
 		}
-		in.accessKey = strings.ToLower(in.agent + " " + in.repo + " " + in.loc + " " + strings.Join(others, " "))
+		in.accessKey = strings.ToLower(in.name + " " + in.agent + " " + in.repo + " " + in.loc + " " + strings.Join(others, " "))
 		out = append(out, in)
 	}
 	return out
 }
 
-// agentLabel is the tab's agent name in bold, then "+N" for the agents
-// in its other panes.
+// agentLabel is the tab's name, else its agent's, in bold, then "+N" for
+// the agents in its other panes.
 func (in tabInfo) agentLabel() *gtk.Box {
 	box := gtk.NewBox(gtk.OrientationHorizontal, 4)
-	box.Append(label(in.agent, "agent"))
+	name := in.name
+	if name == "" {
+		name = in.agent
+	}
+	box.Append(label(name, "agent"))
 	if in.more > 0 {
 		box.Append(label(fmt.Sprintf("+%d", in.more), "more"))
 	}
@@ -454,6 +462,7 @@ func (a *App) buildChrome() {
 	a.rootBox.Prepend(a.chrome)
 	a.tabDrag = nil
 	a.watchTabDrag()
+	a.watchTabRename()
 	a.refreshChrome()
 }
 
@@ -482,7 +491,7 @@ func (a *App) refreshChrome() {
 	infos := a.tabInfos()
 	var key strings.Builder
 	for _, in := range infos {
-		fmt.Fprintf(&key, "%p|%s|%s|%d|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.agent, in.more, in.repo, in.loc, in.notice, in.tooltip, in.active, in.needs, in.pass)
+		fmt.Fprintf(&key, "%p|%s|%s|%s|%d|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.name, in.agent, in.more, in.repo, in.loc, in.notice, in.tooltip, in.active, in.needs, in.pass)
 	}
 	if key.String() == a.chromeKey {
 		return
@@ -716,6 +725,7 @@ func (a *App) menuGroups() [][]menuItem {
 		{
 			{label: "New tab", action: "new_tab", run: func() { a.newTab("", a.cwdForNew()) }},
 			{label: "New window", action: "new_window", run: a.openWindow},
+			{label: "Rename tab…", action: "rename_tab", run: func() { a.renameTab(a.active) }},
 			{label: "Close tab", action: "close_tab", run: func() { a.closeTab(a.active) }},
 		},
 		{
@@ -740,7 +750,8 @@ func (a *App) buildMenu() *gtk.Popover {
 	pop.AddCSSClass("bunk-menu")
 	pop.SetHasArrow(false)
 	pop.ConnectClosed(func() {
-		if p := a.activePane(); p != nil && a.switcher == nil {
+		// An item that opened a dialog keeps the focus there.
+		if p := a.activePane(); p != nil && a.switcher == nil && !a.modalOpen() {
 			p.widget.GrabFocus()
 		}
 	})

@@ -143,6 +143,7 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     clicks with their activation token
   newwindow.go      New window: another bunk-gui process in the pane's
                     directory, with an activation token
+  tabname.go        Tab names: rename dialog, double-click on a tab
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
@@ -506,6 +507,18 @@ its default; Design Decisions says where the defaults come from.
   rail shows that agent's notice as "agent: notice". The tooltip lists
   every agent. Notifications are per pane, as in the TUI, and Alt+A
   focuses the pane that needs the user.
+
+- The user can name a bunk-gui tab (`tabname.go`): a double-click on it,
+  "Rename tab…" in the menu, or `rename_tab`, which has no default key.
+  The name (`Tab.name`) replaces the agent or process name in the rail,
+  the bar and the switcher; the dot, state, repo ⎇ branch, location and
+  notice stay, and the tooltip starts with the name, then the agent. An
+  empty name gives the automatic one back. The double-click is watched
+  on the tab list, like tab dragging: the first click selects the tab and
+  rebuilds the items, so the tab is the one under GTK's first press. The
+  dialog's sheet maps its content a frame after it opens, and GTK drops
+  keys for unmapped widgets although the entry already has the focus;
+  window tests wait for `rename.ready` before they type.
 
 - Keyboard passthrough is per pane. Ctrl+F12 (`[keys].passthrough`) toggles
   forwarding of all other keys through the normal terminal encoder. The toggle

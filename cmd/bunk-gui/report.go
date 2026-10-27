@@ -123,7 +123,8 @@ type tabReport struct {
 	ID       int          `json:"id"`
 	Notified bool         `json:"notified"` // a desktop notification of one of its panes is up
 	Title    string       `json:"title"`
-	Agent    string       `json:"agent"` // as shown: the agent, else the process
+	Agent    string       `json:"agent"` // the agent, else the process
+	Name     string       `json:"name"`  // the user's name for the tab, shown in place of Agent
 	More     int          `json:"more"`  // agents in its other panes ("+N")
 	State    string       `json:"state"` // the most urgent of its agents'
 	Label    string       `json:"label"`
@@ -283,6 +284,7 @@ type uiSnapshot struct {
 	ConfigError   string              `json:"config_error"`
 	Shortcuts     *shortcutsReport    `json:"shortcuts,omitempty"`
 	Quit          *quitReport         `json:"quit_dialog,omitempty"`
+	Rename        *renameReport       `json:"rename"` // the rename dialog; null when closed
 	MenuPassCheck bool                `json:"menu_pass_check"`
 	Find          *findReport         `json:"find,omitempty"`
 	TextZoom      float64             `json:"text_zoom"` // the default, from the config
@@ -346,6 +348,16 @@ type shortcutsRowReport struct {
 
 type quitReport struct {
 	Body []string `json:"body"`
+}
+
+type renameReport struct {
+	Tab         int    `json:"tab"` // 1-based index of the tab it renames
+	Text        string `json:"text"`
+	Placeholder string `json:"placeholder"`
+	// Ready: the entry is mapped. The dialog's sheet maps its content a
+	// frame after it opens, and keys sent before that are lost, although
+	// the entry already has the focus.
+	Ready bool `json:"ready"`
 }
 
 type windowReport struct {
@@ -461,7 +473,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	for i, in := range infos {
 		t := in.t
 		tr := tabReport{
-			Index: in.index + 1, Agent: in.agent, More: in.more, State: stateName[in.state], Label: in.look.label,
+			Index: in.index + 1, Agent: in.agent, Name: in.name, More: in.more, State: stateName[in.state], Label: in.look.label,
 			Dot: in.look.dot, Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.notice, Tooltip: in.tooltip,
 			Selected: in.active, Needs: in.needs, Focus: -1, Zoomed: -1, Status: statusOf(in.st), Pass: in.pass,
 			ID: t.id,
@@ -552,6 +564,10 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	if a.quitDialog != nil {
 		s.Quit = &quitReport{Body: a.quitBody}
 	}
+	if r := a.rename; r != nil {
+		s.Rename = &renameReport{Tab: a.tabIndex(r.t) + 1, Text: r.entry.Text(), Placeholder: r.entry.PlaceholderText(),
+			Ready: r.entry.Mapped()}
+	}
 	s.TextZoom, s.Agents, s.Theme = a.settings.TextZoom, a.settings.Agents, a.theme.Name
 	if w := a.prefsWin; w != nil {
 		pr := &prefsReport{Message: w.message.Text(), Tabs: map[bool]string{true: "bar", false: "rail"}[w.tabsBar.Active()],
@@ -606,6 +622,12 @@ func (a *App) keyboardFocus() string {
 	w := gtk.BaseWidget(fw)
 	if a.switcher != nil && w.IsAncestor(a.switcher.entry) {
 		return "switcher"
+	}
+	if r := a.rename; r != nil && (w == gtk.BaseWidget(r.entry) || w.IsAncestor(r.entry)) {
+		return "rename"
+	}
+	if r := a.rename; r != nil && w.IsAncestor(r.dlg) {
+		return "rename dialog"
 	}
 	for _, p := range a.panes {
 		if p != nil && !p.removeOnce && p.widget.HasFocus() {

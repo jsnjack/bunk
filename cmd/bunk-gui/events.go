@@ -161,7 +161,7 @@ func (a *App) keys() keymap { return a.settings.keymap }
 
 // modalOpen reports a dialog that takes the keyboard.
 func (a *App) modalOpen() bool {
-	return a.about != nil || a.shortcutsWin != nil || a.prefsWin != nil || a.quitDialog != nil
+	return a.about != nil || a.shortcutsWin != nil || a.prefsWin != nil || a.quitDialog != nil || a.rename != nil
 }
 
 // runAction runs a bound action and reports whether it applied. termKey
@@ -203,6 +203,8 @@ func (a *App) runAction(name string, termKey bool) bool {
 		return global(func() { a.newTab("", a.cwdForNew()) })
 	case "close_tab":
 		return global(func() { a.closeTab(t) })
+	case "rename_tab":
+		return global(func() { a.renameTab(t) })
 	case "new_window":
 		return global(a.openWindow)
 	case "next_tab":
