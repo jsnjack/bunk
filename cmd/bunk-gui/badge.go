@@ -87,7 +87,7 @@ func (p *Pane) newBadgeRow() {
 
 // badgeInput is the pane's state as its badges show it: the scroll
 // offset and width of the last frame, the status as shown (status
-// overrides included), passthrough, zoom and the flash.
+// overrides included), the command mark, passthrough, zoom and the flash.
 func (p *Pane) badgeInput() badges.Input {
 	st := p.status()
 	// Status.Container is "TYPE NAME"; a type is one word.
@@ -102,6 +102,8 @@ func (p *Pane) badgeInput() badges.Input {
 		ContainerType: ctype,
 		ContainerID:   cid,
 		SSHHost:       st.SSHHost,
+		CommandState:  p.mark.State,
+		Command:       p.mark.Name,
 		Zoomed:        p.tab != nil && p.tab.zoom == p,
 		Flash:         p.flash,
 		Width:         p.tv.cols,

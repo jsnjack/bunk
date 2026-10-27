@@ -76,6 +76,21 @@ func (r Role) AgentState() (session.AgentState, bool) {
 	return session.AgentNone, false
 }
 
+// CommandLook returns the dot and the label that show a command mark's
+// state (alert.Mark), and the badge's role: an agent state's dot and
+// colours, labelled "running", "done" and "failed". ok is false for other
+// states: no command badge.
+func CommandLook(state session.AgentState) (dot, label string, role Role, ok bool) {
+	switch state {
+	case session.AgentWorking:
+		dot, _, role, ok = AgentLook(state)
+		return dot, "running", role, ok
+	case session.AgentDone, session.AgentFailed:
+		return AgentLook(state)
+	}
+	return "", "", RoleNone, false
+}
+
 // AgentLook returns the dot and the label that show an agent state, and
 // the agent badge's role. ok is false for AgentNone: no agent badge.
 func AgentLook(state session.AgentState) (dot, label string, role Role, ok bool) {
@@ -118,9 +133,15 @@ type Input struct {
 	// a container; ContainerID names the container.
 	ContainerType, ContainerID string
 	SSHHost                    string // ssh or mosh destination
-	Zoomed                     bool
-	Flash                      string // a short message such as Copied; "" for none
-	Width                      int    // the pane's width in cells, its scrollbar column included
+	// CommandState is the shell's command mark when no agent runs
+	// (alert.Mark): AgentWorking while a command runs long, AgentDone or
+	// AgentFailed after one ended unwatched, AgentNone for no badge.
+	// Command names the command; "" when unknown.
+	CommandState session.AgentState
+	Command      string
+	Zoomed       bool
+	Flash        string // a short message such as Copied; "" for none
+	Width        int    // the pane's width in cells, its scrollbar column included
 }
 
 // Badge is one badge as drawn. Text includes the padding spaces at both
@@ -159,7 +180,8 @@ type candidate struct {
 //
 //	PASS              keyboard passthrough
 //	-N                lines scrolled back
-//	● claude working  the agent, its state, then its notice when there is room
+//	● claude working  the agent, its state, then its notice when there is room;
+//	                  without an agent, a command mark: ● make running, ✓ make done
 //	⬡ box · ⇄ host    container, ssh or mosh host, sudo or su
 //	ZOOM              the pane is zoomed
 //	COPIED            a flash message
@@ -186,6 +208,12 @@ func Layout(in Input) Row {
 			" "+dot+" "+in.Agent+" "+label+" ",
 			" "+dot+" "+label+" ",
 			" "+dot+" ")
+	} else if dot, label, role, ok := CommandLook(in.CommandState); ok {
+		forms := []string{" " + dot + " " + label + " ", " " + dot + " "}
+		if in.Command != "" {
+			forms = append([]string{" " + dot + " " + in.Command + " " + label + " "}, forms...)
+		}
+		add(role, forms...)
 	}
 	if text, role := contextBadge(in); text != "" {
 		add(role, text)

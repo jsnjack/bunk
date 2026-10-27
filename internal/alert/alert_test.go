@@ -46,7 +46,7 @@ func TestConfigSettings(t *testing.T) {
 		{name: "command_after", cfg: alert.Config{CommandAfter: intp(30)}, enabled: true, states: all, after: 30 * time.Second},
 		{name: "no command alerts", cfg: alert.Config{CommandAfter: intp(0)}, enabled: true, states: all, after: -1},
 		{name: "negative command_after", cfg: alert.Config{CommandAfter: intp(-5)}, enabled: true, states: all,
-			err: "notifications.command_after: -5 is negative (want seconds, or 0 for no command notifications)"},
+			err: "notifications.command_after: -5 is negative (want seconds, or 0 for no command notifications or marks)"},
 		{name: "off", cfg: alert.Config{Enabled: boolp(false)}, enabled: false, states: all},
 		{name: "on", cfg: alert.Config{Enabled: boolp(true)}, enabled: true, states: all},
 		{name: "two states", cfg: alert.Config{States: []string{"done", "needs-you"}}, enabled: true, states: []session.AgentState{done, needs}},
@@ -470,6 +470,88 @@ func TestCommandAlerts(t *testing.T) {
 		run(t, tr, []cstep{{ended(long, 10*s), false, alert.Send}})
 		if act := tr.Remove(5); act != alert.Withdraw {
 			t.Errorf("remove with a command alert up: %v", act)
+		}
+	})
+}
+
+// TestCommandMarks: a running command gets its mark once it has run
+// CommandAfter, and Next says when; a long command that ends while nobody
+// watches leaves done or failed until someone does; notifications off
+// keep marks, command_after 0 drops them.
+func TestCommandMarks(t *testing.T) {
+	const s = time.Second
+	t0 := time.Unix(1000, 0)
+	at := func(d time.Duration) time.Time { return t0.Add(d) }
+	running := func(started time.Duration) session.Status {
+		return session.Status{Running: session.Command{Name: "make", Line: "make -j8", Started: at(started)}}
+	}
+	finished := func(c session.Command, started, took time.Duration) session.Status {
+		c.Started, c.Took, c.Ended = at(started), took, at(started+took)
+		return session.Status{Command: c}
+	}
+	check := func(t *testing.T, tr *alert.Tracker, now time.Duration, want session.AgentState, summary string) {
+		t.Helper()
+		m := tr.Mark(5, at(now))
+		if m.State != want || m.Summary != summary {
+			t.Errorf("at %v: mark %+v, want %v %q", now, m, want, summary)
+		}
+	}
+
+	t.Run("running, then the end unwatched", func(t *testing.T) {
+		tr := &alert.Tracker{Settings: alert.Default()}
+		tr.Update(5, running(0), true, at(2*s))
+		check(t, tr, 2*s, session.AgentNone, "")
+		if got := tr.Next(); !got.Equal(at(10 * s)) {
+			t.Errorf("Next = %v, want the start plus CommandAfter", got.Sub(t0))
+		}
+		tr.Update(5, running(0), true, at(10*s))
+		check(t, tr, 10*s, working, "")
+		if got := tr.Next(); !got.IsZero() {
+			t.Errorf("Next = %v once the mark shows, want zero", got.Sub(t0))
+		}
+		tr.Update(5, finished(session.Command{Name: "make", ExitKnown: true}, 0, 134*s), false, at(134*s))
+		check(t, tr, 134*s, done, "finished after 2m 14s")
+		check(t, tr, 300*s, done, "finished after 2m 14s")
+		tr.Update(5, finished(session.Command{Name: "make", ExitKnown: true}, 0, 134*s), true, at(400*s))
+		check(t, tr, 400*s, session.AgentNone, "")
+	})
+	t.Run("failed", func(t *testing.T) {
+		tr := &alert.Tracker{Settings: alert.Default()}
+		tr.Update(5, finished(session.Command{Name: "make", Exit: 2, ExitKnown: true}, 0, 12*s), false, at(12*s))
+		check(t, tr, 12*s, failed, "failed after 12s (exit status 2)")
+	})
+	t.Run("ended while watched, or short", func(t *testing.T) {
+		tr := &alert.Tracker{Settings: alert.Default()}
+		tr.Update(5, finished(session.Command{Name: "make"}, 0, 60*s), true, at(60*s))
+		check(t, tr, 60*s, session.AgentNone, "")
+		tr.Update(5, finished(session.Command{Name: "ls"}, 70*s, s), false, at(71*s))
+		check(t, tr, 71*s, session.AgentNone, "")
+	})
+	t.Run("a new long command shows over the last end", func(t *testing.T) {
+		tr := &alert.Tracker{Settings: alert.Default()}
+		end := finished(session.Command{Name: "tar"}, 0, 30*s)
+		tr.Update(5, end, false, at(30*s))
+		st := running(40 * s)
+		st.Command = end.Command
+		tr.Update(5, st, false, at(55*s))
+		check(t, tr, 55*s, working, "")
+		st.Running = session.Command{}
+		tr.Update(5, st, false, at(56*s)) // ended short, as the status shows
+		check(t, tr, 56*s, done, "finished after 30s")
+	})
+	t.Run("notifications off keep marks", func(t *testing.T) {
+		tr := &alert.Tracker{Settings: alert.Settings{CommandAfter: 10 * s}}
+		tr.Update(5, running(0), false, at(10*s))
+		check(t, tr, 10*s, working, "")
+	})
+	t.Run("command_after 0 drops them", func(t *testing.T) {
+		tr := &alert.Tracker{Settings: alert.Default()}
+		tr.Update(5, running(0), false, at(20*s))
+		tr.Settings.CommandAfter = 0
+		tr.Update(5, running(0), false, at(21*s))
+		check(t, tr, 21*s, session.AgentNone, "")
+		if got := tr.Next(); !got.IsZero() {
+			t.Errorf("Next = %v without marks", got.Sub(t0))
 		}
 	})
 }

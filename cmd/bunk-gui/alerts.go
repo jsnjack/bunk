@@ -14,7 +14,9 @@ package main
 //     the user looks at the pane.
 //   - syncAlerts runs whenever a pane's status, the selection, the
 //     focused pane or the window's focus changes (refreshChrome and the
-//     is-active notify).
+//     is-active notify). It also reads each pane's command mark for its
+//     tab and badge: a command running command_after seconds or longer,
+//     then done or failed until the user looks at the pane.
 //   - Clicking a notification runs app.show-pane with the pane's ID: the
 //     window takes the focus with the shell's activation token, the
 //     pane's tab is selected and the pane focused.
@@ -103,7 +105,7 @@ func (a *App) initAlerts() {
 		}
 	})
 	a.app.AddAction(act)
-	a.win.NotifyProperty("is-active", a.syncAlerts)
+	a.win.NotifyProperty("is-active", a.syncMarks)
 	a.app.ConnectShutdown(a.withdrawAlerts)
 	if where := testCompositor(); where != "" {
 		slog.Debug("desktop notifications are recorded, not shown", "on", where)
@@ -156,8 +158,9 @@ func (a *App) paneByID(id int) *Pane {
 	return a.panes[id]
 }
 
-// syncAlerts brings every pane's notification up to date with its agent's
-// status, the selected tab, its focused pane and the window's focus.
+// syncAlerts brings every pane's notification and command mark up to date
+// with its status, the selected tab, its focused pane and the window's
+// focus. When a held alert or a mark is due later, it runs again then.
 func (a *App) syncAlerts() {
 	if a.finished || a.win == nil {
 		return
@@ -174,6 +177,7 @@ func (a *App) syncAlerts() {
 			case alert.Withdraw:
 				withdrawAlert(a, p.id)
 			}
+			p.mark = tr.Mark(p.id, now)
 		}
 	}
 	for _, id := range tr.IDs() {
@@ -185,10 +189,18 @@ func (a *App) syncAlerts() {
 		a.alerts.due = next
 		coreglib.TimeoutAdd(uint(max(0, time.Until(next).Milliseconds())+1), func() bool {
 			a.alerts.due = time.Time{}
-			a.syncAlerts()
+			a.syncMarks()
 			return false
 		})
 	}
+}
+
+// syncMarks shows the command marks where they changed: in the tabs and
+// the selected tab's badges. refreshChrome syncs the alerts first, so the
+// marks are current.
+func (a *App) syncMarks() {
+	a.refreshChrome()
+	a.syncBadges()
 }
 
 // withdrawAlerts removes every notification the window has up, when the
@@ -280,7 +292,7 @@ func (w *prefsWindow) addNotifications(box *gtk.Box) {
 		w.controls["notify-"+alert.StateName(s)] = c
 		np.states = append(np.states, c)
 	}
-	hint = label("Sent when a command in a tab you are not looking at ends after running at least:", "statelabel")
+	hint = label("Sent when a command in a tab you are not looking at ends after running at least this long; the tab shows it running from then on:", "statelabel")
 	hint.SetWrap(true)
 	hint.SetXAlign(0)
 	box.Append(hint)

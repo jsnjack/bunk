@@ -443,8 +443,9 @@ These are the key fields agents may need to know about:
 - `[notifications]` turns notifications on or off (`enabled`), picks
   the agent states that send one (`states`, default needs-you, done and
   failed), and sets how many seconds a command must run for its end to
-  send one (`command_after`, default 10; 0 turns that off). A state name
-  bunk does not know or a negative `command_after` fails at startup.
+  send one and for its pane to be marked (`command_after`, default 10; 0
+  turns both off). A state name bunk does not know or a negative
+  `command_after` fails at startup.
 
 `config.go` is the authoritative reference for every field and its default.
 
@@ -522,7 +523,9 @@ its default; Design Decisions says where the defaults come from.
   highlight show the most urgent state among them (`stateOrder`), and the
   rail shows that agent's notice as "agent: notice". The tooltip lists
   every agent. Notifications are per pane, as in the TUI, and Alt+A
-  focuses the pane that needs the user.
+  focuses the pane that needs the user. A pane without an agent takes
+  part with its command mark (`alert.Mark`): running, or done or failed
+  until the user looks at it, labelled by the command's name.
 
 - The user can name a bunk-gui tab (`tabname.go`): a double-click on it,
   "Rename tab…" in the menu, or `rename_tab`, which has no default key.
@@ -665,9 +668,6 @@ its default; Design Decisions says where the defaults come from.
   `openURL`; Ctrl+Shift+click does the same while the application reports
   the mouse. `launchRefused` keeps the launcher off the test compositor;
   window tests read the links from `--report` (`opened`).
-- Hyperlink IDs are swept and reused. A cell's `Glyph.Link` is a uint16
-  ID into its terminal's URL table. A sweep frees the IDs no cell of either
-  screen, cursor attribute or kept row refers to; new URLs reuse them, lowest
 - bunk-gui draws box drawing and similar characters itself
   (`internal/boxdraw`), as kitty and VTE do. A font's glyphs for them
   seldom reach the cell's edges, so neighbouring cells showed seams.
@@ -691,6 +691,9 @@ its default; Design Decisions says where the defaults come from.
     masks.
   - bunk's TUI is unchanged: there the host terminal draws every glyph.
 
+- Hyperlink IDs are swept and reused. A cell's `Glyph.Link` is a uint16
+  ID into its terminal's URL table. A sweep frees the IDs no cell of either
+  screen, cursor attribute or kept row refers to; new URLs reuse them, lowest
   first. Sweeps run when the table reaches 4,096 URLs or twice what the last
   sweep kept, and after ED 3 and RIS. A cell never changes its ID, so it keeps
   its URL. Rows kept outside the terminal must be marked through
@@ -815,6 +818,15 @@ its default; Design Decisions says where the defaults come from.
     command line as the body. It stays until the user watches the pane, a
     newer alert replaces it or command alerts are turned off; a later
     short command leaves it up.
+  - Commands also get marks (`Tracker.Mark`), with notifications on or
+    off. A command that has run `command_after` is marked running; a long
+    one that ended while its pane was not watched is marked done or
+    failed until the user watches it. `Tracker.Next` includes the moment a
+    running command crosses `command_after`, so front ends wake then.
+    Both front ends show the mark in the pane's badge (`badges.Input`
+    `CommandState`, labelled by `badges.CommandLook`) where no agent runs;
+    bunk-gui also shows it in the tab, in the agent states' order and
+    colours.
   - `Status.Command` is the last command that ended (`command.go`). With
     OSC 133 marks (vte.sh, which runs only when `VTE_VERSION` is set), a
     command runs from 133;C to 133;D, loops and lists included, and has
@@ -824,6 +836,13 @@ its default; Design Decisions says where the defaults come from.
     started after the last prompt, so the ssh carrying a remote shell's
     marks names nothing. A command an agent ran in is not recorded: the
     agent's states notify instead.
+  - `Status.Running` is the command running now, while it is one the user
+    may wait on. Agents and full-screen programs (the alternate screen)
+    are left out, and so is a foreground that runs a session of its own
+    (`carrier`): ssh or mosh, a container entered, a shell without a
+    script, sudo, su or doas starting a shell. A command its shell's
+    marks start after that session appeared counts, such as one in a
+    remote or nested shell with vte.sh.
   - bunk-gui keeps one notification per pane on org.freedesktop.Notifications
     (`desknotify.go`), keyed by the pane's ID. The user watches a pane while
     it is the focused pane of the selected tab in the active window, as in

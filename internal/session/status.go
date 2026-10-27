@@ -57,6 +57,10 @@ type Status struct {
 	// Command is the last command that ended in the foreground, for
 	// notifications about long ones; its Ended is zero before the first.
 	Command Command
+	// Running is the command the shell runs now, while it is one the user
+	// may wait on (command.go); its Started is zero otherwise. Took and
+	// Ended are zero.
+	Running Command
 }
 
 // Status returns the session's current status. It takes the session lock.
@@ -76,6 +80,7 @@ func (s *Session) Status() Status {
 		Branch:   s.branch,
 		SSHHost:  s.SSHHost,
 		Command:  s.ended,
+		Running:  s.running(v.agent != ""),
 	}
 	if r := v.remote; r != (remoteAgent{}) {
 		st.Host, st.Cwd, st.Repo, st.Branch = r.host, r.cwd, r.repo, r.branch
@@ -121,17 +126,18 @@ type remoteAgent struct {
 // started through a wrapper).
 const reportingAgent = "agent"
 
-// takeAgentChange reports whether the agent view or the last ended
-// command differs from what StatusChanged last announced, and records it
-// as announced. Every path that runs StatusChanged for the agent's state
-// or a command's end goes through it, so each change is announced once.
-// It requires the session lock.
+// takeAgentChange reports whether the agent view, the last ended command
+// or the running command differs from what StatusChanged last announced,
+// and records it as announced. Every path that runs StatusChanged for the
+// agent's state or a command goes through it, so each change is announced
+// once. It requires the session lock.
 func (s *Session) takeAgentChange(now time.Time) bool {
 	v := s.view(now)
-	if v == s.shown && s.ended.Ended.Equal(s.shownEnded) {
+	running := s.running(v.agent != "").Started
+	if v == s.shown && s.ended.Ended.Equal(s.shownEnded) && running.Equal(s.shownRunning) {
 		return false
 	}
-	s.shown, s.shownEnded = v, s.ended.Ended
+	s.shown, s.shownEnded, s.shownRunning = v, s.ended.Ended, running
 	return true
 }
 

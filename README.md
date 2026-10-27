@@ -221,7 +221,7 @@ active_border = ""
 [notifications]        # for panes you are not looking at
 enabled       = true
 states        = ["needs-you", "done", "failed"]
-command_after = 10     # seconds a command must run to notify when it ends; 0 = never
+command_after = 10     # seconds a command must run to be marked and notify when it ends; 0 = never
 
 [themes.paper]         # a theme of your own: background, foreground and 16 palette colours
 background = "#FDF6E3"
@@ -268,7 +268,7 @@ scripts = ["@me/myagent"]  # for agents that run under node, python, bun, deno o
 [notifications]            # desktop notifications for tabs you are not looking at
 enabled = true
 states = ["needs-you", "done", "failed"]
-command_after = 10         # seconds a command must run to notify when it ends; 0 = never
+command_after = 10         # seconds a command must run to be marked and notify when it ends; 0 = never
 ```
 
 - bunk-gui watches the file and applies edits to the running window.
@@ -308,6 +308,12 @@ Long commands notify you the same way. When a command that ran for at least `com
 - Without marks, a command runs while a program other than the shell holds the terminal, as bunk sees it once a second, and its exit status is unknown.
 - An agent's own run does not notify as a command: the agent's states notify instead.
 - Commands on the other end of ssh notify only when the remote shell sends the marks.
+
+A command that has run for `command_after` seconds also marks its tab in bunk-gui and gets a badge on its pane in both front ends: "● make running". When it ends in a pane you are not looking at, the mark turns to "✓ done" or "✕ failed" with how long it ran, and stays until you look at the pane. The marks show with notifications turned off; `command_after = 0` turns them off too.
+
+- Sessions that run commands of their own are not marked: ssh and mosh, a container you entered, `sudo -i` or `su`, and a nested shell. Commands inside them are, when their shell sends OSC 133 marks.
+- Full-screen programs such as vim, htop or less are not marked, and neither are agents, whose own states show.
+- A REPL such as `python3` counts as a running command.
 
 With hooks, the agent reports its own state, and the report takes priority over inference. Set them up once per machine:
 

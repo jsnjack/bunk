@@ -121,6 +121,7 @@ func TestCommandEnds(t *testing.T) {
 			want := tc.want
 			if want != (Command{}) {
 				want.Ended = t0.Add(tc.ended)
+				want.Started = want.Ended.Add(-want.Took)
 			}
 			if got := s.Status().Command; got != want {
 				t.Errorf("command %+v\nwant %+v", got, want)
@@ -150,9 +151,9 @@ func TestCommandLine(t *testing.T) {
 	}
 }
 
-// TestCommandEndAnnouncedOnce: a command's end is a status change that
-// StatusChanged announces once.
-func TestCommandEndAnnouncedOnce(t *testing.T) {
+// TestCommandAnnouncedOnce: a command's start and its end are status
+// changes that StatusChanged announces once each.
+func TestCommandAnnouncedOnce(t *testing.T) {
 	t.Parallel()
 	s := newTestSession(20, 2)
 	now := time.Now()
@@ -160,8 +161,11 @@ func TestCommandEndAnnouncedOnce(t *testing.T) {
 	defer s.Unlock()
 	s.takeAgentChange(now)
 	s.commandStarted(now)
+	if !s.takeAgentChange(now) {
+		t.Error("a command start was not announced")
+	}
 	if s.takeAgentChange(now) {
-		t.Error("a command start was announced")
+		t.Error("a command start was announced twice")
 	}
 	s.commandFinished(0, true, now.Add(time.Second))
 	if !s.takeAgentChange(now) {
@@ -169,6 +173,100 @@ func TestCommandEndAnnouncedOnce(t *testing.T) {
 	}
 	if s.takeAgentChange(now) {
 		t.Error("a command end was announced twice")
+	}
+}
+
+// TestCommandRunning: Status.Running is the command the shell runs now,
+// unless it is an agent, a full-screen program, or a session that runs
+// commands of its own (ssh, a nested shell, sudo -i, a container entered).
+// A command such a session's shell marks counts.
+func TestCommandRunning(t *testing.T) {
+	t.Parallel()
+	const ms = time.Millisecond
+	const sec = time.Second
+	t0 := time.Unix(1000, 0)
+	for _, tc := range []struct {
+		name    string
+		steps   []cmdStep
+		setup   func(*Session)
+		want    Command // Started is an offset from t0 in started; zero Command for none
+		started time.Duration
+	}{
+		{"marks", []cmdStep{mark(0, "D;0"), mark(sec, "C"), poll(1500*ms, 200, "tar", "tar", "xf", "a.tar")}, nil,
+			Command{Name: "tar", Line: "tar xf a.tar"}, sec},
+		{"marks, before the poll names it", []cmdStep{mark(0, "D;0"), mark(sec, "C")}, nil, Command{}, sec},
+		{"no marks", []cmdStep{shellPoll(0), poll(sec, 200, "make", "make", "-j8")}, nil,
+			Command{Name: "make", Line: "make -j8"}, sec},
+		{"at the prompt", []cmdStep{mark(0, "C"), mark(sec, "D;0")}, nil, Command{}, 0},
+		{"an agent", []cmdStep{shellPoll(0), {at: sec, pgid: 200, name: "claude", argv: []string{"claude"}, agent: "claude"}}, nil, Command{}, 0},
+		{"ssh", []cmdStep{mark(0, "C"), poll(500*ms, 200, "ssh", "ssh", "build01")}, nil, Command{}, 0},
+		{"ssh without marks", []cmdStep{shellPoll(0), poll(sec, 200, "ssh", "ssh", "build01")}, nil, Command{}, 0},
+		{"a command the remote shell marks", []cmdStep{
+			mark(0, "C"), poll(500*ms, 200, "ssh", "ssh", "build01"), mark(2*sec, "D;0"), mark(3*sec, "C"),
+		}, nil, Command{}, 3 * sec},
+		{"sudo running a command", []cmdStep{shellPoll(0), poll(sec, 200, "sudo", "sudo", "dnf", "upgrade")}, nil,
+			Command{Name: "sudo", Line: "sudo dnf upgrade"}, sec},
+		{"sudo -i", []cmdStep{shellPoll(0), poll(sec, 200, "sudo", "sudo", "-i")}, nil, Command{}, 0},
+		{"a nested shell", []cmdStep{shellPoll(0), poll(sec, 200, "bash", "bash", "-l")}, nil, Command{}, 0},
+		{"a shell script", []cmdStep{shellPoll(0), poll(sec, 200, "bash", "bash", "build.sh")}, nil,
+			Command{Name: "bash", Line: "bash build.sh"}, sec},
+		{"a full-screen program", []cmdStep{mark(0, "C"), poll(500*ms, 200, "htop", "htop")},
+			func(s *Session) { s.Term.Write([]byte("\x1b[?1049h")) }, Command{}, 0}, //nolint:errcheck
+		{"a container entered", []cmdStep{mark(0, "C"), poll(500*ms, 200, "toolbox", "toolbox", "enter")},
+			func(s *Session) { s.ContainerType, s.ContainerID = "toolbox", "fedora" }, Command{}, 0},
+		{"a command in the container", []cmdStep{
+			mark(0, "C"), poll(500*ms, 200, "toolbox", "toolbox", "enter"), mark(2*sec, "D;0"), mark(3*sec, "C"),
+		}, func(s *Session) { s.ContainerType, s.ContainerID = "toolbox", "fedora" }, Command{}, 3 * sec},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := runCommandSteps(t, t0, tc.steps)
+			if tc.setup != nil {
+				s.Lock()
+				tc.setup(s)
+				s.Unlock()
+			}
+			want := tc.want
+			if tc.started != 0 {
+				want.Started = t0.Add(tc.started)
+			}
+			if got := s.Status().Running; got != want {
+				t.Errorf("running %+v\nwant %+v", got, want)
+			}
+		})
+	}
+}
+
+// TestCarrier: a process runs a session of its own when it is ssh or
+// mosh, a shell without a script, or sudo, su or doas starting a shell.
+func TestCarrier(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"ssh", "build01"}, true},
+		{[]string{"mosh-client", "-#", "x"}, true},
+		{[]string{"bash"}, true},
+		{[]string{"-bash"}, true},
+		{[]string{"zsh", "-l"}, true},
+		{[]string{"bash", "build.sh"}, false},
+		{[]string{"sh", "-c", "make && make test"}, false},
+		{[]string{"sudo", "-i"}, true},
+		{[]string{"sudo", "-u", "root", "-s"}, true},
+		{[]string{"sudo", "bash"}, true},
+		{[]string{"sudo", "/usr/bin/su", "-"}, true},
+		{[]string{"sudo", "dnf", "upgrade"}, false},
+		{[]string{"sudo", "-u", "postgres", "pg_dump", "db"}, false},
+		{[]string{"su", "-"}, true},
+		{[]string{"su", "-c", "make install"}, false},
+		{[]string{"run0"}, true},
+		{[]string{"make", "-j8"}, false},
+		{[]string{"tar", "xf", "a.tar"}, false},
+	} {
+		name := strings.TrimPrefix(tc.argv[0], "-")
+		if got := carrier(name, tc.argv); got != tc.want {
+			t.Errorf("carrier(%q) = %v, want %v", tc.argv, got, tc.want)
+		}
 	}
 }
 

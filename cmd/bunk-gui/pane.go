@@ -11,6 +11,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
 	"bunk/cmd/bunk-gui/gl"
+	"bunk/internal/alert"
 	"bunk/internal/input"
 	"bunk/internal/session"
 )
@@ -45,6 +46,9 @@ type Pane struct {
 	st             session.Status
 	statusOverride *session.Status
 	statusQueued   atomic.Bool
+	// mark is the pane's command mark as syncAlerts last read it from the
+	// alert tracker, for its badge and its tab.
+	mark alert.Mark
 
 	// Status badges at the top right (badge.go).
 	badgeRow    *gtk.Box

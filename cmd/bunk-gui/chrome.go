@@ -14,6 +14,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
 
+	"bunk/internal/alert"
 	"bunk/internal/badges"
 	"bunk/internal/session"
 )
@@ -132,6 +133,46 @@ func loadCSS() {
 // look is how a state is shown: dot glyph, label and colour class.
 type look struct{ dot, label, cls string }
 
+// commandLook is how a command mark's state is shown: an agent state's dot
+// and colour, labelled as the mark's badge is (badges.CommandLook).
+func commandLook(state session.AgentState) look {
+	l := lookOf(state)
+	if _, label, _, ok := badges.CommandLook(state); ok {
+		l.label = label
+	}
+	return l
+}
+
+// markOf is the command mark a pane's tab shows: none while an agent
+// runs in the pane, whose state shows instead.
+func markOf(p *Pane) alert.Mark {
+	if p.status().Agent != "" {
+		return alert.Mark{}
+	}
+	return p.mark
+}
+
+// markName names a mark's command in a tab's tooltip and notice.
+func markName(m alert.Mark) string {
+	if m.Name != "" {
+		return m.Name
+	}
+	return "command"
+}
+
+// markText says what a mark's command is and how it went, for a tooltip:
+// "make -j8 · running since 14:03", "tar xf a.tar · finished after 2m 14s".
+func markText(m alert.Mark) string {
+	what := m.Line
+	if what == "" {
+		what = markName(m)
+	}
+	if m.State == session.AgentWorking {
+		return what + " · running since " + m.Started.Format("15:04")
+	}
+	return what + " · " + m.Summary
+}
+
 // lookOf takes the dot and label of the pane's agent badge
 // (internal/badges).
 func lookOf(state session.AgentState) look {
@@ -155,12 +196,15 @@ func lookOf(state session.AgentState) look {
 // tabInfo is the label data of one tab. The name, repo and location come
 // from its agent pane (Tab.agentPane), so the label stays put while
 // agents in other panes change state; the state shown is the most urgent
-// of all its agents' (stateOrder), with that agent's notice.
+// of all its agents' (stateOrder), with that agent's notice. A pane
+// without an agent shows its command mark (alert.Mark) in place of an
+// agent state: running, or done or failed until the user looks.
 type tabInfo struct {
 	t                  *Tab
 	index              int
 	st                 session.Status // the agent pane's
 	state              session.AgentState
+	command            bool   // state is a command mark's, not an agent's
 	notice             string // of the agent in state; "agent: notice" when not the agent pane's
 	more               int    // agents in the tab's other panes, shown as "+N"
 	look               look
@@ -185,16 +229,33 @@ func (a *App) tabInfos() []tabInfo {
 		}
 		st := p.status()
 		in := tabInfo{t: t, index: i, st: st, state: st.State, notice: st.Notice, active: t == a.active, name: t.name}
-		var others []string // tooltip lines and names of the other panes' agents
+		own := markOf(p) // the agent pane's command mark, without an agent
+		if own.State != session.AgentNone {
+			in.state, in.command, in.notice = own.State, true, own.Summary
+		}
+		var others []string // tooltip lines and names of the other panes' agents and commands
 		for _, q := range t.panes() {
 			in.pass = in.pass || q.passthrough
+			if q == p {
+				continue
+			}
 			qs := q.status()
-			if q == p || qs.Agent == "" {
+			if m := markOf(q); m.State != session.AgentNone {
+				if stateOrder[m.State] < stateOrder[in.state] {
+					in.state, in.command, in.notice = m.State, true, ""
+					if m.Summary != "" {
+						in.notice = markName(m) + ": " + m.Summary
+					}
+				}
+				others = append(others, markName(m)+" · "+markText(m))
+				continue
+			}
+			if qs.Agent == "" {
 				continue
 			}
 			in.more++
 			if stateOrder[qs.State] < stateOrder[in.state] {
-				in.state, in.notice = qs.State, ""
+				in.state, in.command, in.notice = qs.State, false, ""
 				if qs.Notice != "" {
 					in.notice = qs.Agent + ": " + qs.Notice
 				}
@@ -209,7 +270,13 @@ func (a *App) tabInfos() []tabInfo {
 			others = append(others, strings.Join(line, " · "))
 		}
 		in.look, in.needs = lookOf(in.state), in.state == session.AgentNeedsYou
+		if in.command {
+			in.look = commandLook(in.state)
+		}
 		in.agent = st.Agent
+		if in.agent == "" && own.Name != "" {
+			in.agent = own.Name // the command stays named until the user looks
+		}
 		if in.agent == "" {
 			in.agent = st.Process
 		}
@@ -244,14 +311,21 @@ func (a *App) tabInfos() []tabInfo {
 		if in.loc != "" {
 			parts = append(parts, in.loc)
 		}
-		if l := lookOf(st.State).label; l != "" {
-			parts = append(parts, l)
+		ownLook := lookOf(st.State)
+		if own.State != session.AgentNone {
+			ownLook = commandLook(own.State)
+		}
+		if ownLook.label != "" {
+			parts = append(parts, ownLook.label)
 		}
 		if in.pass {
 			parts = append(parts, "all keys go to the terminal")
 		}
 		in.tooltip = strings.Join(parts, " · ")
-		if st.Notice != "" {
+		switch {
+		case own.State != session.AgentNone:
+			in.tooltip += "\n" + markText(own)
+		case st.Notice != "":
 			in.tooltip += "\n" + st.Notice
 		}
 		for _, line := range others {

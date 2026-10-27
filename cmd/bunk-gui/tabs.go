@@ -557,7 +557,7 @@ func (a *App) onPaneFocus(p *Pane) {
 	if a.active == t {
 		a.win.SetTitle(p.title)
 	}
-	a.refreshChrome()
+	a.syncMarks() // a pane the user now watches drops its mark
 }
 
 // setTitle records an OSC 0/2 title for p (shown as the window title while

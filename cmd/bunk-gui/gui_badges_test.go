@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"bunk/internal/alert"
 	"bunk/internal/badges"
 	"bunk/internal/badges/badgetest"
 	"bunk/internal/session"
@@ -22,15 +23,16 @@ import (
 )
 
 // TestBadgeParityGUI gives a pane each shared case's state (badgetest) as
-// bunk-gui holds it: session status, passthrough, the scroll offset and
-// width of the last frame, the tab's zoom and the flash. The pane's badge
+// bunk-gui holds it: session status, the command mark, passthrough, the
+// scroll offset and width of the last frame, the tab's zoom and the flash. The pane's badge
 // input must be the case's, and the badges the case's: bunk's
 // TestBadgeParityTUI checks the TUI against the same cases.
 func TestBadgeParityGUI(t *testing.T) {
 	for _, c := range badgetest.Cases {
 		t.Run(c.Name, func(t *testing.T) {
 			in := c.In
-			p := &Pane{app: &App{}, tab: &Tab{}, tv: newTermView(&testTheme), passthrough: in.Passthrough, flash: in.Flash}
+			p := &Pane{app: &App{}, tab: &Tab{}, tv: newTermView(&testTheme), passthrough: in.Passthrough, flash: in.Flash,
+				mark: alert.Mark{State: in.CommandState, Name: in.Command}}
 			p.st = session.Status{Agent: in.Agent, State: in.State, Notice: in.Notice, Process: in.Process,
 				Container: strings.TrimSpace(in.ContainerType + " " + in.ContainerID), SSHHost: in.SSHHost}
 			p.tv.sbOff, p.tv.cols = in.ScrollOffset, in.Width
@@ -73,7 +75,8 @@ func TestBadgeLooksGUI(t *testing.T) {
 func inputOf(r badgeInputReport) badges.Input {
 	return badges.Input{Passthrough: r.Passthrough, ScrollOffset: r.Scroll, Agent: r.Agent, State: stateNames[r.State],
 		Notice: r.Notice, Process: r.Process, ContainerType: r.ContainerType, ContainerID: r.ContainerID,
-		SSHHost: r.SSHHost, Zoomed: r.Zoomed, Flash: r.Flash, Width: r.Width}
+		SSHHost: r.SSHHost, Zoomed: r.Zoomed, Flash: r.Flash, Width: r.Width,
+		CommandState: stateNames[r.CommandState], Command: r.Command}
 }
 
 // checkBadgeRows checks every shown pane of a snapshot. The badge input is
@@ -92,7 +95,7 @@ func checkBadgeRows(t *testing.T, s *uiSnapshot) map[int]badges.Row {
 		ctype, cid, _ := strings.Cut(st.Container, " ")
 		want := badgeInputReport{Passthrough: p.Pass, Scroll: p.Scroll, Agent: st.Agent, State: st.State,
 			Notice: st.Notice, Process: st.Process, ContainerType: ctype, ContainerID: cid, SSHHost: st.SSHHost,
-			Zoomed: p.Zoomed, Flash: in.Flash, Width: p.Cols}
+			Zoomed: p.Zoomed, Flash: in.Flash, Width: p.Cols, CommandState: p.CommandMark.State, Command: p.CommandMark.Name}
 		if in != want || (in.Flash != "" && in.Flash != badges.Copied) {
 			t.Errorf("%s: pane %d badge input %+v, want %+v", s.Label, p.ID, in, want)
 		}

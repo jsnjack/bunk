@@ -430,7 +430,9 @@ log_level = "info"  # trace | debug | info | warn | error
 # needs you, is done or failed, or when a command there ends after running
 # command_after seconds or longer (0 turns that off): through D-Bus (gdbus)
 # on your desktop's machine, else as OSC 777 to the host terminal, which
-# foot, WezTerm, Ghostty and urxvt show.
+# foot, WezTerm, Ghostty and urxvt show. A command running that long also
+# gets a badge on its pane, and its end shows done or failed there until
+# you look at the pane, with notifications on or off.
 [notifications]
 enabled       = true
 states        = ["needs-you", "done", "failed"]

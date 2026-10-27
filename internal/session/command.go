@@ -9,17 +9,27 @@
 // foreground, as the process poll sees it, to within Timing.Poll, and its
 // exit status is unknown. Either way the poll names the command after the
 // first process group it sees run in it.
+//
+// While a command runs, Status.Running shows it if it is one the user may
+// wait on: not an agent, not a full-screen program, and not a session that
+// runs commands of its own, such as ssh or a nested shell.
 package session
 
 import (
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
+
+	"bunk/internal/vt10x"
 )
 
-// Command is a command that ended in a session's foreground.
+// Command is a command that ended in a session's foreground, or for
+// Status.Running one that runs.
 type Command struct {
 	Name      string        // process name, such as "tar"; "" when no poll saw it run
 	Line      string        // its command line, cleaned and capped; "" when unknown
+	Started   time.Time     // when it started; zero for no command
 	Took      time.Duration // from its start to its end
 	Exit      int           // exit status from the shell's OSC 133;D mark
 	ExitKnown bool          // the shell reported Exit
@@ -42,11 +52,12 @@ type runningCommand struct {
 
 // foreground is the process group the last process poll saw.
 type foreground struct {
-	pgid  int
-	shell bool // the shell's own group: it waits at its prompt
-	name  string
-	line  string    // its leader's command line
-	since time.Time // when a poll first saw the group
+	pgid    int
+	shell   bool // the shell's own group: it waits at its prompt
+	name    string
+	line    string    // its leader's command line
+	since   time.Time // when a poll first saw the group
+	carrier bool      // it runs a session of its own (carrier)
 }
 
 // commandLineLimit caps the command line kept for notifications.
@@ -109,7 +120,7 @@ func (s *Session) noteForeground(shellPid, pgid int, name string, argv []string,
 	}
 	shell := pgid == shellPid
 	if pgidChanged {
-		s.fg = foreground{pgid: pgid, shell: shell, name: name, line: commandLine(argv), since: now}
+		s.fg = foreground{pgid: pgid, shell: shell, name: name, line: commandLine(argv), since: now, carrier: carrier(name, argv)}
 	}
 	switch {
 	case s.cmd.start.IsZero():
@@ -138,5 +149,71 @@ func (s *Session) endCommand(now time.Time, exit int, exitKnown bool) {
 	if c.agent {
 		return
 	}
-	s.ended = Command{Name: c.name, Line: c.line, Took: now.Sub(c.start), Exit: exit, ExitKnown: exitKnown, Ended: now}
+	s.ended = Command{Name: c.name, Line: c.line, Started: c.start, Took: now.Sub(c.start), Exit: exit, ExitKnown: exitKnown, Ended: now}
+}
+
+// shells are the process names of shells; one without a script is a
+// nested interactive shell.
+var shells = map[string]bool{
+	"bash": true, "zsh": true, "fish": true, "sh": true, "dash": true, "ksh": true, "mksh": true,
+	"tcsh": true, "csh": true, "nu": true, "xonsh": true, "elvish": true,
+}
+
+// carrier reports whether the process name with command line argv runs a
+// session of its own, whose commands the user waits on rather than on the
+// process: ssh or mosh, a nested shell, or sudo, su or doas starting a
+// shell. sudo or a shell running a command or a script is a command.
+func carrier(name string, argv []string) bool {
+	var args []string
+	if len(argv) > 1 {
+		args = argv[1:]
+	}
+	switch {
+	case remoteClients[name]:
+		return true
+	case shells[name]:
+		for _, a := range args {
+			if a == "-c" || !strings.HasPrefix(a, "-") {
+				return false // a command or a script
+			}
+		}
+		return true
+	case name == "su":
+		return !slices.Contains(args, "-c") && !slices.Contains(args, "--command")
+	case name == "sudo" || name == "doas" || name == "run0":
+		for i := 0; i < len(args); i++ {
+			switch a := args[i]; {
+			case a == "-i" || a == "-s" || a == "--login" || a == "--shell":
+				return true
+			case a == "-u" || a == "-g" || a == "-C" || a == "-D" || a == "-h" || a == "-p" || a == "-r" || a == "-t" || a == "-T" || a == "-U":
+				i++ // the option's value
+			case a == "--":
+			case !strings.HasPrefix(a, "-"):
+				cmd := filepath.Base(a)
+				return shells[cmd] || cmd == "su"
+			}
+		}
+		return name == "run0" // run0 alone opens a root shell
+	}
+	return false
+}
+
+// running returns the command the shell runs now, for Status.Running, or
+// the zero Command when there is none the user would wait on: an agent
+// runs in it (agent: the session shows an agent), a full-screen program
+// holds the alternate screen, or the foreground is a carrier or a
+// container entered from this shell (toolbox enter). A command that the shell's marks
+// started after that foreground group appeared, such as one a remote shell
+// runs, counts. It requires the session lock.
+func (s *Session) running(agent bool) Command {
+	c := s.cmd
+	if c.start.IsZero() || c.agent || agent || s.Term == nil || s.Term.Mode()&vt10x.ModeAltScreen != 0 {
+		return Command{}
+	}
+	entered := s.ContainerType != "" && (s.ContainerType != s.BaseContainerType || s.ContainerID != s.BaseContainerID)
+	inner := c.marked && c.start.After(s.fg.since)
+	if (s.fg.carrier || entered) && s.fg.pgid > 0 && !s.fg.shell && !inner {
+		return Command{}
+	}
+	return Command{Name: c.name, Line: c.line, Started: c.start}
 }

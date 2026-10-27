@@ -116,6 +116,14 @@ type statusReport struct {
 	SSHHost   string `json:"ssh_host"`
 	Host      string `json:"host"`    // a remote agent's machine, from its in-band report
 	Command   string `json:"command"` // name of the last command that ended
+	Running   string `json:"running"` // line of the command running (Status.Running), else its name
+}
+
+// commandMarkReport is a pane's command mark (alert.Mark).
+type commandMarkReport struct {
+	State   string `json:"state"` // working while a command runs long, done or failed after, none
+	Name    string `json:"name"`
+	Summary string `json:"summary"`
 }
 
 type tabReport struct {
@@ -166,15 +174,16 @@ type paneReport struct {
 	// Status badges as shown: right to left, Badges[0] at the right edge,
 	// and BadgeRow, their texts left to right as on screen. BadgeInput is
 	// the state they were laid out from (internal/badges).
-	Badges     []badgeReport    `json:"badges"`
-	BadgeRow   string           `json:"badge_row"`
-	BadgeInput badgeInputReport `json:"badge_input"`
-	Status     statusReport     `json:"status"`
-	Title      string           `json:"title"`
-	Scroll     int              `json:"scroll"`
-	Text       []string         `json:"text"`      // live grid rows, trailing blanks trimmed
-	Selection  string           `json:"selection"` // the selected text, "" when none
-	Line       string           `json:"line"`      // the text cursor's row of Text: "$" at an idle sh prompt
+	Badges      []badgeReport     `json:"badges"`
+	BadgeRow    string            `json:"badge_row"`
+	BadgeInput  badgeInputReport  `json:"badge_input"`
+	Status      statusReport      `json:"status"`
+	CommandMark commandMarkReport `json:"command_mark"` // as its badge and tab show it
+	Title       string            `json:"title"`
+	Scroll      int               `json:"scroll"`
+	Text        []string          `json:"text"`      // live grid rows, trailing blanks trimmed
+	Selection   string            `json:"selection"` // the selected text, "" when none
+	Line        string            `json:"line"`      // the text cursor's row of Text: "$" at an idle sh prompt
 	// Settled: the pane's last frame was drawn at its current size and
 	// font, no frame or reflow is pending, and the grid fits the frame.
 	Settled bool         `json:"settled"`
@@ -208,6 +217,8 @@ type badgeInputReport struct {
 	Zoomed        bool   `json:"zoomed"`
 	Flash         string `json:"flash"`
 	Width         int    `json:"width"`
+	CommandState  string `json:"command_state"`
+	Command       string `json:"command"`
 }
 
 // writerReport is what the session's PTY writer holds for a child that
@@ -402,8 +413,22 @@ func statusOf(st session.Status) statusReport {
 	return statusReport{
 		Reported: st.Reported, Agent: st.Agent, State: stateName[st.State], Process: st.Process, Notice: st.Notice,
 		Repo: st.Repo, Branch: st.Branch, Cwd: st.Cwd, Container: st.Container, SSHHost: st.SSHHost, Host: st.Host,
-		Command: st.Command.Name,
+		Command: st.Command.Name, Running: runningText(st.Running),
 	}
+}
+
+// runningText names the command in Status.Running: its line, else its
+// name, else "command" while one runs.
+func runningText(c session.Command) string {
+	switch {
+	case c.Started.IsZero():
+		return ""
+	case c.Line != "":
+		return c.Line
+	case c.Name != "":
+		return c.Name
+	}
+	return "command"
 }
 
 func (a *App) reportOn() bool { return a.cfg.report != "" }
@@ -659,7 +684,9 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 	in := p.badgeKey.in
 	r.BadgeInput = badgeInputReport{Passthrough: in.Passthrough, Scroll: in.ScrollOffset, Agent: in.Agent,
 		State: stateName[in.State], Notice: in.Notice, Process: in.Process, ContainerType: in.ContainerType,
-		ContainerID: in.ContainerID, SSHHost: in.SSHHost, Zoomed: in.Zoomed, Flash: in.Flash, Width: in.Width}
+		ContainerID: in.ContainerID, SSHHost: in.SSHHost, Zoomed: in.Zoomed, Flash: in.Flash, Width: in.Width,
+		CommandState: stateName[in.CommandState], Command: in.Command}
+	r.CommandMark = commandMarkReport{State: stateName[p.mark.State], Name: p.mark.Name, Summary: p.mark.Summary}
 	r.Badges = []badgeReport{}
 	for _, b := range p.badgeLabels {
 		if !b.l.IsVisible() || !p.badgeRow.IsVisible() {

@@ -147,6 +147,9 @@ type Session struct {
 	promptAt   time.Time      // the shell's last OSC 133;D mark: its prompt
 	ended      Command        // the last command that ended
 	shownEnded time.Time      // ended.Ended as StatusChanged last announced it
+	// shownRunning is Status.Running.Started as StatusChanged last
+	// announced it.
+	shownRunning time.Time
 
 	// knownToken is Options.KnownToken. Set before the session runs; read
 	// without the lock.

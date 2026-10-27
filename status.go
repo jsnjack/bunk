@@ -35,7 +35,7 @@ func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane, rt resolvedTheme
 // p.mu must be held by the caller.
 func statusOverlayKeyLocked(p *Pane, now time.Time) string {
 	tempActive := !p.statusMsgEnd.IsZero() && now.Before(p.statusMsgEnd) && p.statusMsg != ""
-	return fmt.Sprintf("%t|%t|%s|%s|%s|%s|%s|%s|%d|%s",
+	return fmt.Sprintf("%t|%t|%s|%s|%s|%s|%s|%s|%d|%s|%d|%s",
 		p.passthrough,
 		tempActive,
 		p.statusMsg,
@@ -46,6 +46,8 @@ func statusOverlayKeyLocked(p *Pane, now time.Time) string {
 		p.agent.name,
 		p.agent.state,
 		p.agent.notice,
+		p.mark.State,
+		p.mark.Name,
 	)
 }
 
@@ -137,6 +139,8 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 		ContainerType: p.ContainerType,
 		ContainerID:   p.ContainerID,
 		SSHHost:       p.SSHHost,
+		CommandState:  p.mark.State,
+		Command:       p.mark.Name,
 		Zoomed:        zoomed,
 		Width:         p.w,
 	}

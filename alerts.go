@@ -64,7 +64,8 @@ func (app *App) closeDesktopAlerts() {
 // forwardAlerts shows or withdraws the notification of each pane whose
 // agent entered or left an alerting state, where a long command ended, or
 // that the user started or stopped looking at: the active pane while the
-// host terminal has the focus. render calls it under app.mu, before any early return, so a
+// host terminal has the focus. It also gives each pane its command mark
+// for the badge. render calls it under app.mu, before any early return, so a
 // pane's status is read in lock order on every frame.
 func (app *App) forwardAlerts(root *Node, active *Pane) {
 	now := time.Now()
@@ -77,8 +78,13 @@ func (app *App) forwardAlerts(root *Node, active *Pane) {
 		case alert.Withdraw:
 			app.withdrawAlert(p.ID)
 		}
+		m := app.alerts.Mark(p.ID, now)
+		p.Lock()
+		p.mark = m
+		p.Unlock()
 	}
-	// A held alert goes out on the first frame after it is due.
+	// A held alert goes out, and a long command's mark shows, on the first
+	// frame after it is due.
 	if next := app.alerts.Next(); !next.IsZero() && !next.Equal(app.alertWake) {
 		app.alertWake = next
 		time.AfterFunc(time.Until(next), app.triggerRedraw)

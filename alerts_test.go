@@ -199,6 +199,71 @@ func TestAlertsForCommands(t *testing.T) {
 	}
 }
 
+// TestCommandMarkBadges: a command that runs command_after or longer
+// shows a running badge in its pane, also while the pane is not active;
+// when it fails there unwatched, a failed badge stays until the user
+// looks at the pane. A nested shell gets no badge.
+func TestCommandMarkBadges(t *testing.T) {
+	const w, h = 81, 10
+	app, scr := newStatusApp(t, w, h)
+	app.timing = session.Timing{Poll: 20 * time.Millisecond}
+	app.alerts.Settings = alert.Settings{CommandAfter: 300 * time.Millisecond} // notifications off: marks stay
+	a := spawn(t, app, 0, 0, w/2, h, markedBash...)
+	b := spawn(t, app, w/2+1, 0, w-w/2-1, h, markedBash...)
+	app.root = newLeaf(a, 0, 0, w, h)
+	app.root.split(b, splitVertical)
+	app.active = a
+
+	// badge renders until pane b's top row shows want, and returns it.
+	badge := func(want string) string {
+		t.Helper()
+		var row string
+		for deadline := time.Now().Add(10 * time.Second); ; {
+			app.render()
+			row = cellsText(scr, 0, b.x, b.x+b.w)
+			if strings.Contains(row, want) {
+				return row
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("pane b's top row %q never showed %q; status %+v, mark %+v", row, want, b.Status(), b.mark)
+			}
+			select {
+			case <-app.redraw:
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}
+	if err := b.WriteInput([]byte("sleep 1.5; (exit 3)\r")); err != nil {
+		t.Fatal(err)
+	}
+	badge(" ● sleep running ")
+	badge(" ✕ sleep failed ")
+	app.active = b
+	app.render()
+	if row := cellsText(scr, 0, b.x, b.x+b.w); strings.Contains(row, "failed") {
+		t.Errorf("the failed badge stayed while the pane was watched: %q", row)
+	}
+
+	// A nested shell without marks: the outer shell's command runs on.
+	if err := b.WriteInput([]byte("env -u PS0 PS1='nested$ ' bash --norc --noprofile\r")); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		app.render()
+		if strings.Contains(screenText(scr, b.x, b.x+b.w), "nested$") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no nested prompt:\n%s", screenText(scr, b.x, b.x+b.w))
+		}
+	}
+	time.Sleep(500 * time.Millisecond) // past command_after, and polls that saw the shell
+	app.render()
+	if row := cellsText(scr, 0, b.x, b.x+b.w); strings.Contains(row, "running") || b.mark.State != session.AgentNone {
+		t.Errorf("a nested shell shows %q, mark %+v", row, b.mark)
+	}
+}
+
 // TestAlertsFollowZoom: while another pane fills the screen, an agent in
 // a hidden pane still notifies.
 func TestAlertsFollowZoom(t *testing.T) {

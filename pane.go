@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bunk/internal/alert"
 	"bunk/internal/notify"
 	"bunk/internal/session"
 	"bytes"
@@ -64,6 +65,10 @@ type Pane struct {
 	// agent is the agent status that the last renderPane read for the
 	// badge and the borders. Protected by mu.
 	agent paneAgent
+
+	// mark is the command mark the last forwardAlerts read, for the badge.
+	// Protected by mu.
+	mark alert.Mark
 
 	// token routes agent hook reports to this pane's session through the
 	// notify socket; "" when bunk runs without the socket.

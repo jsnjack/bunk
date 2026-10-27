@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bunk/internal/alert"
 	"bunk/internal/badges"
 	"bunk/internal/badges/badgetest"
 	"bunk/internal/session"
@@ -25,11 +26,12 @@ type badgeState struct {
 	flash                     string
 	flashOn                   bool // the flash has not expired
 	width                     int
+	mark                      alert.Mark
 }
 
 // apply sets p's fields to s.
 func (s badgeState) apply(p *Pane) {
-	p.passthrough, p.ScrollOffset, p.agent = s.pass, s.scroll, s.agent
+	p.passthrough, p.ScrollOffset, p.agent, p.mark = s.pass, s.scroll, s.agent, s.mark
 	p.FgProcess, p.ContainerType, p.ContainerID, p.SSHHost = s.process, s.ctype, s.cid, s.host
 	p.statusMsg, p.statusMsgEnd = s.flash, time.Time{}
 	if s.flash != "" {
@@ -162,7 +164,8 @@ func TestBadgeParityTUI(t *testing.T) {
 			in := c.In
 			s := badgeState{pass: in.Passthrough, scroll: in.ScrollOffset, agent: paneAgent{in.Agent, in.State, in.Notice},
 				process: in.Process, ctype: in.ContainerType, cid: in.ContainerID, host: in.SSHHost,
-				zoomed: in.Zoomed, flash: in.Flash, flashOn: true, width: in.Width}
+				zoomed: in.Zoomed, flash: in.Flash, flashOn: true, width: in.Width,
+				mark: alert.Mark{State: in.CommandState, Name: in.Command}}
 			s.apply(p)
 			const cols = 140
 			scr := simScreen(t, cols, 2)

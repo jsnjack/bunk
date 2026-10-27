@@ -296,6 +296,55 @@ func TestGUICommandNotifications(t *testing.T) {
 	}
 }
 
+// TestGUICommandMarks: a command that has run command_after seconds marks
+// its tab and its pane's badge running; when it fails while its tab is
+// not selected, the tab shows failed and how it went until the user
+// selects the tab. Notifications off leave the marks on. The test's sh
+// has no shell integration, so the job marks itself with OSC 133.
+func TestGUICommandMarks(t *testing.T) {
+	t.Parallel()
+	job := "printf '\\033]133;C\\007'\nsleep 3\nfalse\nprintf '\\033]133;D;%d\\007' $?\n"
+	g := runGUI(t, scenario{
+		cost:   3,
+		config: "[notifications]\nenabled = false\ncommand_after = 1\n",
+		args:   []string{"--size", "100x30", "--tab", ""},
+		files:  map[string]string{"job.sh": job},
+		script: []string{
+			"kbd alt+2",
+			"wait selected_tab=2 focused.line=$",
+			"type sh job.sh\\r",
+			"wait tab.2.state=working tab.2.label=running focused.command_mark.state=working",
+			"snap running",
+			"kbd alt+1",
+			"wait selected_tab=1 tab.2.state=failed",
+			"snap failed",
+			"kbd alt+2",
+			"wait selected_tab=2 tab.2.state=none focused.command_mark.state=none",
+			"snap seen",
+			"quit",
+		},
+	})
+	running := g.snap("running")
+	if tab := running.tab(t, 2); tab.Agent != "sh" || tab.Dot != "●" || !strings.Contains(tab.Tooltip, "sh job.sh · running since ") {
+		t.Errorf("running: tab 2 %+v", tab)
+	}
+	rows := checkBadgeRows(t, running)
+	if row := rows[running.FocusedPane]; len(row.Badges) == 0 || row.Badges[0].Text != " ● sh running " {
+		t.Errorf("running: badges %q", row.Badges)
+	}
+	tab := g.snap("failed").tab(t, 2)
+	if tab.Label != "failed" || tab.Dot != "✕" || !strings.HasPrefix(tab.Notice, "failed after ") ||
+		!strings.HasSuffix(tab.Notice, " (exit status 1)") || !strings.Contains(tab.Tooltip, "sh job.sh · failed after ") {
+		t.Errorf("failed: tab 2 %+v", tab)
+	}
+	if tab := g.snap("seen").tab(t, 2); tab.Label != "" || tab.Notice != "" {
+		t.Errorf("seen: tab 2 %+v", tab)
+	}
+	if len(g.Notifications) != 0 {
+		t.Errorf("notifications off sent %+v", g.Notifications)
+	}
+}
+
 // TestGUINotificationSettings: [notifications] enabled = false sends
 // nothing. The preferences window turns notifications on and leaves out
 // done; both apply at once and are saved to config.toml. A needs-you seen

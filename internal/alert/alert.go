@@ -13,6 +13,11 @@
 // Tracker.Repeat. A command that ran Settings.CommandAfter or longer
 // alerts when it ends, and its alert stays until the user watches the
 // source.
+//
+// A Tracker also gives each source a Mark for its tab and badge: a command
+// that has run CommandAfter or longer, then the end of one that nobody
+// watched, until someone does. Marks do not depend on notifications being
+// on.
 package alert
 
 import (
@@ -123,7 +128,7 @@ func (c Config) Settings() (Settings, error) {
 	}
 	if n := c.CommandAfter; n != nil {
 		if *n < 0 {
-			return s, fmt.Errorf("notifications.command_after: %d is negative (want seconds, or 0 for no command notifications)", *n)
+			return s, fmt.Errorf("notifications.command_after: %d is negative (want seconds, or 0 for no command notifications or marks)", *n)
 		}
 		s.CommandAfter = time.Duration(*n) * time.Second
 	}
@@ -314,8 +319,7 @@ func (a Action) String() string {
 const DefaultRepeat = 10 * time.Second
 
 // Tracker follows the agent state of each source and decides when to
-// alert. Sources are identified by an int: bunk-gui's tab ID, bunk's pane
-// ID. The zero Tracker is ready to use with alerts off; set Settings. It is
+// alert. Sources are identified by an int: a pane's ID in both front ends. The zero Tracker is ready to use with alerts off; set Settings. It is
 // not safe for concurrent use.
 type Tracker struct {
 	Settings Settings
@@ -328,11 +332,14 @@ type Tracker struct {
 
 // source is what a Tracker knows about one source.
 type source struct {
-	seen    view      // state and notice at the last Update
-	ended   time.Time // Command.Ended at the last Update
-	pending bool      // entered an alerting state; not sent yet
-	shown   bool      // a notification is up
-	command bool      // the notification up is a command's
+	seen    view            // state and notice at the last Update
+	ended   time.Time       // Command.Ended at the last Update
+	running session.Command // Status.Running at the last Update
+	result  Mark            // a long command that ended unwatched, until watched
+	due     time.Time       // when the running command will have run CommandAfter; zero once it has
+	pending bool            // entered an alerting state; not sent yet
+	shown   bool            // a notification is up
+	command bool            // the notification up is a command's
 	// The state of the last agent alert sent since the user last watched
 	// the source, and when it went out.
 	sent   session.AgentState
@@ -383,6 +390,7 @@ func (t *Tracker) Update(id int, st session.Status, watched bool, now time.Time)
 	s.seen = v
 	ended := !st.Command.Ended.Equal(s.ended)
 	s.ended = st.Command.Ended
+	t.updateMark(s, st, watched, ended, now)
 	if watched {
 		s.pending = false
 		s.sent = session.AgentNone // seen: the next alert need not wait
@@ -409,6 +417,63 @@ func (t *Tracker) Update(id int, st session.Status, watched bool, now time.Time)
 	return Send, For(st)
 }
 
+// Mark is what a source's tab and badge show about its shell's commands
+// beside its agent.
+type Mark struct {
+	// State is AgentWorking while a command has run CommandAfter or
+	// longer, AgentDone or AgentFailed (a non-zero exit status) after a
+	// long command ended while nobody watched the source, until someone
+	// does, and AgentNone otherwise.
+	State session.AgentState
+	Name  string // the command's process name, such as "tar"; "" when unknown
+	Line  string // its command line; "" when unknown
+	// Summary says how it went, without the name: "finished after 2m 14s",
+	// "failed after 3s (exit status 2)"; "" while it runs.
+	Summary string
+	Started time.Time // when it started
+}
+
+// marks reports whether commands get marks at all: CommandAfter is set.
+func (s Settings) marks() bool { return s.CommandAfter > 0 }
+
+// updateMark follows the source's commands for Mark.
+func (t *Tracker) updateMark(s *source, st session.Status, watched, ended bool, now time.Time) {
+	s.running, s.due = st.Running, time.Time{}
+	if !t.Settings.marks() {
+		s.result = Mark{}
+		return
+	}
+	if at := st.Running.Started.Add(t.Settings.CommandAfter); !st.Running.Started.IsZero() && now.Before(at) {
+		s.due = at
+	}
+	switch {
+	case watched:
+		s.result = Mark{}
+	case ended && !st.Command.Ended.IsZero() && st.Command.Took >= t.Settings.CommandAfter:
+		c := st.Command
+		m := Mark{State: session.AgentDone, Name: c.Name, Line: c.Line, Started: c.Started,
+			Summary: "finished after " + Duration(c.Took)}
+		if c.Failed() {
+			m.State = session.AgentFailed
+			m.Summary = "failed after " + Duration(c.Took) + " (exit status " + strconv.Itoa(c.Exit) + ")"
+		}
+		s.result = m
+	}
+}
+
+// Mark returns the source's command mark at now. A command running
+// CommandAfter or longer shows over the end of an earlier one.
+func (t *Tracker) Mark(id int, now time.Time) Mark {
+	s := t.sources[id]
+	if s == nil || !t.Settings.marks() {
+		return Mark{}
+	}
+	if r := s.running; !r.Started.IsZero() && now.Sub(r.Started) >= t.Settings.CommandAfter {
+		return Mark{State: session.AgentWorking, Name: r.Name, Line: r.Line, Started: r.Started}
+	}
+	return s.result
+}
+
 // withdraw takes down the source's notification, if it has one up.
 func (s *source) withdraw() (Action, Alert) {
 	if !s.shown {
@@ -424,16 +489,22 @@ func (s *source) held(repeat time.Duration, now time.Time) bool {
 	return s.seen.state == s.sent && now.Sub(s.sentAt) < repeat
 }
 
-// Next returns when the earliest held alert may go out; zero when no alert
-// is held.
+// Next returns when the earliest held alert may go out or a running
+// command gets its mark, so a front end calls Update and Mark again then;
+// zero when nothing is waiting.
 func (t *Tracker) Next() time.Time {
 	var next time.Time
-	for _, s := range t.sources {
-		if !s.pending || s.seen.state != s.sent {
-			continue
-		}
-		if at := s.sentAt.Add(t.repeat()); next.IsZero() || at.Before(next) {
+	earliest := func(at time.Time) {
+		if next.IsZero() || at.Before(next) {
 			next = at
+		}
+	}
+	for _, s := range t.sources {
+		if !s.due.IsZero() {
+			earliest(s.due)
+		}
+		if s.pending && s.seen.state == s.sent {
+			earliest(s.sentAt.Add(t.repeat()))
 		}
 	}
 	return next
