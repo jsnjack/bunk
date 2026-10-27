@@ -149,6 +149,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     clicks with their activation token
   newwindow.go      New window: another bunk-gui process in the pane's
                     directory, with an activation token
+  scope.go          Each pane's child in a systemd scope of its own, so an
+                    OOM kill in a pane leaves bunk-gui and other panes alone
   tabname.go        Tab names: rename dialog, double-click on a tab
   prefs_hooks.go    Agent hooks in Preferences (state, Install, Copy
                     snippet) and the toast for an agent without hooks
@@ -515,6 +517,24 @@ its default; Design Decisions says where the defaults come from.
   item: Shell offers no New Window for a running GTK application without
   one. On the test compositor the window is recorded in `--report`
   (`windows`) and not started.
+
+- Each bunk-gui pane runs in a systemd scope of its own (`scope.go`), as
+  VTE's terminals do. GNOME starts bunk-gui in
+  `app-gnome-<app ID>-<PID>.scope` with `OOMPolicy=stop`. A program that
+  the kernel's OOM killer ended in a pane therefore stopped that scope,
+  which closed bunk-gui with every pane.
+  - `newPane` asks the user's systemd on the session bus
+    (`StartTransientUnit`) to move the child into
+    `bunk-gui-<PID>-pane-<ID>.scope` in `app.slice`.
+  - `OOMPolicy=continue` ends only the process the kernel picked, so the
+    pane's shell and agents go on. `CollectMode=inactive-or-failed` removes
+    the unit when its last process ends, also after a kill.
+  - systemd moves the child about 15 ms after it starts. A process forked
+    before then stays in bunk-gui's scope.
+  - Without systemd on the bus, as on the window tests' bus, the pane stays
+    in bunk-gui's scope, logged at debug level. `TestPaneScope` checks the
+    call against a fake systemd.
+  - bunk's TUI is unchanged: its panes share the host terminal's scope.
 
 - A bunk-gui tab can hold several agents in split panes. Its label keeps
   the name, repo and location of the first pane with an agent
@@ -925,6 +945,11 @@ its default; Design Decisions says where the defaults come from.
   is long-form. bunk-gui's test flags (`--do`, `--report`, `--verify`,
   `--wait-focus`, `--alloc-probe`, `--dump`, `--dump-size`,
   `--maximize-after`, `--agent-home`) are hidden from `--help`.
+- In bunk-gui, finish a D-Bus call with `callFinish` (`desknotify.go`), not
+  gotk4's `DBusConnection.CallFinish`. gotk4 v0.4.1 sets a finalizer on the
+  NULL reply of a failed call, and GLib logs a critical when the garbage
+  collector runs it, which fails every window test. A test of a failed
+  call runs `runFinalizers` before it checks the logs.
 - Vendored vt10x has local patches. Prefer fixing bugs there over working
   around them in the main code.
 - `TERMINAL_AUDIT.md` is the authoritative reference for which terminal

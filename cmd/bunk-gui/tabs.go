@@ -180,6 +180,11 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 		a.panes[p.id] = nil
 		return nil
 	}
+	// A program that runs out of memory in the pane must not end bunk-gui's
+	// scope, with every other pane (scope.go).
+	if bus := a.app.DBusConnection(); bus != nil && s.Cmd.Process != nil {
+		moveToScope(bus, p.id, s.Cmd.Process.Pid)
+	}
 	p.s, p.cols, p.rows = s, max(2, cols), max(1, rows)
 	p.title = defaultTitle
 	p.st = s.Status()

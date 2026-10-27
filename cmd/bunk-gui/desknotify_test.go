@@ -102,6 +102,25 @@ func pump(t *testing.T, what string, done func() bool) {
 	}
 }
 
+// runFinalizers collects garbage and waits until the finalizers it queued
+// have run, so that a GLib critical one of them logs reaches the test's
+// logs. Each round waits for a finalizer of its own, which runs after the
+// batch queued before it.
+func runFinalizers(t *testing.T) {
+	t.Helper()
+	type sentinel struct{ p *int } // with a pointer: never a tiny allocation
+	for range 2 {
+		done := make(chan struct{})
+		func() { runtime.SetFinalizer(&sentinel{}, func(*sentinel) { close(done) }) }()
+		runtime.GC()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("finalizers did not run")
+		}
+	}
+}
+
 // captureLogs sends slog records at debug level and above to a buffer
 // for the rest of the test.
 func captureLogs(t *testing.T) *syncBuffer {
@@ -148,6 +167,7 @@ func TestDeskNotifierNoServer(t *testing.T) {
 	if len(d.notes)+len(d.paneOf) != 0 {
 		t.Errorf("left behind: notes %v, ids %v", d.notes, d.paneOf)
 	}
+	runFinalizers(t)
 	got := logs.String()
 	if !strings.Contains(got, `level=DEBUG msg="desktop notification not shown" pane=3`) ||
 		!strings.Contains(got, fdoName) {

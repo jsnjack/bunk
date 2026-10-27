@@ -17,12 +17,28 @@ package main
 import (
 	"context"
 	"log/slog"
+	"runtime"
+	"unsafe"
 
+	"github.com/diamondburned/gotk4/pkg/core/gextras"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 
 	"bunk/internal/alert"
 )
+
+// callFinish is bus.CallFinish without a bug of gotk4 v0.4.1: after a
+// failed call it sets a finalizer on the NULL reply, and GLib logs a
+// critical (g_variant_unref: assertion 'value != NULL' failed) when the
+// garbage collector runs it.
+func callFinish(bus *gio.DBusConnection, res gio.AsyncResulter) (*glib.Variant, error) {
+	v, err := bus.CallFinish(res)
+	if err != nil {
+		runtime.SetFinalizer(gextras.StructIntern(unsafe.Pointer(v)), nil)
+		return nil, err
+	}
+	return v, nil
+}
 
 const (
 	fdoName  = "org.freedesktop.Notifications"
@@ -82,7 +98,7 @@ func (d *deskNotifier) send(pane int, al alert.Alert) {
 	n.busy = true
 	d.bus.Call(context.Background(), fdoName, fdoPath, fdoIface, "Notify", notifyArgs(n.id, al),
 		glib.NewVariantType("(u)"), gio.DBusCallFlagsNone, -1, func(res gio.AsyncResulter) {
-			v, err := d.bus.CallFinish(res)
+			v, err := callFinish(d.bus, res)
 			n.busy = false
 			if err != nil {
 				slog.Debug("desktop notification not shown", "pane", pane, "err", err)
@@ -124,7 +140,7 @@ func (d *deskNotifier) withdraw(pane int) {
 	args := glib.NewVariantTuple([]*glib.Variant{glib.NewVariantUint32(n.id)})
 	d.bus.Call(context.Background(), fdoName, fdoPath, fdoIface, "CloseNotification", args,
 		nil, gio.DBusCallFlagsNone, -1, func(res gio.AsyncResulter) {
-			if _, err := d.bus.CallFinish(res); err != nil {
+			if _, err := callFinish(d.bus, res); err != nil {
 				slog.Debug("desktop notification not withdrawn", "pane", pane, "err", err)
 			}
 		})
