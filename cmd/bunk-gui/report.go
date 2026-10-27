@@ -275,6 +275,7 @@ type uiSnapshot struct {
 	TabDrag       *tabDragReport      `json:"tab_drag"`    // a tab being dragged; null when none
 	MenuOpen      bool                `json:"menu_open"`
 	AboutOpen     bool                `json:"about_open"`
+	AboutVersion  string              `json:"about_version"` // as the About dialog shows it
 	LastToast     string              `json:"last_toast"`
 	ToastButton   string              `json:"toast_button"` // the last toast's button, "" without one
 	Clipboard     *string             `json:"clipboard"`
@@ -474,6 +475,9 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		s.MenuOpen = a.optionsBtn.Active()
 	}
 	s.AboutOpen = a.about != nil
+	if a.about != nil {
+		s.AboutVersion = a.about.Version()
+	}
 	infos := a.tabInfos()
 	for i, in := range infos {
 		t := in.t

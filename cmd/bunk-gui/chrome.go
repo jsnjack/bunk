@@ -855,7 +855,7 @@ func (a *App) showAbout() {
 	d := adw.NewAboutDialog()
 	d.SetApplicationName("bunk-gui")
 	d.SetApplicationIcon("utilities-terminal")
-	d.SetVersion("milestone 3")
+	d.SetVersion(Version)
 	d.SetComments("A GTK terminal for coding agents, on bunk's session core.")
 	d.SetDeveloperName("bunk")
 	d.ConnectClosed(func() { a.about = nil })

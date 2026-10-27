@@ -33,7 +33,8 @@ var keyNames = map[uint]struct {
 
 // keyEvent maps a GDK key press to an input event. Text keys use
 // gdk_keyval_to_unicode, so the rune already reflects Shift and the layout.
-// IME composition is not handled yet (milestone 2).
+// Text an input method composes reaches the pane through its IM context
+// (attachInput), not here.
 func keyEvent(keyval uint, state gdk.ModifierType) (input.Event, bool) {
 	var mod input.Mod
 	if state&gdk.ShiftMask != 0 {

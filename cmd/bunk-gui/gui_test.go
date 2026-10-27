@@ -457,8 +457,8 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 			t.Errorf("no toast %q in %q", want, g.Toasts)
 		}
 	}
-	if s := g.snap("about"); !s.AboutOpen {
-		t.Error("About bunk-gui: no dialog")
+	if s := g.snap("about"); !s.AboutOpen || s.AboutVersion != Version {
+		t.Errorf("About bunk-gui: open %v, version %q, want %q", s.AboutOpen, s.AboutVersion, Version)
 	}
 }
 
