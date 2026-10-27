@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -470,6 +471,9 @@ func FuzzFindAndSelect(f *testing.F) {
 
 		needle := []rune(strings.ToLower(query))
 		matches := s.FindAll(query)
+		if want := s.oracleFindAll(query); !slices.Equal(matches, want) {
+			t.Fatalf("FindAll(%q) = %v, oracle %v", query, matches, want)
+		}
 		s.Lock()
 		defer s.Unlock()
 		if query == "" && len(matches) != 0 {

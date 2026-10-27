@@ -3,6 +3,7 @@ package session
 
 import (
 	"bunk/internal/vt10x"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -56,88 +57,93 @@ func SpanContains(spans []Span, col int) bool {
 }
 
 // FindAll returns every case-insensitive occurrence of query in the
-// scrollback and live grid, in virtual-row order. The session is locked
-// while the grid is copied, not while it is matched. An empty query matches
-// nothing.
+// scrollback and live grid, in virtual-row order. It reads the stored cells
+// under the session lock, one row at a time, without building Glyphs. An
+// empty query matches nothing.
 func (s *Session) FindAll(query string) []Match {
 	if query == "" {
 		return nil
 	}
-	lq := strings.ToLower(query)
-	lqRunes := []rune(lq)
-	lqLen := len(lqRunes)
-
-	// Snapshot the virtual grid to [][]rune under the session lock.
-	// This is a pure memcpy — no pattern matching yet — so lock hold time is
-	// O(sbCount × cols) iterations of simple ToLower calls.
+	needle := []rune(strings.ToLower(query))
+	// Past a row's last character every cell is blank, so only a query
+	// that ends in a space can match there.
+	blanks := needle[len(needle)-1] == ' '
+	var (
+		matches []Match
+		text    rowText
+		live    vt10x.Row
+	)
 	s.Lock()
+	defer s.Unlock()
 	cols, rows := s.Term.Size()
 	sbCount := s.Scrollback.Count
-	totalRows := sbCount + rows
-	snapshot := make([][]rune, totalRows)
-	columns := make([][]int, totalRows)
-	ends := make([][]int, totalRows)
-	for vRow := 0; vRow < totalRows; vRow++ {
-		var cells []vt10x.Glyph
+	for vRow := 0; vRow < sbCount+rows; vRow++ {
+		var row vt10x.Row
 		if vRow < sbCount {
-			cells = s.Scrollback.View(vRow)
+			row = s.Scrollback.Row(vRow)
 		} else {
-			cells = CaptureRow(s.Term, vRow-sbCount, cols)
+			s.Term.CopyRow(vRow-sbCount, &live)
+			row = live
 		}
-		row := make([]rune, 0, cols)
-		positions := make([]int, 0, cols+1)
-		endColumns := make([]int, 0, cols)
-		for i := 0; i < cols; i++ {
-			var ch rune
-			if i < len(cells) {
-				if cells[i].Width < 0 {
-					continue
-				}
-				ch = cells[i].Char
-			}
-			if ch == 0 {
-				ch = ' '
-			}
-			row = append(row, unicode.ToLower(ch))
-			positions = append(positions, i)
-			width := 1
-			if i < len(cells) {
-				width = max(1, int(cells[i].Width))
-			}
-			endColumns = append(endColumns, i+width)
-			if i < len(cells) {
-				for _, c := range cells[i].Combining {
-					row = append(row, unicode.ToLower(c))
-					positions = append(positions, i)
-					endColumns = append(endColumns, i+width)
-				}
-			}
+		n := cols
+		if !blanks {
+			n = min(cols, row.TrimmedLen())
 		}
-		snapshot[vRow] = row
-		columns[vRow] = append(positions, cols)
-		ends[vRow] = endColumns
+		text.load(row, n)
+		matches = text.find(matches, vRow, needle)
 	}
-	s.Unlock()
+	return matches
+}
 
-	var matches []Match
-	for vRow, row := range snapshot {
-		for offset := 0; offset+lqLen <= len(row); offset++ {
-			match := true
-			for k := 0; k < lqLen; k++ {
-				if row[offset+k] != lqRunes[k] {
-					match = false
-					break
-				}
-			}
-			if match {
-				matches = append(matches, Match{
-					VRow:   vRow,
-					Col:    columns[vRow][offset],
-					Length: ends[vRow][offset+lqLen-1] - columns[vRow][offset],
-				})
-				offset += lqLen - 1 // skip to end of match (loop adds 1)
+// rowText is the text of one row as search sees it: lower-case runes, each
+// with the columns its cell covers. Continuations of wide characters are
+// left out, and a cell's combining marks follow its character.
+type rowText struct {
+	runes      []rune
+	start, end []int
+}
+
+// load reads the first n columns of row into t, reusing t's storage.
+// Columns past the row's end are blanks.
+func (t *rowText) load(row vt10x.Row, n int) {
+	t.runes, t.start, t.end = t.runes[:0], t.start[:0], t.end[:0]
+	for x := 0; x < n; x++ {
+		if x >= row.Len() {
+			t.add(' ', x, x+1)
+			continue
+		}
+		ch, _, _, _, width, extra := row.CellAt(x)
+		if width < 0 {
+			continue
+		}
+		if ch == 0 {
+			ch = ' '
+		}
+		end := x + max(1, int(width))
+		t.add(unicode.ToLower(ch), x, end)
+		if extra {
+			for _, c := range row.Combining(x) {
+				t.add(unicode.ToLower(c), x, end)
 			}
 		}
+	}
+}
+
+func (t *rowText) add(r rune, start, end int) {
+	t.runes = append(t.runes, r)
+	t.start = append(t.start, start)
+	t.end = append(t.end, end)
+}
+
+// find appends the occurrences of needle in t to matches, left to right;
+// a match starts after the end of the one before it.
+func (t *rowText) find(matches []Match, vRow int, needle []rune) []Match {
+	for i := 0; i+len(needle) <= len(t.runes); i++ {
+		if t.runes[i] != needle[0] || !slices.Equal(t.runes[i:i+len(needle)], needle) {
+			continue
+		}
+		matches = append(matches, Match{VRow: vRow, Col: t.start[i], Length: t.end[i+len(needle)-1] - t.start[i]})
+		i += len(needle) - 1
 	}
 	return matches
 }

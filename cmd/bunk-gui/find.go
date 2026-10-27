@@ -106,8 +106,8 @@ func (a *App) setFindQuery(q string) {
 	a.findScan()
 }
 
-// findScan matches the query on a goroutine: FindAll copies the grid under
-// the session lock, then matches outside it. Queries typed meanwhile
+// findScan runs FindAll on a goroutine, off the GTK thread; FindAll holds
+// the session lock while it reads the grid. Queries typed meanwhile
 // coalesce into one more scan.
 func (a *App) findScan() {
 	f := a.find
