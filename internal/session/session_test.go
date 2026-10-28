@@ -5,6 +5,7 @@ import (
 	"bunk/internal/vt10x"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -201,6 +202,35 @@ func TestCaptureAndWrite_SplitOSC10Response(t *testing.T) {
 		t.Fatalf("split OSC 10 response = %q, want %q", string(buf), want)
 	}
 }
+
+// TestCaptureAndWrite_AltScreenRoundTrips: a program that switches to the
+// alternate screen and back twice in quick succession, as the feature
+// scripts' colour queries do, leaves its text on the primary screen where
+// it wrote it, however the PTY reads split the output. A read that holds
+// one switch's exit and the next one's entry used to keep the first entry's
+// cursor, so the second exit moved the cursor back over the earlier rows.
+func TestCaptureAndWrite_AltScreenRoundTrips(t *testing.T) {
+	stream := []byte("Q10: \x1b[?1049hA\x1b[?1049lR10\r\nQ11: \x1b[?1049hB\x1b[?1049lR11\r\n")
+	want := []string{"Q10: R10", "Q11: R11", ""}
+	splits := [][][]byte{{stream}}
+	for i := 1; i < len(stream); i++ {
+		splits = append(splits, [][]byte{stream[:i], stream[i:]})
+	}
+	for _, chunks := range splits {
+		s := newTestSession(20, 3)
+		feedSplitPTYChunks(t, s, chunks...)
+		for y, w := range want {
+			var row []rune
+			for x := range 20 {
+				row = append(row, s.Term.Cell(x, y).Char)
+			}
+			if got := strings.TrimRight(string(row), " \x00"); got != w {
+				t.Fatalf("chunks %q: row %d = %q, want %q", chunks, y, got, w)
+			}
+		}
+	}
+}
+
 func TestSbRing_PushNotFull(t *testing.T) {
 	r := Ring{MaxLines: 4}
 	r.Push(makeGlyphRow('A'))

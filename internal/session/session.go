@@ -627,102 +627,103 @@ func (s *Session) writeTerminalChunk(chunk []byte) {
 		chunk = s.handleKittyKeyboard(chunk)
 	}
 
-	// If this chunk crosses an alt-screen entry point:
-	//   1. Save the primary cursor so we can restore it on exit (vt10x shares
-	//      a single saved-cursor slot for ESC-7/8 and \x1b[?1049h/l, so the
-	//      real primary position is lost once the alt-screen swap happens).
-	//   2. Split processing and inject \x1b[2J\x1b[H right after the entry so
-	//      the alt-screen starts with a clean slate (it may contain stale
-	//      content if a previous TUI program crashed without sending \x1b[?1049l).
-	wrote := false
-	exitSplitAt := 0 // byte offset into chunk just after the ?1049l/47l sequence, 0 if none
+	// Alt-screen switches, in the order the chunk holds them. One read can
+	// hold several, such as a program's exit and the next one's entry, and
+	// each entry must save its own cursor for the exit that follows.
+	//   - An entry saves the primary cursor, because vt10x shares one
+	//     saved-cursor slot for ESC-7/8 and \x1b[?1049h/l, so the real
+	//     primary position is lost once the swap happens. It then injects
+	//     \x1b[2J\x1b[H, so the alt-screen starts with a clean slate (a TUI
+	//     program that crashed without \x1b[?1049l leaves stale content).
+	//   - An exit injects \x1b[0m, so the TUI's background colour does not
+	//     bleed into the restored primary screen, and restores the saved
+	//     cursor before any trailing output: over SSH, bash often sends the
+	//     prompt in the same chunk as \x1b[?1049l, and a restore after it
+	//     would rewind the cursor and let input overwrite PS1.
+	exited := false
 	// Every alt-screen switch starts with "\x1b[?"; most chunks of output
-	// hold none, and one search saves six.
-	private := bytes.Contains(chunk, []byte("\x1b[?"))
-	if !altScreen && private {
-		for _, seq := range []string{"\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"} {
-			b := []byte(seq)
-			if i := bytes.Index(chunk, b); i >= 0 {
-				// Write everything BEFORE the alt-screen entry sequence first,
-				// so any cursor-movement sequences in this chunk (e.g. vim's
-				// \r\n or \x1b[row;colH) update the vt10x cursor position.
-				// Only then read the cursor — otherwise over SSH where many
-				// sequences arrive in one chunk, the pre-entry cursor moves
-				// are missed and we save y=0 instead of the actual prompt row.
-				if i > 0 {
-					s.termWrite(chunk[:i])
-				}
-				cur := s.Term.Cursor()
-				s.altEntryCursorX, s.altEntryCursorY = cur.X, cur.Y
-				L().Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen entry", "pane", s.ID, "seq", seq, "cursor_x", cur.X, "cursor_y", cur.Y)
-
-				end := i + len(b)
-				s.termWrite(chunk[i:end])
-				s.termWrite([]byte("\x1b[2J\x1b[H"))
-				if end < len(chunk) {
-					s.termWrite(chunk[end:])
-				}
-				wrote = true
-				break
-			}
+	// hold none.
+	for bytes.Contains(chunk, []byte("\x1b[?")) {
+		alt := s.Term.Mode()&vt10x.ModeAltScreen != 0
+		i, n := nextAltSwitch(chunk, !alt)
+		if i < 0 {
+			break
 		}
-	}
-	// If this chunk crosses an alt-screen EXIT point:
-	//   1. Inject \x1b[0m right after the exit sequence to prevent TUI background
-	//      colour bleeding into the restored primary screen.
-	//   2. Inject curRestore BEFORE writing chunk[end:] — over SSH, bash often
-	//      sends the shell prompt in the same chunk as \x1b[?1049l.  If curRestore
-	//      were injected after chunk[end:], it would rewind the cursor to x=0 on
-	//      the prompt line (undoing the natural cursor advance from the prompt text)
-	//      causing subsequent input to overwrite PS1.
-	if !wrote && altScreen && private {
-		for _, seq := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
-			b := []byte(seq)
-			if i := bytes.Index(chunk, b); i >= 0 {
-				end := i + len(b)
-				exitSplitAt = end
-				s.termWrite(chunk[:end])
-				s.termWrite([]byte("\x1b[0m"))
-				// Restore primary cursor here — before any trailing output
-				// in this chunk (e.g. prompt text) — so the prompt text
-				// advances the cursor naturally to the correct position.
-				L().Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit", "pane", s.ID, "cursor_x", s.altEntryCursorX, "cursor_y", s.altEntryCursorY)
-				curRestore := fmt.Sprintf("\x1b[%d;%dH", s.altEntryCursorY+1, s.altEntryCursorX+1)
-				L().Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore", "pane", s.ID, "seq", curRestore)
-				s.termWrite([]byte(curRestore))
-				if end < len(chunk) {
-					s.termWrite(chunk[end:])
-				}
-				wrote = true
-				break
+		end := i + n
+		if !alt {
+			// Write everything BEFORE the entry first, so cursor moves in
+			// this chunk (vim's \r\n or \x1b[row;colH) reach the vt10x
+			// cursor before it is saved. Over SSH many sequences arrive in
+			// one chunk, and reading the cursor first saved y=0 instead of
+			// the prompt row.
+			if i > 0 {
+				s.termWrite(chunk[:i])
 			}
+			cur := s.Term.Cursor()
+			s.altEntryCursorX, s.altEntryCursorY = cur.X, cur.Y
+			L().Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen entry", "pane", s.ID, "seq", string(chunk[i:end]), "cursor_x", cur.X, "cursor_y", cur.Y)
+			s.termWrite(chunk[i:end])
+			s.termWrite([]byte("\x1b[2J\x1b[H"))
+		} else {
+			s.termWrite(chunk[:end])
+			s.restorePrimary("captureAndWrite: alt-screen exit")
+			exited = true
 		}
+		chunk = chunk[end:]
 	}
-	if !wrote {
+	alt := s.Term.Mode()&vt10x.ModeAltScreen != 0
+	if len(chunk) > 0 {
 		s.termWrite(chunk)
 	}
+	if alt && s.Term.Mode()&vt10x.ModeAltScreen == 0 {
+		// The alt-screen ended another way, such as RIS.
+		s.restorePrimary("captureAndWrite: alt-screen exit (fallback)")
+		exited = true
+	}
 
-	if altScreen && s.Term.Mode()&vt10x.ModeAltScreen == 0 {
+	if exited && s.Term.Mode()&vt10x.ModeAltScreen == 0 {
 		// Reset kitty keyboard protocol stack.  TUI apps push onto the stack
 		// when entering alt-screen but may not pop if they crash, are killed,
 		// or exit abnormally.  Clearing here prevents stale flags from
 		// affecting the shell after the alt-screen app is gone.
 		s.KittyStack = s.KittyStack[:0]
 
-		const sgrReset = "\x1b[0m"
-		if exitSplitAt == 0 {
-			s.termWrite([]byte(sgrReset))
-			L().Log(context.Background(), LevelTrace, "captureAndWrite: alt-screen exit (fallback)", "pane", s.ID, "cursor_x", s.altEntryCursorX, "cursor_y", s.altEntryCursorY)
-			curRestore := fmt.Sprintf("\x1b[%d;%dH", s.altEntryCursorY+1, s.altEntryCursorX+1)
-			L().Log(context.Background(), LevelTrace, "captureAndWrite: injecting curRestore (fallback)", "pane", s.ID, "seq", curRestore)
-			s.termWrite([]byte(curRestore))
-		}
-
 		// Signal the render loop to do a full Sync() repaint so any residual
 		// background colour from the TUI app is cleared from the terminal.
 		s.NeedsSync = true
 	}
+}
 
+// altEntries and altExits are the sequences that switch to the alternate
+// screen and back.
+var (
+	altEntries = []string{"\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"}
+	altExits   = []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"}
+)
+
+// nextAltSwitch returns the offset and length of the first alt-screen
+// entry in chunk, or with entry false the first exit; -1 when none.
+func nextAltSwitch(chunk []byte, entry bool) (at, n int) {
+	seqs := altExits
+	if entry {
+		seqs = altEntries
+	}
+	at = -1
+	for _, seq := range seqs {
+		if i := bytes.Index(chunk, []byte(seq)); i >= 0 && (at < 0 || i < at) {
+			at, n = i, len(seq)
+		}
+	}
+	return at, n
+}
+
+// restorePrimary resets SGR and moves the cursor to where it was when the
+// alt-screen was entered. Must be called with the session locked.
+func (s *Session) restorePrimary(msg string) {
+	s.termWrite([]byte("\x1b[0m"))
+	curRestore := fmt.Sprintf("\x1b[%d;%dH", s.altEntryCursorY+1, s.altEntryCursorX+1)
+	L().Log(context.Background(), LevelTrace, msg, "pane", s.ID, "cursor_x", s.altEntryCursorX, "cursor_y", s.altEntryCursorY, "seq", curRestore)
+	s.termWrite([]byte(curRestore))
 }
 
 type terminalQueryKind int
