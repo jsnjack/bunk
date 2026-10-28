@@ -46,7 +46,8 @@ The message is the notice for needs-you, done and failed. "-" reads it
 from stdin. A hook's JSON input gives its "message",
 "last_assistant_message" or similar field, or the question its tool asks.
 A done whose Claude Code Stop input lists background_tasks reports
-working: the agent resumes when they end. A needs-you for a Codex
+working: the agent resumes when they end. A watch for comments on a
+published artifact does not count. A needs-you for a Codex
 PermissionRequest that Codex's automatic reviewer decides reports
 working: the user is not asked.
 Inside bunk it reports over BUNK_NOTIFY_SOCKET. Without a reachable
@@ -216,13 +217,33 @@ func hookText(text string) string {
 // backgroundTasks reports whether text is a Claude Code Stop input whose
 // background_tasks lists work still in flight: shells, subagents,
 // monitors. Its session_crons do not count: a scheduled wakeup, such as
-// the next round of /loop, may be far off.
+// the next round of /loop, may be far off. Neither does an artifact's
+// comment watch, which runs from a publish until the session ends.
 func backgroundTasks(text string) bool {
 	var in struct {
-		Tasks []json.RawMessage `json:"background_tasks"`
+		Tasks []struct {
+			Type        string `json:"type"`
+			Description string `json:"description"`
+		} `json:"background_tasks"`
 	}
 	trimmed := strings.TrimSpace(text)
-	return strings.HasPrefix(trimmed, "{") && json.Unmarshal([]byte(trimmed), &in) == nil && len(in.Tasks) > 0
+	if !strings.HasPrefix(trimmed, "{") || json.Unmarshal([]byte(trimmed), &in) != nil {
+		return false
+	}
+	for _, task := range in.Tasks {
+		if !watchesArtifact(task.Type, task.Description) {
+			return true
+		}
+	}
+	return false
+}
+
+// watchesArtifact reports whether a background task is the watch Claude
+// Code starts for comments on an artifact it published. Its SDK events
+// mark such a task as not activity, but the Stop input carries only the
+// description, "live updates for artifact <URL> (watch requested)".
+func watchesArtifact(typ, description string) bool {
+	return typ == "monitor" && strings.HasPrefix(description, "live updates for artifact ")
 }
 
 // planNotice starts the notice of a plan that waits for approval.

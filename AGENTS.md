@@ -771,7 +771,9 @@ its default; Design Decisions says where the defaults come from.
     Claude snippet reports AskUserQuestion and ExitPlanMode as needs-you
     from PreToolUse, with the question as the notice, and work again from
     PostToolUse. `notify done` reports working instead when the Stop input
-    lists `background_tasks`: Claude resumes when they end.
+    lists `background_tasks`: Claude resumes when they end. An artifact's
+    comment watch ("live updates for artifact …") does not count, because
+    it runs until the session ends.
   - Codex runs PermissionRequest before it picks a reviewer, so `notify
     needs-you -` reads the turn's `approvals_reviewer` from the last
     `turn_context` of the hook's `transcript_path` (`notify/codex.go`).

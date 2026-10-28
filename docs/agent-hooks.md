@@ -312,7 +312,10 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
   `background_tasks` and resumes the session when they finish, so `notify
   done -` reports `working` until a later Stop lists none. Scheduled
   wakeups (`session_crons`, such as the next round of `/loop`) do not
-  count, because they can be far off.
+  count, because they can be far off. Nor does the watch Claude Code
+  starts for comments on an artifact it published ("live updates for
+  artifact …"): it runs until the session ends, and Claude Code itself
+  counts it as no activity.
 - Claude Code runs all Stop hooks at once. A long one, such as a test
   suite that blocks the stop when it fails, runs while the pane already
   shows done, and Claude resumes after a block with nothing to report
