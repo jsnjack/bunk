@@ -52,6 +52,15 @@ func codexTOML() string {
 	return b.String()
 }
 
+// codexState is the table of trust hashes Codex writes into config.toml's
+// [hooks] for the hooks it has run.
+const codexState = `
+[hooks.state]
+
+[hooks.state."/home/u/.codex/hooks.json:stop:0:0"]
+trusted_hash = "sha256:f57907b637acdfbc34ae08636cc471f5745fcef7bac198c9bdba25d5ef885fd6"
+`
+
 // TestCheckHooks: each agent's hooks are missing without a file, installed
 // when every hook of the snippet is there beside the user's own settings
 // and hooks, and outdated when only older bunk hooks are. The variables
@@ -96,6 +105,14 @@ func TestCheckHooks(t *testing.T) {
 			state: HooksInstalled, path: ".codex/hooks.json"},
 		{name: "codex config.toml", agent: "codex", files: map[string]string{".codex/config.toml": codexTOML()},
 			state: HooksInstalled, path: ".codex/hooks.json"},
+		{name: "codex trust state", agent: "codex",
+			files: map[string]string{".codex/hooks.json": snippet("codex"), ".codex/config.toml": "model = \"o3\"\n" + codexState},
+			state: HooksInstalled, path: ".codex/hooks.json"},
+		{name: "codex config.toml with trust state", agent: "codex", files: map[string]string{".codex/config.toml": codexTOML() + codexState},
+			state: HooksInstalled, path: ".codex/hooks.json"},
+		{name: "codex config.toml not TOML", agent: "codex",
+			files: map[string]string{".codex/hooks.json": snippet("codex"), ".codex/config.toml": "[hooks"},
+			state: HooksInstalled, path: ".codex/hooks.json", issue: true},
 		{name: "codex in CODEX_HOME", agent: "codex", env: map[string]string{"CODEX_HOME": "conf/codex"},
 			files: map[string]string{".codex/hooks.json": snippet("codex")}, state: HooksMissing, path: "conf/codex/hooks.json"},
 		{name: "copilot", agent: "copilot", files: map[string]string{".copilot/hooks/bunk.json": snippet("copilot")},

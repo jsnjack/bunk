@@ -172,11 +172,14 @@ type foundHook struct{ event, matcher, command string }
 // settings.json and of Codex's hooks.json and config.toml: event →
 // matcher groups → handlers.
 type settingsHooks struct {
-	Hooks map[string][]struct {
-		Matcher string `json:"matcher" toml:"matcher"`
-		Hooks   []struct {
-			Command string `json:"command" toml:"command"`
-		} `json:"hooks" toml:"hooks"`
+	Hooks map[string][]hookGroup `json:"hooks"`
+}
+
+// hookGroup is one matcher group of an event: its handlers.
+type hookGroup struct {
+	Matcher string `json:"matcher" toml:"matcher"`
+	Hooks   []struct {
+		Command string `json:"command" toml:"command"`
 	} `json:"hooks" toml:"hooks"`
 }
 
@@ -226,13 +229,38 @@ func readCodexHooks(dir string) ([]foundHook, error) {
 	data, terr := readFile(path)
 	if terr == nil && data != nil {
 		var s settingsHooks
-		if _, terr = toml.Decode(string(data), &s); terr == nil {
+		if s, terr = codexTOMLHooks(string(data)); terr == nil {
 			out = append(out, s.found()...)
 		} else {
 			terr = fmt.Errorf("%s: %w", path, terr)
 		}
 	}
 	return out, errors.Join(err, terr)
+}
+
+// codexTOMLHooks decodes the event arrays of config.toml's [hooks]. The
+// table also holds Codex's own tables, such as the trust hashes of
+// [hooks.state], which are no events and are skipped.
+func codexTOMLHooks(data string) (settingsHooks, error) {
+	var f struct {
+		Hooks map[string]toml.Primitive `toml:"hooks"`
+	}
+	md, err := toml.Decode(data, &f)
+	if err != nil {
+		return settingsHooks{}, err
+	}
+	s := settingsHooks{Hooks: map[string][]hookGroup{}}
+	for ev, p := range f.Hooks {
+		if t := md.Type("hooks", ev); t != "Array" && t != "ArrayHash" {
+			continue
+		}
+		var groups []hookGroup
+		if err := md.PrimitiveDecode(p, &groups); err != nil {
+			return settingsHooks{}, fmt.Errorf("hooks.%s: %w", ev, err)
+		}
+		s.Hooks[ev] = groups
+	}
+	return s, nil
 }
 
 // readCopilotHooks reads every hooks file of Copilot CLI: version 1, with
