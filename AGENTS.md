@@ -772,6 +772,11 @@ its default; Design Decisions says where the defaults come from.
     from PreToolUse, with the question as the notice, and work again from
     PostToolUse. `notify done` reports working instead when the Stop input
     lists `background_tasks`: Claude resumes when they end.
+  - Codex runs PermissionRequest before it picks a reviewer, so `notify
+    needs-you -` reads the turn's `approvals_reviewer` from the last
+    `turn_context` of the hook's `transcript_path` (`notify/codex.go`).
+    Any reviewer but `user` (Codex's automatic reviewer) reports working;
+    without a transcript or reviewer the request asks the user.
 - Users set up agent hooks with guidance, not behind their back.
   - `notify.CheckHooks` reads each agent's configuration (honouring
     `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`) and calls an agent's

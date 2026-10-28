@@ -104,7 +104,9 @@ var recipes = []agentHooks{
 		read:  readCodexHooks,
 		hooks: []hook{
 			{event: "UserPromptSubmit", args: "working"},
-			{event: "PermissionRequest", args: "needs-you Approval requested"},
+			// The CLI reads the input: a request that the automatic
+			// reviewer decides (approvals_reviewer) reports working.
+			{event: "PermissionRequest", args: "needs-you -"},
 			{event: "Stop", args: "done -"},
 			// Codex allows Interrupt and SessionEnd hooks 3 s at most.
 			{event: "Interrupt", args: "idle", timeout: 3},

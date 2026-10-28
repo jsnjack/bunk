@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -63,6 +64,13 @@ func TestCLI(t *testing.T) {
 	if err := os.Chmod(denied, 0); err != nil {
 		t.Fatal(err)
 	}
+	// Codex transcripts whose last turn routes approvals to the automatic
+	// reviewer, to the user, or names no reviewer.
+	transcripts := t.TempDir()
+	autoReview := codexPermissionIn(t, transcripts, "user", "auto_review")
+	userReview := codexPermissionIn(t, transcripts, "auto_review", "user")
+	noReviewer := codexPermissionIn(t, transcripts)
+	missing := strings.Replace(codexPermission, `{`, `{"transcript_path":"`+filepath.Join(transcripts, "missing.jsonl")+`",`, 1)
 
 	for _, tc := range []struct {
 		name       string
@@ -119,7 +127,22 @@ func TestCLI(t *testing.T) {
 		{name: "Codex notify argument", args: []string{"done", codexNotify}, env: inside, want: &report{session.EventDone, "Rename complete."}},
 		{name: "Gemini AfterAgent on stdin", args: []string{"done", "-"}, env: inside, stdin: geminiAfterAgent, want: &report{session.EventDone, "Done: fixed it."}},
 		{name: "error object on stdin", args: []string{"failed", "-"}, env: inside, stdin: copilotError, want: &report{session.EventFailed, "Network timeout"}},
-		{name: "hook JSON without text", args: []string{"needs-you", "-"}, env: inside, stdin: codexPermission, want: &report{session.EventNeedsYou, ""}},
+		{name: "hook JSON without text", args: []string{"needs-you", "-"}, env: inside,
+			stdin: `{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}`,
+			want:  &report{session.EventNeedsYou, ""}},
+		{name: "Codex PermissionRequest on stdin", args: []string{"needs-you", "-"}, env: inside, stdin: codexPermission,
+			want: &report{session.EventNeedsYou, "Approval requested: rm -rf build"}},
+		{name: "Codex approval of another tool", args: []string{"needs-you", "-"}, env: inside,
+			stdin: `{"session_id":"s","hook_event_name":"PermissionRequest","turn_id":"t","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n"}}`,
+			want:  &report{session.EventNeedsYou, "Approval requested"}},
+		{name: "Codex approval for the automatic reviewer", args: []string{"needs-you", "-"}, env: inside, stdin: autoReview,
+			want: &report{session.EventWorking, "Approval requested: rm -rf build"}},
+		{name: "Codex approval for the user", args: []string{"needs-you", "-"}, env: inside, stdin: userReview,
+			want: &report{session.EventNeedsYou, "Approval requested: rm -rf build"}},
+		{name: "Codex transcript without a reviewer", args: []string{"needs-you", "-"}, env: inside, stdin: noReviewer,
+			want: &report{session.EventNeedsYou, "Approval requested: rm -rf build"}},
+		{name: "Codex transcript missing", args: []string{"needs-you", "-"}, env: inside, stdin: missing,
+			want: &report{session.EventNeedsYou, "Approval requested: rm -rf build"}},
 		{name: "Claude question on stdin", args: []string{"needs-you", "-"}, env: inside, stdin: claudeQuestion,
 			want: &report{session.EventNeedsYou, "Which framework?"}},
 		{name: "Claude plan on stdin", args: []string{"needs-you", "-"}, env: inside, stdin: claudePlan,
@@ -174,6 +197,86 @@ func TestCLI(t *testing.T) {
 				t.Fatalf("unexpected report %+v", got)
 			}
 		})
+	}
+}
+
+// codexPermissionIn writes a Codex rollout transcript in dir with one turn
+// per reviewer, each turn_context followed by the turn's items, and
+// returns codexPermission naming it. A reviewer "" leaves the field out.
+func codexPermissionIn(t *testing.T, dir string, reviewers ...string) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString(`{"timestamp":"2026-10-28T09:14:11.314Z","ordinal":0,"type":"session_meta","payload":{"id":"s","cwd":"/w"}}` + "\n")
+	for i, reviewer := range reviewers {
+		field := ""
+		if reviewer != "" {
+			field = `,"approvals_reviewer":"` + reviewer + `"`
+		}
+		fmt.Fprintf(&b, `{"timestamp":"2026-10-28T09:14:11.690Z","ordinal":%d,"type":"turn_context","payload":{"turn_id":"t%d","cwd":"/w","approval_policy":"on-request"%s,"sandbox_policy":{"type":"workspace-write"}}}`+"\n", 2*i+1, i, field)
+		// A tool output that quotes a turn_context line, escaped as JSON.
+		fmt.Fprintf(&b, `{"timestamp":"2026-10-28T09:14:12.000Z","ordinal":%d,"type":"response_item","payload":{"type":"function_call_output","output":"{\"type\":\"turn_context\",\"payload\":{\"approvals_reviewer\":\"user\"}}"}}`+"\n", 2*i+2)
+	}
+	path := filepath.Join(dir, fmt.Sprintf("rollout-%d.jsonl", len(reviewers))+strings.Join(reviewers, "-"))
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in, err := json.Marshal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Replace(codexPermission, `{`, `{"transcript_path":`+string(in)+`,`, 1)
+}
+
+// TestCodexReviewer: the last turn_context gives the reviewer wherever it
+// falls among the chunks read, and none past the scan limit.
+func TestCodexReviewer(t *testing.T) {
+	t.Parallel()
+	sep := []byte(turnContextMarker)
+	size := int64(transcriptChunk + 4096)
+	// Around the boundary of the first two chunks, and at the edges.
+	var offsets []int64
+	for k := -1; k <= len(sep); k++ {
+		offsets = append(offsets, size-transcriptChunk-int64(k))
+	}
+	offsets = append(offsets, 0, size-int64(len(sep)))
+	for _, at := range offsets {
+		data := bytes.Repeat([]byte{'x'}, int(size))
+		copy(data[at:], sep)
+		if got := lastIndex(bytes.NewReader(data), size, size, sep); got != at {
+			t.Errorf("sep at %d: found at %d", at, got)
+		}
+		if got := lastIndex(bytes.NewReader(data), size, size-at-1, sep); got != -1 {
+			t.Errorf("sep at %d, limit %d: found at %d", at, size-at-1, got)
+		}
+	}
+	if got := lastIndex(bytes.NewReader(nil), 0, transcriptScan, sep); got != -1 {
+		t.Errorf("empty transcript: found at %d", got)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout.jsonl")
+	turn := func(reviewer string) string {
+		return `{"timestamp":"t","type":"turn_context","payload":{"turn_id":"t","approvals_reviewer":"` + reviewer + `"}}` + "\n"
+	}
+	output := `{"timestamp":"t","type":"response_item","payload":{"output":"` + strings.Repeat("y", 3*transcriptChunk) + `"}}` + "\n"
+	for _, tc := range []struct {
+		name, transcript, want string
+	}{
+		{"last turn", turn("user") + turn("auto_review"), "auto_review"},
+		{"old alias", turn("guardian_subagent"), "guardian_subagent"},
+		{"long turn", turn("user") + turn("auto_review") + output + output, "auto_review"},
+		{"cut-off line", turn("user") + `{"timestamp":"t","type":"turn_context","payload":{"turn_id":"t","approvals_rev`, ""},
+		{"no turn", output, ""},
+	} {
+		if err := os.WriteFile(path, []byte(tc.transcript), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := codexReviewer(path); got != tc.want {
+			t.Errorf("%s: reviewer %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	if got := codexReviewer(filepath.Join(dir, "missing.jsonl")); got != "" {
+		t.Errorf("missing transcript: reviewer %q", got)
 	}
 }
 

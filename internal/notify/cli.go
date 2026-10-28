@@ -46,7 +46,9 @@ The message is the notice for needs-you, done and failed. "-" reads it
 from stdin. A hook's JSON input gives its "message",
 "last_assistant_message" or similar field, or the question its tool asks.
 A done whose Claude Code Stop input lists background_tasks reports
-working: the agent resumes when they end.
+working: the agent resumes when they end. A needs-you for a Codex
+PermissionRequest that Codex's automatic reviewer decides reports
+working: the user is not asked.
 Inside bunk it reports over BUNK_NOTIFY_SOCKET. Without a reachable
 socket, with BUNK_NOTIFY_SESSION set or on a host reached over ssh
 (SSH_CONNECTION set), it writes the report to its terminal for the bunk
@@ -115,6 +117,11 @@ func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.
 		// resumes when that work ends, and its next Stop reports done.
 		ev = session.EventWorking
 	}
+	if ev == session.EventNeedsYou && codexAutoReview(text) {
+		// Codex's automatic reviewer decides the request without asking
+		// the user, and no hook reports work again until the turn ends.
+		ev = session.EventWorking
+	}
 	text = hookText(text)
 	if socket != "" && token != "" {
 		err := Send(socket, Message{Session: token, Event: ev, Text: text})
@@ -170,9 +177,10 @@ func readStdin(stdin io.Reader) string {
 }
 
 // hookText returns text, or, when text is a JSON object such as a hook's
-// input, its first non-empty hookTextFields value, else what the tool it
-// names asks the user (toolQuestion). A JSON object without either, or a
-// cut-off one, gives "".
+// input, its first non-empty hookTextFields value, else the approval a
+// PermissionRequest asks for (approvalNotice) or what the tool it names
+// asks the user (toolQuestion). A JSON object without any, or a cut-off
+// one, gives "".
 func hookText(text string) string {
 	trimmed := strings.TrimSpace(text)
 	if !strings.HasPrefix(trimmed, "{") {
@@ -198,6 +206,9 @@ func hookText(text string) string {
 		if err := json.Unmarshal(raw, &nested); err == nil && strings.TrimSpace(nested.Message) != "" {
 			return nested.Message
 		}
+	}
+	if notice := approvalNotice(obj); notice != "" {
+		return notice
 	}
 	return toolQuestion(obj)
 }

@@ -359,7 +359,7 @@ both, so the file can be deployed whole:
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify needs-you Approval requested",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify needs-you -",
             "timeout": 5
           }
         ]
@@ -405,12 +405,22 @@ both, so the file can be deployed whole:
 | Codex hook | Event | Message |
 | :- | :- | :- |
 | UserPromptSubmit | `working` | none |
-| PermissionRequest | `needs-you` | "Approval requested" |
+| PermissionRequest | `needs-you`, or `working` for the automatic reviewer | "Approval requested", with the first line of a Bash command |
 | Stop | `done` | `last_assistant_message` |
 | Interrupt | `idle` | none |
 | SessionEnd | `clear` | none |
 
 - Codex skips new or changed user hooks until you review them with `/hooks`.
+- Codex runs PermissionRequest before it routes the request to a
+  reviewer. With `approvals_reviewer = "auto_review"`, a model approves
+  or denies the request without asking, and no hook reports work again
+  until the turn ends. The hook input does not name the reviewer, so
+  `notify needs-you -` reads it from the last `turn_context` line of the
+  transcript that `transcript_path` names, up to 64 MiB from its end.
+  Any reviewer other than `user` reports `working`. Without a transcript
+  or a reviewer in it, the request counts as asking the user.
+- After the user answers an approval prompt, the keypress acknowledges
+  the pane, so inference shows it until the next report.
 - Codex releases without hooks support only the `notify` program, which
   reports `agent-turn-complete`. `notify` is a top-level key of
   `config.toml`, so place it above the first `[table]`:
