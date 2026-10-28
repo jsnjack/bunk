@@ -23,6 +23,10 @@ const (
 	flagCursorBar  = 1 << 20
 	flagCursorLine = 1 << 21
 	flagHalf       = 1 << 22 // an image cell without its bitmap: FG fills the top half
+	// flagOverflow marks a narrow glyph whose ink reaches past its cell, so
+	// its slot holds it shrunk or shifted to fit. termView draws it across
+	// two cells instead when the next one is blank; the shaders ignore it.
+	flagOverflow = 1 << 23
 )
 
 // maxAtlasSide caps the atlas texture (GL_MAX_TEXTURE_SIZE is 16384 here).
@@ -32,16 +36,18 @@ type clusterKey struct {
 	r    rune
 	comb string // combining suffix; compared by value, so lookups do not allocate
 	bold bool
+	wide bool // drawn across two cells: a wide character, or a narrow one that overflows
 }
 
 // rasterizer draws text into an R8 slot. dst starts at the slot's top-left
-// pixel; stride is the atlas width.
+// pixel; stride is the atlas width. It reports whether the text's ink
+// reached past the slot's right edge, so the slot holds it fitted.
 type rasterizer interface {
-	draw(text string, bold bool, cells int, dst []byte, stride int)
+	draw(text string, bold bool, cells int, dst []byte, stride int) (overflows bool)
 }
 
 // Atlas is a grayscale glyph atlas with cell-sized slots. A wide glyph takes
-// two neighbouring slots. Glyphs are rasterized on first use and never
+// two neighbouring slots, and so does a narrow one drawn across two cells. Glyphs are rasterized on first use and never
 // evicted; the texture grows by doubling its height. Slots are handed out in
 // order, so a renderer that shares the atlas uploads only the slots past the
 // last one it saw. All panes at one scale share one atlas.
@@ -79,8 +85,9 @@ func newAtlas(cellW, cellH int, r rasterizer) *Atlas {
 	return a
 }
 
-// Lookup returns the slot and wide flag for a grapheme, rasterizing it on
-// first use. Steady-state lookups do not allocate or call into Pango.
+// Lookup returns the slot and flags for a grapheme drawn in one cell, or in
+// two with wide, rasterizing it on first use. Steady-state lookups do not
+// allocate or call into Pango.
 func (a *Atlas) Lookup(r rune, comb string, bold, wide bool) uint32 {
 	b := 0
 	if bold {
@@ -90,7 +97,7 @@ func (a *Atlas) Lookup(r rune, comb string, bold, wide bool) uint32 {
 		if v := a.ascii[b][r]; v != 0 {
 			return v
 		}
-	} else if v, ok := a.other[clusterKey{r, comb, bold}]; ok {
+	} else if v, ok := a.other[clusterKey{r, comb, bold, wide}]; ok {
 		return v
 	}
 	return a.add(r, comb, bold, wide)
@@ -117,7 +124,9 @@ func (a *Atlas) add(r rune, comb string, bold, wide bool) uint32 {
 				text = "�"
 				a.Replaced++
 			}
-			a.raster.draw(text, bold, cells, dst, a.W)
+			if a.raster.draw(text, bold, cells, dst, a.W) && !wide {
+				v |= flagOverflow
+			}
 			a.Rasterized++
 		}
 		if wide {
@@ -133,7 +142,7 @@ func (a *Atlas) add(r rune, comb string, bold, wide bool) uint32 {
 		}
 		a.ascii[b][r] = v
 	} else {
-		a.other[clusterKey{r, comb, bold}] = v
+		a.other[clusterKey{r, comb, bold, wide}] = v
 	}
 	return v
 }
@@ -175,6 +184,8 @@ func isColorEmoji(r rune, comb string) bool {
 }
 
 // pangoRaster renders glyphs with Pango/cairo into a reusable A8 surface.
+// The surface holds two cells with a cell of margin on each side, where
+// ink left outside a slot would show.
 type pangoRaster struct {
 	cellW, cellH, baseline int
 	surf                   *cairo.Surface
@@ -182,7 +193,7 @@ type pangoRaster struct {
 	layouts                [2]*pango.Layout // regular, bold
 }
 
-func (p *pangoRaster) draw(text string, bold bool, cells int, dst []byte, stride int) {
+func (p *pangoRaster) draw(text string, bold bool, cells int, dst []byte, stride int) (overflows bool) {
 	l := p.layouts[0]
 	if bold {
 		l = p.layouts[1]
@@ -191,14 +202,43 @@ func (p *pangoRaster) draw(text string, bold bool, cells int, dst []byte, stride
 	p.cr.Paint()
 	p.cr.SetOperator(cairo.OperatorOver)
 	l.SetText(text)
-	p.cr.MoveTo(0, float64(p.baseline)-float64(l.Baseline())/pango.SCALE)
+	w := cells * p.cellW
+	ink, _ := l.PixelExtents()
+	scale, dx, overflows := fitInk(ink.X(), ink.X()+ink.Width(), w, max(1, p.cellW/8))
+	y := float64(p.baseline) - float64(l.Baseline())/pango.SCALE
+	// A shrunk glyph keeps its vertical centre.
+	cy := y + float64(ink.Y()) + float64(ink.Height())/2
+	p.cr.Save()
+	p.cr.Translate(float64(p.cellW)+dx, cy*(1-scale))
+	p.cr.Scale(scale, scale)
+	p.cr.MoveTo(0, y)
 	pangocairo.ShowLayout(p.cr, l)
+	p.cr.Restore()
 	p.surf.Flush()
 	src, sstride := p.surf.Data(), p.surf.Stride()
-	w := cells * p.cellW
 	for y := 0; y < p.cellH; y++ {
-		copy(dst[y*stride:y*stride+w], src[y*sstride:y*sstride+w])
+		copy(dst[y*stride:y*stride+w], src[y*sstride+p.cellW:y*sstride+p.cellW+w])
 	}
+	return overflows
+}
+
+// fitInk places a glyph whose ink spans [x0, x1) at its natural position
+// in a slot w pixels wide: drawn at x, it lands at x*scale + dx. Ink that
+// stays within tol of the slot keeps its place, so the terminal font's
+// glyphs draw as they always did. Wider ink, which a fallback font's
+// symbol often has, moves into the slot, and shrinks when it is wider than
+// the slot. overflows reports ink past the right edge, which room to the
+// right would show at full size.
+func fitInk(x0, x1, w, tol int) (scale, dx float64, overflows bool) {
+	overflows = x1 > w+tol
+	switch {
+	case x0 >= -tol && x1 <= w+tol:
+		return 1, 0, overflows
+	case x1-x0 <= w:
+		return 1, float64(min(max(0, -x0), w-x1)), overflows
+	}
+	scale = float64(w) / float64(x1-x0)
+	return scale, -scale * float64(x0), overflows
 }
 
 // BuildAtlas measures font at the given device scale and returns an atlas
@@ -222,7 +262,7 @@ func BuildAtlas(font string, scale float64) (*Atlas, error) {
 		return nil, fmt.Errorf("atlas: bad metrics for %q: %dx%d", font, cellW, cellH)
 	}
 
-	surf := cairo.CreateImageSurface(cairo.FormatA8, 2*cellW, cellH)
+	surf := cairo.CreateImageSurface(cairo.FormatA8, 4*cellW, cellH)
 	cr := cairo.Create(surf)
 	cr.SetSourceRGBA(1, 1, 1, 1)
 	pr := &pangoRaster{cellW: cellW, cellH: cellH, baseline: baseline, surf: surf, cr: cr}

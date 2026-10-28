@@ -12,9 +12,17 @@ import (
 	"bunk/internal/vt10x"
 )
 
-type fakeRaster struct{ calls int }
+// fakeRaster draws nothing. A character in overflow has ink wider than
+// one cell.
+type fakeRaster struct {
+	calls    int
+	overflow string
+}
 
-func (f *fakeRaster) draw(string, bool, int, []byte, int) { f.calls++ }
+func (f *fakeRaster) draw(text string, _ bool, cells int, _ []byte, _ int) bool {
+	f.calls++
+	return cells == 1 && strings.Contains(f.overflow, text)
+}
 
 type frameFixture struct {
 	s    *session.Session
@@ -104,6 +112,39 @@ func TestWideGlyphsAndContinuation(t *testing.T) {
 	slot := int(lead.Glyph & slotMask)
 	if slot%f.r.atlas.SlotsPerRow == f.r.atlas.SlotsPerRow-1 {
 		t.Errorf("wide glyph slot %d straddles an atlas row", slot)
+	}
+}
+
+// TestOverflowingGlyphs: a narrow symbol wider than its cell, such as grm's
+// ⟳ from a fallback font, draws across the next cell when that cell is
+// blank, and fitted into its own cell otherwise or in the last column.
+func TestOverflowingGlyphs(t *testing.T) {
+	f := newFixture(10, 2)
+	f.fr.overflow = "⟳✓"
+	f.write("\x1b[?25l⟳ Up✓✓\x1b[1;10H⟳")
+	f.frame()
+	a := f.r.atlas
+	fitted, spread := a.Lookup('⟳', "", false, false), a.Lookup('⟳', "", false, true)
+	if fitted&flagOverflow == 0 || spread&flagWide == 0 || fitted&slotMask == spread&slotMask {
+		t.Fatalf("⟳: fitted %x, across two cells %x; want an overflowing glyph and a separate wide one", fitted, spread)
+	}
+	for _, c := range []struct {
+		x    int
+		want uint32
+		what string
+	}{
+		{0, spread, "⟳ before a space"},
+		{1, 0, "the space after ⟳"},
+		{4, a.Lookup('✓', "", false, false) &^ flagOverflow, "✓ before ✓"},
+		{5, a.Lookup('✓', "", false, true), "✓ at the end of the text"},
+		{9, fitted &^ flagOverflow, "⟳ in the last column"},
+	} {
+		if got := f.cell(c.x, 0).Glyph; got != c.want {
+			t.Errorf("%s: glyph %x, want %x", c.what, got, c.want)
+		}
+	}
+	if got := f.cell(2, 0).Glyph; got&(flagWide|flagOverflow) != 0 {
+		t.Errorf("U: glyph %x, want a plain one-cell glyph", got)
 	}
 }
 

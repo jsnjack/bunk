@@ -711,6 +711,22 @@ its default; Design Decisions says where the defaults come from.
     masks.
   - bunk's TUI is unchanged: there the host terminal draws every glyph.
 
+- bunk-gui fits glyphs that are wider than their cell. A fallback font
+  draws the symbols that the terminal font lacks, often wider than a cell:
+  Noto Sans Math's ⟳ is 21 px wide in a 12 px cell, and the atlas kept
+  only its first 12 px.
+  - The rasterizer measures each glyph's ink (`fitInk`, atlas.go). Ink
+    within a pixel of the cell (cellW/8) keeps its place, so the terminal
+    font draws as before. Wider ink moves into the cell, and shrinks when
+    it is wider than the cell.
+  - Such a glyph (`flagOverflow`) draws across the next cell at full size
+    when that cell is blank (`blankAt`, term.go), as in WezTerm; the
+    atlas keeps both forms. In the last column or before a character, it
+    draws fitted into its own cell.
+  - `TestAtlasFitsWideInk` draws every symbol of the arrow, mathematical,
+    technical and dingbat blocks with the real fonts and checks that no
+    ink leaves its slot. About 750 of their 1,840 symbols overflow a cell.
+
 - Hyperlink IDs are swept and reused. A cell's `Glyph.Link` is a uint16
   ID into its terminal's URL table. A sweep frees the IDs no cell of either
   screen, cursor attribute or kept row refers to; new URLs reuse them, lowest

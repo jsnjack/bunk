@@ -264,6 +264,17 @@ func halfway(a, b uint32) uint32 {
 	return (a>>1)&0x7f7f7f7f + (b>>1)&0x7f7f7f7f | 0xff<<24
 }
 
+// blankAt reports whether the cell at x of line shows nothing: a space or
+// an empty cell, past the end of a stored row too, without combining marks
+// or an image.
+func blankAt(line *vt10x.Row, x int) bool {
+	if x >= line.Len() {
+		return true
+	}
+	ch, _, _, _, width, extra := line.CellAt(x)
+	return (ch == ' ' || ch == 0) && width == 1 && (!extra || line.Combining(x) == "" && line.Image(x) == nil)
+}
+
 // selCols returns the selected column range of visible row y, or c0 > c1.
 func (v *termView) selCols(y, cols int) (c0, c1 int) {
 	s := &v.sel
@@ -335,7 +346,16 @@ func (v *termView) convert(r *Renderer) (rows int) {
 				}
 				if width >= 0 && (ch > ' ' || comb != "") {
 					wide := width == 2 && x+1 < cols
-					glyph = r.atlas.Lookup(ch, comb, mode&vt10x.AttrBold != 0, wide)
+					bold := mode&vt10x.AttrBold != 0
+					glyph = r.atlas.Lookup(ch, comb, bold, wide)
+					if glyph&flagOverflow != 0 {
+						// A symbol from a fallback font can be wider than
+						// its cell: a blank cell after it gives it room.
+						if x+1 < cols && blankAt(line, x+1) {
+							glyph = r.atlas.Lookup(ch, comb, bold, true)
+						}
+						glyph &^= flagOverflow
+					}
 				}
 				if mode&(vt10x.AttrUnderline|vt10x.AttrStrikethrough|vt10x.AttrOverline) != 0 {
 					if mode&vt10x.AttrUnderline != 0 {
