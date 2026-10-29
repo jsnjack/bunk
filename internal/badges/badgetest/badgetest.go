@@ -141,7 +141,7 @@ var DefaultLooks = map[badges.Role]Look{
 	badges.RoleWorking:   {0x5AA9FF, 0x24262B, false},
 	badges.RoleIdle:      {0x9AA0A8, 0x24262B, false},
 	badges.RoleNeedsYou:  {0x131416, 0xFFB454, true},
-	badges.RoleDone:      {0x131416, 0x7EE2A8, true},
+	badges.RoleDone:      {0x131416, 0x5FD35F, true},
 	badges.RoleFailed:    {0xFF8A8A, 0x24262B, true},
 	badges.RoleSudo:      {0xC0BFBC, 0x7E1C24, true},
 	badges.RoleSSH:       {0xC0BFBC, 0x1D5395, true},

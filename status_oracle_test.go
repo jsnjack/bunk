@@ -22,7 +22,9 @@ var (
 	oldColorAgentNeeds   = tcell.NewRGBColor(0xff, 0xb4, 0x54)
 	oldColorAgentIdle    = tcell.NewRGBColor(0x9a, 0xa0, 0xa8)
 	oldColorAgentFailed  = tcell.NewRGBColor(0xff, 0x8a, 0x8a)
-	oldColorAgentDone    = tcell.NewRGBColor(0x7e, 0xe2, 0xa8)
+	// Done was mint (#7ee2a8) until it moved away from working's blue in
+	// thin rail arcs; the oracle keeps the old logic with today's colour.
+	oldColorAgentDone = tcell.NewRGBColor(0x5f, 0xd3, 0x5f)
 )
 
 type oldAgentLook struct {

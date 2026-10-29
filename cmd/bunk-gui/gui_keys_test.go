@@ -802,8 +802,8 @@ sleep 30
 		t.Errorf("after notify done: tab 2 %+v, selected %d", tb, d.SelectedTab)
 	} else {
 		img := loadPNG(t, g.file("done.png"))
-		if n := blendCount(img, tb.Item.DX, tb.Item.DY, tb.Item.DW, tb.Item.DH, hex(0x7ee2a8), colChrome); n < 4 {
-			t.Errorf("done dot: %d pixels #7ee2a8", n)
+		if n := blendCount(img, tb.Item.DX, tb.Item.DY, tb.Item.DW, tb.Item.DH, hex(0x5fd35f), colChrome); n < 4 {
+			t.Errorf("done dot: %d pixels #5fd35f", n)
 		}
 	}
 	if s := g.snap("done-acked"); s.SelectedTab != 2 || s.tab(t, 2).State == "done" {

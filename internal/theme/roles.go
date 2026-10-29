@@ -16,7 +16,7 @@ var (
 	AgentNeeds   = RGB(0xffb454) // also the separators around a pane that needs you
 	AgentIdle    = RGB(0x9aa0a8)
 	AgentFailed  = RGB(0xff8a8a)
-	AgentDone    = RGB(0x7ee2a8) // also the separators around a pane that is done
+	AgentDone    = RGB(0x5fd35f) // also the separators around a pane that is done
 )
 
 // Ink is where a badge colour comes from: an ANSI palette colour of the

@@ -21,7 +21,7 @@ import (
 // (.working, .needs-fg and the others); TestStateRGBMatchesCSS keeps the
 // two in step.
 var stateRGB = map[string]uint32{
-	"working": 0x5aa9ff, "needs-fg": 0xffb454, "idle": 0x9aa0a8, "failed": 0xff8a8a, "done": 0x7ee2a8,
+	"working": 0x5aa9ff, "needs-fg": 0xffb454, "idle": 0x9aa0a8, "failed": 0xff8a8a, "done": 0x5fd35f,
 }
 
 // railRingSize is the ring's side in logical pixels, inside the 40 px

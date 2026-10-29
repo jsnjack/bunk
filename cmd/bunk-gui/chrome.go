@@ -53,7 +53,7 @@ button.tabclose:hover { background: alpha(#ffffff, 0.08); }
 .needs-fg { color: #ffb454; }
 .idle { color: #9aa0a8; }
 .failed { color: #ff8a8a; }
-.done { color: #7ee2a8; }
+.done { color: #5fd35f; }
 .findbar { background: #1b1c20; border: 1px solid #2f3238; border-radius: 8px; padding: 4px 4px 4px 8px; margin: 6px 14px 0 0; }
 entry.findentry { min-height: 30px; background: #131416; color: #e6e8eb; }
 .findcount { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; min-width: 48px; }
