@@ -75,7 +75,7 @@ import (
 //	layout bar|rail | rail open|closed | font +|-|0 | menu open|close | menu-item LABEL | menu-check
 //	switcher [filter TEXT|enter|close] | jump
 //	status [tab=N|pane=ID] [agent=A] [state=working|needs|idle|failed|done|none]
-//	       [repo=R] [branch=B] [container=C] [process=P] [ssh=H] [host=H]
+//	       [repo=R] [branch=B] [cwd=D] [container=C] [process=P] [ssh=H] [host=H]
 //	       [notice=TEXT...]
 //	                                 override a pane's status (test hook)
 //	status-clear [tab=N|pane=ID]
@@ -706,6 +706,8 @@ func (a *App) scriptStatus(clear bool, arg string) {
 				st.Repo = v
 			case "branch":
 				st.Branch = v
+			case "cwd":
+				st.Cwd = v
 			case "container":
 				st.Container = strings.ReplaceAll(v, ":", " ")
 			case "process":

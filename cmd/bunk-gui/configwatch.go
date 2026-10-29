@@ -47,6 +47,7 @@ func (a *App) reloadSettings() {
 	a.rep.Reloads++
 	a.settings.Keys, a.settings.keymap, a.settings.was = st.Keys, st.keymap, st.was
 	a.settings.Agents = st.Agents
+	a.settings.RailStyle = st.RailStyle // refreshChrome's key holds it, so the rail redraws
 	a.settings.Theme, a.settings.Themes, a.settings.themes = st.Theme, st.Themes, st.themes
 	if t, err := a.selectTheme(); err == nil {
 		a.applyTheme(t)

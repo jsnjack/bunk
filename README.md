@@ -42,11 +42,11 @@ bunk-gui draws each pane into a texture at the widget's device-pixel size, so te
 <td width="50%"><img src="assets/gui-bar.png" alt="Tabs in a bar on top"></td>
 </tr>
 <tr>
-<td>Switcher (Ctrl+Shift+O): needs-you first, filter by agent, repo or branch</td>
+<td>Switcher (Ctrl+Shift+O): each tab's repo, branch, agent and folder, needs-you first; filter by agent, repo or branch</td>
 <td>Tabs on top: <code>tabs = "bar"</code></td>
 </tr>
 <tr>
-<td><img src="assets/gui-find.png" alt="Find bar with highlighted matches and a collapsed rail"></td>
+<td><img src="assets/gui-find.png" alt="Find bar with highlighted matches and a collapsed rail of state rings"></td>
 <td><img src="assets/gui-shortcuts.png" alt="Keyboard shortcuts window"></td>
 </tr>
 <tr>
@@ -249,6 +249,7 @@ bunk-gui reads `~/.config/bunk-gui/config.toml`. Every key is optional.
 ```toml
 tabs = "rail"              # "rail" (side) or "bar" (top)
 rail_open = false          # start with the rail expanded
+rail_style = "ring"        # tabs in the collapsed rail: "ring" of the panes' states, or "map" of glyphs
 font = "Noto Sans Mono"
 font_size = 11             # points
 text_zoom = 100            # % of font_size at start and after Ctrl+0
@@ -303,7 +304,9 @@ Both front ends show each state with the same glyph and colour, in the pane badg
 | ✕ (red) | Failed | The agent failed, or a command exited non-zero |
 | ○ (grey) | Idle or shell | The agent waits at its prompt, or the pane is a plain shell without a command mark |
 
-In bunk-gui's collapsed rail, a tab with 2 to 4 panes shows a small map of them: one cell per pane, placed as the splits place the panes, each with its pane's glyph. A tab of an agent beside two stacked shells shows ◐ on the left and ○ over ○ on the right. Each split takes half of the map wherever its divider sits, so the map keeps its shape while you drag a divider. A tab with one pane shows its glyph alone, and a tab with 5 or more shows its most urgent glyph over the pane count.
+bunk-gui's collapsed rail draws each tab as a ring in these colours. A tab with one pane is a closed ring. A tab with split panes is the same ring cut into one arc per pane, and each arc faces its pane: an agent that needs you on the left of two stacked shells shows an amber arc on the left and grey arcs at the top right and bottom right. A plain shell's arc is dimmed, so the agents stand out. A tab with more than 6 panes also shows the pane count under its ring.
+
+With `rail_style = "map"`, or "A map of the panes" in Preferences, the rail shows each tab's glyph instead. A tab with 2 to 4 panes then shows a small map of them: one cell per pane, placed as the splits place the panes, each with its pane's glyph. Each split takes half of the map wherever its divider sits, so the map keeps its shape while you drag a divider. A tab with 5 or more panes shows its most urgent glyph over the pane count.
 
 When an agent you are not looking at needs you, is done or failed, both front ends notify you:
 

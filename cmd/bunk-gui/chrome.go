@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,6 +101,10 @@ button.switchrow { background: none; box-shadow: none; border: none; min-height:
 	color: inherit; font-size: 14px; }
 button.switchrow.active { background: #26292f; }
 button.switchrow:hover { background: #23252a; }
+button.switchrow .swtitle { font-weight: 600; color: #e6e8eb; }
+.swbranch { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
+.swagent { font-size: 12px; color: #c4c8ce; }
+.swpath { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
 button.switchrow.cursor { background: #30343b; box-shadow: inset 0 0 0 1px #4a4f58; }
 button.switchclose { min-height: 36px; padding: 0 12px; border: 1px solid #34373e; border-radius: 6px; background: none;
 	color: #b4b9c1; box-shadow: none; margin-top: 4px; }
@@ -213,6 +218,7 @@ type tabInfo struct {
 	more             int    // agents in the tab's other panes, shown as "+N"
 	look             look
 	agent, repo, loc string // agent: the agent, else the process, else "shell"
+	path             string // the agent pane's directory, ~ for home
 	name             string // the user's name for the tab; shown in place of agent
 	locGlyph         string
 	active, needs    bool
@@ -220,7 +226,10 @@ type tabInfo struct {
 	panes            int
 	// paneMap is the tab's panes as the collapsed rail draws them
 	// (paneMap), "" for a single pane or more than railMapMax.
-	paneMap            string
+	paneMap string
+	// arcs are the tab's panes' arcs in the collapsed rail's ring
+	// (railring.go).
+	arcs               []ringArc
 	tooltip, accessKey string
 }
 
@@ -240,6 +249,7 @@ func (a *App) tabInfos() []tabInfo {
 		if in.panes = len(t.panes()); in.panes > 1 && in.panes <= railMapMax {
 			in.paneMap = paneMap(t.root, mapDot)
 		}
+		in.arcs = ringArcs(t.root, mapDot)
 		own := markOf(p) // the agent pane's command mark, without an agent
 		if own.State != session.AgentNone {
 			in.state, in.command, in.notice = own.State, true, own.Summary
@@ -294,16 +304,17 @@ func (a *App) tabInfos() []tabInfo {
 		if in.agent == "" {
 			in.agent = "shell"
 		}
+		in.path = st.Cwd
+		if home != "" && strings.HasPrefix(in.path, home) {
+			in.path = "~" + strings.TrimPrefix(in.path, home)
+		}
 		switch {
 		case st.Repo != "" && st.Branch != "":
 			in.repo = st.Repo + " ⎇ " + st.Branch
 		case st.Repo != "":
 			in.repo = st.Repo
 		default:
-			in.repo = st.Cwd
-			if home != "" && strings.HasPrefix(in.repo, home) {
-				in.repo = "~" + strings.TrimPrefix(in.repo, home)
-			}
+			in.repo = in.path
 		}
 		switch {
 		case st.Container != "":
@@ -359,6 +370,51 @@ func (in tabInfo) agentLabel() *gtk.Box {
 	box.Append(label(name, "agent"))
 	if in.more > 0 {
 		box.Append(label(fmt.Sprintf("+%d", in.more), "more"))
+	}
+	return box
+}
+
+// switchTitle is a switcher row's first line: where the tab works, as
+// the tab's name, else its repository, else its directory's base name,
+// then the branch.
+func (in tabInfo) switchTitle() *gtk.Box {
+	box := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	title := in.name
+	if title == "" {
+		title = in.st.Repo
+	}
+	if title == "" && in.path != "" {
+		title = filepath.Base(in.path)
+	}
+	if title == "" {
+		title = in.agent
+	}
+	t := label(title, "swtitle")
+	t.SetEllipsize(pango.EllipsizeEnd)
+	box.Append(t)
+	if in.st.Branch != "" {
+		b := label("⎇ "+in.st.Branch, "swbranch")
+		b.SetEllipsize(pango.EllipsizeEnd)
+		box.Append(b)
+	}
+	return box
+}
+
+// switchDetail is a switcher row's second line: the agent, "+N" for the
+// agents in other panes, and the directory, cut in the middle.
+func (in tabInfo) switchDetail() *gtk.Box {
+	box := gtk.NewBox(gtk.OrientationHorizontal, 6)
+	box.Append(label(in.agent, "swagent"))
+	if in.more > 0 {
+		box.Append(label(fmt.Sprintf("+%d", in.more), "more"))
+	}
+	if in.path != "" {
+		box.Append(label("·", "swpath"))
+		p := label(in.path, "swpath")
+		p.SetEllipsize(pango.EllipsizeMiddle)
+		p.SetXAlign(0)
+		p.SetHExpand(true)
+		box.Append(p)
 	}
 	return box
 }
@@ -575,8 +631,9 @@ func (a *App) refreshChrome() {
 	}
 	infos := a.tabInfos()
 	var key strings.Builder
+	key.WriteString(a.settings.RailStyle)
 	for _, in := range infos {
-		fmt.Fprintf(&key, "%p|%s|%s|%d|%s|%s|%d|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.paneMap, in.panes, in.name, in.agent, in.more, in.repo, in.loc, in.notice, in.tooltip, in.active, in.needs, in.pass)
+		fmt.Fprintf(&key, "%p|%s|%v|%s|%d|%s|%s|%d|%s|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.arcs, in.paneMap, in.panes, in.name, in.agent, in.more, in.repo, in.path, in.loc, in.notice, in.tooltip, in.active, in.needs, in.pass)
 	}
 	if key.String() == a.chromeKey {
 		return
@@ -652,20 +709,26 @@ func (a *App) barTab(in tabInfo) tabItem {
 
 func (a *App) railDot(in tabInfo) tabItem {
 	b := gtk.NewButton()
-	if in.paneMap == "" && in.panes <= railMapMax && !in.pass {
+	ring := a.ringShown(in)
+	if !ring && in.paneMap == "" && in.panes <= railMapMax && !in.pass {
 		b.SetLabel(in.look.dot)
 	} else {
 		box := gtk.NewBox(gtk.OrientationVertical, 1)
 		box.SetVAlign(gtk.AlignCenter)
-		if in.paneMap != "" {
+		count := in.panes > railMapMax
+		switch {
+		case ring:
+			box.Append(railRing(in.arcs))
+			count = in.panes > railRingCount
+		case in.paneMap != "":
 			m := railMap(in.t.root)
 			m.AddCSSClass("railmap")
 			m.SetVExpand(false) // a cell's expand must not stretch the rail item
 			box.Append(m)
-		} else {
+		default:
 			box.Append(gtk.NewLabel(in.look.dot))
 		}
-		if in.panes > railMapMax {
+		if count {
 			box.Append(label(strconv.Itoa(in.panes), "panecount"))
 		}
 		if in.pass {
@@ -686,6 +749,13 @@ func (a *App) railDot(in tabInfo) tabItem {
 	t := in.t
 	b.ConnectClicked(func() { a.selectTab(t) })
 	return tabItem{b, nil}
+}
+
+// ringShown reports whether the collapsed rail draws the tab as a ring
+// of its panes (railring.go): every tab, unless rail_style asks for the
+// map.
+func (a *App) ringShown(in tabInfo) bool {
+	return in.panes > 0 && a.settings.RailStyle != "map"
 }
 
 // railMapMax is the most panes the collapsed rail draws as a map of
@@ -1164,15 +1234,20 @@ func (sw *switcher) refresh() {
 			b.AddCSSClass("active")
 		}
 		row := gtk.NewBox(gtk.OrientationHorizontal, 10)
-		row.Append(label(in.look.dot, "dot", in.look.cls))
-		ag := in.agentLabel()
-		ag.SetSizeRequest(72, -1)
-		row.Append(ag)
-		repo := label(in.repo, "repo")
-		repo.SetEllipsize(pango.EllipsizeEnd)
-		repo.SetHExpand(true)
-		repo.SetXAlign(0)
-		row.Append(repo)
+		dot := label(in.look.dot, "dot", in.look.cls)
+		dot.SetVAlign(gtk.AlignStart)
+		row.Append(dot)
+		text := gtk.NewBox(gtk.OrientationVertical, 2)
+		text.SetHExpand(true)
+		text.Append(in.switchTitle())
+		text.Append(in.switchDetail())
+		if in.notice != "" {
+			n := label(in.notice, "notice")
+			n.SetEllipsize(pango.EllipsizeEnd)
+			n.SetXAlign(0)
+			text.Append(n)
+		}
+		row.Append(text)
 		row.Append(label(in.loc, "loc"))
 		st := label(in.look.label, "statelabel")
 		if in.needs {

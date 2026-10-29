@@ -452,7 +452,7 @@ These are the key fields agents may need to know about:
 `config.go` is the authoritative reference for every field and its default.
 
 bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
-`rail_open`, `font`, `font_size`, `text_zoom`, `theme`, `hooks_hint`,
+`rail_open`, `rail_style`, `font`, `font_size`, `text_zoom`, `theme`, `hooks_hint`,
 `[themes.NAME]`, `[[agents]]`, `[notifications]` and `[keys]`. `theme` and
 `[themes.NAME]` work as in bunk's config, and `--theme` overrides `theme`
 for one run.
@@ -543,8 +543,16 @@ its default; Design Decisions says where the defaults come from.
   highlight show the most urgent state among them (`stateOrder`), and the
   rail shows that agent's notice as "agent: notice". The tooltip lists
   every agent. Notifications are per pane, as in the TUI, and Alt+A
-  focuses the pane that needs the user. The collapsed rail draws a tab
-  of 2 to 4 panes as a map (`railMap`): a cell per pane, placed as the
+  focuses the pane that needs the user. The collapsed rail draws every
+  tab as one ring (`railring.go`, `rail_style = "ring"`, the default):
+  closed for one pane, else an equal arc per pane in its state's
+  colour, a plain shell's arc dimmed, around an empty centre. Each arc
+  faces its pane (`ringArcs`): with each split halved, as in the map,
+  the arcs go round in the order of the panes' directions from the
+  tab's middle, turned to lie as close to them as they can, so panes
+  side by side get the left and right halves. Past 6 panes the count shows under it.
+  With `rail_style = "map"` (Preferences offer both) a tab shows its
+  state glyph, and a tab of 2 to 4 panes is drawn as a map (`railMap`): a cell per pane, placed as the
   splits place the panes with each split halved, holding its agent's or
   command's dot, or ○ for a plain shell as in a one-pane tab. More
   panes show the most urgent dot over the pane count. A click still

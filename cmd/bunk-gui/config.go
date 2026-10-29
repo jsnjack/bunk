@@ -22,6 +22,7 @@ import (
 //
 //	tabs = "rail"            # "rail" (side) or "bar" (top)
 //	rail_open = false        # start with the rail expanded
+//	rail_style = "ring"      # tabs in the collapsed rail: "ring" or "map" (railring.go)
 //	font = "Noto Sans Mono"  # terminal font family
 //	font_size = 11           # points
 //	text_zoom = 100          # text size at start and after Ctrl+0, % of font_size
@@ -50,15 +51,19 @@ import (
 //
 // The file is watched: edits apply to the running window.
 type Settings struct {
-	Tabs     string               `toml:"tabs"`
-	RailOpen bool                 `toml:"rail_open"`
-	Font     string               `toml:"font"`
-	FontSize float64              `toml:"font_size"`
-	TextZoom float64              `toml:"text_zoom"`
-	Theme    string               `toml:"theme"`
-	Themes   map[string]theme.Def `toml:"themes"`
-	Agents   []session.AgentSpec  `toml:"agents"`
-	Keys     map[string]any       `toml:"keys"`
+	Tabs     string `toml:"tabs"`
+	RailOpen bool   `toml:"rail_open"`
+	// RailStyle draws the tabs in the collapsed rail: "ring", a ring of
+	// their panes' states (railring.go), or "map", the state glyph, and
+	// for 2 to 4 panes their dots placed like the panes (railMap).
+	RailStyle string               `toml:"rail_style"`
+	Font      string               `toml:"font"`
+	FontSize  float64              `toml:"font_size"`
+	TextZoom  float64              `toml:"text_zoom"`
+	Theme     string               `toml:"theme"`
+	Themes    map[string]theme.Def `toml:"themes"`
+	Agents    []session.AgentSpec  `toml:"agents"`
+	Keys      map[string]any       `toml:"keys"`
 	// Notifications is the [notifications] table as written.
 	Notifications alert.Config `toml:"notifications"`
 	// HooksHint is hooks_hint as written: remind the user of an agent that
@@ -80,7 +85,7 @@ func (st Settings) startSize() float64 {
 
 func defaultSettings() Settings {
 	km, _ := resolveKeys(nil)
-	return Settings{Tabs: "rail", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
+	return Settings{Tabs: "rail", RailStyle: "ring", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
 		keymap: km, was: map[string][]string{}, alerts: alert.Default(), hooksHint: true}
 }
 
@@ -126,6 +131,13 @@ func loadSettings(path string) (Settings, error) {
 			st.Tabs = f.Tabs
 		} else {
 			problems = append(problems, fmt.Sprintf("tabs = %q (want \"rail\" or \"bar\")", f.Tabs))
+		}
+	}
+	if md.IsDefined("rail_style") {
+		if f.RailStyle == "ring" || f.RailStyle == "map" {
+			st.RailStyle = f.RailStyle
+		} else {
+			problems = append(problems, fmt.Sprintf("rail_style = %q (want \"ring\" or \"map\")", f.RailStyle))
 		}
 	}
 	if md.IsDefined("rail_open") {

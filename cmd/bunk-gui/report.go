@@ -137,7 +137,8 @@ type tabReport struct {
 	State    string       `json:"state"` // the most urgent of its agents'
 	Label    string       `json:"label"`
 	Dot      string       `json:"dot"`
-	Map      string       `json:"map"`  // the collapsed rail's map of its panes (paneMap), "" for one pane or over 4
+	Map      string       `json:"map"`  // the map of its panes (paneMap), "" for one pane or over 4; drawn with rail_style = "map"
+	Ring     string       `json:"ring"` // the collapsed rail's ring (ringDots), "" with rail_style = "map"
 	Repo     string       `json:"repo"` // as shown: "repo ⎇ branch" or the directory
 	Branch   string       `json:"branch"`
 	Loc      string       `json:"loc"`
@@ -268,6 +269,7 @@ type uiSnapshot struct {
 	TMs           int64               `json:"t_ms"`
 	Layout        string              `json:"layout"`
 	RailOpen      bool                `json:"rail_open"`
+	RailStyle     string              `json:"rail_style"` // in force: "ring" or "map"
 	Window        windowReport        `json:"window"`
 	Chrome        *rectReport         `json:"chrome"`
 	NewTab        *rectReport         `json:"new_tab,omitempty"`
@@ -311,6 +313,7 @@ type prefsReport struct {
 	Message  string                 `json:"message"`
 	Tabs     string                 `json:"tabs"`
 	RailOpen bool                   `json:"rail_open"`
+	RailRing bool                   `json:"rail_ring"` // the ring is chosen over the map
 	Font     string                 `json:"font"`
 	FontSize float64                `json:"font_size"`
 	TextZoom float64                `json:"text_zoom"`
@@ -487,7 +490,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	g := a.geom()
 	s := &uiSnapshot{
 		Label: label, TMs: time.Since(a.started).Milliseconds(),
-		Layout: a.layout, RailOpen: a.railOpen,
+		Layout: a.layout, RailOpen: a.railOpen, RailStyle: a.settings.RailStyle,
 		Window: windowReport{W: a.win.Width(), H: a.win.Height(), Scale: g.scale,
 			Maximized: a.win.IsMaximized(), Fullscreen: a.win.IsFullscreen(), Active: a.win.IsActive(), Title: a.win.Title()},
 		Chrome: a.widgetRect(g, a.chrome), NewTab: a.widgetRect(g, a.newTabBtn),
@@ -512,6 +515,9 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			Dot: in.look.dot, Map: in.paneMap, Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.notice, Tooltip: in.tooltip,
 			Selected: in.active, Needs: in.needs, Focus: -1, Zoomed: -1, Status: statusOf(in.st), Pass: in.pass,
 			ID: t.id,
+		}
+		if a.ringShown(in) {
+			tr.Ring = ringDots(in.arcs)
 		}
 		if t.focus != nil {
 			tr.Focus, tr.Title = t.focus.id, t.focus.title
@@ -606,7 +612,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	s.TextZoom, s.Agents, s.Theme = a.settings.TextZoom, a.settings.Agents, a.theme.Name
 	if w := a.prefsWin; w != nil {
 		pr := &prefsReport{Message: w.message.Text(), Tabs: map[bool]string{true: "bar", false: "rail"}[w.tabsBar.Active()],
-			RailOpen: w.railOpen.Active(), Font: w.font.Text(), FontSize: w.fontSize.Value(), TextZoom: w.zoom.Value(),
+			RailOpen: w.railOpen.Active(), RailRing: w.railRing.Active(), Font: w.font.Text(), FontSize: w.fontSize.Value(), TextZoom: w.zoom.Value(),
 			Theme: w.chosenTheme(), Themes: []string{}, Agents: [][3]string{}, Controls: map[string]*rectReport{}}
 		for _, c := range w.themes {
 			pr.Themes = append(pr.Themes, c.name)
@@ -954,7 +960,7 @@ func (a *App) writeReport(reason string) {
 	r.AllocProbe = a.cfg.allocProbe
 	r.Toasts = a.toastLog
 	r.Settings = map[string]any{
-		"tabs": a.settings.Tabs, "rail_open": a.settings.RailOpen, "font": a.settings.Font,
+		"tabs": a.settings.Tabs, "rail_open": a.settings.RailOpen, "rail_style": a.settings.RailStyle, "font": a.settings.Font,
 		"font_size": a.settings.FontSize, "agents": a.settings.Agents, "theme": a.settings.Theme,
 		"notifications": map[string]any{"enabled": a.settings.alerts.Enabled, "states": alert.Names(a.settings.alerts.States),
 			"command_after": a.settings.alerts.CommandAfter.Seconds()},

@@ -36,6 +36,7 @@ type prefsWindow struct {
 
 	tabsRail, tabsBar *gtk.CheckButton
 	railOpen          *gtk.Switch
+	railRing, railMap *gtk.CheckButton // how the collapsed rail draws the tabs (rail_style)
 	font              *gtk.Entry
 	fontSize, zoom    *gtk.SpinButton
 	themes            []themeChoice // the Theme section (prefs_theme.go)
@@ -95,6 +96,22 @@ func (a *App) showPreferences() {
 		return false
 	})
 	box.Append(prefRow("Rail expanded at start", w.railOpen))
+	split := label("Tabs in the collapsed rail:", "statelabel")
+	split.SetXAlign(0)
+	box.Append(split)
+	w.railRing = gtk.NewCheckButtonWithLabel("A ring of the panes' states")
+	w.railMap = gtk.NewCheckButtonWithLabel("A glyph, or a map of the panes placed as they are split")
+	w.railMap.SetGroup(w.railRing)
+	w.railRing.SetActive(st.RailStyle != "map")
+	w.railMap.SetActive(st.RailStyle == "map")
+	for _, c := range []*gtk.CheckButton{w.railRing, w.railMap} {
+		c.ConnectToggled(func() {
+			if !w.syncing && c.Active() {
+				w.saveTop(keysEdit{action: "rail_style", value: tomlString(map[bool]string{true: "map", false: "ring"}[w.railMap.Active()])})
+			}
+		})
+		box.Append(c)
+	}
 
 	box.Append(heading("Text"))
 	w.font = gtk.NewEntry()
@@ -142,6 +159,7 @@ func (a *App) showPreferences() {
 	w.controls["agent-add"] = add
 	w.controls["tabs-rail"], w.controls["tabs-bar"] = w.tabsRail, w.tabsBar
 	w.controls["rail-open"], w.controls["font"] = w.railOpen, w.font
+	w.controls["rail-ring"], w.controls["rail-map"] = w.railRing, w.railMap
 	w.controls["font-size"], w.controls["text-zoom"] = w.fontSize, w.zoom
 	w.loadAgents()
 	w.syncing = false
