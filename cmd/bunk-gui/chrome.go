@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
@@ -65,6 +66,9 @@ button.raildot { background: none; box-shadow: none; border: none; padding: 0; m
 	border-radius: 8px; font-size: 16px; }
 button.raildot.active { background: #26292f; }
 button.raildot.needs { background: #2a2216; }
+.railmap { min-width: 30px; min-height: 30px; }
+.mapcell { font-size: 10px; background: alpha(#ffffff, 0.07); border-radius: 3px; min-width: 6px; min-height: 6px; }
+.panecount { font-size: 9px; color: #9aa0a8; }
 .railsep { background: #2a2c31; min-height: 1px; min-width: 24px; margin: 4px 0; }
 .row { border-radius: 8px; color: #d8dade; }
 .row.active { background: #26292f; }
@@ -200,19 +204,23 @@ func lookOf(state session.AgentState) look {
 // without an agent shows its command mark (alert.Mark) in place of an
 // agent state: running, or done or failed until the user looks.
 type tabInfo struct {
-	t                  *Tab
-	index              int
-	st                 session.Status // the agent pane's
-	state              session.AgentState
-	command            bool   // state is a command mark's, not an agent's
-	notice             string // of the agent in state; "agent: notice" when not the agent pane's
-	more               int    // agents in the tab's other panes, shown as "+N"
-	look               look
-	agent, repo, loc   string // agent: the agent, else the process, else "shell"
-	name               string // the user's name for the tab; shown in place of agent
-	locGlyph           string
-	active, needs      bool
-	pass               bool // a pane of the tab sends all keys to the terminal
+	t                *Tab
+	index            int
+	st               session.Status // the agent pane's
+	state            session.AgentState
+	command          bool   // state is a command mark's, not an agent's
+	notice           string // of the agent in state; "agent: notice" when not the agent pane's
+	more             int    // agents in the tab's other panes, shown as "+N"
+	look             look
+	agent, repo, loc string // agent: the agent, else the process, else "shell"
+	name             string // the user's name for the tab; shown in place of agent
+	locGlyph         string
+	active, needs    bool
+	pass             bool // a pane of the tab sends all keys to the terminal
+	panes            int
+	// paneMap is the tab's panes as the collapsed rail draws them
+	// (paneMap), "" for a single pane or more than railMapMax.
+	paneMap            string
 	tooltip, accessKey string
 }
 
@@ -229,6 +237,9 @@ func (a *App) tabInfos() []tabInfo {
 		}
 		st := p.status()
 		in := tabInfo{t: t, index: i, st: st, state: st.State, notice: st.Notice, active: t == a.active, name: t.name}
+		if in.panes = len(t.panes()); in.panes > 1 && in.panes <= railMapMax {
+			in.paneMap = paneMap(t.root, mapDot)
+		}
 		own := markOf(p) // the agent pane's command mark, without an agent
 		if own.State != session.AgentNone {
 			in.state, in.command, in.notice = own.State, true, own.Summary
@@ -565,7 +576,7 @@ func (a *App) refreshChrome() {
 	infos := a.tabInfos()
 	var key strings.Builder
 	for _, in := range infos {
-		fmt.Fprintf(&key, "%p|%s|%s|%s|%d|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.name, in.agent, in.more, in.repo, in.loc, in.notice, in.tooltip, in.active, in.needs, in.pass)
+		fmt.Fprintf(&key, "%p|%s|%s|%d|%s|%s|%d|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.paneMap, in.panes, in.name, in.agent, in.more, in.repo, in.loc, in.notice, in.tooltip, in.active, in.needs, in.pass)
 	}
 	if key.String() == a.chromeKey {
 		return
@@ -641,14 +652,26 @@ func (a *App) barTab(in tabInfo) tabItem {
 
 func (a *App) railDot(in tabInfo) tabItem {
 	b := gtk.NewButton()
-	if in.pass {
+	if in.paneMap == "" && in.panes <= railMapMax && !in.pass {
+		b.SetLabel(in.look.dot)
+	} else {
 		box := gtk.NewBox(gtk.OrientationVertical, 1)
 		box.SetVAlign(gtk.AlignCenter)
-		box.Append(gtk.NewLabel(in.look.dot))
-		box.Append(passTag())
+		if in.paneMap != "" {
+			m := railMap(in.t.root)
+			m.AddCSSClass("railmap")
+			m.SetVExpand(false) // a cell's expand must not stretch the rail item
+			box.Append(m)
+		} else {
+			box.Append(gtk.NewLabel(in.look.dot))
+		}
+		if in.panes > railMapMax {
+			box.Append(label(strconv.Itoa(in.panes), "panecount"))
+		}
+		if in.pass {
+			box.Append(passTag())
+		}
 		b.SetChild(box)
-	} else {
-		b.SetLabel(in.look.dot)
 	}
 	b.AddCSSClass("raildot")
 	b.AddCSSClass(in.look.cls)
@@ -663,6 +686,58 @@ func (a *App) railDot(in tabInfo) tabItem {
 	t := in.t
 	b.ConnectClicked(func() { a.selectTab(t) })
 	return tabItem{b, nil}
+}
+
+// railMapMax is the most panes the collapsed rail draws as a map of
+// their tab. A tab with more shows its most urgent dot over the count.
+const railMapMax = 4
+
+// mapDot is a pane's dot in the map of its tab: its agent's state, else
+// its command mark's, else the hollow dot of a plain shell, as the tab's
+// dot shows a tab of one shell.
+func mapDot(p *Pane) look {
+	if p.status().Agent == "" && p.mark.State != session.AgentNone {
+		return commandLook(p.mark.State)
+	}
+	return lookOf(p.status().State)
+}
+
+// paneMap writes the panes under n as the collapsed rail draws them:
+// each pane's dot, "(a|b)" for panes side by side and "(a/b)" for panes
+// stacked. The report shows it as the tab's map.
+func paneMap(n *node, dot func(*Pane) look) string {
+	if n.pane != nil {
+		return dot(n.pane).dot
+	}
+	sep := "|"
+	if n.vertical {
+		sep = "/"
+	}
+	return "(" + paneMap(n.a, dot) + sep + paneMap(n.b, dot) + ")"
+}
+
+// railMap draws the panes under n as cells placed like the panes: each
+// split halves its space, whatever its divider's position, so the map
+// keeps its shape while a divider moves. A cell shows its pane's dot in
+// the state's colour.
+func railMap(n *node) *gtk.Box {
+	if n.pane != nil {
+		l := mapDot(n.pane)
+		cell := gtk.NewBox(gtk.OrientationHorizontal, 0)
+		cell.AddCSSClass("mapcell")
+		d := label(l.dot, l.cls)
+		d.SetHExpand(true)
+		cell.Append(d)
+		return cell
+	}
+	box := gtk.NewBox(gtk.OrientationHorizontal, 2)
+	if n.vertical {
+		box.SetOrientation(gtk.OrientationVertical)
+	}
+	box.SetHomogeneous(true)
+	box.Append(railMap(n.a))
+	box.Append(railMap(n.b))
+	return box
 }
 
 func (a *App) railRow(in tabInfo) tabItem {

@@ -543,8 +543,13 @@ its default; Design Decisions says where the defaults come from.
   highlight show the most urgent state among them (`stateOrder`), and the
   rail shows that agent's notice as "agent: notice". The tooltip lists
   every agent. Notifications are per pane, as in the TUI, and Alt+A
-  focuses the pane that needs the user. A pane without an agent takes
-  part with its command mark (`alert.Mark`): running, or done or failed
+  focuses the pane that needs the user. The collapsed rail draws a tab
+  of 2 to 4 panes as a map (`railMap`): a cell per pane, placed as the
+  splits place the panes with each split halved, holding its agent's or
+  command's dot, or ○ for a plain shell as in a one-pane tab. More
+  panes show the most urgent dot over the pane count. A click still
+  selects the tab. A pane without an agent takes part with its command
+  mark (`alert.Mark`): running, or done or failed
   until the user looks at it, labelled by the command's name.
 
 - The user can name a bunk-gui tab (`tabname.go`): a double-click on it,

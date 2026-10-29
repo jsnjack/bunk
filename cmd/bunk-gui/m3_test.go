@@ -103,6 +103,29 @@ func TestLookOf(t *testing.T) {
 
 // A 2x2 tree built by hand, as split() builds it: tree order, lookups,
 // the agent pane and dimming.
+// TestPaneMap: the collapsed rail's map places each pane's dot as the
+// splits place the panes.
+func TestPaneMap(t *testing.T) {
+	a, b, c, d := &Pane{id: 1}, &Pane{id: 2}, &Pane{id: 3}, &Pane{id: 4}
+	dots := map[*Pane]look{a: lookOf(session.AgentNeedsYou), b: lookOf(session.AgentWorking), c: lookOf(session.AgentNone), d: commandLook(session.AgentDone)}
+	dot := func(p *Pane) look { return dots[p] }
+	leaf := func(p *Pane) *node { return &node{pane: p} }
+	for _, tc := range []struct {
+		tree *node
+		want string
+	}{
+		{leaf(a), "◐"},
+		{leaf(c), "○"},
+		{&node{a: leaf(a), b: leaf(b)}, "(◐|●)"},
+		{&node{a: leaf(a), b: &node{a: leaf(b), b: leaf(c), vertical: true}}, "(◐|(●/○))"},
+		{&node{vertical: true, a: &node{a: leaf(a), b: leaf(b)}, b: &node{a: leaf(c), b: leaf(d)}}, "((◐|●)/(○|✓))"},
+	} {
+		if got := paneMap(tc.tree, dot); got != tc.want {
+			t.Errorf("paneMap = %q, want %q", got, tc.want)
+		}
+	}
+}
+
 func TestTabTree(t *testing.T) {
 	p := make([]*Pane, 4)
 	for i := range p {
