@@ -160,7 +160,8 @@ func TestGUINotifications(t *testing.T) {
 // "+1"; its state is the most urgent of the two, with codex's notice when
 // codex is that agent. Each pane sends its own notification. Alt+A
 // focuses codex, which withdraws only its notification; focusing claude
-// withdraws the other.
+// withdraws the other. The tab's map in the collapsed rail shows each
+// agent's dot where its pane is.
 func TestGUISplitAgents(t *testing.T) {
 	t.Parallel()
 	bin := t.TempDir()
@@ -210,8 +211,11 @@ func TestGUISplitAgents(t *testing.T) {
 	if !tab.Notified || s.pane(t, 1).Notified || !s.pane(t, 2).Notified {
 		t.Errorf("codex needs you: tab notified %v, claude %v, codex %v", tab.Notified, s.pane(t, 1).Notified, s.pane(t, 2).Notified)
 	}
-	if tab := g.snap("both").tab(t, 2); tab.State != "needs" || tab.Agent != "claude" {
-		t.Errorf("claude done, codex needs you: tab 2 %q, state %q", tab.Agent, tab.State)
+	if tab := g.snap("both").tab(t, 2); tab.State != "needs" || tab.Agent != "claude" || tab.Map != "(✓|◐)" {
+		t.Errorf("claude done, codex needs you: tab 2 %q, state %q, map %q", tab.Agent, tab.State, tab.Map)
+	}
+	if m := s.tab(t, 1).Map; m != "" {
+		t.Errorf("tab 1 has one pane but a map %q", m)
 	}
 	if tab := g.snap("jumped").tab(t, 2); tab.State != "done" || tab.Notice != "Finished the refactor" {
 		t.Errorf("codex seen, claude done: tab 2 state %q, notice %q", tab.State, tab.Notice)
@@ -228,6 +232,51 @@ func TestGUISplitAgents(t *testing.T) {
 	checkRecord(t, g, 3, 1, alertRecord{Op: "withdraw"})
 	if len(g.Notifications) != 4 {
 		t.Errorf("%d notification calls, want 4: %+v", len(g.Notifications), g.Notifications)
+	}
+}
+
+// TestGUIRailMap: the collapsed rail draws a tab of 2 to 4 panes as a
+// map of their dots, placed like the panes, in the rail's 48 px. A fifth
+// pane turns the map back into the most urgent dot.
+func TestGUIRailMap(t *testing.T) {
+	t.Parallel()
+	bin := t.TempDir()
+	writeAgent(t, bin, "claude", "c", `needs-you "Allow edit?"`)
+	g := runGUI(t, scenario{
+		cost:   3,
+		config: "tabs = \"rail\"\n",
+		args:   []string{"--size", "100x30"},
+		env:    []string{agentPath(t, bin)},
+		script: []string{
+			"wait focused.line=$",
+			"type claude\\r",
+			"wait tab.1.status.agent=claude",
+			"run touch c0",
+			"wait tab.1.state=needs",
+			"split",
+			"wait tab.1.panes.#=2 focused.line=$",
+			"split",
+			"wait tab.1.panes.#=3 focused.line=$ chrome.w=48",
+			"snap three",
+			"shot rail-map.png",
+			"split",
+			"wait tab.1.panes.#=4 focused.line=$",
+			"split",
+			"wait tab.1.panes.#=5 focused.line=$ chrome.w=48",
+			"snap five",
+			"quit",
+		},
+		limit: 25e9,
+	})
+	three := g.snap("three")
+	if tab := three.tab(t, 1); tab.Map != "(◐|(○/○))" || tab.Dot != "◐" {
+		t.Errorf("three panes: map %q, dot %q; want (◐|(○/○)) and ◐", tab.Map, tab.Dot)
+	}
+	if it := three.tab(t, 1).Item; it == nil || it.W > 40 || it.H > 40 {
+		t.Errorf("three panes: rail item %+v, want within 40x40", it)
+	}
+	if tab := g.snap("five").tab(t, 1); tab.Map != "" || tab.Dot != "◐" {
+		t.Errorf("five panes: map %q, dot %q; want none and ◐", tab.Map, tab.Dot)
 	}
 }
 

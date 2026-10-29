@@ -293,6 +293,18 @@ Both front ends infer each agent's state from these sources:
 
 Focusing the pane or typing into it acknowledges the state and clears needs you and done.
 
+Both front ends show each state with the same glyph and colour, in the pane badges, the tabs and the rail:
+
+| Glyph | State | Meaning |
+|-------|-------|---------|
+| ● (blue) | Working | The agent is busy, or a long command is running |
+| ◐ (amber) | Needs you | The agent asks a question or a permission |
+| ✓ (green) | Done | The agent's turn or a long command finished, and you have not looked yet |
+| ✕ (red) | Failed | The agent failed, or a command exited non-zero |
+| ○ (grey) | Idle or shell | The agent waits at its prompt, or the pane is a plain shell without a command mark |
+
+In bunk-gui's collapsed rail, a tab with 2 to 4 panes shows a small map of them: one cell per pane, placed as the splits place the panes, each with its pane's glyph. A tab of an agent beside two stacked shells shows ◐ on the left and ○ over ○ on the right. Each split takes half of the map wherever its divider sits, so the map keeps its shape while you drag a divider. A tab with one pane shows its glyph alone, and a tab with 5 or more shows its most urgent glyph over the pane count.
+
 When an agent you are not looking at needs you, is done or failed, both front ends notify you:
 
 - bunk-gui shows a desktop notification per pane, such as "claude needs you" or "claude on build01 needs you" with the notice and repo ⎇ branch. Two agents split in one tab each send their own. A newer state replaces it, and it goes away when you focus the pane. Clicking it raises the window, selects the tab and focuses the pane.

@@ -137,6 +137,7 @@ type tabReport struct {
 	State    string       `json:"state"` // the most urgent of its agents'
 	Label    string       `json:"label"`
 	Dot      string       `json:"dot"`
+	Map      string       `json:"map"`  // the collapsed rail's map of its panes (paneMap), "" for one pane or over 4
 	Repo     string       `json:"repo"` // as shown: "repo ⎇ branch" or the directory
 	Branch   string       `json:"branch"`
 	Loc      string       `json:"loc"`
@@ -508,7 +509,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		t := in.t
 		tr := tabReport{
 			Index: in.index + 1, Agent: in.agent, Name: in.name, More: in.more, State: stateName[in.state], Label: in.look.label,
-			Dot: in.look.dot, Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.notice, Tooltip: in.tooltip,
+			Dot: in.look.dot, Map: in.paneMap, Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.notice, Tooltip: in.tooltip,
 			Selected: in.active, Needs: in.needs, Focus: -1, Zoomed: -1, Status: statusOf(in.st), Pass: in.pass,
 			ID: t.id,
 		}
