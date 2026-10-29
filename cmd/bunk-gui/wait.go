@@ -26,7 +26,7 @@ package main
 // roots besides its own fields:
 //
 //	tab.N              tab N (1-based), e.g. tab.2.state=needs
-//	pane.ID            the pane with that id, e.g. pane.0.ring=true
+//	pane.ID            the pane with that id, e.g. pane.0.status.state=needs
 //	focused            the selected tab's focused pane
 //	run.FIELD          frames, clock_frames, reloads, toasts, opened, windows,
 //	                   errors, notifications

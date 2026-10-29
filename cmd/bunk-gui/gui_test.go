@@ -639,14 +639,19 @@ func TestGUITabsAndStatus(t *testing.T) {
 			"wait selected_tab=1",
 			"status tab=4 state=needs notice=Second request",
 			"kbd alt+a",
-			"wait selected_tab=2 tab.2.state=idle",
+			"wait selected_tab=2",
 			"snap jump1",
 			"kbd alt+a",
-			"wait selected_tab=4 tab.4.state=idle",
+			"wait selected_tab=4",
 			"snap jump2",
 			"kbd alt+a",
-			"wait last_toast=\"No agent needs you\"",
+			"wait selected_tab=2",
 			"snap jump3",
+			"status tab=2 state=idle",
+			"status tab=4 state=idle",
+			"kbd alt+a",
+			"wait last_toast=\"No agent needs you\"",
+			"snap jump4",
 			"kbd alt+3",
 			"wait selected_tab=3",
 			"snap alt3",
@@ -658,14 +663,17 @@ func TestGUITabsAndStatus(t *testing.T) {
 			"split",
 			"wait tab.1.panes.#=2 pane.4.line=$",
 			"status pane=0 agent=claude state=needs notice=Ring me",
-			"wait pane.0.ring=true pane.0.settled=true pane.4.settled=true",
+			"wait pane.0.status.state=needs pane.0.settled=true pane.4.settled=true",
 			"snap ring",
 			"dump-pane 0 ring.png",
 			"dump-pane 4 focused.png",
 			"focus left",
-			"wait focused_pane=0 pane.0.ring=false",
+			"wait focused_pane=0 pane.0.settled=true",
+			"snap seen",
+			"dump-pane 0 seen.png",
+			"kbd Return",
+			"wait pane.0.status.state=idle",
 			"snap acked",
-			"dump-pane 0 acked.png",
 			"quit",
 		},
 	})
@@ -739,14 +747,19 @@ func TestGUITabsAndStatus(t *testing.T) {
 	if s := g.snap("picked"); s.Switcher.Open || s.SelectedTab != 4 || s.KeyboardFocus != "pane 3" {
 		t.Errorf("after Enter: switcher open %v, selected %d, keyboard %q", s.Switcher.Open, s.SelectedTab, s.KeyboardFocus)
 	}
-	if s := g.snap("jump1"); s.SelectedTab != 2 || s.tab(t, 2).State != "idle" || s.tab(t, 4).State != "needs" {
+	// Visiting a needs-you leaves it: the agent still waits for an answer,
+	// so Alt+A goes round the tabs that need the user.
+	if s := g.snap("jump1"); s.SelectedTab != 2 || s.tab(t, 2).State != "needs" || s.tab(t, 4).State != "needs" {
 		t.Errorf("first Alt+A: selected %d, tab 2 %q, tab 4 %q", s.SelectedTab, s.tab(t, 2).State, s.tab(t, 4).State)
 	}
-	if s := g.snap("jump2"); s.SelectedTab != 4 || s.tab(t, 4).State != "idle" {
+	if s := g.snap("jump2"); s.SelectedTab != 4 || s.tab(t, 4).State != "needs" {
 		t.Errorf("second Alt+A: selected %d, tab 4 %q", s.SelectedTab, s.tab(t, 4).State)
 	}
-	if s := g.snap("jump3"); s.SelectedTab != 4 || s.LastToast != "No agent needs you" {
-		t.Errorf("third Alt+A: selected %d, toast %q", s.SelectedTab, s.LastToast)
+	if s := g.snap("jump3"); s.SelectedTab != 2 {
+		t.Errorf("third Alt+A: selected %d, want tab 2 again", s.SelectedTab)
+	}
+	if s := g.snap("jump4"); s.SelectedTab != 2 || s.LastToast != "No agent needs you" {
+		t.Errorf("Alt+A with none left: selected %d, toast %q", s.SelectedTab, s.LastToast)
 	}
 	if s := g.snap("alt3"); s.SelectedTab != 3 {
 		t.Errorf("Alt+3: selected %d", s.SelectedTab)
@@ -757,35 +770,34 @@ func TestGUITabsAndStatus(t *testing.T) {
 
 	ring := g.snap("ring")
 	p0, p4 := ring.pane(t, 0), ring.pane(t, 4)
-	if !p0.Ring || !p0.Dimmed || p0.Focused || p4.Ring || p4.Dimmed || !p4.Focused {
+	if !p0.Dimmed || p0.Focused || p4.Dimmed || !p4.Focused {
 		t.Errorf("split with a pane needing you: pane 0 %+v; pane 4 %+v", p0, p4)
 	}
-	ringPx := int(math.Round(2 * ring.Window.Scale))
-	checkRing(t, "ring.png", loadPNG(t, g.file("ring.png")), ringPx, true)
-	checkRing(t, "acked.png", loadPNG(t, g.file("acked.png")), ringPx, false)
+	// No frame marks a pane that needs the user: its edges keep the
+	// background, as the focused pane's do.
+	noFrame(t, "ring.png", loadPNG(t, g.file("ring.png")))
+	noFrame(t, "seen.png", loadPNG(t, g.file("seen.png")))
 	// Dimming fades text towards the background.
-	if d, f := maxBright(loadPNG(t, g.file("ring.png")), ringPx+2), maxBright(loadPNG(t, g.file("focused.png")), ringPx+2); d >= f-20 {
+	if d, f := maxBright(loadPNG(t, g.file("ring.png")), 4), maxBright(loadPNG(t, g.file("focused.png")), 4); d >= f-20 {
 		t.Errorf("text brightness: dimmed pane %d, focused pane %d", d, f)
 	}
-	if a := g.snap("acked"); !a.pane(t, 0).Focused || a.pane(t, 0).Ring || a.pane(t, 0).Status.State == "needs" {
-		t.Errorf("after focusing the pane: %+v", a.pane(t, 0))
+	// Looking at the pane leaves the request; typing answers it.
+	if s := g.snap("seen"); !s.pane(t, 0).Focused || s.pane(t, 0).Status.State != "needs" {
+		t.Errorf("after focusing the pane: %+v", s.pane(t, 0).Status)
+	}
+	if a := g.snap("acked"); !a.pane(t, 0).Focused || a.pane(t, 0).Status.State == "needs" {
+		t.Errorf("after typing: %+v", a.pane(t, 0).Status)
 	}
 }
 
-// checkRing looks for the needs-you ring along a pane dump's edges.
-func checkRing(t *testing.T, name string, img image.Image, px int, want bool) {
+// noFrame checks that a pane dump's edges hold no needs-you colour.
+func noFrame(t *testing.T, name string, img image.Image) {
 	t.Helper()
 	b := img.Bounds()
-	edge := []image.Point{{0, b.Dy() / 2}, {px - 1, b.Dy() / 2}, {b.Dx() / 2, 0}, {b.Dx() / 2, px - 1},
-		{b.Dx() - 1, b.Dy() / 2}, {b.Dx() / 2, b.Dy() - 1}}
-	for _, p := range edge {
-		if got := at(img, p.X, p.Y) == colNeeds; got != want {
-			t.Errorf("%s: pixel %v is %v; ring wanted: %v", name, p, at(img, p.X, p.Y), want)
-		}
-	}
-	if want {
-		if p := at(img, px+1, b.Dy()/2); p == colNeeds {
-			t.Errorf("%s: the ring is wider than %d px", name, px)
+	for _, p := range []image.Point{{0, b.Dy() / 2}, {1, b.Dy() / 2}, {b.Dx() / 2, 0}, {b.Dx() / 2, 1},
+		{b.Dx() - 1, b.Dy() / 2}, {b.Dx() / 2, b.Dy() - 1}} {
+		if at(img, p.X, p.Y) == colNeeds {
+			t.Errorf("%s: pixel %v is the needs-you colour", name, p)
 		}
 	}
 }
@@ -849,11 +861,11 @@ exit 3
 			"type yes\\r",
 			"wait pane.1.text=\"got: yes\"",
 			"run touch go2",
-			"wait tab.2.state=needs pane.1.ring=true",
+			"wait tab.2.state=needs",
 			"snap bell",
 			"dump-pane 1 bell.png",
 			"type \\r",
-			"wait tab.2.state=failed pane.1.ring=false",
+			"wait tab.2.state=failed",
 			"snap failed",
 			"shot failed.png",
 			"run touch go3",
@@ -890,13 +902,13 @@ exit 3
 		t.Errorf("after Alt+A: selected %d, tab 2 %+v", s.SelectedTab, s.tab(t, 2))
 	}
 	b := g.snap("bell")
-	if tb := b.tab(t, 2); tb.State != "needs" || !b.pane(t, 1).Ring {
-		t.Errorf("after BEL: tab 2 %q, pane 1 ring %v", tb.State, b.pane(t, 1).Ring)
+	if tb := b.tab(t, 2); tb.State != "needs" {
+		t.Errorf("after BEL: tab 2 %q", tb.State)
 	}
-	checkRing(t, "bell.png", loadPNG(t, g.file("bell.png")), int(math.Round(2*b.Window.Scale)), true)
+	noFrame(t, "bell.png", loadPNG(t, g.file("bell.png")))
 	f := g.snap("failed")
-	if tb := f.tab(t, 2); tb.State != "failed" || tb.Dot != "✕" || f.pane(t, 1).Ring {
-		t.Errorf("after OSC 133;D;3: tab 2 %+v, ring %v", tb, f.pane(t, 1).Ring)
+	if tb := f.tab(t, 2); tb.State != "failed" || tb.Dot != "✕" {
+		t.Errorf("after OSC 133;D;3: tab 2 %+v", tb)
 	} else {
 		img := loadPNG(t, g.file("failed.png"))
 		if n := blendCount(img, tb.Item.DX, tb.Item.DY, int(30*f.Window.Scale), tb.Item.DH, colFailed, colRailActv); n < 4 {

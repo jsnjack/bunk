@@ -53,6 +53,11 @@ type Message struct {
 	Session string        // token from BUNK_NOTIFY_SESSION
 	Event   session.Event // what the agent reports
 	Text    string        // notice text for needs-you, done and failed
+	// AgentSession is the agent's own session ID (wire.ValidAgentSession),
+	// "" when the report has none.
+	AgentSession string
+	// Held: a needs-you whose end the agent reports itself (wire.Report).
+	Held bool
 }
 
 var (
@@ -69,7 +74,7 @@ func (m Message) Encode() ([]byte, error) {
 	if _, ok := session.ParseEvent(m.Event.String()); !ok {
 		return nil, fmt.Errorf("encode: %w: %v", errEvent, m.Event)
 	}
-	line, err := wire.Report{Session: m.Session, Event: m.Event.String(), Message: m.Text}.Encode()
+	line, err := wire.Report{Session: m.Session, Event: m.Event.String(), Message: m.Text, AgentSession: m.AgentSession, Held: m.Held}.Encode()
 	if err != nil {
 		return nil, fmt.Errorf("notify: %w", err)
 	}
@@ -77,7 +82,8 @@ func (m Message) Encode() ([]byte, error) {
 }
 
 // Decode parses one line, with or without its newline. It rejects lines
-// over MaxLine, other protocol versions, unknown events and missing tokens.
+// over MaxLine, other protocol versions, unknown events and missing tokens,
+// and drops an agent session ID that is not wire.ValidAgentSession.
 // Text is valid UTF-8 but not otherwise cleaned. Fields for agents on other
 // machines are ignored: they travel in-band only.
 func Decode(line []byte) (Message, error) {
@@ -92,7 +98,11 @@ func Decode(line []byte) (Message, error) {
 	if r.Session == "" {
 		return Message{}, fmt.Errorf("decode: %w", errToken)
 	}
-	return Message{Session: r.Session, Event: ev, Text: r.Message}, nil
+	m := Message{Session: r.Session, Event: ev, Text: r.Message, Held: r.Held}
+	if wire.ValidAgentSession(r.AgentSession) {
+		m.AgentSession = r.AgentSession
+	}
+	return m, nil
 }
 
 // NewToken returns a random, unguessable session token: 32 hex digits.

@@ -295,7 +295,7 @@ func TestGUITabKeys(t *testing.T) {
 			"status tab=5 agent=claude state=needs notice=Approve?",
 			"wait tab.5.state=needs",
 			"kbd alt+a",
-			"wait selected_tab=5 tab.5.state!=needs",
+			"wait selected_tab=5",
 			"snap needs-you",
 			"kbd f10",
 			"wait menu_open=true",
@@ -342,8 +342,8 @@ func TestGUITabKeys(t *testing.T) {
 	if s := g.snap("switcher-closed"); s.Switcher.Open || s.SelectedTab != 1 {
 		t.Errorf("Ctrl+Shift+O again: switcher open %v, selected %d", s.Switcher.Open, s.SelectedTab)
 	}
-	if s := g.snap("needs-you"); s.tab(t, 5).State == "needs" {
-		t.Errorf("Alt+A: tab 5 still %q", s.tab(t, 5).State)
+	if s := g.snap("needs-you"); s.tab(t, 5).State != "needs" {
+		t.Errorf("Alt+A: tab 5 %q; the visit must leave its request", s.tab(t, 5).State)
 	}
 	if s := g.snap("menu"); !s.MenuOpen {
 		t.Error("F10: the options menu is closed")
@@ -766,7 +766,7 @@ sleep 30
 			"snap needs",
 			"shot needs.png",
 			"kbd alt+a",
-			"wait selected_tab=2 tab.2.state!=needs",
+			"wait selected_tab=2",
 			"snap acked",
 			"type yes\\r",
 			"wait tab.2.state=done",
@@ -793,7 +793,8 @@ sleep 30
 	if n := blendCount(img, tb.Item.DX, tb.Item.DY, tb.Item.DW, tb.Item.DH, colNeeds, colTint); n < 4 {
 		t.Errorf("needs-you dot: %d pixels %v", n, colNeeds)
 	}
-	if s := g.snap("acked"); s.SelectedTab != 2 || s.tab(t, 2).State == "needs" {
+	// The visit leaves the request: the agent still waits for its answer.
+	if s := g.snap("acked"); s.SelectedTab != 2 || s.tab(t, 2).State != "needs" {
 		t.Errorf("next_needs_you: selected %d, tab 2 %q", s.SelectedTab, s.tab(t, 2).State)
 	}
 	d := g.snap("done")

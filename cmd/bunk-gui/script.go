@@ -479,6 +479,19 @@ func (a *App) doAction(action string, done func()) {
 		a.win.Unmaximize()
 	case "quit":
 		a.finish("script")
+	case "hooks-banner":
+		switch arg {
+		case "accept":
+			a.acceptHooks()
+		case "dismiss":
+			a.declineHooks()
+		default:
+			a.reportError("%s: want accept or dismiss", action)
+		}
+	case "restore":
+		if err := a.scriptRestore(arg); err != nil {
+			a.reportError("%s: %v", action, err)
+		}
 
 	case "run":
 		// A shell command, synchronously: tests edit config.toml with it.

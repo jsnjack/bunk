@@ -67,7 +67,7 @@ bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, 
 | Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
 | Agent status | | Dot, state, repo ⎇ branch, container or SSH host, and the agent's notice; see [Agent status and hooks](#agent-status-and-hooks) |
 | Switcher | Ctrl+Shift+O | Lists needs-you tabs first; type to filter, Up and Down pick a row, Enter opens it |
-| Next needing you | Alt+A | Visits needs-you tabs, then done tabs, and acknowledges each |
+| Next needing you | Alt+A | Visits needs-you tabs, then done tabs; a done tab counts as seen, and a needs-you tab stays until you answer |
 | Notifications | | A desktop notification when an agent in a tab you are not looking at needs you, is done or failed, or when a command there that ran 10 s or longer ends; clicking it opens the tab |
 | Split | F1 / Alt+F1 | Side by side or stacked by pane shape; Alt+F1 opens a shell in the same container. While you drag a divider, a label shows each side's share |
 | Zoom pane | F12 | |
@@ -82,11 +82,12 @@ bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's terminal, 
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
 | Shortcuts window | Ctrl+Shift+? / Ctrl+? | Rebind or turn off any action, and give it more than one key; ⚠ marks keys terminal programs may use |
 | Preferences | Ctrl+, | Layout, rail, font, text zoom, theme, notifications, agent hooks and extra agent CLIs |
-| Agent hooks | | Preferences shows which agents report their own state, installs the Codex and Copilot CLI hooks and copies the others; a toast reminds you once when an agent runs without them |
+| Agent hooks | | Preferences shows which agents report their own state and installs their hooks; a banner offers to set them up when an agent runs without them or they are outdated |
 | Options menu | F10 | The ≡ button at the bottom of the rail, or at the right of the bar |
 | Fullscreen | F11 | |
 | Themes | | bunk's themes; picking one in Preferences repaints the panes at once |
 | Quit | Ctrl+Q / Ctrl+Shift+Q | Asks first while a pane runs more than an idle shell |
+| Restore session | | The next start offers the last session in a banner: Restore brings back each window's tabs, splits, folders and scrollback, and resumes each agent's conversation; see below |
 
 Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. bunk-gui draws their images 1:1:
 
@@ -95,6 +96,15 @@ Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t. b
 - Each pane keeps up to 64 MiB of image bitmaps (`--image-bytes`), and the images drawn least recently fall back to half-block cells.
 - When a program stops reading its input, the window and other panes keep working. Its pane queues up to 16 MiB of input (`--input-bytes`) and refuses more with a toast.
 - When a program reads the mouse, Ctrl+Shift+click opens a link instead of Ctrl+click.
+
+bunk-gui saves each window as it changes, in `~/.local/state/bunk-gui/windows`, so a crash or a logout loses at most the last seconds. When bunk-gui starts and finds windows that are no longer open, a banner asks whether to restore them:
+
+- Restore brings the newest window back in place of the fresh tab and opens each other window again. Dismiss deletes them.
+- Each pane gets its tab name, split, folder and scrollback back, with a line marking where the old output ends.
+- An agent pane runs the agent's resume command, such as `claude --resume ID`, with the session ID its hooks reported. Without hooks it resumes the folder's latest conversation (`claude --continue`), unless two panes ran that agent in the same folder. Agent panes skip the old scrollback, because the agent prints its conversation again.
+- A pane that ran `ssh` or `mosh` gets that command typed at the prompt, but not run. Other commands are not restarted.
+- Quitting keeps the session for the next start, unless other bunk-gui windows are still open. A window whose last shell exited leaves nothing behind.
+- The saved scrollback can hold secrets that were printed in a pane. The files are readable by you alone; `restore_scrollback = false` stops saving scrollback, and `restore = false` turns the feature off.
 
 ## bunk
 
@@ -254,7 +264,9 @@ font = "Noto Sans Mono"
 font_size = 11             # points
 text_zoom = 100            # % of font_size at start and after Ctrl+0
 theme = "default"          # as in bunk, with [themes.NAME] tables of your own
-hooks_hint = true          # a toast when an agent runs without bunk's hooks
+hooks_hint = true          # offer to set up missing or outdated agent hooks in a banner
+restore = true             # save the windows and offer them back at the next start
+restore_scrollback = true  # save each pane's scrollback with them
 
 [keys]                     # one key or a list; actions in cmd/bunk-gui/bindings.go
 next_tab = ["ctrl+right", "ctrl+pgdn"]
@@ -292,7 +304,7 @@ Both front ends infer each agent's state from these sources:
 - While ssh or mosh runs in a pane, OSC 9/99/777 from the other end mean needs you too. Bells from there do not count, because a remote shell rings one on a failed tab completion.
 - A failed command reported through OSC 133;D means failed.
 
-Focusing the pane or typing into it acknowledges the state and clears needs you and done.
+Focusing the pane or typing into it clears done. A needs-you the agent reported through its hooks stays while the agent still waits: focus and keys such as arrows leave it, Enter answers it, and Esc or Ctrl+C cancel it. A question from Claude Code (AskUserQuestion, a plan to approve) stays through Enter too, because it can hold several questions, and ends when the agent reports that you answered. A needs-you inferred from a bell or an OSC notification clears on focus or typing.
 
 Both front ends show each state with the same glyph and colour, in the pane badges, the tabs and the rail:
 
@@ -335,12 +347,14 @@ With hooks, the agent reports its own state, and the report takes priority over 
 
 ```bash
 bunk notify hooks                  # each agent: installed, outdated or missing, and the next step
-bunk notify hooks install codex    # Codex and Copilot CLI: write the hooks file; trust it with /hooks in Codex
-bunk notify hooks claude           # Claude Code and Gemini CLI: print the snippet to merge into settings.json
+bunk notify hooks install codex    # write the hooks file; trust it with /hooks in Codex
+bunk notify hooks install claude   # merge bunk's hooks into settings.json, keeping a copy of the old file
+bunk notify hooks claude           # or print the snippet to merge by hand
 ```
 
-- In bunk-gui, Preferences (Ctrl+,) → Agent hooks does the same: it shows each agent's state, installs the Codex and Copilot CLI hooks with a click and copies the snippets of Claude Code and Gemini CLI, whose settings file bunk never writes.
-- bunk-gui reminds you with a toast, once per agent and window, when an agent runs without its hooks. `hooks_hint = false` turns the reminder off.
+- `install` writes the hooks files of Codex and Copilot CLI. For Claude Code and Gemini CLI, and a Codex `hooks.json` with hooks of your own, it replaces only bunk's hooks in the file, keeps your other settings and hooks in their order, and saves the old file as `settings.json.bunk-backup` first.
+- In bunk-gui, Preferences (Ctrl+,) → Agent hooks does the same with Install and Copy snippet buttons.
+- bunk-gui offers to set the hooks up in a banner above the panes: at start when bunk's hooks are outdated, and when a tab first shows an agent without them. The banner names the files it changes; Update installs the hooks, and Not now asks again at the next start. `hooks_hint = false` turns the banner off.
 - [docs/agent-hooks.md](docs/agent-hooks.md#set-up) walks through the setup for each agent.
 
 - `bunk notify` and `bunk-gui notify` take the same arguments, and the snippets call bunk-gui when it is installed, else bunk.

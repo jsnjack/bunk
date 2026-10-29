@@ -44,7 +44,7 @@ if [[ ${1:-} != --inner ]]; then
 		  </policy>
 		</busconfig>
 	EOF
-	export HEADLESS_DIR=$dir XDG_CONFIG_HOME=$dir/config GSETTINGS_BACKEND=keyfile
+	export HEADLESS_DIR=$dir XDG_CONFIG_HOME=$dir/config XDG_STATE_HOME=${XDG_STATE_HOME_TEST:-$dir/state} GSETTINGS_BACKEND=keyfile
 	export GIO_USE_VFS=local
 	unset DISPLAY WAYLAND_SOCKET
 	exec dbus-run-session --config-file="$dir/bus.conf" -- "$0" --inner "$@"

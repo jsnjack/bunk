@@ -30,6 +30,8 @@ const (
 	MaxField = 128
 	// MaxToken caps the session token, in bytes.
 	MaxToken = 64
+	// MaxAgentSession caps the agent's own session ID, in bytes.
+	MaxAgentSession = 128
 	// UserVar is the name of the OSC 1337 user variable that carries a
 	// report through a terminal.
 	UserVar = "bunk_notify"
@@ -41,6 +43,8 @@ const userVarPrefix = "SetUserVar=" + UserVar + "="
 // Report is one report as it travels. Session is the token from
 // BUNK_NOTIFY_SESSION; an in-band report may leave it empty. Agent, Host,
 // Repo, Branch and Cwd say where an agent on another machine runs.
+// AgentSession is the agent's own session ID, which resumes its
+// conversation (claude --resume ID); only ValidAgentSession IDs travel.
 type Report struct {
 	V       int    `json:"v"`
 	Session string `json:"session,omitempty"`
@@ -51,6 +55,11 @@ type Report struct {
 	Repo    string `json:"repo,omitempty"`
 	Branch  string `json:"branch,omitempty"`
 	Cwd     string `json:"cwd,omitempty"`
+
+	AgentSession string `json:"agent_session,omitempty"`
+	// Held marks a needs-you whose end the agent reports itself, as its
+	// question tools' PostToolUse hooks do: typing does not end it.
+	Held bool `json:"held,omitempty"`
 }
 
 var (
@@ -74,6 +83,9 @@ func (r Report) Encode() ([]byte, error) {
 	r.Message = CleanText(r.Message)
 	r.Agent, r.Host, r.Repo = cleanField(r.Agent), cleanField(r.Host), cleanField(r.Repo)
 	r.Branch, r.Cwd = cleanField(r.Branch), cleanField(r.Cwd)
+	if !ValidAgentSession(r.AgentSession) {
+		r.AgentSession = ""
+	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false) // "<" stays one byte, so the caps fit MaxLine
@@ -109,6 +121,25 @@ func Decode(line []byte) (Report, error) {
 		return Report{}, fmt.Errorf("decode: %w", errToken)
 	}
 	return r, nil
+}
+
+// ValidAgentSession reports whether id may serve as an agent's session ID:
+// 1 to MaxAgentSession letters, digits, '.', '_', ':' and '-', starting
+// with a letter or digit. A restored pane types the ID into a shell as an
+// argument, so nothing else passes, and it cannot pass for an option.
+func ValidAgentSession(id string) bool {
+	if id == "" || len(id) > MaxAgentSession {
+		return false
+	}
+	for i := range len(id) {
+		switch c := id[i]; {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case i > 0 && (c == '.' || c == '_' || c == ':' || c == '-'):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // CleanText makes text safe to send: invalid UTF-8 and control characters

@@ -73,7 +73,8 @@ func checkRecord(t *testing.T, g *guiRun, i int, pane int, want alertRecord) {
 // its pane, with the agent, notice, repo and branch, and app.show-pane
 // with the pane's ID as its action; done replaces it; selecting the tab
 // acknowledges the agent and withdraws it. A click on the next one raises
-// the window and selects the tab, which withdraws it. The selected tab of
+// the window and selects the tab, which withdraws it and leaves its
+// needs-you: the agent still waits for the answer. The selected tab of
 // the active window sends none; with another window focused, it does. On
 // the test compositor no call reaches a notification server.
 func TestGUINotifications(t *testing.T) {
@@ -142,7 +143,7 @@ func TestGUINotifications(t *testing.T) {
 	if s := g.snap("done"); !s.tab(t, 2).Notified || s.SelectedTab != 1 {
 		t.Errorf("after done: tab 2 notified %v, selected %d", s.tab(t, 2).Notified, s.SelectedTab)
 	}
-	if s := g.snap("clicked"); s.SelectedTab != 2 || !s.Window.Active || s.tab(t, 2).State != "idle" {
+	if s := g.snap("clicked"); s.SelectedTab != 2 || !s.Window.Active || s.tab(t, 2).State != "needs" {
 		t.Errorf("after the click: selected %d, window active %v, tab 2 %q", s.SelectedTab, s.Window.Active, s.tab(t, 2).State)
 	}
 	if s := g.snap("watched"); s.tab(t, 2).Notified || s.SelectedTab != 2 {
@@ -160,8 +161,9 @@ func TestGUINotifications(t *testing.T) {
 // fake codex, while tab 1 is selected. The tab keeps claude's name with
 // "+1"; its state is the most urgent of the two, with codex's notice when
 // codex is that agent. Each pane sends its own notification. Alt+A
-// focuses codex, which withdraws only its notification; focusing claude
-// withdraws the other. The tab's map in the collapsed rail shows each
+// focuses codex, which withdraws only its notification and leaves its
+// request until it is answered; focusing claude withdraws the other and
+// its done. The tab's map in the collapsed rail shows each
 // agent's dot where its pane is.
 func TestGUISplitAgents(t *testing.T) {
 	t.Parallel()
@@ -218,12 +220,12 @@ func TestGUISplitAgents(t *testing.T) {
 	if m := s.tab(t, 1).Map; m != "" {
 		t.Errorf("tab 1 has one pane but a map %q", m)
 	}
-	if tab := g.snap("jumped").tab(t, 2); tab.State != "done" || tab.Notice != "Finished the refactor" {
-		t.Errorf("codex seen, claude done: tab 2 state %q, notice %q", tab.State, tab.Notice)
+	if s := g.snap("jumped"); s.tab(t, 2).State != "needs" || s.pane(t, 1).Status.State != "done" {
+		t.Errorf("codex seen, claude done: tab 2 state %q, claude %q", s.tab(t, 2).State, s.pane(t, 1).Status.State)
 	}
-	// Both agents are idle, or working for 2 s after their last output.
-	if tab := g.snap("seen").tab(t, 2); (tab.State != "idle" && tab.State != "working") || tab.Notified {
-		t.Errorf("both seen: tab 2 state %q, notified %v", tab.State, tab.Notified)
+	// Claude's done is seen; codex still waits for its answer.
+	if s := g.snap("seen"); s.tab(t, 2).State != "needs" || s.pane(t, 1).Status.State == "done" || s.tab(t, 2).Notified {
+		t.Errorf("both seen: tab 2 state %q, claude %q, notified %v", s.tab(t, 2).State, s.pane(t, 1).Status.State, s.tab(t, 2).Notified)
 	}
 	checkRecord(t, g, 0, 2, alertRecord{Op: "send", Title: "codex needs you", Body: "Allow npm install?\n" + where,
 		State: "needs-you", Action: "app.show-pane"})

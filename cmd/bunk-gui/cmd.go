@@ -42,6 +42,10 @@ type config struct {
 	script     string
 	gsk        string
 	agentHome  string // tests: the home directory whose agent hooks count
+	// restoreID is the snapshot to open (--restore); offerRestore shows
+	// the banner for snapshots no window holds (restore.go).
+	restoreID    string
+	offerRestore bool
 
 	imageBytes    int // per pane: bitmaps of image placements (session.Options.ImageBytes)
 	inputBytes    int // per pane: input queued for a program not reading it (session.Options.InputBytes)
@@ -54,9 +58,9 @@ var (
 	flagTrace bool
 )
 
-// testFlags only serve the window tests and other automated runs, so
-// --help leaves them out.
-var testFlags = []string{"do", "report", "verify", "wait-focus", "alloc-probe", "dump", "dump-size", "maximize-after", "agent-home"}
+// testFlags only serve the window tests, other automated runs and the
+// windows bunk-gui starts itself, so --help leaves them out.
+var testFlags = []string{"restore", "offer-restore", "do", "report", "verify", "wait-focus", "alloc-probe", "dump", "dump-size", "maximize-after", "agent-home"}
 
 func init() {
 	pf := rootCmd.PersistentFlags()
@@ -82,6 +86,8 @@ func init() {
 	f.DurationVar(&opts.typeEvery, "type-every", 0, "write 'x' to the selected pane's PTY at this interval (latency runs)")
 	f.StringVar(&opts.memProfile, "memprofile", "", "record every allocation and write the profile to `FILE` on exit (go tool pprof -sample_index=alloc_objects)")
 
+	f.StringVar(&opts.restoreID, "restore", "", "open the saved window `ID` (restore.go)")
+	f.BoolVar(&opts.offerRestore, "offer-restore", true, "offer the windows of the last session back")
 	f.StringVar(&opts.script, "do", "", "run test `ACTIONS` on the main thread, e.g. '1s scroll 10; 2s dump x.png' (see script.go)")
 	f.StringVar(&opts.report, "report", "", "on exit, write a JSON record of the run (state snapshots, marks, latencies) to `FILE`")
 	f.StringVar(&opts.agentHome, "agent-home", "", "read the agents' hook configuration under `DIR`, not the home directory")

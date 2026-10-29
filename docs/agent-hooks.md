@@ -25,20 +25,25 @@ agent runs.
 
    | Agent | File | How |
    | :- | :- | :- |
-   | Claude Code | `~/.claude/settings.json` | Merge the `"hooks"` key of `bunk notify hooks claude` |
+   | Claude Code | `~/.claude/settings.json` | `bunk notify hooks install claude` |
    | Codex | `~/.codex/hooks.json` | `bunk notify hooks install codex`, then `/hooks` in Codex to trust the hooks |
    | Copilot CLI | `~/.copilot/hooks/bunk.json` | `bunk notify hooks install copilot` |
-   | Gemini CLI | `~/.gemini/settings.json` | Merge the `"hooks"` key of `bunk notify hooks gemini` |
+   | Gemini CLI | `~/.gemini/settings.json` | `bunk notify hooks install gemini` |
 
    - Codex and Copilot CLI read hooks from a file of their own, so `install`
      (or Install in bunk-gui's preferences) writes it. It replaces a file
-     with older bunk hooks, and it leaves alone a file that holds hooks of
-     your own: merge the snippet into that one by hand.
+     with older bunk hooks. A Codex `hooks.json` with hooks of your own gets
+     bunk's merged in, as below; a Copilot CLI file with hooks of your own
+     stays as it is: merge the snippet into that one by hand.
    - Claude Code and Gemini CLI keep hooks in their settings file, next to
-     your other settings, so bunk never writes it. Copy the snippet (Copy
-     snippet in bunk-gui, or the command above) and merge it: add the
-     `"hooks"` key if the file has none, else add each event's entries to
-     the lists already there.
+     your other settings. `install` merges bunk's hooks into it: it removes
+     the hooks that run bunk's notify CLI, of any version, adds the current
+     ones, and keeps every other key, event and hook in its order. It saves
+     the old file as `settings.json.bunk-backup` first, keeps the file's
+     mode and indentation, writes through a symbolic link to its target,
+     and leaves a file that is not JSON alone. To merge by hand instead,
+     copy the snippet (Copy snippet in bunk-gui, or `bunk notify hooks
+     claude`) and add each event's entries to the lists already there.
    - `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `COPILOT_HOME` move those files,
      and bunk looks for them there.
 3. Check again: `bunk notify hooks` shows `installed`. A running agent
@@ -47,15 +52,18 @@ agent runs.
 When bunk's snippets change in a new release, `bunk notify hooks` shows the
 agent as outdated, with the hooks it lacks. Repeat step 2 for it.
 
-- bunk-gui reminds you once per agent and window, with a toast, when a tab
-  shows an agent whose hooks are missing or outdated. The toast's Set up
-  button opens Agent hooks in the preferences. `hooks_hint = false` in
-  bunk-gui's config.toml, or the switch in that section, turns the reminder
-  off.
+- bunk-gui offers to set the hooks up in a banner above the panes: at start
+  for agents whose bunk hooks are outdated, and when a tab first shows an
+  agent whose hooks are missing or outdated. The banner names each agent
+  and the file it changes. Update (Set up) runs the same install for every
+  agent it names; Not now asks again at the next start. `hooks_hint =
+  false` in bunk-gui's config.toml, or the switch in that section, turns
+  the banner off.
 - The hooks files are plain files, so a dotfile manager can keep them in
   sync between machines. The Codex and Copilot files hold only bunk's hooks;
   the settings files of Claude Code and Gemini CLI hold your other settings
-  too.
+  too. A settings file that is a symbolic link into your dotfiles stays a
+  link.
 - Without hooks, bunk still shows the agent's state, inferred from its
   output; [How reports and inference combine](#how-reports-and-inference-combine)
   says what changes with hooks.
@@ -78,7 +86,15 @@ the same colour, over the focused pane's colour.
   row, and ends in "…" when cut. Narrow panes drop the notice, then the
   agent's name, then the label.
 - Focusing the pane (Alt+arrows, a click, the jump key) or typing into it
-  acknowledges the state and clears needs-you and done.
+  acknowledges the state (`Session.AcknowledgeAs`). It clears done and an
+  inferred needs-you. A reported needs-you stays while the agent waits:
+  focus and keys such as arrows and letters leave it, Enter answers it,
+  and Esc or Ctrl+C cancel it.
+- A needs-you from the PreToolUse of a question tool (AskUserQuestion,
+  ExitPlanMode) is held (`"held": true` on the wire): the CLI sets it from
+  the hook's input. It survives Enter, which may only move on to the next
+  question, and ends with the agent's next report (PostToolUse's
+  `working`) or Esc or Ctrl+C.
 - Alt+A (`next_needs_you` in `[keys]`) focuses the next pane whose agent
   needs you, else the next one that is done. It leaves zoom first. Set it to
   `"none"` to send Alt+A to the pane instead.
@@ -121,6 +137,15 @@ newline. Unknown fields are ignored.
 | `event` | string | One of the events below |
 | `message` | string | Optional notice text; the CLI cleans it and cuts it to 1024 bytes |
 | `agent`, `host`, `repo`, `branch`, `cwd` | string | Optional, in in-band reports only: where a remote agent runs, each cut to 128 bytes |
+| `held` | boolean | Optional, with `needs-you`: the agent reports when the wait ends, so Enter does not end it |
+| `agent_session` | string | Optional: the agent's own session ID, from the `session_id` or `sessionId` of the hook's input; 1 to 128 letters, digits, `.`, `_`, `:` and `-`, starting with a letter or digit, else dropped |
+
+The snippets pass the hook's input (`-`) to `working` as well, so every turn
+reports the agent's session ID. bunk-gui keeps the latest one per pane until
+the agent clears or leaves the foreground, and a restored window resumes the
+conversation with it (`claude --resume ID`, `codex resume ID`, `copilot
+--resume=ID`, `gemini --resume ID`). Hooks installed before this field
+existed show as outdated; install the current snippet again.
 
 In-band, a report travels as `ESC ] 1337 ; SetUserVar=bunk_notify=<base64 of
 the line> BEL`, and `session` may be missing. iTerm2 and WezTerm store such a
@@ -139,10 +164,12 @@ sequence as a user variable; other terminals ignore it.
 
 - While a report holds, `Status` shows it and sets `Status.Reported`. Output
   timing, BEL and OSC notifications do not change it.
-- `Session.Acknowledge` drops the report, as it drops an inferred attention
-  request. Inference shows the pane until the next report. Both front ends
-  acknowledge a needs-you or done pane when the user focuses it or types
-  into it.
+- `Session.AcknowledgeAs` drops a done or failed report, and a needs-you
+  report once the user answers (Enter) or cancels (Esc, Ctrl+C) it, a held
+  one only on a cancel. It drops an inferred attention request at any
+  acknowledgement. Inference shows the pane until the next report. Both
+  front ends acknowledge a needs-you or done pane when the user focuses it
+  or types into it.
 - The `clear` event drops the report the same way.
 - A report belongs to the foreground process group it arrived from. When
   that group leaves the foreground, the report is dropped.
@@ -210,7 +237,7 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working -",
             "timeout": 5
           }
         ]
@@ -304,9 +331,10 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
   runs before Claude Code shows either prompt, and PostToolUse runs after
   the user has answered. The hook prints nothing, so Claude Code takes no
   permission decision from it.
-- A rejected plan or a question closed with Esc runs no PostToolUse. The
-  keypress acknowledges the pane, so inference shows it until the next
-  report.
+- A rejected plan or a question closed with Esc runs no PostToolUse. Esc
+  cancels the held needs-you, so inference shows the pane until the next
+  report. A plan rejected with Enter on "No" stays needs-you until Claude
+  Code's next report.
 - A turn can end while shells, subagents or monitors it started still run
   in the background. Claude Code lists them in the Stop input's
   `background_tasks` and resumes the session when they finish, so `notify
@@ -351,7 +379,7 @@ both, so the file can be deployed whole:
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working -",
             "timeout": 5
           }
         ]
@@ -422,8 +450,8 @@ both, so the file can be deployed whole:
   transcript that `transcript_path` names, up to 64 MiB from its end.
   Any reviewer other than `user` reports `working`. Without a transcript
   or a reviewer in it, the request counts as asking the user.
-- After the user answers an approval prompt, the keypress acknowledges
-  the pane, so inference shows it until the next report.
+- After the user answers an approval prompt, Enter acknowledges the pane,
+  so inference shows it until the next report.
 - Codex releases without hooks support only the `notify` program, which
   reports `agent-turn-complete`. `notify` is a top-level key of
   `config.toml`, so place it above the first `[table]`:
@@ -455,7 +483,7 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
     "userPromptSubmitted": [
       {
         "type": "command",
-        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working",
+        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working -",
         "timeoutSec": 5
       }
     ],
@@ -470,7 +498,7 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
     "agentStop": [
       {
         "type": "command",
-        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify done",
+        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify done -",
         "timeoutSec": 5
       }
     ],
@@ -520,7 +548,7 @@ Merge into `~/.gemini/settings.json`:
           {
             "name": "bunk-working",
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working -",
             "timeout": 5000
           }
         ]

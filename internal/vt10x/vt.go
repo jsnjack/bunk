@@ -124,6 +124,10 @@ type View interface {
 	// CopyRow copies live row y into dst, reusing dst's storage. Decode cells
 	// with dst.Glyph; dynamic colour overrides are not applied.
 	CopyRow(y int, dst *Row)
+
+	// CopyPrimaryRow is CopyRow for the primary screen, which stays put
+	// while the alternate screen is shown.
+	CopyPrimaryRow(y int, dst *Row)
 }
 
 type TerminalOption func(*TerminalInfo)

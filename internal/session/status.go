@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"bunk/internal/input"
 	"bunk/internal/notify/wire"
 )
 
@@ -57,6 +58,11 @@ type Status struct {
 	// Command is the last command that ended in the foreground, for
 	// notifications about long ones; its Ended is zero before the first.
 	Command Command
+	// AgentSession is the foreground agent's own session ID from its hook
+	// reports, which resumes its conversation (claude --resume ID); "" when
+	// it has reported none. It is forgotten when the agent clears or leaves
+	// the foreground.
+	AgentSession string
 	// Running is the command the shell runs now, while it is one the user
 	// may wait on (command.go); its Started is zero otherwise. Took and
 	// Ended are zero.
@@ -81,6 +87,8 @@ func (s *Session) Status() Status {
 		SSHHost:  s.SSHHost,
 		Command:  s.ended,
 		Running:  s.running(v.agent != ""),
+
+		AgentSession: s.agentSession,
 	}
 	if r := v.remote; r != (remoteAgent{}) {
 		st.Host, st.Cwd, st.Repo, st.Branch = r.host, r.cwd, r.repo, r.branch
@@ -91,17 +99,57 @@ func (s *Session) Status() Status {
 	return st
 }
 
-// Acknowledge records that the user has seen the session. It clears a
-// pending attention request, an inferred finished turn and the agent's
-// explicit report, so inference shows the session until the agent reports
-// again. It keeps what a remote agent's report said about where it runs.
-// It runs no hook itself: the next output or process tick (at most
-// Timing.Poll later) announces the change through Hooks.StatusChanged, so
-// callers may hold their own locks.
-func (s *Session) Acknowledge() {
+// Ack is how the user met a session's agent.
+type Ack uint8
+
+const (
+	// AckSeen: the user looked at the session (focus, a jump, a click on
+	// its notification) or pressed a key that moves through a prompt's
+	// choices: an arrow, Tab, Home, End, PgUp or PgDn.
+	AckSeen Ack = iota
+	// AckAnswer: any other key or text, such as Enter, "1" or "y", which
+	// answer a prompt.
+	AckAnswer
+	// AckCancel: Esc or Ctrl+C, which dismiss a prompt or a question.
+	AckCancel
+)
+
+// KeyAck is the Ack of a key the user typed into the session.
+func KeyAck(ev input.Event) Ack {
+	switch ev.Key {
+	case input.KeyUp, input.KeyDown, input.KeyLeft, input.KeyRight, input.KeyTab, input.KeyBacktab,
+		input.KeyHome, input.KeyEnd, input.KeyPgUp, input.KeyPgDn:
+		return AckSeen
+	case input.KeyEscape:
+		return AckCancel
+	case input.KeyRune:
+		if ev.Mod == input.ModCtrl && ev.Rune == 'c' {
+			return AckCancel
+		}
+	}
+	return AckAnswer
+}
+
+// Acknowledge records that the user answered the session's agent:
+// AcknowledgeAs(AckAnswer). Tests and callers without a key use it.
+func (s *Session) Acknowledge() { s.AcknowledgeAs(AckAnswer) }
+
+// AcknowledgeAs records that the user met the session as how says. It
+// clears a pending attention request and an inferred finished turn, and a
+// done or failed report, so inference shows the session until the agent
+// reports again. A needs-you the agent reported stays while the agent still
+// waits: until an answer, or for a held one (Report.Held, a question whose
+// end the agent reports, where a key may only move to the next question)
+// until a cancel (Esc, Ctrl+C). It keeps what
+// a remote agent's report said about where it runs. It runs no hook itself:
+// the next output or process tick (at most Timing.Poll later) announces the
+// change through Hooks.StatusChanged, so callers may hold their own locks.
+func (s *Session) AcknowledgeAs(how Ack) {
 	s.Lock()
 	s.needsYou, s.notice = false, ""
-	s.report = agentReport{}
+	if r := s.report; r.state != AgentNeedsYou || how == AckCancel || how == AckAnswer && !r.held {
+		s.report = agentReport{}
+	}
 	s.workStart = time.Time{}
 	s.Unlock()
 }
@@ -567,6 +615,11 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 		s.remote, s.remotePGID = remoteAgent{}, 0
 		changed = true
 	}
+	if pgidChanged && s.agentSession != "" && (pgid <= 0 || pgid != s.agentSessionPGID) {
+		// The agent whose conversation it names has left the foreground.
+		s.agentSession, s.agentSessionPGID = "", 0
+		changed = true
+	}
 	if agent != s.agent {
 		if s.agent != "" {
 			s.lastAgent, s.agentLeft = s.agent, now
@@ -638,7 +691,8 @@ const (
 type agentReport struct {
 	state  AgentState // AgentNone: no report, inference decides
 	notice string
-	pgid   int // foreground process group when the report arrived; 0 if unknown
+	pgid   int  // foreground process group when the report arrived; 0 if unknown
+	held   bool // a needs-you the agent ends with a report of its own (Report.Held)
 }
 
 // Notify records a state the agent in the session reported about itself.
@@ -651,6 +705,13 @@ type agentReport struct {
 // Hooks.StatusChanged (as passed to Run) once, without the lock, so callers
 // must not hold a lock that the hook takes.
 func (s *Session) Notify(ev Event, message string) {
+	s.NotifyReport(Report{Event: ev, Message: message})
+}
+
+// NotifyReport is Notify with the rest of a local report: the agent's
+// session ID.
+func (s *Session) NotifyReport(r Report) {
+	ev := r.Event
 	if _, ok := ParseEvent(ev.String()); !ok {
 		return
 	}
@@ -659,7 +720,7 @@ func (s *Session) Notify(ev Event, message string) {
 		pgid = s.fgPGID()
 	}
 	s.Lock()
-	s.record(Report{Event: ev, Message: message}, pgid)
+	s.record(Report{Event: ev, Message: r.Message, AgentSession: r.AgentSession, Held: r.Held}, pgid)
 	changed := s.takeAgentChange(time.Now())
 	hook := s.statusHook
 	s.Unlock()
@@ -677,6 +738,12 @@ type Report struct {
 	// Agent, Host, Repo, Branch and Cwd describe a remote agent; all are ""
 	// in local reports.
 	Agent, Host, Repo, Branch, Cwd string
+	// AgentSession is the agent's own session ID, which resumes its
+	// conversation; "" keeps the one reported before.
+	AgentSession string
+	// Held marks a needs-you whose end the agent reports itself, such as
+	// a question it asks: Acknowledge keeps it.
+	Held bool
 }
 
 // record applies r, which arrived while process group pgid was in the
@@ -692,6 +759,7 @@ func (s *Session) record(r Report, pgid int) {
 		s.report = agentReport{}
 		s.hooked, s.workStart = false, time.Time{}
 		s.remote, s.remotePGID = remoteAgent{}, 0
+		s.agentSession, s.agentSessionPGID = "", 0
 		if s.remoteClient && s.agent == "" {
 			s.needsYou, s.notice = false, ""
 		}
@@ -701,7 +769,7 @@ func (s *Session) record(r Report, pgid int) {
 	case EventIdle:
 		rep.state = AgentIdle
 	case EventNeedsYou:
-		rep.state, rep.notice = AgentNeedsYou, cleanNotice(r.Message, defaultNotice)
+		rep.state, rep.notice, rep.held = AgentNeedsYou, cleanNotice(r.Message, defaultNotice), r.Held
 	case EventDone:
 		rep.state, rep.notice = AgentDone, cleanNotice(r.Message, "")
 	case EventFailed:
@@ -712,6 +780,9 @@ func (s *Session) record(r Report, pgid int) {
 	rep.pgid = pgid
 	s.report = rep
 	s.hooked, s.hookedPGID = true, pgid
+	if wire.ValidAgentSession(r.AgentSession) {
+		s.agentSession, s.agentSessionPGID = r.AgentSession, pgid
+	}
 	where := remoteAgent{
 		agent: cleanNotice(r.Agent, ""), host: cleanNotice(r.Host, ""), repo: cleanNotice(r.Repo, ""),
 		branch: cleanNotice(r.Branch, ""), cwd: cleanNotice(r.Cwd, ""),
@@ -741,7 +812,7 @@ func parseInBand(payload []byte) (token string, r Report, ok bool) {
 		return "", Report{}, false
 	}
 	return w.Session, Report{Event: ev, Message: w.Message, Agent: w.Agent, Host: w.Host, Repo: w.Repo,
-		Branch: w.Branch, Cwd: w.Cwd}, true
+		Branch: w.Branch, Cwd: w.Cwd, AgentSession: w.AgentSession, Held: w.Held}, true
 }
 
 // onInBand records a report that arrived in the session's output

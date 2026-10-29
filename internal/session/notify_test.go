@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"bunk/internal/input"
 	"bunk/internal/vt10x"
 )
 
@@ -471,6 +472,100 @@ func TestStatusChangeAnnouncedOnce(t *testing.T) {
 	for _, step := range steps {
 		if got := step.run(); got != step.want {
 			t.Fatalf("%s: changed = %v, want %v", step.name, got, step.want)
+		}
+	}
+}
+
+// TestNotifyAgentSession: a report's agent session ID shows in Status
+// until the agent clears or its group leaves the foreground; a report
+// without one keeps it, and an ID that is not wire.ValidAgentSession is
+// dropped.
+func TestNotifyAgentSession(t *testing.T) {
+	s := newTestSession(20, 2)
+	s.NotifyReport(Report{Event: EventWorking, AgentSession: "sess-1"})
+	if got := s.Status().AgentSession; got != "sess-1" {
+		t.Fatalf("AgentSession = %q, want sess-1", got)
+	}
+	s.NotifyReport(Report{Event: EventDone, AgentSession: "$(rm -rf ~)"})
+	s.Notify(EventIdle, "")
+	if got := s.Status().AgentSession; got != "sess-1" {
+		t.Fatalf("after reports without a valid ID: %q, want sess-1", got)
+	}
+	s.NotifyReport(Report{Event: EventWorking, AgentSession: "sess-2"})
+	if got := s.Status().AgentSession; got != "sess-2" {
+		t.Fatalf("a new conversation (/clear): %q, want sess-2", got)
+	}
+	s.Notify(EventClear, "")
+	if got := s.Status().AgentSession; got != "" {
+		t.Fatalf("after clear: %q", got)
+	}
+
+	s.NotifyReport(Report{Event: EventWorking, AgentSession: "sess-3"})
+	s.agentSessionPGID = 4242
+	s.refreshStatus(0, 4242, "claude", true)
+	if got := s.Status().AgentSession; got != "sess-3" {
+		t.Fatalf("same group: %q, want sess-3", got)
+	}
+	if changed := s.refreshStatus(0, 4300, "bash", true); !changed || s.Status().AgentSession != "" {
+		t.Fatalf("group left: changed=%v, AgentSession %q", changed, s.Status().AgentSession)
+	}
+}
+
+// TestAcknowledgeKeepsReportedNeedsYou: looking at a session, or keys that
+// move through a prompt's choices, leave a needs-you its agent reported;
+// other keys answer it, unless the agent reports the end itself (Held, a question), and Esc
+// or Ctrl+C cancel either. A done goes at any meeting, and so does an
+// inferred request.
+func TestAcknowledgeKeepsReportedNeedsYou(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rep  Report
+		how  Ack
+		want AgentState
+	}{
+		{"seen needs-you", Report{Event: EventNeedsYou}, AckSeen, AgentNeedsYou},
+		{"answered needs-you", Report{Event: EventNeedsYou}, AckAnswer, AgentNone},
+		{"cancelled needs-you", Report{Event: EventNeedsYou}, AckCancel, AgentNone},
+		{"seen question", Report{Event: EventNeedsYou, Held: true}, AckSeen, AgentNeedsYou},
+		{"answered question", Report{Event: EventNeedsYou, Held: true}, AckAnswer, AgentNeedsYou},
+		{"cancelled question", Report{Event: EventNeedsYou, Held: true}, AckCancel, AgentNone},
+		{"seen done", Report{Event: EventDone}, AckSeen, AgentNone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestSession(20, 2)
+			s.NotifyReport(tc.rep)
+			s.AcknowledgeAs(tc.how)
+			if got := s.Status().State; got != tc.want {
+				t.Errorf("state %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// The agent's own report ends a held question.
+	s := newTestSession(20, 2)
+	s.NotifyReport(Report{Event: EventNeedsYou, Held: true})
+	s.Acknowledge()
+	s.Notify(EventWorking, "")
+	if got := s.Status().State; got != AgentWorking {
+		t.Errorf("after the answer: %v", got)
+	}
+}
+
+func TestKeyAck(t *testing.T) {
+	for _, tc := range []struct {
+		ev   input.Event
+		want Ack
+	}{
+		{input.Event{Key: input.KeyEnter}, AckAnswer},
+		{input.Event{Key: input.KeyEnter, Mod: input.ModKeypad}, AckAnswer},
+		{input.Event{Key: input.KeyEscape}, AckCancel},
+		{input.Event{Key: input.KeyRune, Rune: 'c', Mod: input.ModCtrl}, AckCancel},
+		{input.Event{Key: input.KeyRune, Rune: '1'}, AckAnswer}, // picks a choice of a permission prompt
+		{input.Event{Key: input.KeyRune, Rune: 'y'}, AckAnswer},
+		{input.Event{Key: input.KeyDown}, AckSeen},
+		{input.Event{Key: input.KeyBacktab}, AckSeen},
+	} {
+		if got := KeyAck(tc.ev); got != tc.want {
+			t.Errorf("KeyAck(%+v) = %v, want %v", tc.ev, got, tc.want)
 		}
 	}
 }

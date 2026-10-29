@@ -113,7 +113,7 @@ func guiBinary(t *testing.T) string {
 
 // installAllHooks writes every agent's hook snippet under home, the
 // --agent-home of scenarios that pass none of their own: their agents
-// have hooks, so no reminder toast comes between a scenario and its
+// have hooks, so no hooks banner comes between a scenario and its
 // waits.
 func installAllHooks(home string) error {
 	d := notify.Dirs{Home: home}
@@ -263,7 +263,10 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	// wrapper, which is a bash script.
 	shrc := filepath.Join(dir, "shrc")
 	must(t, os.WriteFile(shrc, []byte("PS1='$ '\n"), 0o600))
-	cmd.Env = append(os.Environ(), "SHELL=/bin/sh", "ENV="+shrc, "HISTFILE=/dev/null", "BUNK_TEST_DIR="+dir)
+	// Saved windows (restore.go) stay in the scenario's directory: the
+	// wrapper reads XDG_STATE_HOME_TEST, as it sets XDG_STATE_HOME itself.
+	cmd.Env = append(os.Environ(), "SHELL=/bin/sh", "ENV="+shrc, "HISTFILE=/dev/null", "BUNK_TEST_DIR="+dir,
+		"XDG_STATE_HOME_TEST="+filepath.Join(dir, "state"))
 	cmd.Env = append(cmd.Env, sc.env...)
 	var stdout *os.File
 	stdout, err = os.Create(filepath.Join(dir, "stdout.txt"))

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"unsafe"
 
@@ -41,6 +42,9 @@ type node struct {
 	a, b     *node
 	parent   *node
 	vertical bool // children stacked top/bottom
+	// ratio is the share of a to give a restored split once GTK lays it
+	// out (restore.go); 0 when none is pending.
+	ratio float64
 }
 
 func (n *node) widget() gtk.Widgetter {
@@ -132,6 +136,12 @@ func argsFor(cmd string) []string {
 
 // newPane starts a session for tab t and its TermView.
 func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
+	return a.newPaneWith(t, args, dir, cols, rows, nil)
+}
+
+// newPaneWith is newPane that first shows history, the scrollback of a
+// restored pane (session.History), ahead of the child's output.
+func (a *App) newPaneWith(t *Tab, args []string, dir string, cols, rows int, history []byte) *Pane {
 	p := &Pane{id: len(a.panes), app: a, tab: t, tv: newTermView(&a.theme)}
 	a.panes = append(a.panes, p)
 	ptr, cv := viewNewC(p.id)
@@ -188,6 +198,9 @@ func (a *App) newPane(t *Tab, args []string, dir string, cols, rows int) *Pane {
 	p.s, p.cols, p.rows = s, max(2, cols), max(1, rows)
 	p.title = defaultTitle
 	p.st = s.Status()
+	if len(history) > 0 {
+		s.Feed(history)
+	}
 	s.Run(session.Hooks{
 		Applied: p.onApplied, Output: p.onOutput, OSC: p.onOSC,
 		Redraw: p.wake, Exited: p.onExited, Closed: p.onClosed,
@@ -349,11 +362,7 @@ func (a *App) split(p *Pane, args []string) *Pane {
 		orient = gtk.OrientationVertical
 	}
 	a.win.SetFocus(nil) // see closePane
-	paned := gtk.NewPaned(orient)
-	paned.SetWideHandle(false)
-	paned.SetShrinkStartChild(false)
-	paned.SetShrinkEndChild(false)
-	paned.NotifyProperty("position", func() { a.splitMoved(paned) })
+	paned := a.newPaned(orient, n)
 	t.replace(n, paned)
 	paned.SetStartChild(p.frame)
 	paned.SetEndChild(np.frame)
@@ -370,6 +379,31 @@ func (a *App) split(p *Pane, args []string) *Pane {
 	t.restyle()
 	a.refreshChrome()
 	return np
+}
+
+// newPaned returns the divider of split n. A restored split gets its
+// ratio when GTK first lays it out, which for a tab not shown yet is when
+// it is first selected.
+func (a *App) newPaned(orient gtk.Orientation, n *node) *gtk.Paned {
+	paned := gtk.NewPaned(orient)
+	paned.SetWideHandle(false)
+	paned.SetShrinkStartChild(false)
+	paned.SetShrinkEndChild(false)
+	paned.NotifyProperty("position", func() { a.splitMoved(paned) })
+	paned.NotifyProperty("max-position", func() {
+		size := paned.Width()
+		if orient == gtk.OrientationVertical {
+			size = paned.Height()
+		}
+		if n.ratio <= 0 || size <= 1 {
+			return
+		}
+		pos := int(math.Round(n.ratio * float64(size-1))) // the divider takes 1 px
+		n.ratio = 0
+		// Not during the allocation that announced the size.
+		coreglib.IdleAdd(func() { paned.SetPosition(pos) })
+	})
+	return paned
 }
 
 // replace puts w where n's widget is in the tree's GTK hierarchy and
@@ -558,7 +592,7 @@ func (a *App) onPaneFocus(p *Pane) {
 		t.focus = p
 		t.restyle()
 	}
-	p.acknowledge()
+	p.acknowledge(session.AckSeen)
 	if a.active == t {
 		a.win.SetTitle(p.title)
 	}
