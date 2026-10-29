@@ -80,11 +80,10 @@ type App struct {
 	cfgMonitor   gio.FileMonitorrer
 	fileSettings Settings // as the config file last read had them
 	toastLog     []string
-	toastButton  string          // the button label of the last toast, "" without one
-	toastAct     func()          // what that button does
-	hinted       map[string]bool // agents hooksHint looked at (prefs_hooks.go)
-	chromeKey    string          // what the tab items show, to skip identical rebuilds
-	layout       string          // "bar" or "rail"
+	toastButton  string // the button label of the last toast, "" without one
+	toastAct     func() // what that button does
+	chromeKey    string // what the tab items show, to skip identical rebuilds
+	layout       string // "bar" or "rail"
 	railOpen     bool
 	fontSize     float64          // points; settings.FontSize is 100 %
 	fontDesc     string           // Pango description at fontSize; atlases are keyed by it
@@ -141,6 +140,8 @@ type App struct {
 	exitArmed, finished bool
 	pendingClip         string     // OSC 52 text waiting for the window to be active
 	alerts              alertState // desktop notifications (alerts.go)
+	restorer            restorer   // session restore (restore.go)
+	hookOffer           hookOffer  // the banner offering agent hooks (prefs_hooks.go)
 	configErr           error
 	fatalErr            error // why the application quit early (fatal)
 }
@@ -174,7 +175,7 @@ func (a *App) activate() {
 	a.stack.SetVExpand(true)
 	a.stack.AddCSSClass("bunk-content")
 	a.rootBox = gtk.NewBox(gtk.OrientationHorizontal, 0)
-	a.rootBox.Append(a.stack)
+	a.rootBox.Append(a.buildContent(a.stack))
 	a.overlay = gtk.NewOverlay()
 	a.overlay.SetChild(a.rootBox)
 	a.toasts = adw.NewToastOverlay()
@@ -205,16 +206,20 @@ func (a *App) activate() {
 	a.win.AddController(ptr)
 
 	a.started = time.Now()
-	first := a.newTab(a.cfg.cmd, "")
-	if first == nil {
-		return
+	if !a.initRestore() {
+		first := a.newTab(a.cfg.cmd, "")
+		if first == nil {
+			return
+		}
+		for _, cmd := range a.cfg.tabs {
+			a.newTab(cmd, "")
+		}
+		a.selectTab(first)
 	}
-	for _, cmd := range a.cfg.tabs {
-		a.newTab(cmd, "")
-	}
-	a.selectTab(first)
 	a.win.Present()
-	first.focus.widget.GrabFocus()
+	a.active.focus.widget.GrabFocus()
+	a.showRestoreOffer()
+	a.offerOutdatedHooks()
 	if a.configErr != nil {
 		a.toast("Settings: " + a.configErr.Error())
 		fmt.Fprintln(os.Stderr, "bunk-gui:", a.configErr)
@@ -427,6 +432,7 @@ func (a *App) finish(reason string) {
 		a.reportError("%d shots still waiting for a frame at quit", a.shotsPending)
 	}
 	a.waitPNG()
+	a.finishRestore(reason)
 	if a.reportOn() {
 		a.writeReport(reason)
 	}

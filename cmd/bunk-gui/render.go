@@ -167,10 +167,9 @@ type Renderer struct {
 	// atlas texH pixels tall.
 	atlasNext, texH int
 	clearRGB        [3]float32
-	// Inactive panes fade towards the background by dim (0: off); a pane
-	// that needs the user gets an orange inner ring of ringPx pixels.
-	dim, ringPx float32
-	dimLoc      [2]int32 // bg, text programs
+	// Inactive panes fade towards the background by dim (0: off).
+	dim    float32
+	dimLoc [2]int32 // bg, text programs
 
 	img imageLayer // image cells at full resolution (images.go)
 
@@ -351,22 +350,6 @@ func (r *Renderer) setDim() {
 	gl.Uniform4f(r.dimLoc[0], r.clearRGB[0], r.clearRGB[1], r.clearRGB[2], r.dim)
 	gl.UseProgram(r.textProg)
 	gl.Uniform4f(r.dimLoc[1], r.clearRGB[0], r.clearRGB[1], r.clearRGB[2], r.dim)
-}
-
-// DrawRing draws the needs-you ring (#ffb454) inside the framebuffer edges.
-func (r *Renderer) DrawRing() {
-	if r.ringPx <= 0 {
-		return
-	}
-	w, h, t := float32(r.fbW), float32(r.fbH), r.ringPx
-	gl.UseProgram(r.rectProg)
-	gl.Uniform2f(r.rectLoc.viewport, w, h)
-	gl.Uniform1f(r.rectLoc.yflip, r.yflip)
-	gl.Uniform4f(r.rectLoc.color, 1, 0xb4/255.0, 0x54/255.0, 1)
-	for _, rc := range [4][4]float32{{0, 0, w, t}, {0, h - t, w, t}, {0, 0, t, h}, {w - t, 0, t, h}} {
-		gl.Uniform4f(r.rectLoc.rect, rc[0], rc[1], rc[2], rc[3])
-		gl.DrawArrays(gl.TRIANGLE_STRIP, 0, 4)
-	}
 }
 
 // DrawScrollbar draws the scrollbar thumb for a view scrolled off rows up

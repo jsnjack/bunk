@@ -82,6 +82,8 @@ internal/session/   One terminal session, shared by front ends
   command.go        Commands the shell runs, from OSC 133;C/D marks or the
                     process poll; the last one that ended (Status.Command)
   search.go         Case-insensitive search over scrollback and the live grid
+  history.go        History: the primary screen and scrollback as SGR text
+                    with OSC 8 links, which a restored pane replays
   status.go         Agent status: AgentSpec detection, attention requests
                     (OSC 9/99/777, BEL), failures (OSC 133;D), done after a
                     long working stretch, git branch, explicit agent
@@ -92,6 +94,10 @@ internal/session/   One terminal session, shared by front ends
   ptyfd_linux.go    Pollable PTY master, so Close ends ReadLoop
   writer.go         PTY writer: one queue for query replies and input,
                     written by one goroutine; caps, drops and refusals
+
+internal/restore/   Saved windows for session restore: snapshot types, the
+                    store of slots (one per window, held by a lock while it
+                    runs), scrollback files, each agent's resume command
 
 internal/badges/    Pane status badges for both front ends: which show, their
                     order, text and fitting (Layout); badgetest holds the cases
@@ -152,6 +158,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
   scope.go          Each pane's child in a systemd scope of its own, so an
                     OOM kill in a pane leaves bunk-gui and other panes alone
   tabname.go        Tab names: rename dialog, double-click on a tab
+  restore.go        Session restore: saves the window, the startup banner,
+                    rebuilds tabs and splits, resumes agents (--restore)
   prefs_hooks.go    Agent hooks in Preferences (state, Install, Copy
                     snippet) and the toast for an agent without hooks
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
@@ -453,7 +461,7 @@ These are the key fields agents may need to know about:
 
 bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
 `rail_open`, `rail_style`, `font`, `font_size`, `text_zoom`, `theme`, `hooks_hint`,
-`[themes.NAME]`, `[[agents]]`, `[notifications]` and `[keys]`. `theme` and
+`restore`, `restore_scrollback`, `[themes.NAME]`, `[[agents]]`, `[notifications]` and `[keys]`. `theme` and
 `[themes.NAME]` work as in bunk's config, and `--theme` overrides `theme`
 for one run.
 `[notifications]` has the same keys as in bunk's config. `[keys]` uses
@@ -571,6 +579,41 @@ its default; Design Decisions says where the defaults come from.
   dialog's sheet maps its content a frame after it opens, and GTK drops
   keys for unmapped widgets although the entry already has the focus;
   window tests wait for `rename.ready` before they type.
+
+- bunk-gui restores sessions (`restore.go`, `internal/restore`).
+  - Each window holds a slot in `$XDG_STATE_HOME/bunk-gui/windows`:
+    `<id>.json` (tabs, split ratios, focus, zoom, and each pane's
+    directory, agent, agent session ID and ssh or mosh argv), `<id>/`
+    with each pane's scrollback (`Session.History`), and `<id>.lock`,
+    which the running window holds with flock. Files are 0600, in a 0700
+    directory.
+  - The layout is written every 2 s when it changed, and scrollback of
+    panes with new output every 30 s, off the main thread, and both once
+    more as bunk-gui quits. Agent panes skip scrollback: the agent prints
+    its conversation again.
+  - A start whose slot is new lists the slots no lock holds and shows a
+    banner over the panes. Restore builds the newest here, in place of a
+    first tab nobody typed in, and starts `bunk-gui --restore ID` for each
+    other; Dismiss deletes them. New window (Ctrl+Shift+N) passes
+    `--offer-restore=false`.
+  - A restored pane starts the shell in its directory, replays its
+    scrollback with a "restored from" line, and types its command once the
+    shell has been quiet for 300 ms (at most 5 s): the agent's resume
+    command with Enter, or the ssh or mosh command line without it.
+    `restore.ResumeCommands` uses the session ID that hooks report
+    (`Status.AgentSession`), else the directory's latest conversation
+    when no other pane ran that agent there. Remote agents are not
+    resumed.
+  - A split's ratio is applied when GTK first lays it out (`node.ratio`,
+    `newPaned`), so tabs not shown yet get theirs when selected. The
+    containers' focus children point at the focused pane, or GTK would
+    focus the first pane when the tab is shown.
+  - Quitting (`finish("quit")`) removes the slot while other windows run,
+    and a window without a live pane leaves none; any other end keeps it.
+  - Window tests get their own state directory: the harness sets
+    `XDG_STATE_HOME_TEST`, which `scripts/headless-gui.sh` turns into
+    `XDG_STATE_HOME`. `TestGUIRestoreSession` saves, quits and restores
+    with a fake `claude` on PATH that reports a session ID.
 
 - Keyboard passthrough is per pane. Ctrl+F12 (`[keys].passthrough`) toggles
   forwarding of all other keys through the normal terminal encoder. The toggle
@@ -778,8 +821,17 @@ its default; Design Decisions says where the defaults come from.
   OSC 9/99/777 notifications and BEL from an agent as "needs you". VTE's
   "Command completed" notices are ignored. Agent hooks can report state
   through `internal/notify` (`docs/agent-hooks.md`); `Session.Notify` takes
-  priority over inference until `Acknowledge`, `clear` or a foreground
-  change. Every change of the agent state runs `Hooks.StatusChanged` once:
+  priority over inference until `AcknowledgeAs`, `clear` or a foreground
+  change.
+  - A reported needs-you means the agent still waits, so looking at the
+    pane leaves it: focus, Alt+A, a notification click and keys that answer
+    nothing (`AckSeen`) keep it, Enter (`AckAnswer`) and Esc or Ctrl+C
+    (`AckCancel`) end it. A held one (`Report.Held`, from the PreToolUse
+    of AskUserQuestion or ExitPlanMode) survives Enter, which may only move
+    to the next question, and ends with PostToolUse's report or a cancel.
+    Done, failed and inferred requests clear at any acknowledgement.
+    bunk-gui draws no frame around a pane that needs the user; the badge,
+    the tab and the rail show it. Every change of the agent state runs `Hooks.StatusChanged` once:
   the reader, its idle timer, the 1 s process tick and `Notify` share one
   record of the last announced state. Without hooks, Claude Code only sends
   OSC notifications to terminals it recognises; set its
@@ -808,7 +860,8 @@ its default; Design Decisions says where the defaults come from.
     `turn_context` of the hook's `transcript_path` (`notify/codex.go`).
     Any reviewer but `user` (Codex's automatic reviewer) reports working;
     without a transcript or reviewer the request asks the user.
-- Users set up agent hooks with guidance, not behind their back.
+- Users set up agent hooks with guidance, not behind their back: bunk
+  writes an agent's configuration only when the user asks for it.
   - `notify.CheckHooks` reads each agent's configuration (honouring
     `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`) and calls an agent's
     hooks installed when every hook of the current snippet is there by
@@ -816,18 +869,28 @@ its default; Design Decisions says where the defaults come from.
     missing otherwise. Codex's `config.toml` counts beside its
     `hooks.json`, and every `*.json` in Copilot CLI's `hooks/`.
   - `bunk notify hooks` lists the states and next steps; `bunk notify hooks
-    install codex|copilot` writes the snippets that are files of their own.
-    It replaces older bunk hooks and refuses a file with other hooks. The
-    settings files of Claude Code and Gemini CLI hold other settings, so
-    bunk only prints or copies their snippet.
+    install AGENT` (`notify.InstallHooks`) sets them up. Codex's and Copilot
+    CLI's files of bunk's own are written whole, replacing older bunk hooks.
+    Settings files that hold other settings or hooks (Claude Code's and
+    Gemini CLI's settings.json, a Codex hooks.json with the user's hooks)
+    get a merge (`merge.go`): handlers whose command runs bunk's notify CLI
+    (`bunkCommand`, any version) go, the snippet's are appended, and every
+    other key, event, group and handler keeps its order. The old file is
+    saved as `<file>.bunk-backup`, the mode and indentation stay, a
+    symbolic link's target is written, and a file that is not JSON is
+    refused. A Copilot CLI file with other hooks is refused too.
   - bunk-gui's Preferences show the same states with Install and Copy
-    snippet buttons and a link to the setup guide. A toast, once per agent
-    and window process, names an agent a tab shows whose hooks are missing
-    or outdated, unless the agent is remote or has reported; its button
-    opens that section. `hooks_hint = false` turns it off.
+    snippet buttons and a link to the setup guide.
+  - bunk-gui offers the install in a banner above the panes (`banner.go`,
+    under the restore banner): at start for agents whose bunk hooks are
+    outdated, and when a tab first shows an agent whose hooks are missing
+    or outdated, unless the agent is remote, or has reported with hooks
+    that are only missing. It names each agent and the file it changes;
+    Update runs `InstallHooks` for each and toasts the result, Not now
+    hides it until the next start. `hooks_hint = false` turns it off.
   - Window tests pass `--agent-home`, a directory with every agent's hooks
-    installed, so no reminder toast comes between a scenario's steps; the
-    hook tests pass an empty one.
+    installed, so no hooks banner comes between a scenario's steps; the
+    hook tests pass an empty one or one with outdated hooks.
 - Agents on hosts reached over ssh report in-band
   (`docs/remote-agent-status.md`). Without a reachable socket, `bunk notify`
   writes the report line as `OSC 1337 ; SetUserVar=bunk_notify=<base64>` to
@@ -849,7 +912,8 @@ its default; Design Decisions says where the defaults come from.
   `Session.Status` before taking the session lock; the badge and the
   needs-you/done separator colours use that copy (`Pane.agent`).
   `Hooks.StatusChanged` only wakes the render loop. Focus or typing calls
-  `Acknowledge`; `next_needs_you` (Alt+A) jumps. bunk serves the notify
+  `AcknowledgeAs` (`session.KeyAck` sorts keys into answers, cancels and
+  the rest); `next_needs_you` (Alt+A) jumps. bunk serves the notify
   socket like bunk-gui, and `bunk notify` runs the same CLI.
 - An agent notifies the user when nobody is looking at it.
   `internal/alert`'s Tracker decides for both front ends, from the status
@@ -983,7 +1047,8 @@ its default; Design Decisions says where the defaults come from.
 - Only `-d` and `-c` have short forms (plus cobra's `-h`); every other flag
   is long-form. bunk-gui's test flags (`--do`, `--report`, `--verify`,
   `--wait-focus`, `--alloc-probe`, `--dump`, `--dump-size`,
-  `--maximize-after`, `--agent-home`) are hidden from `--help`.
+  `--maximize-after`, `--agent-home`) and the flags of windows it starts
+  itself (`--restore`, `--offer-restore`) are hidden from `--help`.
 - In bunk-gui, finish a D-Bus call with `callFinish` (`desknotify.go`), not
   gotk4's `DBusConnection.CallFinish`. gotk4 v0.4.1 sets a finalizer on the
   NULL reply of a failed call, and GLib logs a critical when the garbage

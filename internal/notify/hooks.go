@@ -62,7 +62,7 @@ func (r agentHooks) step(prog string) string {
 	if r.own {
 		return fmt.Sprintf(r.how, prog)
 	}
-	return fmt.Sprintf(`merge the "hooks" key of "%s notify hooks %s" into it`, prog, r.name)
+	return fmt.Sprintf(`run "%[1]s notify hooks install %[2]s", which merges the hooks into it and keeps a copy, or merge the "hooks" key of "%[1]s notify hooks %[2]s" by hand`, prog, r.name)
 }
 
 // mergeKey is the setup step of a snippet merged into a settings file.
@@ -84,10 +84,10 @@ const (
 // recipes are the agents "notify hooks" knows, in listing order.
 var recipes = []agentHooks{
 	{
-		name: "claude", homeDir: ".claude", envDir: "CLAUDE_CONFIG_DIR", file: "settings.json", how: mergeKey,
+		name: "claude", homeDir: ".claude", envDir: "CLAUDE_CONFIG_DIR", file: "settings.json", how: mergeKey + " or run %[1]s notify hooks install claude",
 		read: readSettingsHooks("settings.json"),
 		hooks: []hook{
-			{event: "UserPromptSubmit", args: "working"},
+			{event: "UserPromptSubmit", args: "working -"},
 			{event: "PreToolUse", matcher: claudeQuestionTools, args: "needs-you -"},
 			{event: "PostToolUse", matcher: claudeQuestionTools, args: "working"},
 			{event: "Notification", matcher: "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input", args: "needs-you -"},
@@ -103,7 +103,7 @@ var recipes = []agentHooks{
 		after: "Run /hooks in Codex once to trust the hooks.",
 		read:  readCodexHooks,
 		hooks: []hook{
-			{event: "UserPromptSubmit", args: "working"},
+			{event: "UserPromptSubmit", args: "working -"},
 			// The CLI reads the input: a request that the automatic
 			// reviewer decides (approvals_reviewer) reports working.
 			{event: "PermissionRequest", args: "needs-you -"},
@@ -119,18 +119,18 @@ var recipes = []agentHooks{
 		how:  "%[1]s notify hooks install copilot",
 		read: readCopilotHooks,
 		hooks: []hook{
-			{event: "userPromptSubmitted", args: "working"},
+			{event: "userPromptSubmitted", args: "working -"},
 			{event: "notification", matcher: "permission_prompt|elicitation_dialog", args: "needs-you -"},
-			{event: "agentStop", args: "done"},
+			{event: "agentStop", args: "done -"},
 			{event: "sessionEnd", args: "clear"},
 		},
 		render: renderCopilot,
 	},
 	{
-		name: "gemini", homeDir: ".gemini", file: "settings.json", how: mergeKey,
+		name: "gemini", homeDir: ".gemini", file: "settings.json", how: mergeKey + " or run %[1]s notify hooks install gemini",
 		read: readSettingsHooks("settings.json"),
 		hooks: []hook{
-			{event: "BeforeAgent", args: "working"},
+			{event: "BeforeAgent", args: "working -"},
 			{event: "Notification", args: "needs-you -"},
 			{event: "AfterAgent", args: "done -"},
 			{event: "SessionEnd", args: "clear"},

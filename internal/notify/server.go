@@ -35,6 +35,12 @@ type Target interface {
 	Notify(ev session.Event, message string)
 }
 
+// reportTarget is a Target that also takes a report's agent session ID.
+// *session.Session implements it.
+type reportTarget interface {
+	NotifyReport(r session.Report)
+}
+
 // Server accepts reports on a Unix socket and passes them to the Target
 // registered for their token. It handles one connection at a time, so
 // reports reach their targets in the order their clients connected.
@@ -226,6 +232,10 @@ func (s *Server) dispatch(line []byte) {
 	s.mu.Unlock()
 	if t == nil {
 		slog.Debug("notify: dropped message for an unknown session", "event", m.Event.String())
+		return
+	}
+	if rt, ok := t.(reportTarget); ok {
+		rt.NotifyReport(session.Report{Event: m.Event, Message: m.Text, AgentSession: m.AgentSession, Held: m.Held})
 		return
 	}
 	t.Notify(m.Event, m.Text)

@@ -45,9 +45,11 @@ type Hooks struct {
 	State HookState
 	// Missing lists the snippet's events whose hook the agent lacks.
 	Missing []string
-	// Installable: the snippet is a file of its own, which InstallHooks
-	// writes. Otherwise it is merged into a settings file by hand.
+	// Installable: InstallHooks sets the hooks up, always now; Merges: it
+	// merges them into a settings file that holds other settings, with a
+	// backup, rather than writing a file of bunk's own.
 	Installable bool
+	Merges      bool
 	CLI         bool   // the agent's command is on PATH
 	Problem     string // why the configuration could not be read; "" when it could
 	After       string // what to do once InstallHooks wrote the file, or ""
@@ -137,7 +139,7 @@ func recipe(agent string) (agentHooks, bool) {
 // and the agent's other hooks do not matter.
 func check(d Dirs, r agentHooks) Hooks {
 	dir := d.dir(r)
-	h := Hooks{Agent: r.name, Path: filepath.Join(dir, r.file), Installable: r.own, After: r.after}
+	h := Hooks{Agent: r.name, Path: filepath.Join(dir, r.file), Installable: true, Merges: !r.own, After: r.after}
 	h.CLI = d.onPath(r.name)
 	found, err := r.read(dir)
 	if err != nil {
@@ -297,50 +299,48 @@ func readCopilotHooks(dir string) ([]foundHook, error) {
 	return out, errors.Join(errs...)
 }
 
-// InstallHooks writes the snippet of an agent whose hooks are a file of
-// their own (codex, copilot) and returns the file. It refuses a file that
-// holds hooks besides bunk's, which the snippet would replace, and an
-// agent whose hooks go into a settings file with others.
-func InstallHooks(d Dirs, agent string) (string, error) {
+// Installed is what InstallHooks changed: the file, and the copy of its
+// old contents it kept, "" when it kept none.
+type Installed struct {
+	Path, Backup string
+}
+
+// InstallHooks sets up an agent's current hooks. A hooks file of bunk's
+// own (codex, copilot) is written whole. A settings file that holds other
+// settings or hooks (claude, gemini, a Codex hooks.json with hooks of the
+// user's) has only bunk's hooks replaced, its other keys kept in their
+// order, after a copy of it is saved as BackupSuffix. A Copilot CLI hooks
+// file with other hooks is refused, and so is a file that is not JSON.
+func InstallHooks(d Dirs, agent string) (Installed, error) {
 	r, ok := recipe(agent)
 	if !ok {
-		return "", fmt.Errorf("no hooks for %q", agent)
+		return Installed{}, fmt.Errorf("no hooks for %q", agent)
 	}
 	path := filepath.Join(d.dir(r), r.file)
-	if !r.own {
-		return path, fmt.Errorf("%s's hooks go into %s with its other settings: merge the snippet into it", agent, d.Short(path))
-	}
+	done := Installed{Path: path}
 	snippet, err := r.render(r.hooks)
 	if err != nil {
-		return path, err
+		return done, err
 	}
-	cmds, err := fileCommands(agent, path)
-	if err != nil {
-		return path, fmt.Errorf("%s stays as it is: %w", d.Short(path), err)
-	}
-	for _, c := range cmds {
-		if !bunkCommand(c) {
-			return path, fmt.Errorf("%s holds other hooks, so it stays: merge the snippet into it", d.Short(path))
+	if r.own {
+		cmds, err := fileCommands(agent, path)
+		if err != nil {
+			return done, fmt.Errorf("%s stays as it is: %w", d.Short(path), err)
+		}
+		if !slices.ContainsFunc(cmds, func(c string) bool { return !bunkCommand(c) }) {
+			if err := writeAtomic(path, []byte(snippet), 0o644); err != nil {
+				return done, fmt.Errorf("install %s hooks: %w", agent, err)
+			}
+			return done, nil
+		}
+		if agent == "copilot" {
+			return done, fmt.Errorf("%s holds other hooks, so it stays: merge the snippet into it", d.Short(path))
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return path, fmt.Errorf("install %s hooks: %w", agent, err)
+	if done.Backup, err = mergeInto(path, snippet); err != nil {
+		return done, fmt.Errorf("%s stays as it is: %w", d.Short(path), err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".bunk-hooks-*")
-	if err != nil {
-		return path, fmt.Errorf("install %s hooks: %w", agent, err)
-	}
-	_, werr := tmp.WriteString(snippet)
-	cerr := tmp.Close()
-	if err := errors.Join(werr, cerr, os.Chmod(tmp.Name(), 0o644)); err != nil {
-		_ = os.Remove(tmp.Name())
-		return path, fmt.Errorf("install %s hooks: %w", agent, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		_ = os.Remove(tmp.Name())
-		return path, fmt.Errorf("install %s hooks: %w", agent, err)
-	}
-	return path, nil
+	return done, nil
 }
 
 // fileCommands returns the hook commands of one hooks file of agent:

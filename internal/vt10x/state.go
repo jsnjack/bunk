@@ -474,6 +474,16 @@ func (t *State) CopyRow(y int, dst *Row) {
 	dst.CopyFrom(*src, src.Len())
 }
 
+// CopyPrimaryRow copies row y of the primary screen into dst, also while
+// the alternate screen is shown.
+func (t *State) CopyPrimaryRow(y int, dst *Row) {
+	src := t.lines[y]
+	if t.mode&ModeAltScreen != 0 {
+		src = t.altLines[y]
+	}
+	dst.CopyFrom(*src, src.Len())
+}
+
 // markDirty marks row y as dirty and sets the anydirty flag.
 func (t *State) markDirty(y int) {
 	t.dirty[y] = true

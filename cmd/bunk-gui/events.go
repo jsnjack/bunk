@@ -107,7 +107,7 @@ func (a *App) onKey(p *Pane, keyval uint, state gdk.ModifierType) bool {
 	if len(data) == 0 {
 		return false
 	}
-	p.acknowledge()
+	p.acknowledge(session.KeyAck(ev))
 	p.snapToLive()
 	p.app.noteInjected()
 	p.write(data)
@@ -317,7 +317,7 @@ func (p *Pane) imCommit(text string) {
 	if text == "" {
 		return
 	}
-	p.acknowledge()
+	p.acknowledge(session.AckAnswer) // typed text, such as "1" or "y", answers a prompt
 	p.snapToLive()
 	p.app.noteInjected()
 	p.write([]byte(text))

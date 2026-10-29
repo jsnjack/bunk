@@ -100,7 +100,7 @@ func TestCLI(t *testing.T) {
 			inBand: &wire.Report{V: 1, Session: token, Event: "done", Agent: "claude", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}},
 		{name: "over ssh", args: []string{"needs-you", "-"}, env: []string{envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, stdin: claudeNotification,
 			inBand: &wire.Report{V: 1, Event: "needs-you", Message: "Claude needs your permission to use Bash", Agent: "claude",
-				Host: "build01", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}},
+				Host: "build01", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk", AgentSession: "abc123"}},
 		{name: "over ssh in tmux", args: []string{"clear"}, env: []string{envSSH + "=x", "TMUX=/tmp/tmux-1000/default,1,0"},
 			inBand: &wire.Report{V: 1, Event: "clear", Agent: "claude", Host: "build01", Repo: "bunk", Branch: "main", Cwd: "/home/u/bunk"}},
 		{name: "over ssh with a token", args: []string{"idle"}, env: []string{envSSH + "=x", EnvSession + "=" + token},

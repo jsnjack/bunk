@@ -431,8 +431,9 @@ func threePanes(t *testing.T, keys map[string]string) (*App, [3]*Pane, [3]string
 }
 
 // TestAgentAcknowledge: focusing a pane (Alt+arrow, a click, the jump key)
-// and typing into it acknowledge needs-you and done, as in bunk-gui.
-// Working and failed reports stay.
+// acknowledges done, and typing into it a reported needs-you too, as in
+// bunk-gui: the agent still waits while the user only looks, or moves
+// through the prompt's choices. Working and failed reports stay.
 func TestAgentAcknowledge(t *testing.T) {
 	t.Run("navigate", func(t *testing.T) {
 		app, p, _ := threePanes(t, nil)
@@ -441,8 +442,16 @@ func TestAgentAcknowledge(t *testing.T) {
 		if app.active != p[1] {
 			t.Fatal("Alt+Right did not focus b")
 		}
-		if st := p[1].Status(); st.State != session.AgentNone || st.Reported {
+		if st := p[1].Status(); st.State != session.AgentNeedsYou || !st.Reported {
 			t.Fatalf("b after focus: %+v", st)
+		}
+		app.handleKey(keyEv(tcell.KeyDown, 0))
+		if st := p[1].Status(); st.State != session.AgentNeedsYou {
+			t.Fatalf("b after Down, which picks a choice: %+v", st)
+		}
+		app.handleKey(keyEv(tcell.KeyEnter, 0))
+		if st := p[1].Status(); st.State != session.AgentNone || st.Reported {
+			t.Fatalf("b after Enter: %+v", st)
 		}
 	})
 	t.Run("click", func(t *testing.T) {
@@ -490,8 +499,8 @@ func TestAgentAcknowledge(t *testing.T) {
 		if app.active != p[1] {
 			t.Fatalf("focus went to pane %d", app.active.ID)
 		}
-		if st := p[1].Status(); st.State != session.AgentNone {
-			t.Fatalf("b after refocus: %+v", st)
+		if st := p[1].Status(); st.State != session.AgentNeedsYou {
+			t.Fatalf("b after refocus: %+v; want the request kept", st)
 		}
 	})
 }
@@ -505,14 +514,20 @@ func TestNextNeedsYou(t *testing.T) {
 		app, p, _ := threePanes(t, nil)
 		p[1].Notify(session.EventDone, "")
 		p[2].Notify(session.EventNeedsYou, "")
-		for i, want := range []*Pane{p[2], p[1]} {
+		// A needs-you stays until answered, so the jump comes back to it.
+		for i := range 2 {
 			app.handleKey(jump)
-			if app.active != want {
-				t.Fatalf("jump %d focused pane %p, want %p", i, app.active, want)
+			if app.active != p[2] || p[2].Status().State != session.AgentNeedsYou {
+				t.Fatalf("jump %d: active %p, c %+v; want c, still needing you", i, app.active, p[2].Status())
 			}
-			if st := want.Status(); st.State != session.AgentNone {
-				t.Fatalf("jump %d did not acknowledge: %+v", i, st)
-			}
+		}
+		app.handleKey(runeEv('y', 0))
+		app.handleKey(jump)
+		if app.active != p[1] {
+			t.Fatalf("jump after the answer focused pane %p, want b", app.active)
+		}
+		if st := p[1].Status(); st.State != session.AgentNone {
+			t.Fatalf("the jump did not acknowledge b's done: %+v", st)
 		}
 		app.handleKey(jump)
 		if app.active != p[1] {
@@ -541,7 +556,7 @@ func TestNextNeedsYou(t *testing.T) {
 		app, p, _ := threePanes(t, nil)
 		p[0].Notify(session.EventNeedsYou, "")
 		app.handleKey(jump)
-		if app.active != p[0] || p[0].Status().State != session.AgentNone {
+		if app.active != p[0] || p[0].Status().State != session.AgentNeedsYou {
 			t.Fatalf("active pane's own request: active %p, %+v", app.active, p[0].Status())
 		}
 	})

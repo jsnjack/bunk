@@ -88,6 +88,13 @@ type Pane struct {
 	exited     bool
 	closed     bool
 	removeOnce bool
+
+	// Restore (restore.go): whether the user typed into the pane, and the
+	// newest output its saved scrollback holds (outLast then); histSaved
+	// is set once a scrollback file of it exists.
+	typed     bool
+	histAt    int64
+	histSaved atomic.Bool
 }
 
 func (p *Pane) wake() {
@@ -130,7 +137,7 @@ func (p *Pane) onStatusChanged() {
 }
 
 // refreshStatus reads the session's status on the main thread and updates
-// the tab chrome and the needs-you ring when something shown changed.
+// the tab chrome when something shown changed.
 func (p *Pane) refreshStatus() {
 	p.statusQueued.Store(false)
 	if p.removeOnce || p.s == nil {
@@ -143,13 +150,9 @@ func (p *Pane) setStatus(st session.Status) {
 	if st == p.st {
 		return
 	}
-	ring := p.st.State == session.AgentNeedsYou
 	p.st = st
 	if p.statusOverride == nil {
 		p.app.hooksHint(st)
-		if ring != (st.State == session.AgentNeedsYou) {
-			p.queueRender()
-		}
 		p.app.refreshChrome()
 		p.syncBadges()
 	}
@@ -165,8 +168,11 @@ func (p *Pane) status() session.Status {
 
 // acknowledge clears a needs-you request: the user focused or typed into
 // the pane.
-func (p *Pane) acknowledge() {
-	if o := p.statusOverride; o != nil && (o.State == session.AgentNeedsYou || o.State == session.AgentDone) {
+// acknowledge records how the user met p (session.AcknowledgeAs).
+func (p *Pane) acknowledge(how session.Ack) {
+	// An override stands for a report: any meeting clears its done, an
+	// answer or a cancel its needs-you.
+	if o := p.statusOverride; o != nil && (how != session.AckSeen && o.State == session.AgentNeedsYou || o.State == session.AgentDone) {
 		o.State, o.Notice = session.AgentIdle, ""
 		p.queueRender()
 		p.app.refreshChrome()
@@ -175,7 +181,7 @@ func (p *Pane) acknowledge() {
 	if (p.st.State != session.AgentNeedsYou && p.st.State != session.AgentDone) || p.s == nil {
 		return
 	}
-	p.s.Acknowledge()
+	p.s.AcknowledgeAs(how)
 	p.setStatus(p.s.Status())
 }
 
@@ -363,15 +369,12 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 		p.r.fbW, p.r.fbH = dw, dh
 		changed = true
 	}
-	var dim, ring float32
+	var dim float32
 	if p.tab != nil && p.tab.dimmed(p) {
 		dim = 0.28
 	}
-	if p.status().State == session.AgentNeedsYou {
-		ring = float32(math.Round(2 * scale))
-	}
-	if dim != p.r.dim || ring != p.r.ringPx {
-		p.r.dim, p.r.ringPx = dim, ring
+	if dim != p.r.dim {
+		p.r.dim = dim
 		changed = true
 	}
 	if !changed {
@@ -417,7 +420,6 @@ func (p *Pane) render(dw, dh int, scale float64) bool {
 		p.wake() // an image could not be uploaded: draw its half blocks
 	}
 	p.r.DrawScrollbar(p.tv.sbOff, p.tv.sbCount)
-	p.r.DrawRing()
 	if timing {
 		p.r.EndTimer()
 	}
@@ -507,6 +509,7 @@ func (p *Pane) write(data []byte) {
 	if len(data) == 0 {
 		return
 	}
+	p.typed = true
 	now := monoNs()
 	stamped := p.keyPending.CompareAndSwap(0, now)
 	if err := p.s.WriteInput(data); err != nil {

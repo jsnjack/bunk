@@ -56,7 +56,7 @@ func TestGUIHooksPrefs(t *testing.T) {
 	var agents []string
 	for _, h := range before.Hooks {
 		agents = append(agents, h.Agent)
-		if h.State != "missing" || h.Installable != (h.Agent == "codex" || h.Agent == "copilot") || !strings.HasPrefix(h.Path, home) {
+		if h.State != "missing" || !h.Installable || !strings.HasPrefix(h.Path, home) {
 			t.Errorf("before: %+v", h)
 		}
 	}
@@ -80,11 +80,11 @@ func TestGUIHooksPrefs(t *testing.T) {
 	}
 }
 
-// TestGUIHooksHint: an agent whose hooks are missing brings one toast, for
-// its first tab only; its button opens the preferences. With the hooks
-// installed, or with hooks_hint = false, no toast comes. The hint runs
-// when the tab first shows the agent, so the snapshot right after that
-// wait has every toast.
+// TestGUIHooksHint: an agent whose hooks are missing brings the hooks
+// banner once, for its first tab only, and Set up installs them. With the
+// hooks installed, or with hooks_hint = false, no banner comes. The hint
+// runs when the tab first shows the agent, so the snapshot right after
+// that wait has the banner.
 func TestGUIHooksHint(t *testing.T) {
 	t.Parallel()
 	bin := t.TempDir()
@@ -94,9 +94,9 @@ func TestGUIHooksHint(t *testing.T) {
 		name   string
 		config string
 		home   string // "" keeps the harness's, with every agent's hooks
-		toast  bool
+		banner bool
 	}{
-		{name: "missing", home: t.TempDir(), toast: true},
+		{name: "missing", home: t.TempDir(), banner: true},
 		{name: "installed"},
 		{name: "turned off", config: "hooks_hint = false\n", home: t.TempDir()},
 	} {
@@ -107,7 +107,7 @@ func TestGUIHooksHint(t *testing.T) {
 				args = append(args, "--agent-home", tc.home)
 			}
 			script := []string{
-				"wait focused.line=$",
+				"wait focused.line=$ hooks.banner=false",
 				"type claude\\r",
 				"wait tab.1.status.agent=claude",
 				"snap first",
@@ -117,23 +117,85 @@ func TestGUIHooksHint(t *testing.T) {
 				"wait tab.2.status.agent=claude",
 				"snap second",
 			}
-			if tc.toast {
-				script = append(script, "toast-action", "wait prefs!=null", "dialog-close", "wait prefs=null")
+			if tc.banner {
+				script = append(script, "hooks-banner accept", "wait hooks.banner=false hooks.result~Installed", "snap installed")
 			}
 			g := runGUI(t, scenario{cost: 2, config: tc.config, args: args, env: []string{path}, script: append(script, "quit")})
-			const text = "claude runs without bunk's hooks, so its state is guessed from its output"
-			want := []string{}
-			if tc.toast {
-				want = []string{text}
-			}
 			for _, snap := range []string{"first", "second"} {
-				s := g.snap(snap)
-				if tc.toast != (s.LastToast == text && s.ToastButton == "Set up") || (!tc.toast && s.LastToast != "") {
-					t.Errorf("%s: toast %q with button %q", snap, s.LastToast, s.ToastButton)
+				h := g.snap(snap).Hooks
+				if h.Banner != tc.banner || tc.banner && (!slices.Equal(h.Agents, []string{"claude"}) ||
+					!strings.HasPrefix(h.Text, "Set up bunk's hooks for claude (not set up)?") ||
+					!strings.Contains(h.Text, "~/.claude/settings.json, keeping a copy")) {
+					t.Errorf("%s: hooks banner %+v", snap, h)
 				}
 			}
-			if !slices.Equal(g.Toasts, want) {
-				t.Errorf("toasts %q, want %q", g.Toasts, want)
+			if len(g.Toasts) != 0 && !tc.banner {
+				t.Errorf("toasts %q", g.Toasts)
+			}
+			if tc.banner {
+				if h, _ := notify.CheckHook(notify.Dirs{Home: tc.home}, "claude"); h.State != notify.HooksInstalled {
+					t.Errorf("after Set up: %+v", h)
+				}
+				if !slices.Equal(g.Toasts, []string{"Hooks installed"}) {
+					t.Errorf("toasts %q", g.Toasts)
+				}
+			}
+		})
+	}
+}
+
+// TestGUIHooksOutdatedAtStart: bunk hooks older than the current snippet
+// bring the banner at start, before any agent runs; Update merges the new
+// hooks into Claude Code's settings.json, keeping its other settings and a
+// copy of the old file. Not now leaves the file alone.
+func TestGUIHooksOutdatedAtStart(t *testing.T) {
+	t.Parallel()
+	old := `{
+  "model": "opus",
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "bunk-gui notify working"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "afplay done.wav"}]}]
+  }
+}
+`
+	for _, accept := range []bool{true, false} {
+		t.Run(strconv.FormatBool(accept), func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			settings := filepath.Join(home, ".claude", "settings.json")
+			must(t, os.MkdirAll(filepath.Dir(settings), 0o755))
+			must(t, os.WriteFile(settings, []byte(old), 0o600))
+			step := "hooks-banner dismiss"
+			if accept {
+				step = "hooks-banner accept"
+			}
+			g := runGUI(t, scenario{
+				args:   []string{"--size", "100x30", "--agent-home", home},
+				script: []string{"wait focused.line=$ hooks.banner=true", "snap offered", step, "wait hooks.banner=false", "quit"},
+			})
+			if h := g.snap("offered").Hooks; !slices.Equal(h.Agents, []string{"claude"}) || !strings.HasPrefix(h.Text, "Update bunk's hooks for claude (outdated)?") {
+				t.Errorf("banner %+v", h)
+			}
+			got := readFile(t, settings)
+			if !accept {
+				if got != old {
+					t.Errorf("Not now changed settings.json:\n%s", got)
+				}
+				return
+			}
+			if h, _ := notify.CheckHook(notify.Dirs{Home: home}, "claude"); h.State != notify.HooksInstalled {
+				t.Errorf("after Update: %+v", h)
+			}
+			for _, want := range []string{`"model": "opus"`, `"afplay done.wav"`} {
+				if !strings.Contains(got, want) {
+					t.Errorf("settings.json lost %s:\n%s", want, got)
+				}
+			}
+			if backup := readFile(t, settings+notify.BackupSuffix); backup != old {
+				t.Errorf("backup:\n%s", backup)
+			}
+			if fi, err := os.Stat(settings); err != nil || fi.Mode().Perm() != 0o600 {
+				t.Errorf("mode %v, %v; want the file's own 0600", fi.Mode(), err)
 			}
 		})
 	}

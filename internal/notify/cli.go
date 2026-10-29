@@ -49,7 +49,9 @@ A done whose Claude Code Stop input lists background_tasks reports
 working: the agent resumes when they end. A watch for comments on a
 published artifact does not count. A needs-you for a Codex
 PermissionRequest that Codex's automatic reviewer decides reports
-working: the user is not asked.
+working: the user is not asked. A hook's "session_id" (or "sessionId")
+goes with the report, so bunk-gui can resume the agent's conversation
+when it restores the pane.
 Inside bunk it reports over BUNK_NOTIFY_SOCKET. Without a reachable
 socket, with BUNK_NOTIFY_SESSION set or on a host reached over ssh
 (SSH_CONNECTION set), it writes the report to its terminal for the bunk
@@ -123,9 +125,11 @@ func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.
 		// the user, and no hook reports work again until the turn ends.
 		ev = session.EventWorking
 	}
+	agentSession := hookSessionID(text)
+	held := ev == session.EventNeedsYou && questionTool(text)
 	text = hookText(text)
 	if socket != "" && token != "" {
-		err := Send(socket, Message{Session: token, Event: ev, Text: text})
+		err := Send(socket, Message{Session: token, Event: ev, Text: text, AgentSession: agentSession, Held: held})
 		switch {
 		case err == nil:
 			return 0
@@ -136,7 +140,7 @@ func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.
 		// The front end that started this session has exited, as when an
 		// agent outlives it inside tmux. The terminal may still lead to bunk.
 	}
-	return reportInBand(prog, wire.Report{Session: token, Event: ev.String(), Message: text}, env, stderr)
+	return reportInBand(prog, wire.Report{Session: token, Event: ev.String(), Message: text, AgentSession: agentSession, Held: held}, env, stderr)
 }
 
 func write(w io.Writer, s string) {
@@ -212,6 +216,45 @@ func hookText(text string) string {
 		return notice
 	}
 	return toolQuestion(obj)
+}
+
+// hookSessionIDFields are the keys of a hook's JSON input that hold the
+// agent's session ID: Claude Code, Codex and Gemini CLI, then Copilot CLI.
+var hookSessionIDFields = []string{"session_id", "sessionId"}
+
+// hookSessionID returns the agent's session ID from text, a hook's JSON
+// input, or "" when it has none that wire.ValidAgentSession accepts.
+func hookSessionID(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "{") {
+		return ""
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(trimmed), &obj) != nil {
+		return ""
+	}
+	for _, key := range hookSessionIDFields {
+		var id string
+		if json.Unmarshal(obj[key], &id) == nil && wire.ValidAgentSession(id) {
+			return id
+		}
+	}
+	return ""
+}
+
+// questionTool reports whether text is the PreToolUse input of a tool
+// that waits for the user's answer (AskUserQuestion, ExitPlanMode), whose
+// PostToolUse hook reports when the answer came.
+func questionTool(text string) bool {
+	var in struct {
+		Event string `json:"hook_event_name"`
+		Tool  string `json:"tool_name"`
+	}
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "{") || json.Unmarshal([]byte(trimmed), &in) != nil {
+		return false
+	}
+	return (in.Event == "" || in.Event == "PreToolUse") && (in.Tool == askUserQuestion || in.Tool == exitPlanMode)
 }
 
 // backgroundTasks reports whether text is a Claude Code Stop input whose
@@ -328,12 +371,15 @@ func installHooks(prog, agent string, d Dirs, stdout, stderr io.Writer) int {
 		write(stderr, prog+" notify: hooks install takes one of:\n"+HookAgents(prog))
 		return exitError
 	}
-	path, err := InstallHooks(d, agent)
+	done, err := InstallHooks(d, agent)
 	if err != nil {
 		write(stderr, fmt.Sprintf("%s notify: %v\n", prog, err))
 		return exitError
 	}
-	msg := "Installed " + d.Short(path) + "."
+	msg := "Installed " + d.Short(done.Path) + "."
+	if done.Backup != "" {
+		msg += " The old file is in " + d.Short(done.Backup) + "."
+	}
 	if r.after != "" {
 		msg += " " + r.after
 	}

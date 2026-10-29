@@ -115,6 +115,7 @@ type statusReport struct {
 	Container string `json:"container"`
 	SSHHost   string `json:"ssh_host"`
 	Host      string `json:"host"`    // a remote agent's machine, from its in-band report
+	Session   string `json:"session"` // the agent's own session ID (Status.AgentSession)
 	Command   string `json:"command"` // name of the last command that ended
 	Running   string `json:"running"` // line of the command running (Status.Running), else its name
 }
@@ -168,7 +169,6 @@ type paneReport struct {
 	HasFocus bool        `json:"has_focus"` // GTK keyboard focus
 	Dimmed   bool        `json:"dimmed"`
 	Zoomed   bool        `json:"zoomed"`
-	Ring     bool        `json:"ring"`
 	Visible  bool        `json:"visible"`
 	Override bool        `json:"override"`
 	Pass     bool        `json:"passthrough"`
@@ -307,6 +307,8 @@ type uiSnapshot struct {
 	Agents        []session.AgentSpec `json:"agents"`    // extra agents in force
 	Theme         string              `json:"theme"`     // the theme shown
 	Prefs         *prefsReport        `json:"prefs,omitempty"`
+	Restore       restoreReport       `json:"restore"` // session restore (restore.go)
+	Hooks         hookOfferReport     `json:"hooks"`   // the banner offering agent hooks
 }
 
 type prefsReport struct {
@@ -417,7 +419,7 @@ func statusOf(st session.Status) statusReport {
 	return statusReport{
 		Reported: st.Reported, Agent: st.Agent, State: stateName[st.State], Process: st.Process, Notice: st.Notice,
 		Repo: st.Repo, Branch: st.Branch, Cwd: st.Cwd, Container: st.Container, SSHHost: st.SSHHost, Host: st.Host,
-		Command: st.Command.Name, Running: runningText(st.Running),
+		Session: st.AgentSession, Command: st.Command.Name, Running: runningText(st.Running),
 	}
 }
 
@@ -628,6 +630,8 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		pr.Hooks, pr.HooksHint, pr.HooksNote = w.hooksShown(), w.hooks.hint.Active(), w.hooks.note.Text()
 		s.Prefs = pr
 	}
+	s.Restore = a.restoreReport()
+	s.Hooks = a.hookOfferReport()
 	if f := a.find; f != nil {
 		fr := &findReport{Pane: f.p.id, Query: f.query, Count: f.count.Text(), Index: f.idx, Total: len(f.matches),
 			Focused: a.findFocused(), Busy: f.busy, Bar: a.widgetRect(g, f.bar), Visible: []matchReport{}}
@@ -684,7 +688,7 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 	r := paneReport{
 		ID: p.id, Tab: a.tabIndex(t) + 1, Cols: p.cols, Rows: p.rows,
 		Focused: t.focus == p, HasFocus: p.widget.HasFocus(), Dimmed: t.dimmed(p), Zoomed: t.zoom == p,
-		Ring: p.status().State == session.AgentNeedsYou, Visible: p.widget.IsDrawable(),
+		Visible:  p.widget.IsDrawable(),
 		Override: p.statusOverride != nil, Status: statusOf(p.status()), Title: p.title,
 		Pass: p.passthrough, Notified: a.alerts.tracker.Shown(p.id),
 	}

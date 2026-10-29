@@ -28,6 +28,7 @@ const chromeCSS = `
 window.bunk-window { background: #16171a; }
 .bunk-bar { background: #131416; border-bottom: 1px solid #24262b; min-height: 43px; padding: 0 6px; }
 .bunk-rail { background: #131416; border-right: 1px solid #24262b; }
+.bunk-banner { background: #1f2a3a; border-bottom: 1px solid #24262b; padding: 6px 10px; color: #d8dade; }
 .bunk-rail.collapsed { min-width: 47px; padding: 8px 0; }
 .bunk-rail.expanded { min-width: 251px; padding: 6px 8px 8px 8px; }
 button.chrome { background: none; box-shadow: none; border: none; outline: none; padding: 0; margin: 0;

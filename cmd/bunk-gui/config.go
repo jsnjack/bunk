@@ -27,7 +27,9 @@ import (
 //	font_size = 11           # points
 //	text_zoom = 100          # text size at start and after Ctrl+0, % of font_size
 //	theme = "default"        # a built-in theme or a [themes.NAME] table (internal/theme)
-//	hooks_hint = true        # a toast when an agent runs without bunk's hooks
+//	hooks_hint = true        # offer to set up missing or outdated agent hooks (prefs_hooks.go)
+//	restore = true           # save the windows; offer them back at start (restore.go)
+//	restore_scrollback = true # save each pane's scrollback with them
 //
 //	[themes.paper]           # a custom theme, as in bunk's config (theme.Def)
 //	background = "#FDF6E3"
@@ -66,15 +68,21 @@ type Settings struct {
 	Keys      map[string]any       `toml:"keys"`
 	// Notifications is the [notifications] table as written.
 	Notifications alert.Config `toml:"notifications"`
-	// HooksHint is hooks_hint as written: remind the user of an agent that
-	// runs without bunk's hooks (prefs_hooks.go).
+	// HooksHint is hooks_hint as written: offer to set up the hooks of an
+	// agent whose hooks are missing or outdated (prefs_hooks.go).
 	HooksHint *bool `toml:"hooks_hint"`
+	// Restore and RestoreScrollback are restore and restore_scrollback as
+	// written (restore.go).
+	Restore           *bool `toml:"restore"`
+	RestoreScrollback *bool `toml:"restore_scrollback"`
 
 	keymap    keymap              // Keys applied to the defaults
 	was       map[string][]string // bindings of disabled actions, from "# was" comments
 	themes    *theme.Registry     // the built-in themes and the valid ones of Themes
 	alerts    alert.Settings      // Notifications applied to the defaults
 	hooksHint bool                // HooksHint applied to the default, true
+	restore   bool                // Restore applied to the default, true
+	restoreSB bool                // RestoreScrollback applied to the default, true
 }
 
 // startSize is the text size at start and after Ctrl+0: font_size at
@@ -86,7 +94,8 @@ func (st Settings) startSize() float64 {
 func defaultSettings() Settings {
 	km, _ := resolveKeys(nil)
 	return Settings{Tabs: "rail", RailStyle: "ring", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
-		keymap: km, was: map[string][]string{}, alerts: alert.Default(), hooksHint: true}
+		keymap: km, was: map[string][]string{}, alerts: alert.Default(), hooksHint: true,
+		restore: true, restoreSB: true}
 }
 
 // configPath is $XDG_CONFIG_HOME/bunk-gui/config.toml.
@@ -145,6 +154,12 @@ func loadSettings(path string) (Settings, error) {
 	}
 	if f.HooksHint != nil {
 		st.HooksHint, st.hooksHint = f.HooksHint, *f.HooksHint
+	}
+	if f.Restore != nil {
+		st.Restore, st.restore = f.Restore, *f.Restore
+	}
+	if f.RestoreScrollback != nil {
+		st.RestoreScrollback, st.restoreSB = f.RestoreScrollback, *f.RestoreScrollback
 	}
 	if f.Font != "" {
 		st.Font = f.Font

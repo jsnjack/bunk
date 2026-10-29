@@ -137,6 +137,8 @@ type Session struct {
 	report            agentReport // the agent's latest explicit report (Notify)
 	remote            remoteAgent // where a remote agent runs, from its in-band report
 	remotePGID        int         // foreground process group when remote was reported
+	agentSession      string      // the agent's own session ID (Status.AgentSession)
+	agentSessionPGID  int         // foreground process group when agentSession was reported
 	remoteClient      bool        // ssh or mosh runs in the foreground
 	statusHook        func()      // Hooks.StatusChanged, set by Run, for Notify
 	shown             agentView   // the agent state StatusChanged last announced

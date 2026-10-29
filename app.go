@@ -483,7 +483,11 @@ func (app *App) forwardKey(ev *tcell.EventKey) {
 	app.mu.Unlock()
 	if active != nil && !active.IsDead() {
 		// Typing into the pane answers its agent's request.
-		needRedraw := acknowledge(active)
+		how := session.AckSeen
+		if k, ok := tcellKeyEvent(ev); ok {
+			how = session.KeyAck(k)
+		}
+		needRedraw := acknowledge(active, how)
 		if active.InScrollback() {
 			L.Debug("handleKey: leaving scrollback on keypress", "pane", active.ID)
 			active.ScrollReset()
@@ -844,23 +848,24 @@ func (app *App) navigate(d dir) {
 // making p the active pane, without app.mu.
 func (app *App) focusIn(p *Pane) {
 	sendFocusIn(p)
-	if acknowledge(p) {
+	if acknowledge(p, session.AckSeen) {
 		app.triggerRedraw()
 	}
 }
 
-// acknowledge records that the user has seen p when its agent needs the
-// user or is done, and reports whether it did. Other states stay, so an
-// agent's working or failed report survives a focus change. It takes the
-// session lock; callers must not hold it.
-func acknowledge(p *Pane) bool {
+// acknowledge records how the user met p when its agent needs the user or
+// is done, and reports whether it did. Other states stay, so an agent's
+// working or failed report survives a focus change; a needs-you the agent
+// reported stays until an answer or a cancel (session.AcknowledgeAs). It
+// takes the session lock; callers must not hold it.
+func acknowledge(p *Pane, how session.Ack) bool {
 	if p == nil {
 		return false
 	}
 	switch p.Status().State {
 	case session.AgentNeedsYou, session.AgentDone:
-		p.Acknowledge()
-		L.Debug("acknowledge: agent request seen", "pane", p.ID)
+		p.AcknowledgeAs(how)
+		L.Debug("acknowledge: agent request seen", "pane", p.ID, "how", how)
 		return true
 	}
 	return false
