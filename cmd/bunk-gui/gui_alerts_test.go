@@ -235,16 +235,17 @@ func TestGUISplitAgents(t *testing.T) {
 	}
 }
 
-// TestGUIRailMap: the collapsed rail draws a tab of 2 to 4 panes as a
-// map of their dots, placed like the panes, in the rail's 48 px. A fifth
-// pane turns the map back into the most urgent dot.
+// TestGUIRailMap: with rail_style = "map", the collapsed rail draws a
+// tab of 2 to 4 panes as a map of their dots, placed like the panes, in
+// the rail's 48 px. A fifth pane turns the map back into the most urgent
+// dot.
 func TestGUIRailMap(t *testing.T) {
 	t.Parallel()
 	bin := t.TempDir()
 	writeAgent(t, bin, "claude", "c", `needs-you "Allow edit?"`)
 	g := runGUI(t, scenario{
 		cost:   3,
-		config: "tabs = \"rail\"\n",
+		config: "tabs = \"rail\"\nrail_style = \"map\"\n",
 		args:   []string{"--size", "100x30"},
 		env:    []string{agentPath(t, bin)},
 		script: []string{
@@ -277,6 +278,97 @@ func TestGUIRailMap(t *testing.T) {
 	}
 	if tab := g.snap("five").tab(t, 1); tab.Map != "" || tab.Dot != "◐" {
 		t.Errorf("five panes: map %q, dot %q; want none and ◐", tab.Map, tab.Dot)
+	}
+}
+
+// TestGUIRailRing: by default the collapsed rail draws every tab as one
+// ring: closed for one pane, an arc per pane in its state's colour for
+// several, around an empty centre, within the rail button. Preferences switch it to the
+// map at once and save rail_style.
+func TestGUIRailRing(t *testing.T) {
+	t.Parallel()
+	bin := t.TempDir()
+	writeAgent(t, bin, "claude", "c", `needs-you "Allow edit?"`)
+	g := runGUI(t, scenario{
+		cost:   3,
+		config: "tabs = \"rail\"\n",
+		args:   []string{"--size", "100x30"},
+		env:    []string{agentPath(t, bin)},
+		script: []string{
+			"wait focused.line=$",
+			"type claude\\r",
+			"wait tab.1.status.agent=claude",
+			"run touch c0",
+			"wait tab.1.state=needs",
+			"wait tab.1.ring=◐@0",
+			"snap one",
+			"split",
+			"wait tab.1.panes.#=2 focused.line=$",
+			"split",
+			"wait tab.1.panes.#=3 focused.line=$ chrome.w=48 tab.1.ring=\"○@30 ○@150 ◐@270\"",
+			"snap three",
+			"shot ring.png",
+			"split",
+			"wait tab.1.panes.#=4 focused.line=$",
+			"split",
+			"wait tab.1.panes.#=5 focused.line=$ chrome.w=48",
+			"snap five",
+			"maximize",
+			"wait window.maximized=true window.w>1800",
+			"kbd ctrl+comma",
+			"wait prefs!=null",
+			"ptr-at pref rail-map", "ptr-click",
+			"wait rail_style=map tab.1.ring=\"\"",
+			"snap map",
+			"quit",
+		},
+		limit: 30e9,
+	})
+	if tab := g.snap("one").tab(t, 1); tab.Ring != "◐@0" {
+		t.Errorf("one pane: ring %q, want ◐@0", tab.Ring)
+	}
+	three := g.snap("three")
+	tab := three.tab(t, 1)
+	// The agent's pane is on the left, the shells stacked on the right.
+	if tab.Ring != "○@30 ○@150 ◐@270" || tab.Dot != "◐" || three.RailStyle != "ring" {
+		t.Errorf("three panes: ring %q, dot %q, style %q; want ○@30 ○@150 ◐@270, ◐ and ring", tab.Ring, tab.Dot, three.RailStyle)
+	}
+	if it := tab.Item; it == nil || it.W > 40 || it.H > 40 {
+		t.Errorf("three panes: rail item %+v, want within 40x40", it)
+	} else {
+		// The agent's arc is amber, the shells' arcs grey, the centre empty.
+		img := loadPNG(t, g.file("ring.png"))
+		amber, grey := 0, 0
+		cx, cy := it.DX+it.DW/2, it.DY+it.DH/2
+		for y := cy - 3; y <= cy+3; y++ {
+			for x := cx - 3; x <= cx+3; x++ {
+				if c := at(img, x, y); c.dist(hex(stateRGB["needs-fg"])) < 40 || c.dist(hex(0x5c5b58)) < 24 {
+					t.Errorf("ring centre (%d,%d) is %v, want the background", x, y, c)
+				}
+			}
+		}
+		for y := it.DY; y < it.DY+it.DH; y++ {
+			for x := it.DX; x < it.DX+it.DW; x++ {
+				switch c := at(img, x, y); {
+				case c.dist(hex(stateRGB["needs-fg"])) < 40:
+					amber++
+				case c.dist(hex(0x5c5b58)) < 24: // idle grey at 45 % over the needs-you background
+					grey++
+				}
+			}
+		}
+		if amber < 40 || grey < 40 {
+			t.Errorf("ring pixels: %d amber, %d grey; want an amber arc and grey arcs", amber, grey)
+		}
+	}
+	if tab := g.snap("five").tab(t, 1); tab.Ring != "○@62 ○@134 ○@206 ◐@278 ○@350" || tab.Map != "" {
+		t.Errorf("five panes: ring %q, map %q; want ○@62 ○@134 ○@206 ◐@278 ○@350 and none", tab.Ring, tab.Map)
+	}
+	if s := g.snap("map"); s.RailStyle != "map" || s.tab(t, 1).Ring != "" || s.Prefs == nil || s.Prefs.RailRing {
+		t.Errorf("map chosen: style %q, ring %q, prefs ring %v", s.RailStyle, s.tab(t, 1).Ring, s.Prefs.RailRing)
+	}
+	if got := readFile(t, filepath.Join(g.dir, "config.toml")); !strings.Contains(got, `rail_style = "map"`) {
+		t.Errorf("config.toml does not save rail_style:\n%s", got)
 	}
 }
 
