@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -361,8 +362,11 @@ func TestGUIRailRing(t *testing.T) {
 			t.Errorf("ring pixels: %d amber, %d grey; want an amber arc and grey arcs", amber, grey)
 		}
 	}
-	if tab := g.snap("five").tab(t, 1); tab.Ring != "○@62 ○@134 ○@206 ◐@278 ○@350" || tab.Map != "" {
-		t.Errorf("five panes: ring %q, map %q; want ○@62 ○@134 ○@206 ◐@278 ○@350 and none", tab.Ring, tab.Map)
+	// The later splits go across or down by the pane's shape at the time,
+	// so the right half's tree varies between runs; the agent's pane is
+	// always the left half, and its arc stays on the left.
+	if tab := g.snap("five").tab(t, 1); !fiveRing(tab.Ring) || tab.Map != "" {
+		t.Errorf("five panes: ring %q, map %q; want 5 arcs with ◐ at 225-315° and no map", tab.Ring, tab.Map)
 	}
 	if s := g.snap("map"); s.RailStyle != "map" || s.tab(t, 1).Ring != "" || s.Prefs == nil || s.Prefs.RailRing {
 		t.Errorf("map chosen: style %q, ring %q, prefs ring %v", s.RailStyle, s.tab(t, 1).Ring, s.Prefs.RailRing)
@@ -556,4 +560,23 @@ func TestGUINotificationSettings(t *testing.T) {
 	if got := readFile(t, g.file("config.toml")); got != want {
 		t.Errorf("config.toml:\n%s\nwant:\n%s", got, want)
 	}
+}
+
+// fiveRing reports whether a ring (ringDots) has five arcs, one of them
+// the agent's ◐ on the left, between 225° and 315°.
+func fiveRing(ring string) bool {
+	arcs := strings.Fields(ring)
+	agent := 0
+	for _, a := range arcs {
+		dot, deg, _ := strings.Cut(a, "@")
+		if dot != "◐" {
+			continue
+		}
+		d, err := strconv.Atoi(deg)
+		if err != nil || d < 225 || d > 315 {
+			return false
+		}
+		agent++
+	}
+	return len(arcs) == 5 && agent == 1
 }
