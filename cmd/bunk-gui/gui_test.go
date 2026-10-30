@@ -212,11 +212,13 @@ func strp(s *string) string {
 // TestGUILayoutsAndMenu: a config file selects the bar and the font; every
 // options-menu item works; Ctrl+B and the menu switch layouts with the
 // sizes of the prototypes; Ctrl+=/-/0 and the menu's −/+ change the text
-// size.
+// size. New windows start in new_dir, which defaults to the home directory.
 func TestGUILayoutsAndMenu(t *testing.T) {
 	t.Parallel()
+	home := t.TempDir()
 	g := runGUI(t, scenario{
 		config: "tabs = \"bar\"\nfont = \"Noto Sans Mono\"\nfont_size = 12\n",
+		env:    []string{"HOME=" + home},
 		args:   []string{"--size", "100x30", "--tab", ""},
 		script: []string{
 			"wait chrome.h=44 tabs.#=2 focused.settled=true",
@@ -449,8 +451,8 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 	if s := g.snap("prefs-open"); s.Prefs == nil {
 		t.Error("Preferences: no window")
 	}
-	if dir, err := filepath.EvalSymlinks(g.dir); err != nil || !slices.Equal(g.Windows, []string{dir, dir}) {
-		t.Errorf("New window and Ctrl+Shift+N opened windows in %q, want two in %q (%v)", g.Windows, dir, err)
+	if !slices.Equal(g.Windows, []string{home, home}) {
+		t.Errorf("New window and Ctrl+Shift+N opened windows in %q, want two in %q", g.Windows, home)
 	}
 	for _, want := range []string{"No agent needs you"} {
 		if !slices.ContainsFunc(g.Toasts, func(s string) bool { return strings.HasPrefix(s, want) }) {

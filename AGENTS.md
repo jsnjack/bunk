@@ -461,9 +461,12 @@ These are the key fields agents may need to know about:
 
 bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
 `rail_open`, `rail_style`, `font`, `font_size`, `text_zoom`, `theme`, `hooks_hint`,
-`restore`, `restore_scrollback`, `[themes.NAME]`, `[[agents]]`, `[notifications]` and `[keys]`. `theme` and
+`restore`, `restore_scrollback`, `new_dir`, `[themes.NAME]`, `[[agents]]`, `[notifications]` and `[keys]`. `theme` and
 `[themes.NAME]` work as in bunk's config, and `--theme` overrides `theme`
-for one run.
+for one run. `new_dir` is where new tabs and windows start: `~` (the
+default), `~/…`, an absolute path, or `current` for the active pane's
+directory; a directory that is gone gives the home directory, and splits
+start in their pane's directory.
 `[notifications]` has the same keys as in bunk's config. `[keys]` uses
 bunk's action names and key syntax where they overlap; "none" sends the key
 to the terminal. The file is watched and reloads live, and a bad value shows
@@ -519,7 +522,7 @@ its default; Design Decisions says where the defaults come from.
 
 - Each bunk-gui window is its own process. The application is non-unique,
   and each process has its own notify socket. New window (Ctrl+Shift+N,
-  the menu) starts bunk-gui again in the active pane's directory, in a new
+  the menu) starts bunk-gui again in `new_dir` (home by default), in a new
   session, with an XDG activation token so the window takes the focus. The
   desktop entry's `new-window` action gives GNOME Shell's app menu the same
   item: Shell offers no New Window for a running GTK application without

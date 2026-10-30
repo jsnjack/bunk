@@ -30,6 +30,8 @@ import (
 //	hooks_hint = true        # offer to set up missing or outdated agent hooks (prefs_hooks.go)
 //	restore = true           # save the windows; offer them back at start (restore.go)
 //	restore_scrollback = true # save each pane's scrollback with them
+//	new_dir = "~"            # where new tabs and windows start: a directory, or
+//	                         # "current" for the active pane's (newDir, chrome.go)
 //
 //	[themes.paper]           # a custom theme, as in bunk's config (theme.Def)
 //	background = "#FDF6E3"
@@ -75,6 +77,10 @@ type Settings struct {
 	// written (restore.go).
 	Restore           *bool `toml:"restore"`
 	RestoreScrollback *bool `toml:"restore_scrollback"`
+	// NewDir is new_dir: the directory new tabs and windows start in,
+	// "~" for the home directory (the default), or "current" for the
+	// active pane's directory. Splits always start in their pane's.
+	NewDir string `toml:"new_dir"`
 
 	keymap    keymap              // Keys applied to the defaults
 	was       map[string][]string // bindings of disabled actions, from "# was" comments
@@ -93,7 +99,7 @@ func (st Settings) startSize() float64 {
 
 func defaultSettings() Settings {
 	km, _ := resolveKeys(nil)
-	return Settings{Tabs: "rail", RailStyle: "ring", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
+	return Settings{Tabs: "rail", RailStyle: "ring", NewDir: "~", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
 		keymap: km, was: map[string][]string{}, alerts: alert.Default(), hooksHint: true,
 		restore: true, restoreSB: true}
 }
@@ -147,6 +153,13 @@ func loadSettings(path string) (Settings, error) {
 			st.RailStyle = f.RailStyle
 		} else {
 			problems = append(problems, fmt.Sprintf("rail_style = %q (want \"ring\" or \"map\")", f.RailStyle))
+		}
+	}
+	if md.IsDefined("new_dir") {
+		if f.NewDir == "current" || f.NewDir == "~" || strings.HasPrefix(f.NewDir, "~/") || filepath.IsAbs(f.NewDir) {
+			st.NewDir = f.NewDir
+		} else {
+			problems = append(problems, fmt.Sprintf("new_dir = %q (want an absolute path, ~/… or \"current\")", f.NewDir))
 		}
 	}
 	if md.IsDefined("rail_open") {

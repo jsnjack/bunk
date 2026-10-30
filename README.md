@@ -267,6 +267,7 @@ theme = "default"          # as in bunk, with [themes.NAME] tables of your own
 hooks_hint = true          # offer to set up missing or outdated agent hooks in a banner
 restore = true             # save the windows and offer them back at the next start
 restore_scrollback = true  # save each pane's scrollback with them
+new_dir = "~"              # where new tabs and windows start; "current" uses the active pane's directory
 
 [keys]                     # one key or a list; actions in cmd/bunk-gui/bindings.go
 next_tab = ["ctrl+right", "ctrl+pgdn"]

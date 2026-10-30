@@ -968,7 +968,7 @@ func (a *App) writeReport(reason string) {
 		"font_size": a.settings.FontSize, "agents": a.settings.Agents, "theme": a.settings.Theme,
 		"notifications": map[string]any{"enabled": a.settings.alerts.Enabled, "states": alert.Names(a.settings.alerts.States),
 			"command_after": a.settings.alerts.CommandAfter.Seconds()},
-		"hooks_hint": a.settings.hooksHint,
+		"hooks_hint": a.settings.hooksHint, "new_dir": a.settings.NewDir,
 	}
 	if a.configErr != nil {
 		r.ConfigError = a.configErr.Error()

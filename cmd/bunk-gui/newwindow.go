@@ -2,7 +2,7 @@ package main
 
 // New windows. bunk-gui is a non-unique application: every window is its
 // own process, with its own tabs and notify socket. "New window" (menu,
-// Ctrl+Shift+N) starts bunk-gui again in the active pane's directory; the
+// Ctrl+Shift+N) starts bunk-gui again in new_dir (cwdForNew); the
 // desktop entry's new-window action does the same from the shell's app
 // menu.
 

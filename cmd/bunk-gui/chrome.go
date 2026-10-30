@@ -608,11 +608,36 @@ func (a *App) buildChrome() {
 	a.refreshChrome()
 }
 
+// cwdForNew is the directory of a new tab or window: new_dir.
 func (a *App) cwdForNew() string {
-	if p := a.activePane(); p != nil {
-		return p.s.Cwd()
+	return newDir(a.settings.NewDir, a.activePane())
+}
+
+// newDir resolves new_dir: "current" is the active pane's directory, "~"
+// and "~/…" are under the home directory. A directory that does not exist
+// gives the home directory, and a missing home directory "" (bunk-gui's).
+func newDir(setting string, active *Pane) string {
+	home, _ := os.UserHomeDir()
+	dir := setting
+	switch {
+	case setting == "current":
+		if active == nil {
+			return home
+		}
+		return active.s.Cwd()
+	case setting == "" || setting == "~":
+		return home
+	case strings.HasPrefix(setting, "~/"):
+		if home == "" {
+			return ""
+		}
+		dir = filepath.Join(home, setting[2:])
 	}
-	return ""
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		slog.Debug("new_dir not a directory", "dir", dir, "err", err)
+		return home
+	}
+	return dir
 }
 
 // refreshChrome rebuilds the tab items from the panes' cached status. It
