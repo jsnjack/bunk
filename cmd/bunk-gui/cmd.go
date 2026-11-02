@@ -209,7 +209,9 @@ func runApp(cfg config, debug, trace bool) error {
 	}
 	a.app = adw.NewApplication(appID, gio.ApplicationNonUnique)
 	a.app.ConnectActivate(a.activate)
+	stopSignals := a.finishOnSignal()
 	code := a.app.Run(os.Args[:1])
+	stopSignals()
 	close(a.done)
 	if a.notify != nil {
 		if err := a.notify.Close(); err != nil {

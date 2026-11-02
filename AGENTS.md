@@ -622,8 +622,13 @@ its default; Design Decisions says where the defaults come from.
     `newPaned`), so tabs not shown yet get theirs when selected. The
     containers' focus children point at the focused pane, or GTK would
     focus the first pane when the tab is shown.
-  - Quitting (`finish("quit")`) removes the slot while other windows run,
-    and a window without a live pane leaves none; any other end keeps it.
+  - Every orderly end (a quit, the last tab closed, SIGTERM or SIGHUP at
+    logout) keeps the slot and stamps `Window.Closed`; a window without a
+    live pane leaves none. `restore.Offer` offers the windows closed
+    together: the last one closed and each closed within `CloseGap` (1
+    min) of the next, so the order the user closes them in does not
+    matter. A window closed earlier is deleted. While another window
+    runs, closed windows wait; a crashed or killed one is always offered.
   - Window tests get their own state directory: the harness sets
     `XDG_STATE_HOME_TEST`, which `scripts/headless-gui.sh` turns into
     `XDG_STATE_HOME`. `TestGUIRestoreSession` saves, quits and restores

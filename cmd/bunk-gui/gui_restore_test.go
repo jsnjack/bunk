@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"bunk/internal/restore"
 )
@@ -212,6 +213,50 @@ func TestGUIRestoreWindows(t *testing.T) {
 	})
 	if saved := savedWindows(t, state); len(saved) != 1 {
 		t.Errorf("after Dismiss: %d saved windows, want only the last run's", len(saved))
+	}
+}
+
+// TestGUIRestoreClosedTogether: the user quits the main window while a
+// second one still runs, then closes the second; the next start offers
+// both. A window closed hours before them is deleted, not offered.
+func TestGUIRestoreClosedTogether(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	env, _ := restoreEnv(t, state)
+	st, err := restore.Open(filepath.Join(state, "bunk-gui", "windows"))
+	must(t, err)
+	old := restore.Window{Tabs: []restore.Tab{onePane("/var")}, Closed: time.Now().Add(-3 * time.Hour)}
+	oldSlot, err := st.New()
+	must(t, err)
+	must(t, oldSlot.Save(old))
+	oldSlot.Release()
+	// The second window runs while the main one quits.
+	stray, err := st.New()
+	must(t, err)
+	must(t, stray.Save(restore.Window{Tabs: []restore.Tab{onePane("/tmp")}}))
+	runGUI(t, scenario{
+		env:  env,
+		args: []string{"--size", "100x30"},
+		script: []string{
+			"wait tabs.#=1 focused.line=$",
+			"new-tab",
+			"wait tabs.#=2 focused.line=$",
+			"quit",
+		},
+	})
+	must(t, stray.Save(restore.Window{Tabs: []restore.Tab{onePane("/tmp")}, Closed: time.Now()}))
+	stray.Release()
+
+	g := runGUI(t, scenario{
+		env:    env,
+		args:   []string{"--size", "100x30"},
+		script: []string{"wait restore.banner=true", "snap offered", "restore dismiss", "wait restore.banner=false", "quit"},
+	})
+	if offer := g.snap("offered").Restore.Offer; !strings.Contains(offer, "2 windows, 3 tabs") {
+		t.Errorf("banner offers %q, want the main window's 2 tabs and the stray one", offer)
+	}
+	if _, err := os.Stat(filepath.Join(st.Dir(), oldSlot.ID()+".json")); err == nil {
+		t.Error("the window closed hours before stayed")
 	}
 }
 

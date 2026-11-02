@@ -219,3 +219,40 @@ func TestSummary(t *testing.T) {
 		t.Errorf("Summary = %q", got)
 	}
 }
+
+// TestGroup: windows closed one by one come back together; one closed long
+// before the others, or while another window still runs, does not.
+func TestGroup(t *testing.T) {
+	t0 := time.Date(2026, 11, 2, 19, 22, 0, 0, time.UTC)
+	at := func(id string, closed time.Duration) Saved {
+		w := Window{Saved: t0.Add(closed)}
+		if closed >= 0 {
+			w.Closed = t0.Add(closed)
+		}
+		return Saved{ID: id, Window: w}
+	}
+	ids := func(ss []Saved) []string {
+		var out []string
+		for _, s := range ss {
+			out = append(out, s.ID)
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name         string
+		saved        []Saved
+		running      bool
+		offer, stale []string
+	}{
+		{"main then stray", []Saved{at("b", 37*time.Second), at("a", 30*time.Second)}, false, []string{"b", "a"}, nil},
+		{"chain", []Saved{at("c", 100*time.Second), at("b", 50*time.Second), at("a", 0)}, false, []string{"c", "b", "a"}, nil},
+		{"closed hours before", []Saved{at("b", 3*time.Hour), at("a", 0)}, false, []string{"b"}, []string{"a"}},
+		{"crashed always", []Saved{at("b", 3*time.Hour), at("x", -time.Hour), at("a", 0)}, false, []string{"b", "x"}, []string{"a"}},
+		{"another runs", []Saved{at("x", -time.Hour), at("a", 0)}, true, []string{"x"}, nil},
+	} {
+		offer, stale := Group(tc.saved, tc.running)
+		if !reflect.DeepEqual(ids(offer), tc.offer) || !reflect.DeepEqual(ids(stale), tc.stale) {
+			t.Errorf("%s: offer %v stale %v, want %v and %v", tc.name, ids(offer), ids(stale), tc.offer, tc.stale)
+		}
+	}
+}

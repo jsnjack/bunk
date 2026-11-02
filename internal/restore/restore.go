@@ -5,7 +5,8 @@
 // Each window is a slot in a Store: <id>.json holds the layout (Window),
 // <id>/ the scrollback of each pane, and <id>.lock a lock the running
 // window holds. A slot nobody holds is a window that ended, by a quit, a
-// crash or a logout, and Saved lists those. A window writes its snapshot
+// crash or a logout, and Saved lists those; Offer picks the ones a start
+// brings back. A window writes its snapshot
 // as it changes, so a crash loses at most its last seconds.
 //
 // The package knows nothing of GTK: bunk-gui maps its tabs to these types,
@@ -26,6 +27,9 @@ const Version = 1
 type Window struct {
 	V     int       `json:"v"`
 	Saved time.Time `json:"saved"`
+	// Closed is when the window ended in an orderly way (a quit, its last
+	// tab closed, a SIGTERM at logout); zero after a crash or a kill.
+	Closed time.Time `json:"closed,omitzero"`
 	// Width and Height are the window's size in logical pixels, 0 when
 	// unknown; Maximized wins over them.
 	Width     int  `json:"width,omitempty"`

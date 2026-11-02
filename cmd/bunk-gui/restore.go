@@ -14,8 +14,11 @@ package main
 // the command line without running it. An agent pane skips the scrollback:
 // the agent prints its conversation again.
 //
-// Quitting keeps the snapshot for the next start unless other windows are
-// still open; a window whose last pane ended leaves none. restore = false
+// Quitting keeps the snapshot for the next start, stamped with the time
+// the window closed; a window whose last pane ended leaves none. The next
+// start offers the windows closed together (restore.Offer): the user
+// closes a session's windows one by one, so the order must not matter,
+// but a window closed long before the others is dropped. restore = false
 // in config.toml turns saving and the banner off.
 
 import (
@@ -24,9 +27,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
@@ -135,7 +140,7 @@ func (a *App) initRestore() bool {
 	}
 	coreglib.TimeoutAdd(uint(saveEvery.Milliseconds()), a.saveTick)
 	if a.cfg.offerRestore {
-		r.offer = st.Saved()
+		r.offer = st.Offer(st.Running(r.slot) > 0)
 	}
 	return false
 }
@@ -467,20 +472,26 @@ func (a *App) saveRestore(history, final bool) {
 
 func historyName(p *Pane) string { return fmt.Sprintf("pane-%d", p.id) }
 
-// finishRestore writes the last snapshot as bunk-gui quits. The user's
-// quit with other windows still open, or a window without a live pane,
-// leaves none; anything else keeps it for the next start.
+// finishRestore writes the last snapshot as bunk-gui quits, stamped with
+// the time it closed, and keeps it for the next start, which offers it
+// with the windows closed around then. A window without a live pane
+// leaves none.
 func (a *App) finishRestore(reason string) {
 	r := &a.restorer
 	if r.slot == nil {
 		return
 	}
 	a.saveRestore(true, true)
-	if !a.settings.restore || len(a.snapshotWindow().Tabs) == 0 || reason == "quit" && r.store.Running(r.slot) > 0 {
+	w := a.snapshotWindow()
+	if !a.settings.restore || len(w.Tabs) == 0 {
 		if err := r.slot.Remove(); err != nil {
 			slog.Debug("restore: remove", "err", err)
 		}
 	} else {
+		w.Closed = time.Now()
+		if err := r.slot.Save(w); err != nil {
+			slog.Debug("restore: save", "reason", reason, "err", err)
+		}
 		r.slot.Release()
 	}
 	r.slot = nil
@@ -592,4 +603,28 @@ func (a *App) scriptRestore(arg string) error {
 		return fmt.Errorf("restore %q: want accept, dismiss or save", arg)
 	}
 	return nil
+}
+
+// finishOnSignal ends bunk-gui in order on SIGTERM and SIGHUP, as systemd
+// stops the session's scopes at logout, so the window's snapshot records
+// when it closed. It returns the function that stops listening.
+func (a *App) finishOnSignal() func() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		for sig := range ch {
+			coreglib.IdleAdd(func() {
+				slog.Debug("quit on signal", "signal", sig)
+				if a.win == nil {
+					a.app.Quit()
+					return
+				}
+				a.finish("signal")
+			})
+		}
+	}()
+	return func() {
+		signal.Stop(ch)
+		close(ch)
+	}
 }

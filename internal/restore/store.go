@@ -306,3 +306,54 @@ func writeFile(path string, data []byte) error {
 	}
 	return nil
 }
+
+// CloseGap is how far apart windows may close and still come back
+// together: the user closes the windows of a session one by one.
+const CloseGap = time.Minute
+
+// Offer lists the snapshots a start offers to bring back, newest first,
+// and deletes those it never will. A window that crashed or was killed
+// (no Closed time) is always offered. Windows closed in order are
+// offered once no other window runs (running is false), as one group:
+// the last one closed, and each closed within CloseGap of the next. A
+// window closed earlier was one the user was done with.
+func (s *Store) Offer(running bool) []Saved {
+	offer, stale := Group(s.Saved(), running)
+	for _, sv := range stale {
+		_ = s.Discard(sv.ID)
+	}
+	return offer
+}
+
+// Group splits saved (newest first) into the snapshots to offer, in the
+// same order, and the stale ones to delete, as Offer describes.
+func Group(saved []Saved, running bool) (offer, stale []Saved) {
+	var closed []time.Time
+	for _, sv := range saved {
+		if !sv.Window.Closed.IsZero() {
+			closed = append(closed, sv.Window.Closed)
+		}
+	}
+	slices.SortFunc(closed, func(a, b time.Time) int { return b.Compare(a) })
+	// The group reaches back from the last close while the gaps are short.
+	var since time.Time
+	for i, c := range closed {
+		if i > 0 && closed[i-1].Sub(c) > CloseGap {
+			break
+		}
+		since = c
+	}
+	for _, sv := range saved {
+		switch c := sv.Window.Closed; {
+		case c.IsZero():
+			offer = append(offer, sv)
+		case running:
+			// Another window still runs: the group is not complete yet.
+		case c.Before(since):
+			stale = append(stale, sv)
+		default:
+			offer = append(offer, sv)
+		}
+	}
+	return offer, stale
+}
