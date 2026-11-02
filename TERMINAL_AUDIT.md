@@ -165,7 +165,7 @@ CSI 14/16/18 and PTY pixel sizes describe the same virtual cell geometry.
 | UTF-8 | OK | Boundary detection prevents split-rune corruption |
 | CJK double-width | **FIXED** | vt10x tracks display-cell widths and continuations, including right-edge wrapping and editing. Rendering, cursor positions, copy, search, and reflow use those same coordinates |
 | Combining characters | OK | Immutable grapheme suffix retained in lead cells, including copy/search/reflow |
-| Emoji (multi-codepoint) | OK | ZWJ families, flags, modifiers, variation selectors, and keycaps; widths and continuation cells agree with tcell. Visual shaping still requires a capable host/font |
+| Emoji (multi-codepoint) | OK | ZWJ families, flags, modifiers, variation selectors, and keycaps; widths and continuation cells agree with tcell. In the TUI, visual shaping still requires a capable host/font; bunk-gui draws colour emoji from an RGBA atlas page |
 | Box drawing, blocks, braille | OK | bunk-gui draws kitty's set of 1,098 characters itself (`internal/boxdraw`): lines, blocks and shades fill the cell exactly and join across cells. bunk's TUI leaves them to the host terminal's font |
 
 ---

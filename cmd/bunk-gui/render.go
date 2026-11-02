@@ -79,8 +79,10 @@ const textVertex = vertexCommon + `
 uniform int u_slotsPerRow;
 out vec2 v_uv;
 flat out vec4 v_fg;
+flat out uint v_color;
 void main() {
 	v_fg = a_fg;
+	v_color = a_glyph & 16777216u; // flagColor
 	int slot = int(a_glyph & 65535u);
 	if (slot == 0) {
 		// Nothing to draw: collapse the quad outside the clip volume.
@@ -96,13 +98,23 @@ void main() {
 }
 `
 
+// A colour glyph (flagColor) comes from the colour page, premultiplied,
+// and keeps its own colours; others tint their coverage with the cell's
+// foreground. Both fade with an inactive pane.
 const textFragment = `#version 330 core
 uniform sampler2D u_atlas;
+uniform sampler2D u_colors;
 uniform vec4 u_dim;
 in vec2 v_uv;
 flat in vec4 v_fg;
+flat in uint v_color;
 out vec4 o_color;
 void main() {
+	if (v_color != 0u) {
+		vec4 c = texelFetch(u_colors, ivec2(v_uv), 0) * v_fg.a;
+		o_color = vec4(mix(c.rgb, u_dim.rgb * c.a, u_dim.a), c.a);
+		return;
+	}
 	float a = texelFetch(u_atlas, ivec2(v_uv), 0).r * v_fg.a;
 	o_color = vec4(mix(v_fg.rgb, u_dim.rgb, u_dim.a) * a, a); // premultiplied
 }
@@ -152,21 +164,23 @@ type Renderer struct {
 	rowDirty   []bool // rows whose instances changed since the last upload
 
 	bgProg, textProg uint32
-	vao, vbo, tex    uint32
+	vao, vbo         uint32
+	tex, colorTex    uint32 // the atlas's coverage and colour pages
 	bgLoc, textLoc   uniformLocs
 	linesLoc         int32
 	slotsLoc         int32
 	atlasLoc         int32
+	colorsLoc        int32
 	checkerProg      uint32
 	rectProg         uint32
 	rectLoc          struct{ rect, viewport, yflip, color int32 }
 
 	fbW, fbH int
 	yflip    float32
-	// Atlas upload state: the texture holds slots [1, atlasNext) of an
-	// atlas texH pixels tall.
-	atlasNext, texH int
-	clearRGB        [3]float32
+	// Atlas upload state: each texture holds the slots of its page that
+	// were there at the last upload.
+	mono, color pageUpload
+	clearRGB    [3]float32
 	// Inactive panes fade towards the background by dim (0: off).
 	dim    float32
 	dimLoc [2]int32 // bg, text programs
@@ -182,6 +196,10 @@ type Renderer struct {
 }
 
 type uniformLocs struct{ grid, cell, viewport, yflip int32 }
+
+// pageUpload is what a page's texture holds: slots [1, next) of a page h
+// pixels tall.
+type pageUpload struct{ next, h int }
 
 // NewRenderer compiles the programs and creates the buffers and textures
 // for a grid of cols x rows cells drawn from atlas. The view's GL context
@@ -211,6 +229,7 @@ func NewRenderer(cols, rows int, atlas *Atlas) (*Renderer, error) {
 	r.dimLoc = [2]int32{gl.UniformLocation(r.bgProg, "u_dim"), gl.UniformLocation(r.textProg, "u_dim")}
 	r.slotsLoc = gl.UniformLocation(r.textProg, "u_slotsPerRow")
 	r.atlasLoc = gl.UniformLocation(r.textProg, "u_atlas")
+	r.colorsLoc = gl.UniformLocation(r.textProg, "u_colors")
 
 	r.vao = gl.GenVertexArray()
 	gl.BindVertexArray(r.vao)
@@ -225,12 +244,14 @@ func NewRenderer(cols, rows int, atlas *Atlas) (*Renderer, error) {
 		gl.VertexAttribDivisor(i, 1)
 	}
 
-	r.tex = gl.GenTexture()
-	gl.BindTexture(gl.TEXTURE_2D, r.tex)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	for _, t := range []*uint32{&r.tex, &r.colorTex} {
+		*t = gl.GenTexture()
+		gl.BindTexture(gl.TEXTURE_2D, *t)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	}
 	r.syncAtlas()
 	if err := r.img.init(); err != nil {
 		return nil, fmt.Errorf("image layer: %w", err)
@@ -256,28 +277,36 @@ func (r *Renderer) Resize(cols, rows int) {
 // SetAtlas switches to an atlas built for another scale.
 func (r *Renderer) SetAtlas(a *Atlas) {
 	r.atlas = a
-	r.texH = 0
+	r.mono, r.color = pageUpload{}, pageUpload{}
 	r.syncAtlas()
 }
 
-// syncAtlas uploads glyphs rasterized since the last call: the whole texture
-// after the atlas grew, otherwise only the slot rows holding new slots.
+// syncAtlas uploads glyphs rasterized since the last call to the textures
+// of both pages.
 func (r *Renderer) syncAtlas() {
 	a := r.atlas
-	if r.texH == a.H && r.atlasNext == a.next {
+	syncPage(&r.mono, &a.page, r.tex, gl.TEXTURE0, gl.R8, gl.RED, a)
+	syncPage(&r.color, &a.Color, r.colorTex, gl.TEXTURE2, gl.RGBA8, gl.RGBA, a)
+	gl.ActiveTexture(gl.TEXTURE0)
+}
+
+// syncPage uploads the whole page after it grew, otherwise only the slot
+// rows holding slots added since up was taken.
+func syncPage(up *pageUpload, pg *page, tex, unit uint32, internal int32, format uint32, a *Atlas) {
+	if up.h == pg.H && up.next == pg.next {
 		return
 	}
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, r.tex)
+	gl.ActiveTexture(unit)
+	gl.BindTexture(gl.TEXTURE_2D, tex)
 	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
-	if r.texH != a.H {
-		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.R8, int32(a.W), int32(a.H), gl.RED, gl.UNSIGNED_BYTE, unsafe.Pointer(&a.Pixels[0]))
+	if up.h != pg.H {
+		gl.TexImage2D(gl.TEXTURE_2D, 0, internal, int32(pg.W), int32(pg.H), format, gl.UNSIGNED_BYTE, unsafe.Pointer(&pg.Pixels[0]))
 	} else {
-		y0 := r.atlasNext / a.SlotsPerRow * a.CellH
-		y1 := ((a.next-1)/a.SlotsPerRow + 1) * a.CellH
-		gl.TexSubImage2D(gl.TEXTURE_2D, 0, 0, int32(y0), int32(a.W), int32(y1-y0), gl.RED, gl.UNSIGNED_BYTE, unsafe.Pointer(&a.Pixels[y0*a.W]))
+		y0 := up.next / a.SlotsPerRow * a.CellH
+		y1 := ((pg.next-1)/a.SlotsPerRow + 1) * a.CellH
+		gl.TexSubImage2D(gl.TEXTURE_2D, 0, 0, int32(y0), int32(pg.W), int32(y1-y0), format, gl.UNSIGNED_BYTE, unsafe.Pointer(&pg.Pixels[y0*pg.W*pg.bpp]))
 	}
-	r.texH, r.atlasNext = a.H, a.next
+	up.h, up.next = pg.H, pg.next
 }
 
 // Upload sends each contiguous run of changed rows with one glBufferSubData
@@ -335,6 +364,9 @@ func (r *Renderer) Draw() {
 	gl.Uniform1f(r.textLoc.yflip, r.yflip)
 	gl.Uniform1i(r.slotsLoc, int32(a.SlotsPerRow))
 	gl.Uniform1i(r.atlasLoc, 0)
+	gl.Uniform1i(r.colorsLoc, 2)
+	gl.ActiveTexture(gl.TEXTURE2)
+	gl.BindTexture(gl.TEXTURE_2D, r.colorTex)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, r.tex)
 	gl.Enable(gl.BLEND)
@@ -388,6 +420,7 @@ func thumbAt(fbW, fbH, rows, cellW, cellH, off, count int) thumb {
 func (r *Renderer) Delete() {
 	r.img.delete()
 	gl.DeleteTexture(r.tex)
+	gl.DeleteTexture(r.colorTex)
 	gl.DeleteBuffer(r.vbo)
 	gl.DeleteVertexArray(r.vao)
 	for _, p := range []uint32{r.bgProg, r.textProg, r.rectProg, r.checkerProg} {

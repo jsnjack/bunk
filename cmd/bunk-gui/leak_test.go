@@ -75,8 +75,9 @@ func TestGUITabLeaks(t *testing.T) {
 	if end.Panes != start.Panes {
 		t.Errorf("%d panes not freed, %d before the tabs", end.Panes, start.Panes)
 	}
-	// Only live panes hold textures: a glyph atlas and the view's slots.
-	if limit := end.Panes * (viewSlots + 1); end.Textures > limit {
+	// Only live panes hold textures: the glyph atlas's two pages and the
+	// view's slots.
+	if limit := end.Panes * (viewSlots + 2); end.Textures > limit {
 		t.Errorf("%d GL textures held by %d panes (limit %d)", end.Textures, end.Panes, limit)
 	}
 }

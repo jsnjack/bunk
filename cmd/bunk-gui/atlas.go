@@ -1,9 +1,9 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
-	"unicode/utf8"
 
 	"github.com/diamondburned/gotk4/pkg/cairo"
 	"github.com/diamondburned/gotk4/pkg/pango"
@@ -27,6 +27,9 @@ const (
 	// its slot holds it shrunk or shifted to fit. termView draws it across
 	// two cells instead when the next one is blank; the shaders ignore it.
 	flagOverflow = 1 << 23
+	// flagColor marks a slot of the colour page: the glyph draws its own
+	// colours (an emoji) instead of the cell's foreground.
+	flagColor = 1 << 24
 )
 
 // maxAtlasSide caps the atlas texture (GL_MAX_TEXTURE_SIZE is 16384 here).
@@ -39,18 +42,36 @@ type clusterKey struct {
 	wide bool // drawn across two cells: a wide character, or a narrow one that overflows
 }
 
-// rasterizer draws text into an R8 slot. dst starts at the slot's top-left
-// pixel; stride is the atlas width. It reports whether the text's ink
-// reached past the slot's right edge, so the slot holds it fitted.
+// rasterizer draws glyphs for the atlas. draw renders text into a buffer
+// of its own, cells wide, and reports whether the drawing has colours of
+// its own (a colour emoji) and whether the text's ink reached past the
+// slot's right edge, so the slot holds it fitted. copyOut then copies that
+// drawing into a slot: dst starts at the slot's top-left pixel and stride
+// is the page width in pixels. A monochrome drawing gives one coverage byte
+// per pixel, a colour one premultiplied RGBA.
 type rasterizer interface {
-	draw(text string, bold bool, cells int, dst []byte, stride int) (overflows bool)
+	draw(text string, bold bool, cells int) (color, overflows bool)
+	copyOut(dst []byte, stride int, color bool)
 }
 
-// Atlas is a grayscale glyph atlas with cell-sized slots. A wide glyph takes
-// two neighbouring slots, and so does a narrow one drawn across two cells. Glyphs are rasterized on first use and never
-// evicted; the texture grows by doubling its height. Slots are handed out in
-// order, so a renderer that shares the atlas uploads only the slots past the
-// last one it saw. All panes at one scale share one atlas.
+// page is one texture of the atlas: cell-sized slots, SlotsPerRow to a
+// row, bpp bytes per pixel. It grows by doubling its height. Slots are
+// handed out in order, so a renderer uploads only the slots past the last
+// one it saw.
+type page struct {
+	W, H   int
+	Pixels []byte // W*H*bpp, tightly packed, the CPU copy of the texture
+	bpp    int
+	rows   int // slot rows
+	next   int // the next free slot; slot 0 means "nothing to draw"
+}
+
+// Atlas is a glyph atlas with cell-sized slots in two pages: coverage
+// (R8) for text, which the shaders tint with the cell's foreground, and
+// premultiplied RGBA (Color) for glyphs with colours of their own, such
+// as emoji. A wide glyph takes two neighbouring slots, and so does a
+// narrow one drawn across two cells. Glyphs are rasterized on first use
+// and never evicted. All panes at one scale share one atlas.
 type Atlas struct {
 	Font         string
 	Scale        float64 // device pixels per logical pixel
@@ -60,11 +81,9 @@ type Atlas struct {
 	ULPos, Thick, StrikePos int
 
 	SlotsPerRow int
-	slotRows    int
-	W, H        int
-	Pixels      []byte // W*H, tightly packed, the CPU copy of the texture
+	page             // coverage glyphs
+	Color       page // colour glyphs (flagColor)
 
-	next  int
 	ascii [2][128]uint32
 	other map[clusterKey]uint32
 
@@ -72,16 +91,14 @@ type Atlas struct {
 	line       int // width of a light box drawing line
 	Rasterized int // glyphs the font drew so far
 	Drawn      int // glyphs boxdraw drew so far
-	Replaced   int // glyphs drawn as U+FFFD (colour emoji)
+	Colored    int // glyphs drawn in their own colours (Color page)
 	Full       int // lookups that found no free slot
 }
 
 func newAtlas(cellW, cellH int, r rasterizer) *Atlas {
 	a := &Atlas{CellW: cellW, CellH: cellH, SlotsPerRow: 64, raster: r, line: boxdraw.LineWidth(cellW), other: make(map[clusterKey]uint32)}
-	a.slotRows = 16
-	a.W, a.H = a.SlotsPerRow*cellW, a.slotRows*cellH
-	a.Pixels = make([]byte, a.W*a.H)
-	a.next = 1 // slot 0 means "nothing to draw"
+	a.page = newPage(a.SlotsPerRow*cellW, cellH, 16, 1)
+	a.Color = newPage(a.SlotsPerRow*cellW, cellH, 2, 4)
 	return a
 }
 
@@ -108,32 +125,37 @@ func (a *Atlas) add(r rune, comb string, bold, wide bool) uint32 {
 	if wide {
 		cells = 2
 	}
-	slot := a.alloc(cells)
-	v := uint32(slot)
-	if slot != 0 {
-		x, y := (slot%a.SlotsPerRow)*a.CellW, (slot/a.SlotsPerRow)*a.CellH
-		dst := a.Pixels[y*a.W+x:]
-		if comb == "" && boxdraw.Draw(r, dst, a.W, cells*a.CellW, a.CellH, a.line) {
-			// Box drawing, blocks, braille and the like fill the cell
-			// exactly, so neighbouring cells join without seams.
+	var v uint32
+	if comb == "" && boxdraw.Has(r) {
+		// Box drawing, blocks, braille and the like fill the cell
+		// exactly, so neighbouring cells join without seams.
+		if v = uint32(a.alloc(&a.page, cells)); v != 0 {
+			boxdraw.Draw(r, a.slotPixels(&a.page, v), a.W, cells*a.CellW, a.CellH, a.line)
 			a.Drawn++
-		} else {
-			text := string(r) + comb
-			if isColorEmoji(r, comb) {
-				// Colour glyphs need an RGBA atlas; draw a placeholder for now.
-				text = "�"
-				a.Replaced++
-			}
-			if a.raster.draw(text, bold, cells, dst, a.W) && !wide {
-				v |= flagOverflow
-			}
-			a.Rasterized++
-		}
-		if wide {
-			v |= flagWide
 		}
 	} else {
+		color, overflows := a.raster.draw(string(r)+comb, bold, cells)
+		pg := &a.page
+		if color {
+			pg = &a.Color
+		}
+		if slot := a.alloc(pg, cells); slot != 0 {
+			v = uint32(slot)
+			a.raster.copyOut(a.slotPixels(pg, v), pg.W, color)
+			a.Rasterized++
+			if color {
+				v |= flagColor
+				a.Colored++
+			}
+			if overflows && !wide {
+				v |= flagOverflow
+			}
+		}
+	}
+	if v == 0 {
 		a.Full++
+	} else if wide {
+		v |= flagWide
 	}
 	if r < 128 && comb == "" && !wide {
 		b := 0
@@ -147,53 +169,52 @@ func (a *Atlas) add(r rune, comb string, bold, wide bool) uint32 {
 	return v
 }
 
-// alloc returns the first of `cells` free neighbouring slots, growing the
-// atlas when needed, or 0 when it cannot grow further.
-func (a *Atlas) alloc(cells int) int {
-	if cells == 2 && a.next%a.SlotsPerRow == a.SlotsPerRow-1 {
-		a.next++ // a wide glyph must not straddle two slot rows
+// slotPixels returns the bytes of pg from slot v's top-left pixel on.
+func (a *Atlas) slotPixels(pg *page, v uint32) []byte {
+	slot := int(v & slotMask)
+	x, y := (slot%a.SlotsPerRow)*a.CellW, (slot/a.SlotsPerRow)*a.CellH
+	return pg.Pixels[(y*pg.W+x)*pg.bpp:]
+}
+
+func newPage(w, cellH, rows, bpp int) page {
+	return page{W: w, H: rows * cellH, Pixels: make([]byte, w*rows*cellH*bpp), bpp: bpp, rows: rows, next: 1}
+}
+
+// alloc returns the first of `cells` free neighbouring slots of pg,
+// growing it when needed, or 0 when it cannot grow further.
+func (a *Atlas) alloc(pg *page, cells int) int {
+	if cells == 2 && pg.next%a.SlotsPerRow == a.SlotsPerRow-1 {
+		pg.next++ // a wide glyph must not straddle two slot rows
 	}
-	for a.next+cells > a.SlotsPerRow*a.slotRows {
-		if (a.slotRows*2)*a.CellH > maxAtlasSide {
+	for pg.next+cells > a.SlotsPerRow*pg.rows {
+		if (pg.rows*2)*a.CellH > maxAtlasSide {
 			return 0
 		}
-		a.slotRows *= 2
-		h := a.slotRows * a.CellH
-		px := make([]byte, a.W*h)
-		copy(px, a.Pixels)
-		a.Pixels, a.H = px, h
+		pg.rows *= 2
+		pg.H = pg.rows * a.CellH
+		px := make([]byte, pg.W*pg.H*pg.bpp)
+		copy(px, pg.Pixels)
+		pg.Pixels = px
 	}
-	slot := a.next
-	a.next += cells
+	slot := pg.next
+	pg.next += cells
 	return slot
 }
 
-// isColorEmoji is a coarse test for glyphs that only exist as colour emoji.
-func isColorEmoji(r rune, comb string) bool {
-	if r >= 0x1F000 && r <= 0x1FAFF {
-		return true
-	}
-	for len(comb) > 0 {
-		c, n := utf8.DecodeRuneInString(comb)
-		if c == 0xFE0F { // VS16: emoji presentation
-			return true
-		}
-		comb = comb[n:]
-	}
-	return false
-}
-
-// pangoRaster renders glyphs with Pango/cairo into a reusable A8 surface.
-// The surface holds two cells with a cell of margin on each side, where
-// ink left outside a slot would show.
+// pangoRaster renders glyphs with Pango/cairo into a reusable ARGB32
+// surface, white on transparent, so a coverage glyph comes out grey in
+// every channel and a colour font's glyph keeps its colours. The surface
+// holds two cells with a cell of margin on each side, where ink left
+// outside a slot would show.
 type pangoRaster struct {
 	cellW, cellH, baseline int
 	surf                   *cairo.Surface
 	cr                     *cairo.Context
 	layouts                [2]*pango.Layout // regular, bold
+	cells                  int              // the width of the last drawing
 }
 
-func (p *pangoRaster) draw(text string, bold bool, cells int, dst []byte, stride int) (overflows bool) {
+func (p *pangoRaster) draw(text string, bold bool, cells int) (color, overflows bool) {
 	l := p.layouts[0]
 	if bold {
 		l = p.layouts[1]
@@ -215,11 +236,50 @@ func (p *pangoRaster) draw(text string, bold bool, cells int, dst []byte, stride
 	pangocairo.ShowLayout(p.cr, l)
 	p.cr.Restore()
 	p.surf.Flush()
+	p.cells = cells
 	src, sstride := p.surf.Data(), p.surf.Stride()
-	for y := 0; y < p.cellH; y++ {
-		copy(dst[y*stride:y*stride+w], src[y*sstride+p.cellW:y*sstride+p.cellW+w])
+	for y := 0; y < p.cellH && !color; y++ {
+		row := src[y*sstride+4*p.cellW : y*sstride+4*(p.cellW+w)]
+		for i := 0; i < len(row); i += 4 {
+			if isColored(binary.NativeEndian.Uint32(row[i:])) {
+				color = true
+				break
+			}
+		}
 	}
-	return overflows
+	return color, overflows
+}
+
+// isColored reports whether a premultiplied ARGB32 pixel drawn in white
+// is not grey: its colour channels differ from its alpha.
+func isColored(px uint32) bool {
+	a := int(px >> 24)
+	for _, c := range [3]int{int(px>>16) & 0xff, int(px>>8) & 0xff, int(px) & 0xff} {
+		if c-a > 2 || a-c > 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *pangoRaster) copyOut(dst []byte, stride int, color bool) {
+	src, sstride := p.surf.Data(), p.surf.Stride()
+	w := p.cells * p.cellW
+	for y := 0; y < p.cellH; y++ {
+		row := src[y*sstride+4*p.cellW : y*sstride+4*(p.cellW+w)]
+		if !color {
+			out := dst[y*stride : y*stride+w]
+			for x := range out {
+				out[x] = byte(binary.NativeEndian.Uint32(row[4*x:]) >> 24)
+			}
+			continue
+		}
+		out := dst[4*y*stride : 4*(y*stride+w)]
+		for x := 0; x < w; x++ {
+			px := binary.NativeEndian.Uint32(row[4*x:])
+			out[4*x], out[4*x+1], out[4*x+2], out[4*x+3] = byte(px>>16), byte(px>>8), byte(px), byte(px>>24)
+		}
+	}
 }
 
 // fitInk places a glyph whose ink spans [x0, x1) at its natural position
@@ -262,7 +322,7 @@ func BuildAtlas(font string, scale float64) (*Atlas, error) {
 		return nil, fmt.Errorf("atlas: bad metrics for %q: %dx%d", font, cellW, cellH)
 	}
 
-	surf := cairo.CreateImageSurface(cairo.FormatA8, 4*cellW, cellH)
+	surf := cairo.CreateImageSurface(cairo.FormatARGB32, 4*cellW, cellH)
 	cr := cairo.Create(surf)
 	cr.SetSourceRGBA(1, 1, 1, 1)
 	pr := &pangoRaster{cellW: cellW, cellH: cellH, baseline: baseline, surf: surf, cr: cr}

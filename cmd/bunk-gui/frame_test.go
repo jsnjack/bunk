@@ -13,16 +13,18 @@ import (
 )
 
 // fakeRaster draws nothing. A character in overflow has ink wider than
-// one cell.
+// one cell, and one in color has colours of its own.
 type fakeRaster struct {
-	calls    int
-	overflow string
+	calls           int
+	overflow, color string
 }
 
-func (f *fakeRaster) draw(text string, _ bool, cells int, _ []byte, _ int) bool {
+func (f *fakeRaster) draw(text string, _ bool, cells int) (color, overflows bool) {
 	f.calls++
-	return cells == 1 && strings.Contains(f.overflow, text)
+	return strings.Contains(f.color, text), cells == 1 && strings.Contains(f.overflow, text)
 }
+
+func (f *fakeRaster) copyOut([]byte, int, bool) {}
 
 type frameFixture struct {
 	s    *session.Session
@@ -148,12 +150,28 @@ func TestOverflowingGlyphs(t *testing.T) {
 	}
 }
 
-func TestEmojiDrawnAsReplacement(t *testing.T) {
+// TestColorGlyphs: a glyph the font draws in colour takes a slot of the
+// colour page and flagColor, and spreads over a blank cell after it like
+// any overflowing glyph; text keeps the coverage page.
+func TestColorGlyphs(t *testing.T) {
 	f := newFixture(10, 2)
-	f.write("\U0001F600")
+	f.fr.color, f.fr.overflow = "\U0001F535❤", "❤"
+	f.write("\x1b[?25l\U0001F535x❤ ")
 	f.frame()
-	if f.r.atlas.Replaced != 1 {
-		t.Errorf("replaced = %d, want 1", f.r.atlas.Replaced)
+	a := f.r.atlas
+	blue, x, heart := f.cell(0, 0).Glyph, f.cell(2, 0).Glyph, f.cell(3, 0).Glyph
+	if blue&flagColor == 0 || blue&flagWide == 0 || blue&slotMask == 0 {
+		t.Errorf("🔵: glyph %x, want a wide colour slot", blue)
+	}
+	if heart&flagColor == 0 || heart&flagWide == 0 || heart&flagOverflow != 0 {
+		t.Errorf("❤ before a space: glyph %x, want a colour slot across two cells", heart)
+	}
+	if x&flagColor != 0 || x&slotMask == 0 {
+		t.Errorf("x: glyph %x, want a coverage slot", x)
+	}
+	// 🔵 and ❤ across two cells, and ❤ fitted into one.
+	if a.Colored != 3 || a.Color.next != 6 {
+		t.Errorf("colour glyphs %d, next colour slot %d; want 3 and 6", a.Colored, a.Color.next)
 	}
 }
 

@@ -797,6 +797,21 @@ its default; Design Decisions says where the defaults come from.
     technical and dingbat blocks with the real fonts and checks that no
     ink leaves its slot. About 750 of their 1,840 symbols overflow a cell.
 
+- bunk-gui draws colour emoji in their own colours. The atlas has two
+  pages (`atlas.go`): coverage (R8), which the text shader tints with the
+  cell's foreground, and premultiplied RGBA (`Atlas.Color`).
+  - The rasterizer draws every glyph white on an ARGB32 surface. A glyph
+    whose pixels are not grey came from a colour font, so it goes to the
+    colour page and its slot gets `flagColor`; any other keeps its
+    coverage, the alpha channel. The font decides, not a code point
+    range: ❤ alone stays text, ❤️ with VS16 is colour.
+  - The colour page is a second texture on unit 2. Its slots number from
+    1 like the coverage page's, and the text shader picks the texture by
+    the flag. Colour glyphs fade with an inactive pane and spread over a
+    blank cell like other overflowing glyphs.
+  - `TestAtlasColorEmoji` checks the real fonts, and `TestGUIColorEmoji`
+    the window's pixels. Before, every emoji showed as U+FFFD.
+
 - Hyperlink IDs are swept and reused. A cell's `Glyph.Link` is a uint16
   ID into its terminal's URL table. A sweep frees the IDs no cell of either
   screen, cursor attribute or kept row refers to; new URLs reuse them, lowest

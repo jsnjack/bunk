@@ -258,6 +258,7 @@ const (
 	TEXTURE_2D               = 0x0DE1
 	TEXTURE0                 = 0x84C0
 	TEXTURE1                 = 0x84C1
+	TEXTURE2                 = 0x84C2
 	LINEAR                   = 0x2601
 	MAX_TEXTURE_SIZE         = 0x0D33
 	R8                       = 0x8229

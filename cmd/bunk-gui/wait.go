@@ -648,7 +648,7 @@ func (a *App) resources() markReport {
 		}
 		m.Panes++
 		if p.r != nil {
-			m.Textures++ // the glyph atlas
+			m.Textures += 2 // the glyph atlas: coverage and colour pages
 		}
 		for i := range p.slots {
 			if p.slots[i].tex != 0 {

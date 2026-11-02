@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/binary"
 	"math"
 	"slices"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 
 	"bunk/internal/boxdraw"
 )
@@ -107,19 +109,24 @@ func TestAtlasFitsWideInk(t *testing.T) {
 		p := a.raster.(*pangoRaster)
 		tol, overflowing := max(1, p.cellW/8), 0
 		for _, r := range runes {
-			if isColorEmoji(r, "") || !unicode.IsGraphic(r) || unicode.IsSpace(r) || boxdraw.Draw(r, make([]byte, a.CellW*a.CellH), a.CellW, a.CellW, a.CellH, 1) {
+			if !unicode.IsGraphic(r) || unicode.IsSpace(r) || boxdraw.Has(r) {
 				continue
 			}
 			for cells := 1; cells <= 2; cells++ {
 				w := cells * p.cellW
-				dst := make([]byte, w*p.cellH)
-				if p.draw(string(r), false, cells, dst, w) {
+				color, overflows := p.draw(string(r), false, cells)
+				if color {
+					break // an emoji: TestAtlasColorEmoji
+				}
+				if overflows {
 					overflowing++
 				}
+				dst := make([]byte, w*p.cellH)
+				p.copyOut(dst, w, false)
 				src, stride := p.surf.Data(), p.surf.Stride()
 				for y := 0; y < p.cellH; y++ {
 					for x := 0; x < 4*p.cellW; x++ {
-						if src[y*stride+x] != 0 && (x < p.cellW-tol || x >= p.cellW+w+tol) {
+						if binary.NativeEndian.Uint32(src[y*stride+4*x:])>>24 != 0 && (x < p.cellW-tol || x >= p.cellW+w+tol) {
 							t.Fatalf("scale %v: %c (U+%04X) in %d cells has ink at column %d of the surface; the slot is [%d, %d)",
 								scale, r, r, cells, x, p.cellW, p.cellW+w)
 						}
@@ -131,5 +138,43 @@ func TestAtlasFitsWideInk(t *testing.T) {
 			}
 		}
 		t.Logf("scale %v: cell %dx%d, %d of %d symbols overflow one cell", scale, p.cellW, p.cellH, overflowing, len(runes))
+	}
+}
+
+// TestAtlasColorEmoji draws emoji with the real fonts: each lands on the
+// colour page with its own colours (🔵 is blue, whatever the foreground),
+// while text and a text-style heart stay on the coverage page.
+func TestAtlasColorEmoji(t *testing.T) {
+	for _, scale := range []float64{1, 4.0 / 3, 2} {
+		a, err := BuildAtlas(defaultSettings().Font+" 11", scale)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range []string{"\U0001F535", "\U0001F600", "\u2764\uFE0F", "\u2705", "\U0001F680"} {
+			r, _ := utf8.DecodeRuneInString(e)
+			v := a.Lookup(r, e[utf8.RuneLen(r):], false, true)
+			if v&flagColor == 0 || v&slotMask == 0 {
+				t.Errorf("scale %v: %s: glyph %x, want a colour slot", scale, e, v)
+			}
+		}
+		for _, r := range []rune{'A', '\u2764', '\u2713'} {
+			if v := a.Lookup(r, "", false, false); v&flagColor != 0 {
+				t.Errorf("scale %v: %c: glyph %x on the colour page", scale, r, v)
+			}
+		}
+		// The blue circle's slot holds opaque blue pixels.
+		px := a.slotPixels(&a.Color, a.Lookup(0x1F535, "", false, true))
+		blue := 0
+		for y := range a.CellH {
+			for x := range 2 * a.CellW {
+				p := px[4*(y*a.Color.W+x):]
+				if p[3] == 255 && int(p[2]) > int(p[0])+80 {
+					blue++
+				}
+			}
+		}
+		if area := 2 * a.CellW * a.CellH; blue < area/4 {
+			t.Errorf("scale %v: 🔵 has %d opaque blue pixels of %d", scale, blue, area)
+		}
 	}
 }
