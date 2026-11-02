@@ -358,13 +358,9 @@ func (r *Renderer) DrawScrollbar(off, count int) {
 	if off <= 0 || count <= 0 {
 		return
 	}
-	h := float32(r.fbH)
-	total := float32(count + r.rows)
-	thumb := max(float32(r.atlas.CellH), h*float32(r.rows)/total)
-	y := (h - thumb) * (1 - float32(off)/float32(count))
-	w := float32(max(3, r.atlas.CellW/3))
+	t := thumbAt(r.fbW, r.fbH, r.rows, r.atlas.CellW, r.atlas.CellH, off, count)
 	gl.UseProgram(r.rectProg)
-	gl.Uniform4f(r.rectLoc.rect, float32(r.fbW)-w-2, y, w, thumb)
+	gl.Uniform4f(r.rectLoc.rect, float32(t.x), float32(t.y), float32(t.w), float32(t.h))
 	gl.Uniform2f(r.rectLoc.viewport, float32(r.fbW), float32(r.fbH))
 	gl.Uniform1f(r.rectLoc.yflip, r.yflip)
 	gl.Uniform4f(r.rectLoc.color, 0.5, 0.5, 0.5, 0.6) // premultiplied grey
@@ -372,6 +368,20 @@ func (r *Renderer) DrawScrollbar(off, count int) {
 	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 	gl.DrawArrays(gl.TRIANGLE_STRIP, 0, 4)
 	gl.Disable(gl.BLEND)
+}
+
+// thumb is the scrollbar thumb in device pixels, y from the top.
+type thumb struct{ x, y, w, h float64 }
+
+// thumbAt places the thumb of a fbW x fbH view of rows rows scrolled off
+// rows back into count rows of scrollback. The pointer's scrollbar drag
+// uses it too, so the thumb stays under the pointer.
+func thumbAt(fbW, fbH, rows, cellW, cellH, off, count int) thumb {
+	h := float64(fbH)
+	total := float64(count + rows)
+	th := max(float64(cellH), h*float64(rows)/total)
+	w := float64(max(3, cellW/3))
+	return thumb{x: float64(fbW) - w - 2, y: (h - th) * (1 - float64(off)/float64(count)), w: w, h: th}
 }
 
 // Delete frees the renderer's GL objects (the view's context is current).

@@ -140,6 +140,7 @@ type App struct {
 	exitArmed, finished bool
 	pendingClip         string     // OSC 52 text waiting for the window to be active
 	alerts              alertState // desktop notifications (alerts.go)
+	focusIn             *Pane      // the pane last told it has the focus (focusreport.go)
 	restorer            restorer   // session restore (restore.go)
 	hookOffer           hookOffer  // the banner offering agent hooks (prefs_hooks.go)
 	configErr           error

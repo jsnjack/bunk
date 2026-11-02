@@ -29,6 +29,8 @@ func runHelper() {
 		return
 	case "pixels":
 		os.Exit(pixelsHelper())
+	case "focus":
+		os.Exit(focusHelper())
 	default:
 		fmt.Println("unknown helper", os.Getenv("BUNK_GUI_HELPER"))
 		os.Exit(2)
@@ -114,6 +116,41 @@ func pixelsHelper() int {
 			if k == 'r' {
 				report("key")
 			}
+		}
+	}
+}
+
+// focusHelper asks for focus events (DECSET 1004) and prints a line for
+// each one it receives, with running counts: "focus out (outs=1 ins=0)".
+// It quits on "q".
+func focusHelper() int {
+	stty := exec.Command("stty", "raw", "-echo")
+	stty.Stdin = os.Stdin
+	if err := stty.Run(); err != nil {
+		fmt.Println("stty:", err)
+		return 1
+	}
+	fmt.Print("\x1b[?1004hready\r\n")
+	in := bufio.NewReader(os.Stdin)
+	outs, ins := 0, 0
+	for {
+		b, err := in.ReadByte()
+		if err != nil || b == 'q' {
+			return 0
+		}
+		if b != 0x1b {
+			continue
+		}
+		if c, _ := in.ReadByte(); c != '[' {
+			continue
+		}
+		switch c, _ := in.ReadByte(); c {
+		case 'I':
+			ins++
+			fmt.Printf("focus in (outs=%d ins=%d)\r\n", outs, ins)
+		case 'O':
+			outs++
+			fmt.Printf("focus out (outs=%d ins=%d)\r\n", outs, ins)
 		}
 	}
 }

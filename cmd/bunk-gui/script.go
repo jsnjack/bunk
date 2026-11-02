@@ -59,7 +59,7 @@ import (
 //	ptr-move X Y                     pointer to window coordinates
 //	ptr-by DX DY                     pointer moved by DX, DY, buttons kept (a drag in steps)
 //	ptr-at TARGET [DX DY]            tab N | tabclose N | newtab | options | closewin |
-//	                                 pane ID | cell ID COL ROW | divider r[a|b…] | menu LABEL |
+//	                                 pane ID | cell ID COL ROW | thumb ID | divider r[a|b…] | menu LABEL |
 //	                                 shortcut-keys ACTION [N] | shortcut-remove ACTION [N] |
 //	                                 shortcut-add ACTION | shortcut-switch ACTION | button LABEL |
 //	                                 pref NAME (tabs-rail, font-size, agent-0-name, agent-add, …);

@@ -153,8 +153,9 @@ type tabReport struct {
 	Item     *rectReport  `json:"item,omitempty"`
 	NaturalW int          `json:"natural_w"` // the width its content asks for, logical px
 	Close    *rectReport  `json:"close,omitempty"`
-	Status   statusReport `json:"status"` // of the agent pane
-	Pass     bool         `json:"pass"`   // shows the PASS tag
+	Status   statusReport `json:"status"`   // of the agent pane
+	Pass     bool         `json:"pass"`     // shows the PASS tag
+	Progress string       `json:"progress"` // OSC 9;4 as shown: "42%", "failed at 42%", "paused at 42%", "busy" (progressName)
 }
 
 type paneReport struct {
@@ -516,7 +517,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			Index: in.index + 1, Agent: in.agent, Name: in.name, More: in.more, State: stateName[in.state], Label: in.look.label,
 			Dot: in.look.dot, Map: in.paneMap, Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.notice, Tooltip: in.tooltip,
 			Selected: in.active, Needs: in.needs, Focus: -1, Zoomed: -1, Status: statusOf(in.st), Pass: in.pass,
-			ID: t.id,
+			ID: t.id, Progress: progressName(in.progress),
 		}
 		if a.ringShown(in) {
 			tr.Ring = ringDots(in.arcs)

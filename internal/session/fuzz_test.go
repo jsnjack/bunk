@@ -232,7 +232,7 @@ func FuzzStatusOSC(f *testing.F) {
 		num     uint8
 		payload string
 	}{
-		{0, "Claude needs your permission"}, {0, "4;1;50"}, {0, "line1\nline2\x9b"},
+		{0, "Claude needs your permission"}, {0, "4;1;50"}, {0, "4;2"}, {0, "4;9;1"}, {0, "4;1;-5"}, {0, "line1\nline2\x9b"},
 		{1, "e=1:p=body;" + "RG9uZQ=="}, {1, "i=1:p=close;"}, {1, "p=title;\x1b[31m"},
 		{2, "D;1"}, {2, "D;99999999999999999999"}, {2, "C"},
 		{3, "notify;Codex;Approval requested"}, {3, "notify;Command completed;x"},
@@ -253,8 +253,17 @@ func FuzzStatusOSC(f *testing.F) {
 		if err := checkNotice(st.notice); err != nil {
 			t.Fatalf("OSC %d %q: %v", num, payload, err)
 		}
-		if (st.notice != "") == (st.started || st.finished) {
-			t.Fatalf("OSC %d %q: %+v is neither a notice nor a command boundary", num, payload, st)
+		kinds := 0
+		for _, k := range []bool{st.notice != "", st.started || st.finished, st.progress != ""} {
+			if k {
+				kinds++
+			}
+		}
+		if kinds != 1 {
+			t.Fatalf("OSC %d %q: %+v is not one of a notice, a command boundary and a progress report", num, payload, st)
+		}
+		if p, ok := parseProgress(st.progress, Progress{Percent: 50}); ok && (p.Percent < 0 || p.Percent > 100 || p.State > ProgressPaused) {
+			t.Fatalf("OSC %d %q: progress %+v out of range", num, payload, p)
 		}
 	})
 }

@@ -518,7 +518,7 @@ func (a *App) menuTarget(label string) (float64, float64, error) {
 // target finds a point to aim the pointer at, in window coordinates:
 //
 //	tab N | tabclose N | newtab | options | closewin
-//	pane ID | cell ID COL ROW | divider PATH (r, ra, rb, rab, … from the selected tab's root)
+//	pane ID | cell ID COL ROW | thumb ID (the scrollbar thumb) | divider PATH (r, ra, rb, rab, … from the selected tab's root)
 func (a *App) target(args []string) (float64, float64, error) {
 	var numErr error
 	num := func(i int) int {
@@ -560,7 +560,7 @@ func (a *App) target(args []string) (float64, float64, error) {
 		return centre(a.optionsBtn)
 	case "closewin":
 		return centre(a.closeWinBtn)
-	case "pane", "cell":
+	case "pane", "cell", "thumb":
 		id := num(1)
 		if numErr != nil {
 			return 0, 0, numErr
@@ -572,13 +572,21 @@ func (a *App) target(args []string) (float64, float64, error) {
 		if args[0] == "pane" {
 			return centre(p.widget)
 		}
-		cx, cy := p.cellCenter(num(2), num(3))
-		if numErr != nil {
-			return 0, 0, numErr
-		}
 		x, y, _, _, ok := a.boundsIn(p.widget)
 		if !ok {
 			return 0, 0, errors.New("pane not shown")
+		}
+		if args[0] == "thumb" {
+			t, scale, shown := p.scrollThumb()
+			if !shown {
+				return 0, 0, errors.New("no scrollbar thumb on pane " + args[1])
+			}
+			g := viewGeomC(p.view)
+			return x + g.bx + (t.x+t.w/2)/scale, y + g.by + (t.y+t.h/2)/scale, nil
+		}
+		cx, cy := p.cellCenter(num(2), num(3))
+		if numErr != nil {
+			return 0, 0, numErr
 		}
 		return x + cx, y + cy, nil
 	case "shortcut-keys", "shortcut-remove", "shortcut-add", "shortcut-switch":

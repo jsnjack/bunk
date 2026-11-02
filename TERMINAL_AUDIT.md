@@ -49,6 +49,7 @@ Apps affected: `git diff`, `ls --color`, neovim with LSP, glow, bat, delta, lazy
 | 7 | CWD notification | OK | Forwarded to host |
 | 8 | Hyperlinks | OK | Stored on glyphs and emitted inline with text; hyperlink identities survive reflow. Link IDs no cell refers to are swept and reused, so a pane keeps new links clickable after any number of unique URLs; only live links count against the 65,535-ID and 16 MiB limits. In bunk-gui, Ctrl+hover underlines a link and Ctrl+click opens it (http, https, file, mailto, ftp); plain-text http/https/file URLs work too |
 | 9/99/777 | Attention requests | OK | Mark a pane's agent as needing you; not forwarded. When an agent in a pane the user is not looking at needs you, is done or failed (`[notifications]`), bunk shows a desktop notification through D-Bus on the user's desktop, and otherwise (over SSH, without a session bus or gdbus) sends its own OSC 777 notify to the host, with control and bidi characters removed and the text cut short |
+| 9;4 | Progress | OK | `session.Status.Progress`: normal with a percentage, error, indeterminate and paused; ends with 9;4;0 or when the reporting program leaves the foreground. bunk-gui draws it as a bar under the tab (Ptyxis shows it in its tabs); bunk's TUI does not show it; not forwarded |
 | 10/11/12 | Query/set fg/bg/cursor color | OK (host-dependent) | In-stream replies in both screen modes, including SSH/mosh. FG/BG changes repaint existing cells; cursor colour follows the active pane via tcell. Terminal-theme defaults are probed at startup; a genuinely unknown default is not fabricated |
 | 52 | Clipboard | OK | Forwarded to host |
 | 104 | Reset palette color | OK | vt10x handles indices 0-255 |
@@ -72,7 +73,7 @@ be queried accurately for that value. Explicit pane colour overrides remain quer
 | 25 | DECTCEM (cursor visible) | OK | |
 | 47/1047 | Alt screen | OK | |
 | 1000-1003 | Mouse modes | OK | Release events are forwarded in 1000/1002 as well as 1003 |
-| 1004 | Focus events | OK | Pane navigation and outer-terminal focus changes are forwarded when enabled |
+| 1004 | Focus events | OK | Pane navigation and outer-terminal focus changes are forwarded when enabled; in bunk-gui, pane, tab and window focus changes |
 | 1006 | SGR mouse | OK | |
 | 1049 | Alt screen + save cursor | OK | |
 | 2004 | Bracketed paste | OK | |

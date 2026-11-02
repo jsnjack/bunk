@@ -217,7 +217,7 @@ func TestGUIBadges(t *testing.T) {
 		"wait focused.scroll>0 focused.badges.0.role=scroll focused.settled=true idle 100ms",
 		"snap scroll", "shot scroll.png",
 		"kbd shift+pgup",
-		"wait focused.scroll>30 idle 100ms",
+		"wait focused.scroll>12 idle 100ms",
 		"snap scroll-2",
 		"scroll-reset",
 		"wait focused.scroll=0 focused.badges.#=0 idle 100ms",

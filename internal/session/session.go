@@ -153,6 +153,12 @@ type Session struct {
 	// shownRunning is Status.Running.Started as StatusChanged last
 	// announced it.
 	shownRunning time.Time
+	// progress is the foreground program's OSC 9;4 report, and
+	// progressPGID its process group (setProgress); shownProgress is
+	// progress as StatusChanged last announced it.
+	progress      Progress
+	progressPGID  int
+	shownProgress Progress
 
 	// knownToken is Options.KnownToken. Set before the session runs; read
 	// without the lock.

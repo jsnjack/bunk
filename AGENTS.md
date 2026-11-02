@@ -87,7 +87,7 @@ internal/session/   One terminal session, shared by front ends
   status.go         Agent status: AgentSpec detection, attention requests
                     (OSC 9/99/777, BEL), failures (OSC 133;D), done after a
                     long working stretch, git branch, explicit agent
-                    reports (Notify)
+                    reports (Notify), OSC 9;4 progress (Status.Progress)
   winsize.go        PTY window size in cells and virtual pixels
   timing.go         Timing: per-session timer intervals (Options.Timing)
   ptyfd.go          Setsize: window-size ioctl that holds the PTY descriptor
@@ -149,6 +149,7 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     background, dividers and badges; repaints on a change
   prefs_theme.go    The Theme section of Preferences: a choice per theme with
                     a preview of its colours
+  progress.go       OSC 9;4 progress as a bar under each tab
   alerts.go         Desktop notifications per pane: when (internal/alert), the
                     show-pane action, --report records, preferences section
   desknotify.go     org.freedesktop.Notifications client: replace, withdraw,
@@ -488,7 +489,8 @@ its default; Design Decisions says where the defaults come from.
   - Ctrl+C copies only while text is selected, and ends the selection, so
     the next Ctrl+C reaches the program; with nothing selected it sends ^C.
     Ctrl+Shift+C always copies. The rule follows `keyCombo.collides`: a copy
-    key a terminal program may use falls through without a selection.
+    key a terminal program may use falls through without a selection. Any
+    key sent to the program ends the selection too, as in bunk's TUI.
   - Ctrl+V and Ctrl+Shift+V paste text. An image goes as the path of a PNG
     file in the temporary directory, as in bunk's TUI, and agents attach
     it. With neither on the clipboard, Ctrl+V sends ^V; Ctrl+Shift+V sends
@@ -511,6 +513,15 @@ its default; Design Decisions says where the defaults come from.
   - The switcher's Up and Down move a cursor, which starts on the first
     match and stays on its tab when a status change reorders the rows;
     Enter opens its tab.
+
+- bunk-gui's pointer and focus handling matches bunk's TUI. The
+  scrollbar thumb can be dragged while it shows (`grabThumb`). A selection
+  dragged to the top or bottom row keeps scrolling (`edgeScroll`), and the
+  wheel during a drag moves the selection's end with the view. Shift+PgUp
+  and Shift+PgDn scroll half a page. Focus events (DECSET 1004) go to the
+  focused pane of the selected tab in the active window
+  (`focusreport.go`). `TestGUIScrollbarDrag`, `TestGUISelectionDrag` and
+  `TestGUIFocusReports` check them.
 
 - While a divider is held, bunk-gui shows the split's shares on it
   (`splitratio.go`). A legacy event controller written in C sees the press

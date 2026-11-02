@@ -82,9 +82,13 @@ type Pane struct {
 	mouseCell  [2]int       // last cell reported for motion
 	lastX      float64      // last pointer position, widget coordinates
 	lastY      float64
-	selecting  bool   // left button held for a selection
-	pointerIn  bool   // the pointer is over the view
-	cursorName string // pointer cursor shown over the view: "text" or "pointer" (a link)
+	selecting  bool    // left button held for a selection
+	edgeDir    int     // a selection drag at the top (1) or bottom (-1) row scrolls that way
+	edgeTimer  bool    // the edge scroll's timer runs
+	sbDrag     bool    // left button held on the scrollbar thumb
+	sbGrab     float64 // the pointer's offset in the thumb while sbDrag, device pixels
+	pointerIn  bool    // the pointer is over the view
+	cursorName string  // pointer cursor shown over the view: "text" or "pointer" (a link)
 	exited     bool
 	closed     bool
 	removeOnce bool

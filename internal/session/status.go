@@ -67,6 +67,60 @@ type Status struct {
 	// may wait on (command.go); its Started is zero otherwise. Took and
 	// Ended are zero.
 	Running Command
+	// Progress is what the foreground program last reported with OSC 9;4.
+	Progress Progress
+}
+
+// ProgressState is the kind of an OSC 9;4 progress report (ConEmu's
+// sequence, also read by Windows Terminal, Ghostty and VTE).
+type ProgressState uint8
+
+const (
+	ProgressNone          ProgressState = iota // no progress shown (9;4;0)
+	ProgressNormal                             // Percent done (9;4;1;N)
+	ProgressError                              // failed at Percent (9;4;2;N)
+	ProgressIndeterminate                      // busy, no percentage (9;4;3)
+	ProgressPaused                             // paused at Percent (9;4;4;N)
+)
+
+// Progress is a program's progress report: OSC 9 ; 4 ; STATE [; PERCENT].
+// It lasts until the program clears it or its process group leaves the
+// foreground.
+type Progress struct {
+	State   ProgressState
+	Percent int // 0-100
+}
+
+// parseProgress reads "4;STATE[;PERCENT]", the payload of OSC 9 after
+// "9;". A missing percentage keeps prev's for the error and paused
+// states, as in Windows Terminal; it is 0 for the normal state.
+func parseProgress(text string, prev Progress) (Progress, bool) {
+	fields := strings.Split(text, ";")
+	if len(fields) < 2 || fields[0] != "4" {
+		return Progress{}, false
+	}
+	st, err := strconv.Atoi(fields[1])
+	if err != nil || st < 0 || st > int(ProgressPaused) {
+		return Progress{}, false
+	}
+	p := Progress{State: ProgressState(st)}
+	pct, havePct := 0, false
+	if len(fields) > 2 && fields[2] != "" {
+		if pct, err = strconv.Atoi(fields[2]); err != nil {
+			return Progress{}, false
+		}
+		pct, havePct = max(0, min(pct, 100)), true
+	}
+	switch p.State {
+	case ProgressNormal:
+		p.Percent = pct
+	case ProgressError, ProgressPaused:
+		p.Percent = prev.Percent
+		if havePct {
+			p.Percent = pct
+		}
+	}
+	return p, true
 }
 
 // Status returns the session's current status. It takes the session lock.
@@ -87,6 +141,7 @@ func (s *Session) Status() Status {
 		SSHHost:  s.SSHHost,
 		Command:  s.ended,
 		Running:  s.running(v.agent != ""),
+		Progress: s.progress,
 
 		AgentSession: s.agentSession,
 	}
@@ -182,10 +237,10 @@ const reportingAgent = "agent"
 func (s *Session) takeAgentChange(now time.Time) bool {
 	v := s.view(now)
 	running := s.running(v.agent != "").Started
-	if v == s.shown && s.ended.Ended.Equal(s.shownEnded) && running.Equal(s.shownRunning) {
+	if v == s.shown && s.ended.Ended.Equal(s.shownEnded) && running.Equal(s.shownRunning) && s.progress == s.shownProgress {
 		return false
 	}
-	s.shown, s.shownEnded, s.shownRunning = v, s.ended.Ended, running
+	s.shown, s.shownEnded, s.shownRunning, s.shownProgress = v, s.ended.Ended, running, s.progress
 	return true
 }
 
@@ -398,7 +453,8 @@ type statusOSC struct {
 	started   bool   // a command started (OSC 133;C)
 	finished  bool   // a command finished (OSC 133;D)
 	exitCode  int
-	exitKnown bool // the 133;D mark carried a numeric exit status
+	exitKnown bool   // the 133;D mark carried a numeric exit status
+	progress  string // an OSC 9;4 progress report, "4;…"
 }
 
 // noticeLimit caps the notice text kept for tab labels.
@@ -410,8 +466,11 @@ func parseStatusOSC(num int, p []byte) (statusOSC, bool) {
 	text := string(p)
 	switch num {
 	case 9:
-		// "9;4;…" and other "9;<digit>;…" forms are ConEmu commands such as
-		// progress bars, not notifications.
+		// "9;4;…" is a progress report; other "9;<digit>;…" forms are
+		// ConEmu commands, not notifications.
+		if strings.HasPrefix(text, "4;") {
+			return statusOSC{progress: text}, true
+		}
 		if code, _, ok := strings.Cut(text, ";"); ok {
 			if _, err := strconv.Atoi(code); err == nil {
 				return statusOSC{}, false
@@ -523,6 +582,10 @@ func (s *Session) onStatusOSC(num int, payload []byte) {
 	s.Lock()
 	defer s.Unlock()
 	switch {
+	case st.progress != "":
+		if p, ok := parseProgress(st.progress, s.progress); ok {
+			s.setProgress(p)
+		}
 	case st.notice != "" && (s.agent != "" && !s.agentGone || s.remoteClient):
 		s.needsYou, s.notice = true, st.notice
 	case st.started:
@@ -543,6 +606,17 @@ func (s *Session) onStatusOSC(num int, payload []byte) {
 			// The agent already left; show its failure until the next command.
 			s.agent, s.failed, s.agentGone = s.lastAgent, true, true
 		}
+	}
+}
+
+// setProgress records a progress report from the foreground program, and
+// the process group it belongs to: 0 while the last poll saw the shell, so
+// the next group the poll sees adopts it. It requires the session lock.
+func (s *Session) setProgress(p Progress) {
+	s.progress = p
+	s.progressPGID = 0
+	if p.State != ProgressNone && !s.fg.shell {
+		s.progressPGID = s.fg.pgid
 	}
 }
 
@@ -614,6 +688,17 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 		// The ssh or bunk that carried the remote agent's reports has left.
 		s.remote, s.remotePGID = remoteAgent{}, 0
 		changed = true
+	}
+	if pgidChanged && s.progress.State != ProgressNone {
+		switch {
+		case s.progressPGID == 0 && pgid > 0 && pgid != shellPid:
+			// Reported before a poll saw the program: it is the new group.
+			s.progressPGID = pgid
+		case pgid != s.progressPGID:
+			// The program that reported has left the foreground.
+			s.progress, s.progressPGID = Progress{}, 0
+			changed = true
+		}
 	}
 	if pgidChanged && s.agentSession != "" && (pgid <= 0 || pgid != s.agentSessionPGID) {
 		// The agent whose conversation it names has left the foreground.

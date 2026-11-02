@@ -69,6 +69,11 @@ button.raildot { background: none; box-shadow: none; border: none; padding: 0; m
 button.raildot.active { background: #26292f; }
 button.raildot.needs { background: #2a2216; }
 .railmap { min-width: 30px; min-height: 30px; }
+progressbar.tabprogress > trough { min-height: 3px; min-width: 24px; background: alpha(#ffffff, 0.10); border-radius: 2px; }
+progressbar.tabprogress > trough > progress { min-height: 3px; background: #5aa9ff; border-radius: 2px; }
+progressbar.tabprogress.error > trough > progress { background: #ff8a8a; }
+progressbar.tabprogress.paused > trough > progress { background: #ffb454; }
+progressbar.tabprogress.busy > trough > progress { background: alpha(#5aa9ff, 0.45); }
 .mapcell { font-size: 10px; background: alpha(#ffffff, 0.07); border-radius: 3px; min-width: 6px; min-height: 6px; }
 .panecount { font-size: 9px; color: #9aa0a8; }
 .railsep { background: #2a2c31; min-height: 1px; min-width: 24px; margin: 4px 0; }
@@ -232,6 +237,7 @@ type tabInfo struct {
 	// (railring.go).
 	arcs               []ringArc
 	tooltip, accessKey string
+	progress           session.Progress // OSC 9;4 of its panes (tabProgress)
 }
 
 func (a *App) tabInfos() []tabInfo {
@@ -343,6 +349,10 @@ func (a *App) tabInfos() []tabInfo {
 		}
 		if in.pass {
 			parts = append(parts, "all keys go to the terminal")
+		}
+		in.progress = tabProgress(t, p)
+		if pr := progressName(in.progress); pr != "" {
+			parts = append(parts, "progress "+pr)
 		}
 		in.tooltip = strings.Join(parts, " · ")
 		switch {
@@ -647,6 +657,7 @@ func newDir(setting string, active *Pane) string {
 // foreground process of a hidden tab). The desktop notifications follow
 // the same events (alerts.go).
 func (a *App) refreshChrome() {
+	a.syncFocusReports()
 	a.syncAlerts()
 	if a.tabsBox == nil {
 		return
@@ -659,7 +670,7 @@ func (a *App) refreshChrome() {
 	var key strings.Builder
 	key.WriteString(a.settings.RailStyle)
 	for _, in := range infos {
-		fmt.Fprintf(&key, "%p|%s|%v|%s|%d|%s|%s|%d|%s|%s|%s|%s|%s|%v|%v|%v\x00", in.t, in.look, in.arcs, in.paneMap, in.panes, in.name, in.agent, in.more, in.repo, in.path, in.loc, in.notice, in.tooltip, in.active, in.needs, in.pass)
+		fmt.Fprintf(&key, "%p|%s|%v|%s|%d|%s|%s|%d|%s|%s|%s|%s|%s|%v|%v|%v|%v\x00", in.t, in.look, in.arcs, in.paneMap, in.panes, in.name, in.agent, in.more, in.repo, in.path, in.loc, in.notice, in.tooltip, in.active, in.needs, in.pass, in.progress)
 	}
 	if key.String() == a.chromeKey {
 		return
@@ -720,7 +731,15 @@ func (a *App) barTab(in tabInfo) tabItem {
 	}
 	btn := gtk.NewButton()
 	btn.AddCSSClass("tabbtn")
-	btn.SetChild(inner)
+	if in.progress.State != session.ProgressNone {
+		col := gtk.NewBox(gtk.OrientationVertical, 2)
+		col.SetVAlign(gtk.AlignCenter)
+		col.Append(inner)
+		col.Append(progressBar(in.progress))
+		btn.SetChild(col)
+	} else {
+		btn.SetChild(inner)
+	}
 	btn.SetHExpand(true)
 	btn.SetFocusOnClick(false)
 	t := in.t
@@ -736,7 +755,7 @@ func (a *App) barTab(in tabInfo) tabItem {
 func (a *App) railDot(in tabInfo) tabItem {
 	b := gtk.NewButton()
 	ring := a.ringShown(in)
-	if !ring && in.paneMap == "" && in.panes <= railMapMax && !in.pass {
+	if !ring && in.paneMap == "" && in.panes <= railMapMax && !in.pass && in.progress.State == session.ProgressNone {
 		b.SetLabel(in.look.dot)
 	} else {
 		box := gtk.NewBox(gtk.OrientationVertical, 1)
@@ -759,6 +778,9 @@ func (a *App) railDot(in tabInfo) tabItem {
 		}
 		if in.pass {
 			box.Append(passTag())
+		}
+		if in.progress.State != session.ProgressNone {
+			box.Append(progressBar(in.progress))
 		}
 		b.SetChild(box)
 	}
@@ -875,6 +897,12 @@ func (a *App) railRow(in tabInfo) tabItem {
 	}
 	if in.notice != "" {
 		add(in.notice, "notice")
+	}
+	if in.progress.State != session.ProgressNone {
+		bar := progressBar(in.progress)
+		bar.SetMarginStart(22)
+		bar.SetMarginTop(2)
+		lines.Append(bar)
 	}
 	btn := gtk.NewButton()
 	btn.AddCSSClass("rowbtn")

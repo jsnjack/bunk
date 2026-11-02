@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/rivo/uniseg"
@@ -109,6 +110,7 @@ func (a *App) onKey(p *Pane, keyval uint, state gdk.ModifierType) bool {
 	}
 	p.acknowledge(session.KeyAck(ev))
 	p.snapToLive()
+	p.endSelection()
 	p.app.noteInjected()
 	p.write(data)
 	return true
@@ -258,10 +260,10 @@ func (a *App) runAction(name string, termKey bool) bool {
 		}
 		d := focusDirs[strings.TrimPrefix(name, "nav_")]
 		t.moveFocus(d[0], d[1])
-	case "scroll_up":
-		p.scrollBy(max(1, p.tv.rows-1))
+	case "scroll_up": // half a page, as in bunk's TUI
+		p.scrollBy(max(1, p.tv.rows/2))
 	case "scroll_down":
-		p.scrollBy(-max(1, p.tv.rows-1))
+		p.scrollBy(-max(1, p.tv.rows/2))
 	case "search":
 		a.openFind()
 	case "copy":
@@ -319,6 +321,7 @@ func (p *Pane) imCommit(text string) {
 	}
 	p.acknowledge(session.AckAnswer) // typed text, such as "1" or "y", answers a prompt
 	p.snapToLive()
+	p.endSelection()
 	p.app.noteInjected()
 	p.write([]byte(text))
 }
@@ -408,6 +411,9 @@ func (p *Pane) mousePress(button uint, n int, x, y float64, state gdk.ModifierTy
 	p.widget.GrabFocus()
 	col, row := p.cellAt(x, y)
 	p.lastX, p.lastY = x, y
+	if button == 1 && p.grabThumb(x, y) {
+		return
+	}
 	mode := p.mouseMode()
 	if p.clickLink(button, x, y, state, mode&vt10x.ModeMouseMask != 0) {
 		return
@@ -442,20 +448,15 @@ func (p *Pane) mousePress(button uint, n int, x, y float64, state gdk.ModifierTy
 func (p *Pane) mouseMotion(x, y float64, state gdk.ModifierType) {
 	p.lastX, p.lastY = x, y
 	p.pointerIn = true
+	if p.sbDrag {
+		p.dragThumb(y)
+		return
+	}
 	p.updateHover(x, y, state)
 	col, row := p.cellAt(x, y)
 	if p.selecting {
-		p.s.Lock()
-		v := p.virtualLocked(col, row)
-		changed := v != p.s.SelCursor || (!p.s.SelActive && v != p.s.SelAnchor)
-		if changed {
-			p.s.SelActive = true
-			p.s.SelCursor = v
-		}
-		p.s.Unlock()
-		if changed {
-			p.queueRender()
-		}
+		p.extendSelection(x, y)
+		p.edgeScroll(y)
 		return
 	}
 	mode := p.mouseMode()
@@ -474,6 +475,10 @@ func (p *Pane) mouseMotion(x, y float64, state gdk.ModifierType) {
 // mouseRelease ends a selection (and sets the primary selection) or
 // reports the release.
 func (p *Pane) mouseRelease(x, y float64, state gdk.ModifierType) {
+	if p.sbDrag {
+		p.sbDrag = false
+		return
+	}
 	if p.selecting {
 		p.selecting = false
 		p.s.Lock()
@@ -492,6 +497,81 @@ func (p *Pane) mouseRelease(x, y float64, state gdk.ModifierType) {
 		p.report(input.ButtonNone, p.mouseBtn, modsFrom(state), col, row, mode)
 	}
 	p.mouseBtn = input.ButtonNone
+}
+
+// thumbHitPad widens the thumb for the pointer, in device pixels on each
+// side: the thumb itself is a few pixels wide.
+const thumbHitPad = 6
+
+// scrollThumb is the scrollbar thumb as drawn now and the view's scale
+// (device pixels per widget unit); ok is false while no thumb shows.
+func (p *Pane) scrollThumb() (t thumb, scale float64, ok bool) {
+	g := viewGeomC(p.view)
+	if g.scale <= 0 || p.atlas == nil || g.dw <= 0 || g.dh <= 0 {
+		return thumb{}, 0, false
+	}
+	p.s.Lock()
+	off, count := p.s.ScrollOffset, p.s.Scrollback.Count
+	p.s.Unlock()
+	if off <= 0 || count <= 0 {
+		return thumb{}, 0, false
+	}
+	return thumbAt(g.dw, g.dh, p.tv.rows, p.atlas.CellW, p.atlas.CellH, off, count), g.scale, true
+}
+
+// grabThumb starts a scrollbar drag when a left press at widget (x, y)
+// falls on the thumb's column, as in bunk's TUI. A press on the thumb
+// keeps the point it holds; a press above or below it centres the thumb
+// on the pointer.
+func (p *Pane) grabThumb(x, y float64) bool {
+	t, scale, ok := p.scrollThumb()
+	if !ok {
+		return false
+	}
+	g := viewGeomC(p.view)
+	dx, dy := (x-g.bx)*scale, (y-g.by)*scale
+	if dx < t.x-thumbHitPad || dx > t.x+t.w+thumbHitPad {
+		return false
+	}
+	p.setSelection(false, session.SelPos{}, session.SelPos{})
+	p.sbDrag = true
+	if dy >= t.y && dy <= t.y+t.h {
+		p.sbGrab = dy - t.y
+	} else {
+		p.sbGrab = t.h / 2
+		p.dragThumb(y)
+	}
+	return true
+}
+
+// dragThumb scrolls so that the thumb's grabbed point sits at widget y.
+// The thumb's top runs from 0 (oldest row) to the view's height less the
+// thumb (live view).
+func (p *Pane) dragThumb(y float64) {
+	g := viewGeomC(p.view)
+	if g.scale <= 0 || p.atlas == nil || g.dh <= 0 {
+		return
+	}
+	p.s.Lock()
+	count := p.s.Scrollback.Count
+	if count <= 0 {
+		p.s.Unlock()
+		return
+	}
+	t := thumbAt(g.dw, g.dh, p.tv.rows, p.atlas.CellW, p.atlas.CellH, 1, count)
+	track := float64(g.dh) - t.h
+	off := count
+	if track > 0 {
+		top := (y-g.by)*g.scale - p.sbGrab
+		off = int(math.Round(float64(count) * (1 - top/track)))
+	}
+	off = max(0, min(off, count))
+	changed := off != p.s.ScrollOffset
+	p.s.ScrollOffset = off
+	p.s.Unlock()
+	if changed {
+		p.queueRender()
+	}
 }
 
 // wheel reports wheel notches to an application in a mouse mode, otherwise
@@ -514,7 +594,64 @@ func (p *Pane) wheel(dy float64, state gdk.ModifierType) bool {
 		return true
 	}
 	p.scrollBy(-3 * n)
+	if p.selecting {
+		p.extendSelection(p.lastX, p.lastY) // the view moved under the pointer
+	}
 	return true
+}
+
+// extendSelection moves the end of the selection being dragged to the
+// cell at widget (x, y).
+func (p *Pane) extendSelection(x, y float64) {
+	col, row := p.cellAt(x, y)
+	p.s.Lock()
+	v := p.virtualLocked(col, row)
+	changed := v != p.s.SelCursor || (!p.s.SelActive && v != p.s.SelAnchor)
+	if changed {
+		p.s.SelActive = true
+		p.s.SelCursor = v
+	}
+	p.s.Unlock()
+	if changed {
+		p.queueRender()
+	}
+}
+
+// edgeScrollEvery is how often a selection drag held at the top or bottom
+// row scrolls one line, as in bunk's TUI.
+const edgeScrollEvery = 80 // ms
+
+// edgeScroll keeps a selection drag scrolling while the pointer is on the
+// pane's top or bottom row or beyond it: the view moves a line every
+// edgeScrollEvery and the selection follows, until the pointer leaves the
+// edge or the button is released.
+func (p *Pane) edgeScroll(y float64) {
+	g := viewGeomC(p.view)
+	if g.scale <= 0 || p.atlas == nil {
+		return
+	}
+	row := math.Floor((y - g.by) * g.scale / float64(p.atlas.CellH))
+	switch {
+	case row <= 0:
+		p.edgeDir = 1 // back in history
+	case row >= float64(p.tv.rows-1):
+		p.edgeDir = -1
+	default:
+		p.edgeDir = 0
+	}
+	if p.edgeDir == 0 || p.edgeTimer {
+		return
+	}
+	p.edgeTimer = true
+	coreglib.TimeoutAdd(edgeScrollEvery, func() bool {
+		if !p.selecting || p.edgeDir == 0 || p.removeOnce {
+			p.edgeTimer = false
+			return false
+		}
+		p.scrollBy(p.edgeDir)
+		p.extendSelection(p.lastX, p.lastY)
+		return true
+	})
 }
 
 func abs(n int) int {
@@ -522,6 +659,19 @@ func abs(n int) int {
 		return -n
 	}
 	return n
+}
+
+// endSelection clears the selection when a key goes to the program, as
+// bunk's TUI does, so that a later Ctrl+C reaches the program instead of
+// copying old text.
+func (p *Pane) endSelection() {
+	p.s.Lock()
+	active := p.s.SelActive
+	p.s.SelActive = false
+	p.s.Unlock()
+	if active {
+		p.queueRender()
+	}
 }
 
 func (p *Pane) setSelection(active bool, anchor, cursor session.SelPos) {

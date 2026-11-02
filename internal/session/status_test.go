@@ -158,7 +158,7 @@ func TestParseStatusOSC(t *testing.T) {
 		ok      bool
 	}{
 		{9, "Claude needs your permission to use Bash", statusOSC{notice: "Claude needs your permission to use Bash"}, true},
-		{9, "4;1;50", statusOSC{}, false},
+		{9, "4;1;50", statusOSC{progress: "4;1;50"}, true}, // a progress report (progress_test.go)
 		{9, "", statusOSC{notice: "Needs your attention"}, true},
 		{9, "line1\nline2\x07", statusOSC{notice: "line1 line2"}, true},
 		{9, long, statusOSC{notice: strings.Repeat("x", noticeLimit-1) + "…"}, true},
