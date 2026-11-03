@@ -855,6 +855,12 @@ func (s *Session) record(r Report, pgid int) {
 		rep.state = AgentIdle
 	case EventNeedsYou:
 		rep.state, rep.notice, rep.held = AgentNeedsYou, cleanNotice(r.Message, defaultNotice), r.Held
+		if old := s.report; !r.Held && old.state == AgentNeedsYou && old.held && old.pgid == pgid {
+			// The agent's notification about the question it asks, such as
+			// the permission_prompt Claude Code sends seconds after
+			// AskUserQuestion opens: the question and its text stay.
+			rep.notice, rep.held = old.notice, true
+		}
 	case EventDone:
 		rep.state, rep.notice = AgentDone, cleanNotice(r.Message, "")
 	case EventFailed:

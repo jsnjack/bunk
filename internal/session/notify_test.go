@@ -540,6 +540,27 @@ func TestAcknowledgeKeepsReportedNeedsYou(t *testing.T) {
 			}
 		})
 	}
+	// Claude Code's Notification hook (permission_prompt) reports a plain
+	// needs-you seconds after the question opens; the question stays held
+	// with its text, and a cancel still ends it.
+	q := newTestSession(20, 2)
+	q.NotifyReport(Report{Event: EventNeedsYou, Message: "Which layout?", Held: true})
+	q.Notify(EventNeedsYou, "Claude needs your permission")
+	q.AcknowledgeAs(AckAnswer)
+	if st := q.Status(); st.State != AgentNeedsYou || st.Notice != "Which layout?" {
+		t.Errorf("question after its notification and an answer key: %v %q", st.State, st.Notice)
+	}
+	q.AcknowledgeAs(AckCancel)
+	if got := q.Status().State; got != AgentNone {
+		t.Errorf("cancelled question: %v", got)
+	}
+	// A later plain needs-you, after the question ended, is plain again.
+	q.Notify(EventNeedsYou, "Claude needs your permission")
+	q.AcknowledgeAs(AckAnswer)
+	if got := q.Status().State; got != AgentNone {
+		t.Errorf("permission prompt after the question: %v", got)
+	}
+
 	// The agent's own report ends a held question.
 	s := newTestSession(20, 2)
 	s.NotifyReport(Report{Event: EventNeedsYou, Held: true})

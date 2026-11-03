@@ -94,7 +94,10 @@ the same colour, over the focused pane's colour.
   ExitPlanMode) is held (`"held": true` on the wire): the CLI sets it from
   the hook's input. It survives Enter, which may only move on to the next
   question, and ends with the agent's next report (PostToolUse's
-  `working`) or Esc or Ctrl+C.
+  `working`) or Esc or Ctrl+C. A plain needs-you from the same process
+  while the question waits keeps it held, with the question as its notice:
+  Claude Code runs its Notification hook (`permission_prompt`) about 6 s
+  after AskUserQuestion opens.
 - Alt+A (`next_needs_you` in `[keys]`) focuses the next pane whose agent
   needs you, else the next one that is done. It leaves zoom first. Set it to
   `"none"` to send Alt+A to the pane instead.

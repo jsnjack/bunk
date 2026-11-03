@@ -863,6 +863,9 @@ its default; Design Decisions says where the defaults come from.
     (`AckCancel`) end it. A held one (`Report.Held`, from the PreToolUse
     of AskUserQuestion or ExitPlanMode) survives Enter, which may only move
     to the next question, and ends with PostToolUse's report or a cancel.
+    A plain needs-you from the same group while it waits keeps it held
+    with its notice: Claude Code's `permission_prompt` notification follows
+    AskUserQuestion by about 6 s.
     Done, failed and inferred requests clear at any acknowledgement.
     bunk-gui draws no frame around a pane that needs the user; the badge,
     the tab and the rail show it. Every change of the agent state runs `Hooks.StatusChanged` once:
