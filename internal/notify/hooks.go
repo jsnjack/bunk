@@ -71,8 +71,8 @@ const mergeKey = `merge the "hooks" key`
 // claudeQuestionTools are Claude Code's tools that wait for the user: a
 // multiple-choice question and the approval of a plan. No notification
 // type of Claude Code names them, so PreToolUse, which runs before the
-// prompt shows, reports them, and PostToolUse, which runs once the user
-// has answered, reports work again.
+// prompt shows, reports them. PostToolUse of every tool reports work
+// again, the question's once the user has answered.
 const claudeQuestionTools = askUserQuestion + "|" + exitPlanMode
 
 // The tool names of Claude Code's question and plan approval.
@@ -89,7 +89,11 @@ var recipes = []agentHooks{
 		hooks: []hook{
 			{event: "UserPromptSubmit", args: "working -"},
 			{event: "PreToolUse", matcher: claudeQuestionTools, args: "needs-you -"},
-			{event: "PostToolUse", matcher: claudeQuestionTools, args: "working"},
+			// Any tool's end means the agent works again: the answer to a
+			// question, or a call that a permission prompt held, which
+			// auto mode may approve after permission_prompt notified.
+			{event: "PostToolUse", args: "working -"},
+			{event: "PostToolUseFailure", args: "working -"},
 			{event: "Notification", matcher: "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input", args: "needs-you -"},
 			{event: "Stop", args: "done -"},
 			{event: "StopFailure", args: "failed -"},

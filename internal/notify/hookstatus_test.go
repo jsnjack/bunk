@@ -93,7 +93,7 @@ func TestCheckHooks(t *testing.T) {
 		{name: "claude with an older hook", agent: "claude",
 			files: map[string]string{".claude/settings.json": `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"` + oldDone + `"}]}]}}`},
 			state: HooksOutdated, path: ".claude/settings.json",
-			absent: []string{"UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "StopFailure", "SessionEnd"}},
+			absent: []string{"UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "Stop", "StopFailure", "SessionEnd"}},
 		{name: "claude with other hooks only", agent: "claude",
 			files: map[string]string{".claude/settings.json": `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"make lint"}]}]}}`},
 			state: HooksMissing, path: ".claude/settings.json"},

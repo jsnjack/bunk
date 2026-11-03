@@ -115,6 +115,11 @@ func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.
 	if text == "-" {
 		text = readStdin(stdin)
 	}
+	if ev == session.EventWorking && subagentHook(text) {
+		// A subagent's tool ended; the main agent may still wait for
+		// the user, so its state stays.
+		return 0
+	}
 	if ev == session.EventDone && backgroundTasks(text) {
 		// Claude Code ended its turn while work it started runs on: it
 		// resumes when that work ends, and its next Stop reports done.
@@ -255,6 +260,16 @@ func questionTool(text string) bool {
 		return false
 	}
 	return (in.Event == "" || in.Event == "PreToolUse") && (in.Tool == askUserQuestion || in.Tool == exitPlanMode)
+}
+
+// subagentHook reports whether text is the input of a Claude Code hook
+// that fired inside a subagent, which names the subagent (agent_id).
+func subagentHook(text string) bool {
+	var in struct {
+		AgentID string `json:"agent_id"`
+	}
+	trimmed := strings.TrimSpace(text)
+	return strings.HasPrefix(trimmed, "{") && json.Unmarshal([]byte(trimmed), &in) == nil && in.AgentID != ""
 }
 
 // backgroundTasks reports whether text is a Claude Code Stop input whose

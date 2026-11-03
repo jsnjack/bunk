@@ -260,11 +260,21 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
     ],
     "PostToolUse": [
       {
-        "matcher": "AskUserQuestion|ExitPlanMode",
         "hooks": [
           {
             "type": "command",
-            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working -",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify working -",
             "timeout": 5
           }
         ]
@@ -323,7 +333,7 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 | :- | :- | :- |
 | UserPromptSubmit | `working` | none |
 | PreToolUse (AskUserQuestion, ExitPlanMode) | `needs-you` | the first question, or "Approve the plan: " and the plan's title |
-| PostToolUse (AskUserQuestion, ExitPlanMode) | `working` | none |
+| PostToolUse, PostToolUseFailure (every tool, not in a subagent) | `working` | none |
 | Notification (permission, elicitation, agent input) | `needs-you` | `message` from stdin |
 | Stop | `done`, or `working` while `background_tasks` is not empty | `last_assistant_message` |
 | StopFailure (API error) | `failed` | `last_assistant_message`, e.g. "API Error: Rate limit reached" |
@@ -334,6 +344,12 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
   runs before Claude Code shows either prompt, and PostToolUse runs after
   the user has answered. The hook prints nothing, so Claude Code takes no
   permission decision from it.
+- Every tool's end reports `working`, because a permission prompt has no
+  hook of its own when it goes. Claude Code's `permission_prompt`
+  notification comes about 6 s after a call waits, and in auto mode it can
+  come for a call that auto mode then approves; the call's PostToolUse ends
+  that needs-you. Tools of a subagent (an input with `agent_id`) report
+  nothing, so they never end a prompt the main agent shows.
 - A rejected plan or a question closed with Esc runs no PostToolUse. Esc
   cancels the held needs-you, so inference shows the pane until the next
   report. A plan rejected with Enter on "No" stays needs-you until Claude

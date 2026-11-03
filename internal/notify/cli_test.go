@@ -504,11 +504,12 @@ func TestClaudeQuestionHooks(t *testing.T) {
 	if err := json.Unmarshal([]byte(snippet), &cfg); err != nil {
 		t.Fatal(err)
 	}
+	matchers := map[string]string{"PreToolUse": "AskUserQuestion|ExitPlanMode", "PostToolUse": "", "PostToolUseFailure": ""}
 	command := func(event string) string {
 		t.Helper()
 		groups := cfg.Hooks[event]
-		if len(groups) != 1 || groups[0].Matcher != "AskUserQuestion|ExitPlanMode" || len(groups[0].Hooks) != 1 {
-			t.Fatalf("%s hooks %+v, want one group matching AskUserQuestion and ExitPlanMode", event, groups)
+		if len(groups) != 1 || groups[0].Matcher != matchers[event] || len(groups[0].Hooks) != 1 {
+			t.Fatalf("%s hooks %+v, want one group matching %q", event, groups, matchers[event])
 		}
 		return groups[0].Hooks[0].Command
 	}
@@ -519,8 +520,11 @@ func TestClaudeQuestionHooks(t *testing.T) {
 		want               report
 	}{
 		{"question shown", "PreToolUse", claudeQuestion, report{session.EventNeedsYou, "Which framework?"}},
-		{"question answered", "PostToolUse", postAnswer, report{session.EventWorking, ""}},
+		{"question answered", "PostToolUse", postAnswer, report{session.EventWorking, "Which framework?"}},
 		{"plan shown", "PreToolUse", claudePlan, report{session.EventNeedsYou, "Approve the plan: Infer done from output"}},
+		// Auto mode approved a call after permission_prompt notified.
+		{"tool ended", "PostToolUse", `{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"toolu_1"}`, report{session.EventWorking, ""}},
+		{"tool failed", "PostToolUseFailure", `{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","error":"exit 1"}`, report{session.EventWorking, "exit 1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := exec.Command("/bin/sh", "-c", command(tc.event))
@@ -533,6 +537,13 @@ func TestClaudeQuestionHooks(t *testing.T) {
 				t.Fatalf("report %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+	// A subagent's tool end reports nothing: the main agent may still wait.
+	c := exec.Command("/bin/sh", "-c", command("PostToolUse"))
+	c.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", EnvSocket + "=" + srv.Path(), EnvSession + "=" + token}
+	c.Stdin = strings.NewReader(`{"hook_event_name":"PostToolUse","tool_name":"Read","agent_id":"a1","agent_type":"Explore"}`)
+	if out, err := c.CombinedOutput(); err != nil || len(out) > 0 {
+		t.Fatalf("subagent hook: %v, output %q", err, out)
 	}
 	expectEmpty(t, target)
 }
