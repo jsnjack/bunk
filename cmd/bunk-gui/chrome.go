@@ -106,14 +106,12 @@ entry.switcher-entry { background: #131416; border: 1px solid #34373e; border-ra
 button.switchrow { background: none; box-shadow: none; border: none; min-height: 44px; padding: 8px 10px; border-radius: 6px;
 	color: inherit; font-size: 14px; }
 button.switchrow:hover { background: #23252a; }
-button.switchrow.active { background: #24272d; box-shadow: inset 3px 0 #e6e8eb; }
 .swcurrent { font-size: 11px; font-weight: 600; color: #1b1c20; background: #e6e8eb; border-radius: 4px; padding: 1px 6px; }
 button.switchrow .swtitle { font-weight: 600; color: #e6e8eb; }
 .swbranch { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
 .swagent { font-size: 12px; color: #c4c8ce; }
 .swpath { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
-button.switchrow.cursor { background: #263445; box-shadow: inset 0 0 0 2px #5aa9ff; }
-button.switchrow.active.cursor { box-shadow: inset 3px 0 #e6e8eb, inset 0 0 0 2px #5aa9ff; }
+button.switchrow.cursor { background: #2c2f36; }
 button.switchclose { min-height: 36px; padding: 0 12px; border: 1px solid #34373e; border-radius: 6px; background: none;
 	color: #b4b9c1; box-shadow: none; margin-top: 4px; }
 paned > separator { min-width: 1px; min-height: 1px; }
@@ -1172,8 +1170,8 @@ var stateOrder = map[session.AgentState]int{
 }
 
 // openSwitcher shows the tab switcher: a filter field and the tabs, those
-// needing you first. The selected tab's row is marked "current" with a
-// bar on its left; the cursor, outlined in blue, starts on the first
+// needing you first. The selected tab's row carries a "current" chip;
+// the cursor, a filled row like a list selection, starts on the first
 // match that is not the selected tab, so the switcher's key and Enter go
 // to another tab. Up and Down move the cursor; Enter picks its tab; Esc
 // closes.
