@@ -468,7 +468,8 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 // their requested size (34 px, 40 in the collapsed rail) and, in the bar,
 // that the tabs keep their own width: the drag area takes the spare width.
 // The close button's centred icon used to widen it to a share of the bar,
-// and the tabs took another share.
+// and the tabs took another share. In the collapsed rail the close button
+// is the bottom one, below the options button.
 func checkChromeButtons(t *testing.T, label string, s *uiSnapshot) {
 	t.Helper()
 	for _, b := range []struct {
@@ -478,6 +479,10 @@ func checkChromeButtons(t *testing.T, label string, s *uiSnapshot) {
 		if b.r == nil || b.r.W > 40 {
 			t.Errorf("%s: %s button %+v, want at most 40 px wide", label, b.name, b.r)
 		}
+	}
+	if s.Layout == "rail" && !s.RailOpen && s.Options != nil && s.CloseWindow != nil &&
+		s.CloseWindow.Y < s.Options.Y+s.Options.H {
+		t.Errorf("%s: close window button %+v, want it below the options button %+v", label, s.CloseWindow, s.Options)
 	}
 	if s.Layout != "bar" {
 		return

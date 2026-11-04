@@ -75,7 +75,6 @@ progressbar.tabprogress.paused > trough > progress { background: #ffb454; }
 progressbar.tabprogress.busy > trough > progress { background: alpha(#5aa9ff, 0.45); }
 .mapcell { font-size: 10px; background: alpha(#ffffff, 0.07); border-radius: 3px; min-width: 6px; min-height: 6px; }
 .panecount { font-size: 9px; color: #9aa0a8; }
-.railsep { background: #2a2c31; min-height: 1px; min-width: 24px; margin: 4px 0; }
 .row { border-radius: 8px; color: #d8dade; }
 .row.active { background: #26292f; }
 .row.needs { background: #2a2216; }
@@ -583,8 +582,7 @@ func (a *App) buildChrome() {
 			rail.Append(a.tabsBox)
 			spacer := dragArea(false)
 			rail.Append(spacer)
-			// The options button sits bottom left in both rail states, so
-			// it stays under the pointer when the rail opens or closes.
+			// The options button sits bottom left in both rail states.
 			foot := gtk.NewBox(gtk.OrientationHorizontal, 4)
 			opts := a.optionsButton(34)
 			opts.SetDirection(gtk.ArrowUp)
@@ -600,13 +598,6 @@ func (a *App) buildChrome() {
 		} else {
 			rail.AddCSSClass("collapsed")
 			rail.SetSizeRequest(48, -1)
-			cw := a.closeWindowButton(40)
-			cw.SetHAlign(gtk.AlignCenter)
-			rail.Append(cw)
-			sep := gtk.NewBox(gtk.OrientationHorizontal, 0)
-			sep.AddCSSClass("railsep")
-			sep.SetHAlign(gtk.AlignCenter)
-			rail.Append(sep)
 			a.tabsBox = gtk.NewBox(gtk.OrientationVertical, 4)
 			a.tabsBox.SetHAlign(gtk.AlignCenter)
 			rail.Append(a.tabsBox)
@@ -621,6 +612,11 @@ func (a *App) buildChrome() {
 			opts.SetDirection(gtk.ArrowUp)
 			opts.SetHAlign(gtk.AlignCenter)
 			rail.Append(opts)
+			// The close button sits at the bottom, away from the tabs, so
+			// the first tab is not one slip of the pointer from it.
+			cw := a.closeWindowButton(40)
+			cw.SetHAlign(gtk.AlignCenter)
+			rail.Append(cw)
 		}
 		a.chrome = rail
 	}
