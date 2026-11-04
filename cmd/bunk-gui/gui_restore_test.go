@@ -260,6 +260,44 @@ func TestGUIRestoreClosedTogether(t *testing.T) {
 	}
 }
 
+// TestGUIRestoreBesideRunning: the user closes one window while another
+// still runs, then opens a new one; it offers the closed window, not the
+// running one, and Restore builds it here.
+func TestGUIRestoreBesideRunning(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	env, _ := restoreEnv(t, state)
+	st, err := restore.Open(filepath.Join(state, "bunk-gui", "windows"))
+	must(t, err)
+	running, err := st.New() // held until the test ends, as a running window holds it
+	must(t, err)
+	t.Cleanup(running.Release)
+	must(t, running.Save(restore.Window{Tabs: []restore.Tab{onePane("/")}}))
+	closed := writeSnapshot(t, state, restore.Window{Tabs: []restore.Tab{onePane("/"), onePane("/tmp")}, Selected: 1, Closed: time.Now()})
+
+	g := runGUI(t, scenario{
+		env:  env,
+		args: []string{"--size", "100x30"},
+		script: []string{
+			"wait tabs.#=1 restore.banner=true",
+			"snap offered",
+			"restore accept",
+			"wait tabs.#=2 selected_tab=2 focused.status.cwd=/tmp",
+			"snap restored",
+			"quit",
+		},
+	})
+	if offer := g.snap("offered").Restore.Offer; !strings.Contains(offer, ": 2 tabs?") {
+		t.Errorf("banner offers %q, want the closed window's 2 tabs alone", offer)
+	}
+	if s := g.snap("restored").Restore; len(s.Spawned) != 0 {
+		t.Errorf("opened %v in new windows, want the closed window here only (not %s)", s.Spawned, closed)
+	}
+	if _, err := os.Stat(filepath.Join(st.Dir(), running.ID()+".json")); err != nil {
+		t.Errorf("the running window's snapshot: %v", err)
+	}
+}
+
 // TestGUIRestoreOff: restore = false neither offers nor saves.
 func TestGUIRestoreOff(t *testing.T) {
 	t.Parallel()

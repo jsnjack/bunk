@@ -635,8 +635,8 @@ its default; Design Decisions says where the defaults come from.
   - A start whose slot is new lists the slots no lock holds and shows a
     banner over the panes. Restore builds the newest here, in place of a
     first tab nobody typed in, and starts `bunk-gui --restore ID` for each
-    other; Dismiss deletes them. New window (Ctrl+Shift+N) passes
-    `--offer-restore=false`.
+    other; Dismiss deletes them. New window (Ctrl+Shift+N) offers them
+    too.
   - A restored pane starts the shell in its directory, replays its
     scrollback with a "restored from" line, and types its command once the
     shell has been quiet for 300 ms (at most 5 s): the agent's resume
@@ -654,8 +654,9 @@ its default; Design Decisions says where the defaults come from.
     live pane leaves none. `restore.Offer` offers the windows closed
     together: the last one closed and each closed within `CloseGap` (1
     min) of the next, so the order the user closes them in does not
-    matter. A window closed earlier is deleted. While another window
-    runs, closed windows wait; a crashed or killed one is always offered.
+    matter. A window closed earlier is deleted. Closed windows are offered
+    while other windows run too, so a window closed beside others comes
+    back in the next one opened; a crashed or killed one is always offered.
   - Window tests get their own state directory: the harness sets
     `XDG_STATE_HOME_TEST`, which `scripts/headless-gui.sh` turns into
     `XDG_STATE_HOME`. `TestGUIRestoreSession` saves, quits and restores

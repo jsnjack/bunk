@@ -40,9 +40,6 @@ func TestSlotRoundTrip(t *testing.T) {
 	if saved := st.Saved(); len(saved) != 0 {
 		t.Errorf("Saved while the window holds its slot: %d", len(saved))
 	}
-	if n := st.Running(nil); n != 1 {
-		t.Errorf("Running = %d, want 1", n)
-	}
 	if _, err := st.Claim(sl.ID()); !errors.Is(err, ErrClaimed) {
 		t.Errorf("Claim of a held slot: %v, want ErrClaimed", err)
 	}
@@ -221,7 +218,7 @@ func TestSummary(t *testing.T) {
 }
 
 // TestGroup: windows closed one by one come back together; one closed long
-// before the others, or while another window still runs, does not.
+// before the others does not.
 func TestGroup(t *testing.T) {
 	t0 := time.Date(2026, 11, 2, 19, 22, 0, 0, time.UTC)
 	at := func(id string, closed time.Duration) Saved {
@@ -241,16 +238,15 @@ func TestGroup(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		saved        []Saved
-		running      bool
 		offer, stale []string
 	}{
-		{"main then stray", []Saved{at("b", 37*time.Second), at("a", 30*time.Second)}, false, []string{"b", "a"}, nil},
-		{"chain", []Saved{at("c", 100*time.Second), at("b", 50*time.Second), at("a", 0)}, false, []string{"c", "b", "a"}, nil},
-		{"closed hours before", []Saved{at("b", 3*time.Hour), at("a", 0)}, false, []string{"b"}, []string{"a"}},
-		{"crashed always", []Saved{at("b", 3*time.Hour), at("x", -time.Hour), at("a", 0)}, false, []string{"b", "x"}, []string{"a"}},
-		{"another runs", []Saved{at("x", -time.Hour), at("a", 0)}, true, []string{"x"}, nil},
+		{"main then stray", []Saved{at("b", 37*time.Second), at("a", 30*time.Second)}, []string{"b", "a"}, nil},
+		{"chain", []Saved{at("c", 100*time.Second), at("b", 50*time.Second), at("a", 0)}, []string{"c", "b", "a"}, nil},
+		{"closed hours before", []Saved{at("b", 3*time.Hour), at("a", 0)}, []string{"b"}, []string{"a"}},
+		{"crashed always", []Saved{at("b", 3*time.Hour), at("x", -time.Hour), at("a", 0)}, []string{"b", "x"}, []string{"a"}},
+		{"crashed and closed", []Saved{at("x", -time.Hour), at("a", 0)}, []string{"x", "a"}, nil},
 	} {
-		offer, stale := Group(tc.saved, tc.running)
+		offer, stale := Group(tc.saved)
 		if !reflect.DeepEqual(ids(offer), tc.offer) || !reflect.DeepEqual(ids(stale), tc.stale) {
 			t.Errorf("%s: offer %v stale %v, want %v and %v", tc.name, ids(offer), ids(stale), tc.offer, tc.stale)
 		}

@@ -18,7 +18,8 @@ package main
 // the window closed; a window whose last pane ended leaves none. The next
 // start offers the windows closed together (restore.Offer): the user
 // closes a session's windows one by one, so the order must not matter,
-// but a window closed long before the others is dropped. restore = false
+// but a window closed long before the others is dropped. Windows closed
+// while others run are offered too, also in a New window. restore = false
 // in config.toml turns saving and the banner off.
 
 import (
@@ -140,7 +141,7 @@ func (a *App) initRestore() bool {
 	}
 	coreglib.TimeoutAdd(uint(saveEvery.Milliseconds()), a.saveTick)
 	if a.cfg.offerRestore {
-		r.offer = st.Offer(st.Running(r.slot) > 0)
+		r.offer = st.Offer()
 	}
 	return false
 }

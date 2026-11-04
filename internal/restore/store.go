@@ -143,17 +143,6 @@ func (s *Store) Saved() []Saved {
 	return out
 }
 
-// Running returns how many slots other than own running windows hold.
-func (s *Store) Running(own *Slot) int {
-	n := 0
-	for _, id := range s.lockIDs() {
-		if (own == nil || id != own.id) && s.held(id) {
-			n++
-		}
-	}
-	return n
-}
-
 func (s *Store) ids() []string { return s.list(".json") }
 
 func (s *Store) lockIDs() []string { return s.list(".lock") }
@@ -314,11 +303,11 @@ const CloseGap = time.Minute
 // Offer lists the snapshots a start offers to bring back, newest first,
 // and deletes those it never will. A window that crashed or was killed
 // (no Closed time) is always offered. Windows closed in order are
-// offered once no other window runs (running is false), as one group:
-// the last one closed, and each closed within CloseGap of the next. A
-// window closed earlier was one the user was done with.
-func (s *Store) Offer(running bool) []Saved {
-	offer, stale := Group(s.Saved(), running)
+// offered as one group, also while other windows run: the last one
+// closed, and each closed within CloseGap of the next. A window closed
+// earlier was one the user was done with.
+func (s *Store) Offer() []Saved {
+	offer, stale := Group(s.Saved())
 	for _, sv := range stale {
 		_ = s.Discard(sv.ID)
 	}
@@ -327,7 +316,7 @@ func (s *Store) Offer(running bool) []Saved {
 
 // Group splits saved (newest first) into the snapshots to offer, in the
 // same order, and the stale ones to delete, as Offer describes.
-func Group(saved []Saved, running bool) (offer, stale []Saved) {
+func Group(saved []Saved) (offer, stale []Saved) {
 	var closed []time.Time
 	for _, sv := range saved {
 		if !sv.Window.Closed.IsZero() {
@@ -347,8 +336,6 @@ func Group(saved []Saved, running bool) (offer, stale []Saved) {
 		switch c := sv.Window.Closed; {
 		case c.IsZero():
 			offer = append(offer, sv)
-		case running:
-			// Another window still runs: the group is not complete yet.
 		case c.Before(since):
 			stale = append(stale, sv)
 		default:

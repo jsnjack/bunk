@@ -59,8 +59,7 @@ func (a *App) openWindow() {
 // session, so a hang-up of the terminal this window started from leaves
 // it running.
 func windowCmd(exe, dir, configFile, token string) *exec.Cmd {
-	// Only a start of its own offers the last session back.
-	cmd := exec.Command(exe, "--offer-restore=false")
+	cmd := exec.Command(exe)
 	if configFile != configPath() {
 		cmd.Args = append(cmd.Args, "--config", configFile)
 	}
