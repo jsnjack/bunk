@@ -694,6 +694,9 @@ func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged boo
 		case s.progressPGID == 0 && pgid > 0 && pgid != shellPid:
 			// Reported before a poll saw the program: it is the new group.
 			s.progressPGID = pgid
+		case s.progressPGID == 0 && pgid == shellPid:
+			// The shell reported before the first poll saw it: it still
+			// holds the foreground.
 		case pgid != s.progressPGID:
 			// The program that reported has left the foreground.
 			s.progress, s.progressPGID = Progress{}, 0

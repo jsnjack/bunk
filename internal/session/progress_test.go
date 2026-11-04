@@ -37,6 +37,22 @@ func TestParseProgress(t *testing.T) {
 
 // TestProgressStatus: a progress report shows in Status, is announced
 // once, and ends when the program clears it or leaves the foreground.
+// TestProgressBeforeFirstPoll: the shell reports progress before the
+// first poll has seen it; the poll finding the shell keeps it.
+func TestProgressBeforeFirstPoll(t *testing.T) {
+	s := newTestSession(20, 5)
+	const shell = 100
+	s.onStatusOSC(9, []byte("4;1;60"))
+	s.refreshStatus(shell, shell, "bash", true)
+	if got := s.Status().Progress; got != (Progress{ProgressNormal, 60}) {
+		t.Fatalf("the first poll dropped the shell's progress: %+v", got)
+	}
+	s.onStatusOSC(9, []byte("4;2"))
+	if got := s.Status().Progress; got != (Progress{ProgressError, 60}) {
+		t.Errorf("after 9;4;2: %+v, want failed at 60%%", got)
+	}
+}
+
 func TestProgressStatus(t *testing.T) {
 	s := newTestSession(20, 5)
 	const shell, prog = 100, 200
