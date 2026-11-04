@@ -105,13 +105,15 @@ entry.switcher-entry { background: #131416; border: 1px solid #34373e; border-ra
 	font-family: "Noto Sans Mono", monospace; font-size: 14px; min-height: 40px; margin: 0 6px 8px 6px; }
 button.switchrow { background: none; box-shadow: none; border: none; min-height: 44px; padding: 8px 10px; border-radius: 6px;
 	color: inherit; font-size: 14px; }
-button.switchrow.active { background: #26292f; }
 button.switchrow:hover { background: #23252a; }
+button.switchrow.active { background: #24272d; box-shadow: inset 3px 0 #e6e8eb; }
+.swcurrent { font-size: 11px; font-weight: 600; color: #1b1c20; background: #e6e8eb; border-radius: 4px; padding: 1px 6px; }
 button.switchrow .swtitle { font-weight: 600; color: #e6e8eb; }
 .swbranch { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
 .swagent { font-size: 12px; color: #c4c8ce; }
 .swpath { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
-button.switchrow.cursor { background: #30343b; box-shadow: inset 0 0 0 1px #4a4f58; }
+button.switchrow.cursor { background: #263445; box-shadow: inset 0 0 0 2px #5aa9ff; }
+button.switchrow.active.cursor { box-shadow: inset 3px 0 #e6e8eb, inset 0 0 0 2px #5aa9ff; }
 button.switchclose { min-height: 36px; padding: 0 12px; border: 1px solid #34373e; border-radius: 6px; background: none;
 	color: #b4b9c1; box-shadow: none; margin-top: 4px; }
 paned > separator { min-width: 1px; min-height: 1px; }
@@ -349,6 +351,9 @@ func (a *App) tabInfos() []tabInfo {
 		}
 		if in.pass {
 			parts = append(parts, "all keys go to the terminal")
+		}
+		if t.muted {
+			parts = append(parts, "notifications muted")
 		}
 		in.progress = tabProgress(t, p)
 		if pr := progressName(in.progress); pr != "" {
@@ -615,6 +620,7 @@ func (a *App) buildChrome() {
 	a.tabDrag = nil
 	a.watchTabDrag()
 	a.watchTabRename()
+	a.watchTabMenu()
 	a.refreshChrome()
 }
 
@@ -1166,8 +1172,11 @@ var stateOrder = map[session.AgentState]int{
 }
 
 // openSwitcher shows the tab switcher: a filter field and the tabs, those
-// needing you first. Up and Down move the cursor, which starts on the
-// first match; Enter picks its tab; Esc closes.
+// needing you first. The selected tab's row is marked "current" with a
+// bar on its left; the cursor, outlined in blue, starts on the first
+// match that is not the selected tab, so the switcher's key and Enter go
+// to another tab. Up and Down move the cursor; Enter picks its tab; Esc
+// closes.
 func (a *App) openSwitcher() {
 	if a.switcher != nil {
 		a.closeSwitcher()
@@ -1273,13 +1282,17 @@ func (sw *switcher) refresh() {
 	f := strings.ToLower(strings.TrimSpace(sw.entry.Text()))
 	infos := a.tabInfos()
 	sort.SliceStable(infos, func(i, j int) bool { return stateOrder[infos[i].state] < stateOrder[infos[j].state] })
-	sw.cur, sw.shown, sw.rows = 0, sw.shown[:0], sw.rows[:0]
+	sw.cur, sw.shown, sw.rows = -1, sw.shown[:0], sw.rows[:0]
+	other := -1 // the first row that is not the selected tab
 	for _, in := range infos {
 		if f != "" && !strings.Contains(in.accessKey, f) {
 			continue
 		}
 		if in.t == cur {
 			sw.cur = len(sw.shown)
+		}
+		if other < 0 && !in.active {
+			other = len(sw.shown)
 		}
 		sw.shown = append(sw.shown, in.t)
 		b := gtk.NewButton()
@@ -1303,6 +1316,11 @@ func (sw *switcher) refresh() {
 		}
 		row.Append(text)
 		row.Append(label(in.loc, "loc"))
+		if in.active {
+			c := label("current", "swcurrent")
+			c.SetVAlign(gtk.AlignStart)
+			row.Append(c)
+		}
 		st := label(in.look.label, "statelabel")
 		if in.needs {
 			st.AddCSSClass("needs-fg")
@@ -1316,6 +1334,9 @@ func (sw *switcher) refresh() {
 		})
 		sw.list.Append(b)
 		sw.rows = append(sw.rows, b)
+	}
+	if sw.cur < 0 {
+		sw.cur = max(other, 0)
 	}
 	if len(sw.rows) > 0 {
 		sw.rows[sw.cur].AddCSSClass("cursor")

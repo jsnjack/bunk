@@ -74,6 +74,9 @@ import (
 //	fake-container TYPE ID           pretend the focused pane runs in a container
 //	layout bar|rail | rail open|closed | font +|-|0 | menu open|close | menu-item LABEL | menu-check
 //	switcher [filter TEXT|enter|close] | jump
+//	ctx-tab N | ctx-item LABEL | ctx-close
+//	                                 a tab's context menu; click an item of the open menu
+//	close-dialog cancel|close        answer the dialog a menu's close opened
 //	status [tab=N|pane=ID] [agent=A] [state=working|needs|idle|failed|done|none]
 //	       [repo=R] [branch=B] [cwd=D] [container=C] [process=P] [ssh=H] [host=H]
 //	       [notice=TEXT...]
@@ -436,6 +439,31 @@ func (a *App) doAction(action string, done func()) {
 			return
 		}
 		coreglib.BaseObject(b).Emit("clicked")
+	case "ctx-tab":
+		// A tab's context menu, as a right-click on its item opens it.
+		if i := num(0, 1) - 1; i >= 0 && i < len(a.tabs) && a.tabsBox != nil {
+			a.openTabMenu(a.tabs[i], a.tabsBox, 0, 0)
+		} else {
+			a.reportError("%s: no tab %q", action, arg)
+		}
+	case "ctx-item":
+		if err := a.clickCtxItem(arg); err != nil {
+			a.reportError("%s: %v", action, err)
+		}
+	case "ctx-close":
+		a.closeCtxMenu()
+	case "close-dialog":
+		if a.closeDialog == nil {
+			a.reportError("%s: no close dialog", action)
+			return
+		}
+		if arg == "close" {
+			d := a.closeDialog
+			coreglib.BaseObject(d).Emit("response", "close")
+			d.ForceClose()
+		} else {
+			a.closeDialog.Close() // the close response: cancel
+		}
 	case "switcher":
 		sub, text, _ := strings.Cut(arg, " ")
 		switch sub {

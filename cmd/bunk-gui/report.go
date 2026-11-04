@@ -155,6 +155,7 @@ type tabReport struct {
 	Close    *rectReport  `json:"close,omitempty"`
 	Status   statusReport `json:"status"`   // of the agent pane
 	Pass     bool         `json:"pass"`     // shows the PASS tag
+	Muted    bool         `json:"muted"`    // its panes send no desktop notifications (ctxmenu.go)
 	Progress string       `json:"progress"` // OSC 9;4 as shown: "42%", "failed at 42%", "paused at 42%", "busy" (progressName)
 }
 
@@ -184,9 +185,11 @@ type paneReport struct {
 	CommandMark commandMarkReport `json:"command_mark"` // as its badge and tab show it
 	Title       string            `json:"title"`
 	Scroll      int               `json:"scroll"`
-	Text        []string          `json:"text"`      // live grid rows, trailing blanks trimmed
-	Selection   string            `json:"selection"` // the selected text, "" when none
-	Line        string            `json:"line"`      // the text cursor's row of Text: "$" at an idle sh prompt
+	// ScrollbackRows is the rows kept in the pane's scrollback.
+	ScrollbackRows int      `json:"scrollback"`
+	Text           []string `json:"text"`      // live grid rows, trailing blanks trimmed
+	Selection      string   `json:"selection"` // the selected text, "" when none
+	Line           string   `json:"line"`      // the text cursor's row of Text: "$" at an idle sh prompt
 	// Settled: the pane's last frame was drawn at its current size and
 	// font, no frame or reflow is pending, and the grid fits the frame.
 	Settled bool         `json:"settled"`
@@ -301,7 +304,9 @@ type uiSnapshot struct {
 	ConfigError   string              `json:"config_error"`
 	Shortcuts     *shortcutsReport    `json:"shortcuts,omitempty"`
 	Quit          *quitReport         `json:"quit_dialog,omitempty"`
-	Rename        *renameReport       `json:"rename"` // the rename dialog; null when closed
+	Rename        *renameReport       `json:"rename"`        // the rename dialog; null when closed
+	CtxMenu       *ctxMenuReport      `json:"ctx_menu"`      // the open context menu (ctxmenu.go); null when none
+	CloseConfirm  []string            `json:"close_confirm"` // what the open close dialog lists as running; null when none
 	MenuPassCheck bool                `json:"menu_pass_check"`
 	Find          *findReport         `json:"find,omitempty"`
 	TextZoom      float64             `json:"text_zoom"` // the default, from the config
@@ -407,8 +412,11 @@ type ratioReport struct {
 type switchReport struct {
 	Open   bool   `json:"open"`
 	Filter string `json:"filter"`
-	Rows   []int  `json:"rows"`   // tab indexes in the order shown
-	Cursor int    `json:"cursor"` // tab index of the row Enter picks; 0 with no rows
+	Rows   []int  `json:"rows"` // tab indexes in the order shown
+	// Current is the tab index of the row marked as the selected tab; 0
+	// when the filter hides it.
+	Current int `json:"current"`
+	Cursor  int `json:"cursor"` // tab index of the row Enter picks; 0 with no rows
 }
 
 var stateName = map[session.AgentState]string{
@@ -517,7 +525,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			Index: in.index + 1, Agent: in.agent, Name: in.name, More: in.more, State: stateName[in.state], Label: in.look.label,
 			Dot: in.look.dot, Map: in.paneMap, Repo: in.repo, Branch: in.st.Branch, Loc: in.loc, Notice: in.notice, Tooltip: in.tooltip,
 			Selected: in.active, Needs: in.needs, Focus: -1, Zoomed: -1, Status: statusOf(in.st), Pass: in.pass,
-			ID: t.id, Progress: progressName(in.progress),
+			ID: t.id, Progress: progressName(in.progress), Muted: t.muted,
 		}
 		if a.ringShown(in) {
 			tr.Ring = ringDots(in.arcs)
@@ -573,9 +581,16 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			if i == sw.cur {
 				s.Switcher.Cursor = a.tabIndex(t) + 1
 			}
+			if t == a.active && sw.rows[i].HasCSSClass("active") {
+				s.Switcher.Current = a.tabIndex(t) + 1
+			}
 		}
 	}
 	s.KeyboardFocus = a.keyboardFocus()
+	s.CtxMenu = a.ctxMenuReport()
+	if a.closeDialog != nil {
+		s.CloseConfirm = a.closeBusy
+	}
 	s.Keys = map[string][]string{}
 	for name, cs := range a.keys().bind {
 		s.Keys[name] = []string{}
@@ -673,6 +688,9 @@ func (a *App) keyboardFocus() string {
 	if r := a.rename; r != nil && (w == gtk.BaseWidget(r.entry) || w.IsAncestor(r.entry)) {
 		return "rename"
 	}
+	if m := a.ctxMenu; m != nil && w.IsAncestor(m.pop) {
+		return "context menu"
+	}
 	if r := a.rename; r != nil && w.IsAncestor(r.dlg) {
 		return "rename dialog"
 	}
@@ -751,7 +769,7 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 		p.s.Lock()
 		cols, rows := p.s.Term.Size()
 		r.Settled = r.Settled && cols == p.cols && rows == p.rows
-		r.Scroll = p.s.ScrollOffset
+		r.Scroll, r.ScrollbackRows = p.s.ScrollOffset, p.s.Scrollback.Count
 		if st := p.s.Images(); st != nil {
 			r.Images.Stored, r.Images.StoredBytes, r.Images.Evicted, r.Images.Swept = st.Len(), st.Bytes(), st.Evicted, st.Swept
 		}

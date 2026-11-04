@@ -166,11 +166,18 @@ func (a *App) syncAlerts() {
 		return
 	}
 	tr := &a.alerts.tracker
-	tr.Settings = a.settings.alerts
 	now, active := time.Now(), a.win.IsActive()
 	for _, t := range a.tabs {
+		// A muted tab's panes alert as with notifications off: what they
+		// show is withdrawn, and their marks stay.
+		tr.Settings = a.settings.alerts
+		if t.muted {
+			tr.Settings.Enabled = false
+		}
+		seen := t.seen // Mark as seen: watched once
+		t.seen = false
 		for _, p := range t.panes() {
-			watched := active && t == a.active && t.focus == p
+			watched := seen || active && t == a.active && t.focus == p
 			switch act, al := tr.Update(p.id, p.status(), watched, now); act {
 			case alert.Send:
 				postAlert(a, p.id, al)
@@ -180,6 +187,7 @@ func (a *App) syncAlerts() {
 			p.mark = tr.Mark(p.id, now)
 		}
 	}
+	tr.Settings = a.settings.alerts
 	for _, id := range tr.IDs() {
 		if a.paneByID(id) == nil && tr.Remove(id) == alert.Withdraw {
 			withdrawAlert(a, id)

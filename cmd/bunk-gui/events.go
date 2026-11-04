@@ -163,7 +163,7 @@ func (a *App) keys() keymap { return a.settings.keymap }
 
 // modalOpen reports a dialog that takes the keyboard.
 func (a *App) modalOpen() bool {
-	return a.about != nil || a.shortcutsWin != nil || a.prefsWin != nil || a.quitDialog != nil || a.rename != nil
+	return a.about != nil || a.shortcutsWin != nil || a.prefsWin != nil || a.quitDialog != nil || a.rename != nil || a.closeDialog != nil
 }
 
 // runAction runs a bound action and reports whether it applied. termKey
@@ -406,7 +406,8 @@ func (p *Pane) report(btn, prev input.Button, mods input.Mod, col, row int, mode
 
 // mousePress: with an application mouse mode (and no Shift) the press is
 // reported; otherwise the left button starts a selection (double click: a
-// word) and the middle button pastes the primary selection.
+// word), the middle button pastes the primary selection and the right
+// button opens the pane's context menu.
 func (p *Pane) mousePress(button uint, n int, x, y float64, state gdk.ModifierType) {
 	p.widget.GrabFocus()
 	col, row := p.cellAt(x, y)
@@ -416,6 +417,12 @@ func (p *Pane) mousePress(button uint, n int, x, y float64, state gdk.ModifierTy
 	}
 	mode := p.mouseMode()
 	if p.clickLink(button, x, y, state, mode&vt10x.ModeMouseMask != 0) {
+		return
+	}
+	// The context menu: a right-click, or Shift+right-click while the
+	// program reports the mouse (ctxmenu.go).
+	if button == 3 && n == 1 && (mode&vt10x.ModeMouseMask == 0 || state&gdk.ShiftMask != 0) {
+		p.app.openPaneMenu(p, x, y)
 		return
 	}
 	if mode&vt10x.ModeMouseMask != 0 && state&gdk.ShiftMask == 0 {

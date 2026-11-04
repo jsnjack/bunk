@@ -75,6 +75,9 @@ type App struct {
 	quitDialog   *adw.AlertDialog
 	quitBody     []string      // the quit dialog's list of busy tabs
 	rename       *renameDialog // the rename dialog (tabname.go), nil when closed
+	ctxMenu      *ctxMenu      // the open context menu of a tab or pane (ctxmenu.go)
+	closeDialog  *adw.AlertDialog
+	closeBusy    []string // what closeDialog lists as running
 
 	notify       *notify.Server // agent hook reports; nil when the socket failed
 	cfgMonitor   gio.FileMonitorrer

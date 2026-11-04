@@ -33,6 +33,12 @@ type Tab struct {
 	// name is the user's name for the tab (tabname.go); "" shows the
 	// agent or process.
 	name string
+	// muted: the tab's panes send no desktop notifications; their marks
+	// still show (ctxmenu.go).
+	muted bool
+	// seen: the user marked the tab as seen; the next syncAlerts treats
+	// its panes as watched once.
+	seen bool
 }
 
 // node is a BSP tree node: a pane (leaf) or a split of two subtrees.

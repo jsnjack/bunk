@@ -159,6 +159,10 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
   scope.go          Each pane's child in a systemd scope of its own, so an
                     OOM kill in a pane leaves bunk-gui and other panes alone
   tabname.go        Tab names: rename dialog, double-click on a tab
+  ctxmenu.go        Context menus of a tab (right-click) and a pane
+                    (right-click, Shift+right-click under a mouse
+                    program); muting a tab, marking it seen, closing
+                    with confirmation
   restore.go        Session restore: saves the window, the startup banner,
                     rebuilds tabs and splits, resumes agents (--restore)
   prefs_hooks.go    Agent hooks in Preferences (state, Install, Copy
@@ -593,6 +597,29 @@ its default; Design Decisions says where the defaults come from.
   dialog's sheet maps its content a frame after it opens, and GTK drops
   keys for unmapped widgets although the entry already has the focus;
   window tests wait for `rename.ready` before they type.
+
+- bunk-gui has context menus (`ctxmenu.go`). Their popover hangs on the
+  root box, because refreshChrome replaces the tab items under it.
+  - A right-click on a tab, caught on the tab list like the rename and
+    drag gestures, opens its menu without selecting it: Rename…, Copy
+    directory, Mark as seen, Mute notifications, Close tab and Close
+    other tabs.
+  - Mark as seen does what looking at each pane does (`AckSeen`, and
+    the tracker sees the panes watched once): done and inferred needs-you
+    clear, command marks clear and notifications go. A reported needs-you
+    stays, as the agent still waits.
+  - A muted tab's panes run the tracker with notifications off, so a
+    shown notification is withdrawn and marks stay. Muting lasts for the
+    window's life and is not restored.
+  - A right-click in a pane opens its menu, the link under the pointer
+    first. While the program reports the mouse, the right-click goes to
+    it and Shift+right-click opens the menu, as in VTE.
+  - Closing from a menu asks while a pane runs more than an idle shell
+    (`Pane.busy`, as quitting does); the close_tab key does not ask.
+  - The switcher marks the selected tab's row as current, and its cursor
+    starts on the first other row, so the switcher's key and Enter switch
+    away. `TestGUITabMenu`, `TestGUIPaneMenu` and
+    `TestGUISwitcherCurrent` check them.
 
 - bunk-gui restores sessions (`restore.go`, `internal/restore`).
   - Each window holds a slot in `$XDG_STATE_HOME/bunk-gui/windows`:
