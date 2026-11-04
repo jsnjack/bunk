@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -111,6 +110,7 @@ button.switchrow .swtitle { font-weight: 600; color: #e6e8eb; }
 .swbranch { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
 .swagent { font-size: 12px; color: #c4c8ce; }
 .swpath { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
+.swpath.swnotice { color: #ffb454; }
 button.switchrow.cursor { background: #2c2f36; }
 button.switchclose { min-height: 36px; padding: 0 12px; border: 1px solid #34373e; border-radius: 6px; background: none;
 	color: #b4b9c1; box-shadow: none; margin-top: 4px; }
@@ -415,17 +415,27 @@ func (in tabInfo) switchTitle() *gtk.Box {
 }
 
 // switchDetail is a switcher row's second line: the agent, "+N" for the
-// agents in other panes, and the directory, cut in the middle.
+// agents in other panes, and the directory, cut in the middle. A notice
+// takes the directory's place, so the row keeps its height.
 func (in tabInfo) switchDetail() *gtk.Box {
 	box := gtk.NewBox(gtk.OrientationHorizontal, 6)
 	box.Append(label(in.agent, "swagent"))
 	if in.more > 0 {
 		box.Append(label(fmt.Sprintf("+%d", in.more), "more"))
 	}
-	if in.path != "" {
+	if in.notice != "" {
+		box.Append(label("·", "swpath"))
+		n := label(in.notice, "swpath", "swnotice")
+		n.SetEllipsize(pango.EllipsizeEnd)
+		n.SetMaxWidthChars(1) // fills the row without widening the switcher
+		n.SetXAlign(0)
+		n.SetHExpand(true)
+		box.Append(n)
+	} else if in.path != "" {
 		box.Append(label("·", "swpath"))
 		p := label(in.path, "swpath")
 		p.SetEllipsize(pango.EllipsizeMiddle)
+		p.SetMaxWidthChars(1)
 		p.SetXAlign(0)
 		p.SetHExpand(true)
 		box.Append(p)
@@ -1169,8 +1179,8 @@ var stateOrder = map[session.AgentState]int{
 	session.AgentNone: 5,
 }
 
-// openSwitcher shows the tab switcher: a filter field and the tabs, those
-// needing you first. The selected tab's row carries a "current" chip;
+// openSwitcher shows the tab switcher: a filter field and the tabs in
+// their order, which a status change never alters. The selected tab's row carries a "current" chip;
 // the cursor, a filled row like a list selection, starts on the first
 // match that is not the selected tab, so the switcher's key and Enter go
 // to another tab. Up and Down move the cursor; Enter picks its tab; Esc
@@ -1272,14 +1282,13 @@ func (sw *switcher) refresh() {
 	for c := sw.list.FirstChild(); c != nil; c = sw.list.FirstChild() {
 		sw.list.Remove(c)
 	}
-	// A status change reorders the rows; the cursor stays on its tab.
+	// The cursor stays on its tab when the filter keeps it.
 	var cur *Tab
 	if sw.cur < len(sw.shown) {
 		cur = sw.shown[sw.cur]
 	}
 	f := strings.ToLower(strings.TrimSpace(sw.entry.Text()))
 	infos := a.tabInfos()
-	sort.SliceStable(infos, func(i, j int) bool { return stateOrder[infos[i].state] < stateOrder[infos[j].state] })
 	sw.cur, sw.shown, sw.rows = -1, sw.shown[:0], sw.rows[:0]
 	other := -1 // the first row that is not the selected tab
 	for _, in := range infos {
@@ -1306,12 +1315,6 @@ func (sw *switcher) refresh() {
 		text.SetHExpand(true)
 		text.Append(in.switchTitle())
 		text.Append(in.switchDetail())
-		if in.notice != "" {
-			n := label(in.notice, "notice")
-			n.SetEllipsize(pango.EllipsizeEnd)
-			n.SetXAlign(0)
-			text.Append(n)
-		}
 		row.Append(text)
 		row.Append(label(in.loc, "loc"))
 		if in.active {
@@ -1320,6 +1323,8 @@ func (sw *switcher) refresh() {
 			row.Append(c)
 		}
 		st := label(in.look.label, "statelabel")
+		st.SetWidthChars(9) // "needs you": the row's text keeps its place as the state changes
+		st.SetXAlign(1)
 		if in.needs {
 			st.AddCSSClass("needs-fg")
 		}

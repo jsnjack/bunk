@@ -593,9 +593,9 @@ func TestGUITabDrag(t *testing.T) {
 }
 
 // TestGUITabsAndStatus: status from the test hook drives dots, labels,
-// locations and tints; the switcher sorts needs-you first, moves its
-// cursor with Up and Down (wrapping, kept on its tab when the rows
-// reorder) and filters by typed text; Alt+A visits tabs needing you in order; Alt+1…9 select
+// locations and tints; the switcher lists the tabs in order, keeps every
+// row in place as states and notices change, moves its cursor with Up
+// and Down (wrapping) and filters by typed text; Alt+A visits tabs needing you in order; Alt+1…9 select
 // tabs; a pane needing you gets the ring until it is focused; inactive
 // panes are dimmed.
 func TestGUITabsAndStatus(t *testing.T) {
@@ -616,16 +616,17 @@ func TestGUITabsAndStatus(t *testing.T) {
 			"wait switcher.open=true keyboard_focus=switcher",
 			"snap switcher",
 			"kbd down down",
-			"wait switcher.cursor=3",
+			"wait switcher.cursor=4",
 			"snap switcher-down",
 			"kbd up up up",
 			"wait switcher.cursor=1",
 			"snap switcher-wrap",
 			"kbd down down",
-			"wait switcher.cursor=4",
+			"wait switcher.cursor=3",
 			"status tab=4 state=idle",
-			"wait switcher.rows.1=3",
-			"snap switcher-reorder",
+			"status tab=3 state=working notice=Running the whole integration suite again, with a summary of every failure",
+			"wait tab.4.state=idle tab.3.notice~integration",
+			"snap switcher-status",
 			"kbd-type ma",
 			"wait switcher.filter=ma",
 			"snap switcher-typed",
@@ -726,18 +727,28 @@ func TestGUITabsAndStatus(t *testing.T) {
 		}
 	}
 
-	if s := g.snap("switcher"); !s.Switcher.Open || !slices.Equal(s.Switcher.Rows, []int{2, 4, 3, 1}) || s.KeyboardFocus != "switcher" {
-		t.Errorf("switcher: %+v, keyboard focus %q; want rows needs-you, failed, working, shell", s.Switcher, s.KeyboardFocus)
+	if s := g.snap("switcher"); !s.Switcher.Open || !slices.Equal(s.Switcher.Rows, []int{1, 2, 3, 4}) || s.KeyboardFocus != "switcher" {
+		t.Errorf("switcher: %+v, keyboard focus %q; want the tabs in order", s.Switcher, s.KeyboardFocus)
+	}
+	// State and notice changes leave every row where it was.
+	before, after := g.snap("switcher").Switcher.Rects, g.snap("switcher-status").Switcher.Rects
+	if len(before) != 4 || len(after) != 4 {
+		t.Fatalf("switcher rows: %d before, %d after the status changes", len(before), len(after))
+	}
+	for i := range before {
+		if before[i] == nil || after[i] == nil || *before[i] != *after[i] {
+			t.Errorf("switcher row %d moved: %+v, then %+v", i+1, before[i], after[i])
+		}
 	}
 	for label, want := range map[string]struct {
 		rows   []int
 		cursor int
 	}{
-		"switcher":         {[]int{2, 4, 3, 1}, 2},
-		"switcher-down":    {[]int{2, 4, 3, 1}, 3},
-		"switcher-wrap":    {[]int{2, 4, 3, 1}, 1},
-		"switcher-reorder": {[]int{2, 3, 4, 1}, 4},
-		"switcher-typed":   {[]int{3, 4}, 3},
+		"switcher":        {[]int{1, 2, 3, 4}, 2},
+		"switcher-down":   {[]int{1, 2, 3, 4}, 4},
+		"switcher-wrap":   {[]int{1, 2, 3, 4}, 1},
+		"switcher-status": {[]int{1, 2, 3, 4}, 3},
+		"switcher-typed":  {[]int{3, 4}, 3},
 	} {
 		if s := g.snap(label); !slices.Equal(s.Switcher.Rows, want.rows) || s.Switcher.Cursor != want.cursor || s.KeyboardFocus != "switcher" {
 			t.Errorf("%s: switcher %+v, keyboard focus %q; want rows %v, cursor on tab %d", label, s.Switcher, s.KeyboardFocus, want.rows, want.cursor)

@@ -38,11 +38,11 @@ bunk-gui draws each pane into a texture at the widget's device-pixel size, so te
 
 <table>
 <tr>
-<td width="50%"><img src="assets/gui-switcher.png" alt="Tab switcher listing needs-you first"></td>
+<td width="50%"><img src="assets/gui-switcher.png" alt="Tab switcher listing every tab in order"></td>
 <td width="50%"><img src="assets/gui-bar.png" alt="Tabs in a bar on top"></td>
 </tr>
 <tr>
-<td>Switcher (Ctrl+Shift+O): each tab's repo, branch, agent and folder, needs-you first; filter by agent, repo or branch</td>
+<td>Switcher (Ctrl+Shift+O): each tab's repo, branch, agent and folder, in tab order; filter by agent, repo or branch</td>
 <td>Tabs on top: <code>tabs = "bar"</code></td>
 </tr>
 <tr>

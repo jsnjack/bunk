@@ -157,8 +157,8 @@ func TestGUIScreenshots(t *testing.T) {
 			t.Errorf("shell pane lacks %q:\n%s", s, shell)
 		}
 	}
-	if s := g.snap("switcher"); !s.Switcher.Open || len(s.Switcher.Rows) != len(want) || s.Switcher.Rows[0] != 2 {
-		t.Errorf("switcher: %+v; want all tabs, needs-you first", s.Switcher)
+	if s := g.snap("switcher"); !s.Switcher.Open || len(s.Switcher.Rows) != len(want) || s.Switcher.Rows[0] != 1 {
+		t.Errorf("switcher: %+v; want all tabs in order", s.Switcher)
 	}
 	if s := g.snap("bar"); s.Layout != "bar" {
 		t.Errorf("bar: layout %q", s.Layout)

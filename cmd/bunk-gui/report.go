@@ -417,6 +417,8 @@ type switchReport struct {
 	// when the filter hides it.
 	Current int `json:"current"`
 	Cursor  int `json:"cursor"` // tab index of the row Enter picks; 0 with no rows
+	// Rects are the rows' places, in the order shown.
+	Rects []*rectReport `json:"rects"`
 }
 
 var stateName = map[session.AgentState]string{
@@ -578,6 +580,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		s.Switcher.Open, s.Switcher.Filter = true, sw.entry.Text()
 		for i, t := range sw.shown {
 			s.Switcher.Rows = append(s.Switcher.Rows, a.tabIndex(t)+1)
+			s.Switcher.Rects = append(s.Switcher.Rects, a.widgetRect(g, sw.rows[i]))
 			if i == sw.cur {
 				s.Switcher.Cursor = a.tabIndex(t) + 1
 			}

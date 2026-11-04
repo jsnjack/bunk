@@ -514,9 +514,11 @@ its default; Design Decisions says where the defaults come from.
     removes it, and + adds one. A row's chips are rebuilt only when its
     keys change, because a button replaced under the pointer can miss the
     next click.
-  - The switcher's Up and Down move a cursor, which starts on the first
-    match and stays on its tab when a status change reorders the rows;
-    Enter opens its tab.
+  - The switcher lists the tabs in their order (`App.tabs`), and a
+    status change never moves a row: a notice takes the directory's
+    place on the second line, and the state label has a fixed width.
+    Up and Down move a cursor, which starts on the first match and stays
+    on its tab as rows are rebuilt; Enter opens its tab.
 
 - bunk-gui's pointer and focus handling matches bunk's TUI. The
   scrollbar thumb can be dragged while it shows (`grabThumb`). A selection
