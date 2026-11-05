@@ -573,8 +573,15 @@ its default; Design Decisions says where the defaults come from.
   - bunk's TUI is unchanged: its panes share the host terminal's scope.
 
 - A bunk-gui tab can hold several agents in split panes. Its label keeps
-  the name, repo and location of the first pane with an agent
-  (`Tab.agentPane`), so it does not change as the agents change state.
+  the name and repo of the first pane with an agent (`Tab.agentPane`),
+  so it does not change as the agents change state. Its location lists
+  every pane's places as the pane's context badge names them
+  (`badges.Places`: the container, then the ssh or mosh host; sudo and su
+  are left out), so the tab and the badges agree (`tabLoc`). Each kind
+  shows once, with its names in pane order, the agent's first: "⬡ fedora
+  · ⇄ ti-ci, int-build". The open rail wraps it onto a second line, the
+  switcher cuts it at 36 characters, and the tooltip holds all of it
+  (`TestGUITabHosts`).
   "+N" counts the agents in its other panes. The dot, colour and needs-you
   highlight show the most urgent state among them (`stateOrder`), and the
   rail shows that agent's notice as "agent: notice". The tooltip lists
@@ -680,7 +687,8 @@ its default; Design Decisions says where the defaults come from.
 
 - Pane badges come from `internal/badges`, for both front ends.
   - `badges.Layout` decides which badges show, their order, text and fitting
-    from plain pane state. Each badge has a `Role`.
+    from plain pane state. Each badge has a `Role`. `badges.Places` gives
+    the context badge's places, which bunk-gui's tabs list too.
   - The front ends only paint. `theme.BadgeInks` names each role's colours:
     palette slots, most backgrounds blended `theme.BadgeDim` (40%) toward
     the theme background, and fixed agent colours. The TUI resolves them in

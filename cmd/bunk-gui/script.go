@@ -80,7 +80,8 @@ import (
 //	status [tab=N|pane=ID] [agent=A] [state=working|needs|idle|failed|done|none]
 //	       [repo=R] [branch=B] [cwd=D] [container=C] [process=P] [ssh=H] [host=H]
 //	       [notice=TEXT...]
-//	                                 override a pane's status (test hook)
+//	                                 override a pane's status (test hook); ssh=H
+//	                                 runs ssh too unless process= says otherwise
 //	status-clear [tab=N|pane=ID]
 //	alert-click ID                   click pane ID's desktop notification, as the server would
 //	decoy open|close                 a second window takes the keyboard focus (inactive window)
@@ -731,6 +732,10 @@ func (a *App) scriptStatus(clear bool, arg string) {
 		p.statusOverride = nil
 	} else {
 		st := p.status()
+		process := false // process= given: ssh= keeps it
+		for _, f := range fields {
+			process = process || strings.HasPrefix(f, "process=")
+		}
 		for _, f := range fields {
 			k, v, _ := strings.Cut(f, "=")
 			switch k {
@@ -754,7 +759,11 @@ func (a *App) scriptStatus(clear bool, arg string) {
 			case "process":
 				st.Process = v
 			case "ssh":
+				// A real pane has an ssh host only while ssh or mosh runs.
 				st.SSHHost = v
+				if !process {
+					st.Process = "ssh"
+				}
 			case "host":
 				st.Host = v
 			}

@@ -59,7 +59,7 @@ sleep 30
 	must(t, err)
 	r := g.snap("remote").tab(t, 1)
 	if r.Agent != "claude" || r.Notice != "Allow rm?" || !r.Status.Reported || r.Status.Host != host ||
-		r.Status.Repo != "proj" || r.Status.Branch != "main" || !strings.HasPrefix(r.Loc, "⇄ ssh ") || !strings.Contains(r.Tooltip, "Allow rm?") {
+		r.Status.Repo != "proj" || r.Status.Branch != "main" || !strings.HasPrefix(r.Loc, "⇄ ") || !strings.Contains(r.Tooltip, "Allow rm?") {
 		t.Errorf("remote agent: tab %+v", r)
 	}
 	if l := g.snap("left").tab(t, 1); l.Status.Reported || l.Status.Host != "" || l.Notice != "" {
@@ -70,5 +70,62 @@ sleep 30
 	}
 	if k := g.snap("token").tab(t, 1); k.Notice != "Finished" || !k.Status.Reported {
 		t.Errorf("a report with the tab's token: tab %+v", k)
+	}
+}
+
+// TestGUITabHosts: a tab split into panes on three ssh hosts names all
+// three in pane order, wherever the focus is, and an agent's host first.
+// The switcher cuts the list instead of growing wider.
+func TestGUITabHosts(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost:   2,
+		config: "tabs = \"rail\"\nrail_open = true\n",
+		args:   []string{"--size", "100x30"},
+		script: []string{
+			"wait focused.line=$",
+			"kbd ctrl+shift+o",
+			"wait switcher.open=true",
+			"snap plain",
+			"kbd Escape",
+			"wait switcher.open=false",
+			"split",
+			"wait tab.1.panes.#=2",
+			"split",
+			"wait tab.1.panes.#=3",
+			"status pane=0 ssh=ti-ci",
+			"wait tab.1.loc=\"⇄ ti-ci\"",
+			"snap one-host",
+			"status pane=1 ssh=int-build",
+			"status pane=2 ssh=int-devops",
+			"wait tab.1.loc=\"⇄ ti-ci, int-build, int-devops\"",
+			"snap hosts",
+			"status pane=1 agent=claude state=working",
+			"status pane=2 ssh=ti-ci-long-host-name-for-the-switcher.example.com",
+			"wait tab.1.agent=claude",
+			"kbd ctrl+shift+o",
+			"wait switcher.open=true",
+			"snap agent",
+			"quit",
+		},
+	})
+	one, three := g.snap("one-host").tab(t, 1), g.snap("hosts").tab(t, 1)
+	if !strings.Contains(three.Tooltip, "⇄ ti-ci, int-build, int-devops") {
+		t.Errorf("three hosts: tab %+v", three)
+	}
+	// The open rail wraps the hosts onto a second line.
+	if one.Item == nil || three.Item == nil || three.Item.H <= one.Item.H {
+		t.Errorf("rail item %+v with one host, %+v with three; want it a line taller", one.Item, three.Item)
+	}
+	a := g.snap("agent")
+	if l := a.tab(t, 1).Loc; l != "⇄ int-build, ti-ci, ti-ci-long-host-name-for-the-switcher.example.com" {
+		t.Errorf("with an agent in pane 1: loc %q; want its host first", l)
+	}
+	plain, wide := g.snap("plain").Switcher, a.Switcher
+	if len(plain.Rects) != 1 || len(wide.Rects) != 1 {
+		t.Fatalf("switcher rows %d and %d; want 1", len(plain.Rects), len(wide.Rects))
+	}
+	if w0, w1 := plain.Rects[0].W, wide.Rects[0].W; w1 != w0 {
+		t.Errorf("switcher row %v px wide with the hosts, %v without; want the same width", w1, w0)
 	}
 }

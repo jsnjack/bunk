@@ -204,3 +204,41 @@ func TestRoleNames(t *testing.T) {
 		}
 	}
 }
+
+// TestPlaces: the places are the context badge without sudo or su, in the
+// badge's order, so a tab that lists them matches its panes' badges.
+func TestPlaces(t *testing.T) {
+	for _, c := range badgetest.Cases {
+		var parts []string
+		for _, p := range badges.Places(c.In) {
+			parts = append(parts, p.String())
+		}
+		if c.In.Process == "sudo" || c.In.Process == "su" {
+			parts = append(parts, c.In.Process)
+		}
+		want := strings.Join(parts, " · ")
+		var got string
+		for _, b := range badges.Layout(c.In).Badges {
+			if b.Role == badges.RoleSudo || b.Role == badges.RoleSSH || b.Role == badges.RoleContainer || b.Role == badges.RoleMosh {
+				got = strings.TrimSpace(b.Text)
+			}
+		}
+		// A narrow row cuts or hides the badge.
+		if got != "" && got != want && !strings.HasSuffix(got, "…") {
+			t.Errorf("%s: places %q, context badge %q", c.Name, want, got)
+		}
+	}
+	for _, c := range []struct {
+		in   badges.Input
+		want string
+	}{
+		{badges.Input{Process: "sudo", ContainerType: "toolbox", ContainerID: "fedora"}, "[⬡ fedora]"},
+		{badges.Input{Process: "ssh", SSHHost: "build01", ContainerType: "distrobox"}, "[▣ distrobox ⇄ build01]"},
+		{badges.Input{Process: "mosh"}, "[⇄ mosh]"},
+		{badges.Input{Process: "vim", SSHHost: "stale"}, "[]"},
+	} {
+		if got := fmt.Sprint(badges.Places(c.in)); got != c.want {
+			t.Errorf("Places(%+v) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}

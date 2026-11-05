@@ -695,8 +695,8 @@ func TestGUITabsAndStatus(t *testing.T) {
 	}{
 		{1, "sh", "none", "", "", false, true, colIdle},
 		{2, "codex", "needs", "needs you", "", true, false, colNeeds},
-		{3, "copilot", "working", "working", "⬡ toolbox fedora-42", false, false, colWorking},
-		{4, "claude", "failed", "failed", "⇄ ssh build01", false, false, colFailed},
+		{3, "copilot", "working", "working", "⬡ fedora-42", false, false, colWorking},
+		{4, "claude", "failed", "failed", "⇄ build01", false, false, colFailed},
 	} {
 		tb := s.tab(t, c.tab)
 		if tb.Agent != c.agent || tb.State != c.state || tb.Label != c.label || tb.Loc != c.loc || tb.Needs != c.needs || tb.Selected != c.selected {

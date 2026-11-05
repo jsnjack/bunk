@@ -259,30 +259,50 @@ func Layout(in Input) Row {
 	return row
 }
 
-// contextBadge returns the text and role of the context badge: the
-// container, then ssh or mosh and its host, or sudo or su, joined by " · ".
-// It returns "" when there is no context to show.
-func contextBadge(in Input) (string, Role) {
-	var parts []string
+// Place is where a pane's program runs, as its context badge names it: a
+// container (Icon ⬡, or ▣ for distrobox) or a host that ssh or mosh
+// reached (⇄).
+type Place struct {
+	Icon, Name string
+}
+
+func (p Place) String() string { return p.Icon + " " + p.Name }
+
+// Places returns the places the context badge shows: the container, then
+// the host of ssh or mosh in the foreground. sudo and su are not places.
+// bunk-gui's tabs list their panes' places.
+func Places(in Input) []Place {
+	var out []Place
 	if in.ContainerType != "" {
 		icon := "⬡"
 		if in.ContainerType == "distrobox" {
 			icon = "▣"
 		}
-		label := in.ContainerType
+		name := in.ContainerType
 		if in.ContainerID != "" {
-			label = in.ContainerID
+			name = in.ContainerID
 		}
-		parts = append(parts, icon+" "+label)
+		out = append(out, Place{icon, name})
 	}
-	switch in.Process {
-	case "ssh", "mosh":
+	if in.Process == "ssh" || in.Process == "mosh" {
 		host := in.SSHHost
 		if host == "" {
 			host = in.Process
 		}
-		parts = append(parts, "⇄ "+host)
-	case "sudo", "su":
+		out = append(out, Place{"⇄", host})
+	}
+	return out
+}
+
+// contextBadge returns the text and role of the context badge: the
+// places, then sudo or su, joined by " · ". It returns "" when there is
+// no context to show.
+func contextBadge(in Input) (string, Role) {
+	var parts []string
+	for _, p := range Places(in) {
+		parts = append(parts, p.String())
+	}
+	if in.Process == "sudo" || in.Process == "su" {
 		parts = append(parts, in.Process)
 	}
 	if len(parts) == 0 {

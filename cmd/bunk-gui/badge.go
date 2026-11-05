@@ -27,6 +27,7 @@ import (
 	"github.com/rivo/uniseg"
 
 	"bunk/internal/badges"
+	"bunk/internal/session"
 	"bunk/internal/theme"
 )
 
@@ -90,24 +91,24 @@ func (p *Pane) newBadgeRow() {
 // overrides included), the command mark, passthrough, zoom and the flash.
 func (p *Pane) badgeInput() badges.Input {
 	st := p.status()
+	in := contextInput(st)
+	in.Passthrough = p.passthrough
+	in.ScrollOffset = p.tv.sbOff
+	in.Agent, in.State, in.Notice = st.Agent, st.State, st.Notice
+	in.CommandState, in.Command = p.mark.State, p.mark.Name
+	in.Zoomed = p.tab != nil && p.tab.zoom == p
+	in.Flash = p.flash
+	in.Width = p.tv.cols
+	return in
+}
+
+// contextInput is the badge input of the context badge, from a pane's
+// status: the foreground process, its ssh host and the container. The
+// tab's places (panePlaces) come from it too.
+func contextInput(st session.Status) badges.Input {
 	// Status.Container is "TYPE NAME"; a type is one word.
 	ctype, cid, _ := strings.Cut(st.Container, " ")
-	return badges.Input{
-		Passthrough:   p.passthrough,
-		ScrollOffset:  p.tv.sbOff,
-		Agent:         st.Agent,
-		State:         st.State,
-		Notice:        st.Notice,
-		Process:       st.Process,
-		ContainerType: ctype,
-		ContainerID:   cid,
-		SSHHost:       st.SSHHost,
-		CommandState:  p.mark.State,
-		Command:       p.mark.Name,
-		Zoomed:        p.tab != nil && p.tab.zoom == p,
-		Flash:         p.flash,
-		Width:         p.tv.cols,
-	}
+	return badges.Input{Process: st.Process, ContainerType: ctype, ContainerID: cid, SSHHost: st.SSHHost}
 }
 
 // badgeTop is how far below the pane's top the row sits: under the find

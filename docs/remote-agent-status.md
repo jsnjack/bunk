@@ -182,8 +182,8 @@ unwrapped, so the number does not change compatibility.
   ssh exits.
 - The report's agent, host, repo, branch and directory replace the values
   taken from the local `ssh` process. `Status.Host` is new. bunk-gui's tab
-  keeps the location `⇄ ssh <destination>` as typed, and shows `⇄ <host>`
-  only when it knows no destination.
+  keeps the location `⇄ <destination>` as typed, as the pane's badge does,
+  and shows `⇄ <host>` only when it knows no destination.
 - These fields hold until `clear` or a change of the foreground process.
   Acknowledging drops the state and notice but keeps them. Inference then
   treats the remote agent like a known local one: output timing gives

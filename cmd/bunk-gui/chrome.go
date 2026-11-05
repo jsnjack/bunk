@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -263,12 +264,23 @@ func (a *App) tabInfos() []tabInfo {
 			in.state, in.command, in.notice = own.State, true, own.Summary
 		}
 		var others []string // tooltip lines and names of the other panes' agents and commands
+		// Every pane's status for tabLoc in pane order, an agent's first.
+		// Without an agent p is the focused pane, whose place would move
+		// as the focus does.
+		var places []session.Status
+		if st.Agent != "" {
+			places = append(places, st)
+		}
 		for _, q := range t.panes() {
 			in.pass = in.pass || q.passthrough
 			if q == p {
+				if st.Agent == "" {
+					places = append(places, st)
+				}
 				continue
 			}
 			qs := q.status()
+			places = append(places, qs)
 			if m := markOf(q); m.State != session.AgentNone {
 				if stateOrder[m.State] < stateOrder[in.state] {
 					in.state, in.command, in.notice = m.State, true, ""
@@ -324,16 +336,7 @@ func (a *App) tabInfos() []tabInfo {
 		default:
 			in.repo = in.path
 		}
-		switch {
-		case st.Container != "":
-			in.loc, in.locGlyph = "⬡ "+st.Container, "⬡"
-		case st.SSHHost != "":
-			in.loc, in.locGlyph = "⇄ ssh "+st.SSHHost, "⇄"
-		case st.Host != "":
-			// A remote agent reporting in-band through a client bunk does
-			// not recognise as ssh.
-			in.loc, in.locGlyph = "⇄ "+st.Host, "⇄"
-		}
+		in.loc, in.locGlyph = tabLoc(places)
 		parts := []string{in.agent, in.repo}
 		if in.name != "" {
 			parts = append([]string{in.name}, parts...)
@@ -372,6 +375,47 @@ func (a *App) tabInfos() []tabInfo {
 		out = append(out, in)
 	}
 	return out
+}
+
+// panePlaces is where a pane's program runs, as its context badge names
+// it (badges.Places): its container, then the host of ssh or mosh. A
+// remote agent that reports in-band through a client bunk does not
+// recognise as ssh adds the host it reports from.
+func panePlaces(st session.Status) []badges.Place {
+	pl := badges.Places(contextInput(st))
+	if st.Host != "" && !slices.ContainsFunc(pl, func(p badges.Place) bool { return p.Icon == "⇄" }) {
+		pl = append(pl, badges.Place{Icon: "⇄", Name: st.Host})
+	}
+	return pl
+}
+
+// tabLoc names where a tab's panes run, from their statuses in order:
+// each kind of place once, in the order the panes show it, with its
+// names in that order and without repeats ("⬡ fedora · ⇄ ti-ci,
+// int-build"). glyph is the first kind's icon, which the collapsed bar
+// shows.
+func tabLoc(sts []session.Status) (loc, glyph string) {
+	var icons []string
+	names := map[string][]string{}
+	for _, st := range sts {
+		for _, p := range panePlaces(st) {
+			if slices.Contains(names[p.Icon], p.Name) {
+				continue
+			}
+			if names[p.Icon] == nil {
+				icons = append(icons, p.Icon)
+			}
+			names[p.Icon] = append(names[p.Icon], p.Name)
+		}
+	}
+	if len(icons) == 0 {
+		return "", ""
+	}
+	parts := make([]string, len(icons))
+	for i, icon := range icons {
+		parts[i] = icon + " " + strings.Join(names[icon], ", ")
+	}
+	return strings.Join(parts, " · "), icons[0]
 }
 
 // agentLabel is the tab's name, else its agent's, in bold, then "+N" for
@@ -895,17 +939,22 @@ func (a *App) railRow(in tabInfo) tabItem {
 	state.SetXAlign(1)
 	top.Append(state)
 	lines.Append(top)
-	add := func(text string, cls string) {
+	add := func(text string, cls string) *gtk.Label {
 		l := label(text, cls)
 		l.SetEllipsize(pango.EllipsizeEnd)
 		l.SetMaxWidthChars(24) // keeps the rail at 268 px
 		l.SetXAlign(0)
 		l.SetMarginStart(22)
 		lines.Append(l)
+		return l
 	}
 	add(in.repo, "repo")
 	if in.loc != "" {
-		add(in.loc, "loc")
+		// Every pane's place: a second line holds a few more hosts.
+		l := add(in.loc, "loc")
+		l.SetWrap(true)
+		l.SetWrapMode(pango.WrapWordChar)
+		l.SetLines(2)
 	}
 	if in.notice != "" {
 		add(in.notice, "notice")
@@ -1322,7 +1371,15 @@ func (sw *switcher) refresh() {
 		text.Append(in.switchTitle())
 		text.Append(in.switchDetail())
 		row.Append(text)
-		row.Append(label(in.loc, "loc"))
+		// Every pane's place, cut so a tab of many hosts cannot widen the
+		// switcher; the tooltip holds them all.
+		loc := label(in.loc, "loc")
+		loc.SetEllipsize(pango.EllipsizeEnd)
+		loc.SetMaxWidthChars(36)
+		if in.loc != "" {
+			loc.SetTooltipText(in.loc)
+		}
+		row.Append(loc)
 		if in.active {
 			c := label("current", "swcurrent")
 			c.SetVAlign(gtk.AlignStart)
