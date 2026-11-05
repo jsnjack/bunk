@@ -19,7 +19,7 @@ switch tabs.
 | Rename tab | | Double-click a tab, or choose "Rename tab…" in the menu; `rename_tab` in `[keys]` binds a key. The name replaces the agent or program name, and an empty name brings it back |
 | Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
 | Agent status | | Dot, state, repo ⎇ branch, container or SSH host, and the agent's notice; see [agent-status.md](agent-status.md) |
-| Switcher | Ctrl+Shift+O | Lists the tabs in their order and marks the current one; the cursor starts on the first other tab. Type to filter, Up and Down pick a row, Enter opens it |
+| Switcher | Ctrl+Shift+O | Lists the tabs in their order and marks the current one; the cursor starts on the first other tab. Type to filter, Up and Down pick a row, Enter opens it. A row's × closes its tab, and the switcher stays open |
 | Tab menu | Right-click a tab | Rename, Copy directory, Mark as seen (clears done marks and notifications), Mute notifications, Close tab, Close other tabs; closing asks first while something runs |
 | Pane menu | Right-click a pane | The link under the pointer, Copy, Paste, Select all, Find, Split, Zoom, Passthrough, Copy or open the directory, Clear scrollback, Close pane. Where the program uses the mouse, Shift+right-click opens it |
 | Next needing you | Alt+A | Visits needs-you tabs, then done tabs; a done tab counts as seen, and a needs-you tab stays until you answer |

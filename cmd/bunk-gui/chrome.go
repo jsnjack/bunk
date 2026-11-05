@@ -101,16 +101,18 @@ checkbutton.menucheck:hover { background: #2a2c31; }
 .switcher-title { font-size: 12px; color: #9aa0a8; padding: 4px 6px 0 6px; }
 entry.switcher-entry { background: #131416; border: 1px solid #34373e; border-radius: 6px; color: #e6e8eb;
 	font-family: "Noto Sans Mono", monospace; font-size: 14px; min-height: 40px; margin: 0 6px 8px 6px; }
-button.switchrow { background: none; box-shadow: none; border: none; min-height: 44px; padding: 8px 10px; border-radius: 6px;
+.switchrow { border-radius: 6px; }
+.switchrow:hover { background: #23252a; }
+button.swpick { background: none; box-shadow: none; border: none; min-height: 44px; padding: 8px 10px; border-radius: 6px;
 	color: inherit; font-size: 14px; }
-button.switchrow:hover { background: #23252a; }
+.switchrow:hover button.tabclose, .switchrow.cursor button.tabclose { color: #b4b9c1; }
 .swcurrent { font-size: 11px; font-weight: 600; color: #1b1c20; background: #e6e8eb; border-radius: 4px; padding: 1px 6px; }
-button.switchrow .swtitle { font-weight: 600; color: #e6e8eb; }
+.switchrow .swtitle { font-weight: 600; color: #e6e8eb; }
 .swbranch { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
 .swagent { font-size: 12px; color: #c4c8ce; }
 .swpath { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
 .swpath.swnotice { color: #ffb454; }
-button.switchrow.cursor { background: #2c2f36; }
+.switchrow.cursor { background: #2c2f36; }
 button.switchclose { min-height: 36px; padding: 0 12px; border: 1px solid #34373e; border-radius: 6px; background: none;
 	color: #b4b9c1; box-shadow: none; margin-top: 4px; }
 paned > separator { min-width: 1px; min-height: 1px; }
@@ -128,7 +130,7 @@ paned > separator { min-width: 1px; min-height: 1px; }
 .collide { color: #ffb454; font-size: 15px; }
 button.shortcutkeys, button.keyadd { font-family: "Noto Sans Mono", monospace; font-size: 12px; }
 button.keyremove { padding: 0 8px; color: #9aa0a8; }
-button.tabbtn label, button.rowbtn label, button.menuitem label, button.switchrow label, button.raildot label { font-weight: normal; }
+button.tabbtn label, button.rowbtn label, button.menuitem label, button.swpick label, button.raildot label { font-weight: normal; }
 button label.agent { font-weight: 600; }
 `
 
@@ -1161,13 +1163,14 @@ func (a *App) toast(text string) {
 // ---- switcher ----
 
 type switcher struct {
-	shown []*Tab // rows in the order shown
-	rows  []*gtk.Button
-	a     *App
-	bg    *gtk.Box
-	entry *gtk.Entry
-	list  *gtk.Box
-	cur   int // the row Enter picks; Up and Down move it
+	shown  []*Tab // rows in the order shown
+	rows   []*gtk.Box
+	closes []*gtk.Button // each row's ×, which closes its tab
+	a      *App
+	bg     *gtk.Box
+	entry  *gtk.Entry
+	list   *gtk.Box
+	cur    int // the row Enter picks; Up and Down move it
 }
 
 var stateOrder = map[session.AgentState]int{
@@ -1180,7 +1183,8 @@ var stateOrder = map[session.AgentState]int{
 // the cursor, a filled row like a list selection, starts on the first
 // match that is not the selected tab, so the switcher's key and Enter go
 // to another tab. Up and Down move the cursor; Enter picks its tab; Esc
-// closes.
+// closes. A row's × closes its tab as the rail's × does, and the switcher
+// stays open with the filter field keeping the keyboard.
 func (a *App) openSwitcher() {
 	if a.switcher != nil {
 		a.closeSwitcher()
@@ -1278,14 +1282,17 @@ func (sw *switcher) refresh() {
 	for c := sw.list.FirstChild(); c != nil; c = sw.list.FirstChild() {
 		sw.list.Remove(c)
 	}
-	// The cursor stays on its tab when the filter keeps it.
+	// The cursor stays on its tab when the filter keeps it. When its tab
+	// went (a row's × closed it), it stays at its place: on the row that
+	// took the tab's place, or on the last one.
 	var cur *Tab
+	prev := sw.cur
 	if sw.cur < len(sw.shown) {
 		cur = sw.shown[sw.cur]
 	}
 	f := strings.ToLower(strings.TrimSpace(sw.entry.Text()))
 	infos := a.tabInfos()
-	sw.cur, sw.shown, sw.rows = -1, sw.shown[:0], sw.rows[:0]
+	sw.cur, sw.shown, sw.rows, sw.closes = -1, sw.shown[:0], sw.rows[:0], sw.closes[:0]
 	other := -1 // the first row that is not the selected tab
 	for _, in := range infos {
 		if f != "" && !strings.Contains(in.accessKey, f) {
@@ -1298,11 +1305,14 @@ func (sw *switcher) refresh() {
 			other = len(sw.shown)
 		}
 		sw.shown = append(sw.shown, in.t)
-		b := gtk.NewButton()
-		b.AddCSSClass("switchrow")
+		box := gtk.NewBox(gtk.OrientationHorizontal, 0)
+		box.AddCSSClass("switchrow")
 		if in.active {
-			b.AddCSSClass("active")
+			box.AddCSSClass("active")
 		}
+		b := gtk.NewButton()
+		b.AddCSSClass("swpick")
+		b.SetHExpand(true)
 		row := gtk.NewBox(gtk.OrientationHorizontal, 10)
 		dot := label(in.look.dot, "dot", in.look.cls)
 		dot.SetVAlign(gtk.AlignStart)
@@ -1331,10 +1341,27 @@ func (sw *switcher) refresh() {
 			a.closeSwitcher()
 			a.selectTab(t)
 		})
-		sw.list.Append(b)
-		sw.rows = append(sw.rows, b)
+		box.Append(b)
+		cl := iconButton("window-close-symbolic", 14, "Close tab", "tabclose")
+		cl.SetVAlign(gtk.AlignCenter)
+		cl.ConnectClicked(func() {
+			a.closeTab(t)
+			// Closing the selected tab selects another, which takes the
+			// focus: give it back to the filter field.
+			if !a.finished && a.switcher == sw {
+				sw.entry.GrabFocus()
+			}
+		})
+		box.Append(cl)
+		sw.list.Append(box)
+		sw.rows = append(sw.rows, box)
+		sw.closes = append(sw.closes, cl)
 	}
-	if sw.cur < 0 {
+	switch {
+	case sw.cur >= 0:
+	case cur != nil && len(sw.shown) > 0:
+		sw.cur = min(max(prev, 0), len(sw.shown)-1)
+	default:
 		sw.cur = max(other, 0)
 	}
 	if len(sw.rows) > 0 {

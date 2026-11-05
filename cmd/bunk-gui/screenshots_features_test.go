@@ -26,6 +26,10 @@ import (
 // turns into assets/gui-states.webp.
 var statesFrames = []string{"frames/states-1.png", "frames/states-2.png", "frames/states-3.png", "frames/states-4.png"}
 
+// rings4 is tab 4's ring in railScreenshots: codex working at the top
+// right, the shells' arcs below, claude done at the top left.
+const rings4 = "●@45 ○@135 ○@225 ✓@315"
+
 // railScreenshots: six tabs of one to four panes in the collapsed rail.
 // Tab 1 holds claude on the left and codex above a shell on the right;
 // the frames change their states, then the rail is shot as rings and as
@@ -56,7 +60,7 @@ func railScreenshots(t *testing.T) {
 			"select-tab 4", "wait selected_tab=4 focused.line=❯",
 			"split", "wait tab.4.panes.#=2 focused.line=❯",
 			"split", "wait tab.4.panes.#=3 focused.line=❯",
-			"focus left", "split", "wait tab.4.panes.#=4",
+			"focus left", "wait focused_pane=3", "split", "wait tab.4.panes.#=4",
 			"select-tab 6", "wait selected_tab=6 focused.line=❯",
 			"split", "wait tab.6.panes.#=2",
 			"select-tab 1", "wait selected_tab=1",
@@ -108,6 +112,11 @@ func railScreenshots(t *testing.T) {
 		if n := len(rings.tab(t, i+1).Panes); n != want {
 			t.Errorf("tab %d: %d panes, want %d", i+1, n, want)
 		}
+	}
+	// Tab 4 is split in quarters: claude done at the top left, codex at
+	// the top right, shells under them.
+	if got := rings.tab(t, 4).Ring; got != rings4 {
+		t.Errorf("tab 4 ring %q, want %q", got, rings4)
 	}
 	cropShot(t, g, "states-1.png", "gui-rail-ring.png", railStrip(t, rings))
 	if m := g.snap("map"); m.RailStyle != "map" {

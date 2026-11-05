@@ -230,3 +230,53 @@ func TestGUISwitcherCurrent(t *testing.T) {
 		t.Errorf("filtered to the selected tab: %+v; want the cursor on it", s)
 	}
 }
+
+// TestGUISwitcherClose: a row's × closes its tab and leaves the switcher
+// open, with the filter field keeping the keyboard. Closing the tab under
+// the cursor puts the cursor on the row that took its place; closing the
+// selected tab selects another, which the switcher marks as current.
+func TestGUISwitcherClose(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost:   2,
+		config: "tabs = \"rail\"\nrail_open = true\n",
+		args:   []string{"--size", "100x30", "--tab", "", "--tab", "", "--tab", ""},
+		script: []string{
+			"maximize", "wait window.maximized=true window.w>1800",
+			"wait tabs.#=4 selected_tab=1 focused.line=$",
+			"kbd ctrl+shift+o",
+			"wait switcher.open=true keyboard_focus=switcher",
+			"snap open",
+			"ptr-at swclose 2", "ptr-click",
+			"wait tabs.#=3 switcher.rows.#=3",
+			"snap closed-cursor",
+			"ptr-at swclose 1", "ptr-click",
+			"wait tabs.#=2 switcher.rows.#=2 keyboard_focus=switcher",
+			"snap closed-selected",
+			"kbd-type x",
+			"wait switcher.filter=x",
+			"quit",
+		},
+	})
+	ids := func(s *uiSnapshot) []int {
+		var out []int
+		for _, tb := range s.Tabs {
+			out = append(out, tb.ID)
+		}
+		return out
+	}
+	open := g.snap("open")
+	if s := open.Switcher; s.Cursor != 2 || len(s.Close) != 4 || slices.Contains(s.Close, nil) {
+		t.Fatalf("open: %+v; want the cursor on tab 2 and a close button on every row", s)
+	}
+	c := g.snap("closed-cursor")
+	if s := c.Switcher; !slices.Equal(ids(c), []int{0, 2, 3}) || s.Cursor != 2 || s.Current != 1 || c.KeyboardFocus != "switcher" {
+		t.Errorf("after closing the cursor's tab: tabs %v, %+v, focus %q; want tab 2 gone, the cursor on the next tab",
+			ids(c), s, c.KeyboardFocus)
+	}
+	sel := g.snap("closed-selected")
+	if s := sel.Switcher; !slices.Equal(ids(sel), []int{2, 3}) || sel.SelectedTab != 1 || s.Current != 1 || !slices.Equal(s.Rows, []int{1, 2}) {
+		t.Errorf("after closing the selected tab: tabs %v, selected %d, %+v; want the next tab selected and marked current",
+			ids(sel), sel.SelectedTab, s)
+	}
+}

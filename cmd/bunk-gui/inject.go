@@ -517,7 +517,7 @@ func (a *App) menuTarget(label string) (float64, float64, error) {
 
 // target finds a point to aim the pointer at, in window coordinates:
 //
-//	tab N | tabclose N | newtab | options | closewin
+//	tab N | tabclose N | newtab | options | closewin | swclose N (the switcher's row N)
 //	pane ID | cell ID COL ROW | thumb ID (the scrollbar thumb) | divider PATH (r, ra, rb, rab, … from the selected tab's root)
 func (a *App) target(args []string) (float64, float64, error) {
 	var numErr error
@@ -554,6 +554,15 @@ func (a *App) target(args []string) (float64, float64, error) {
 			return centre(a.tabItems[i].item)
 		}
 		return centre(a.tabItems[i].close)
+	case "swclose":
+		i := num(1) - 1
+		if numErr != nil {
+			return 0, 0, numErr
+		}
+		if a.switcher == nil || i < 0 || i >= len(a.switcher.closes) {
+			return 0, 0, errors.New("no switcher row " + strings.Join(args, " "))
+		}
+		return centre(a.switcher.closes[i])
 	case "newtab":
 		return centre(a.newTabBtn)
 	case "options":

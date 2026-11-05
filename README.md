@@ -105,7 +105,7 @@ When an agent in a pane you are not watching needs you, finishes or fails, bunk-
 
 ### Switcher
 
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> lists every tab with its repo, branch, agent and folder, in tab order. Type to filter by any of them, and Enter opens the tab.
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> lists every tab with its repo, branch, agent and folder, in tab order. Type to filter by any of them, and Enter opens the tab. A row's × closes its tab, and the switcher stays open, so you can clear out finished tabs in one place.
 
 <img src="assets/gui-switcher.png" alt="The switcher listing five tabs with their repo, branch, agent, folder and state">
 

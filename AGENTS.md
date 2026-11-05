@@ -523,7 +523,10 @@ its default; Design Decisions says where the defaults come from.
     status change never moves a row: a notice takes the directory's
     place on the second line, and the state label has a fixed width.
     Up and Down move a cursor, which starts on the first match and stays
-    on its tab as rows are rebuilt; Enter opens its tab.
+    on its tab as rows are rebuilt; Enter opens its tab. A row's × closes
+    its tab as the rail's × does, without asking; the switcher stays open,
+    the filter field keeps the keyboard, and a cursor whose tab closed
+    stays at its place (`TestGUISwitcherClose`).
 
 - bunk-gui's pointer and focus handling matches bunk's TUI. The
   scrollbar thumb can be dragged while it shows (`grabThumb`). A selection
