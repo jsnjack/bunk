@@ -4,10 +4,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"unicode/utf8"
 
 	"github.com/diamondburned/gotk4/pkg/cairo"
 	"github.com/diamondburned/gotk4/pkg/pango"
 	"github.com/diamondburned/gotk4/pkg/pangocairo"
+	"github.com/rivo/uniseg"
 
 	"bunk/internal/boxdraw"
 )
@@ -201,6 +203,30 @@ func (a *Atlas) alloc(pg *page, cells int) int {
 	return slot
 }
 
+// symbolFamilies draw the pictographs that the terminal font lacks. The
+// fallback fontconfig picks for a monospace font is another monospace
+// font, which squeezes a pictograph into its cell: Adwaita Mono's ⚠ is a
+// tall, narrow triangle. These fonts draw pictographs in their own
+// proportions, and fitInk spreads a wide one over a blank cell after it or
+// shrinks it into its cell. Other symbols, such as ⎿ ✓ ❯, keep the
+// monospace fallback, whose glyphs are drawn for a cell.
+//
+// The fonts are named because no generic family helps: after a monospace
+// font, fontconfig ranks monospace fonts first even for "sans-serif".
+// Fedora installs the Noto fonts (the RPM recommends them); Symbola and
+// DejaVu Sans cover systems without them. With none installed, the
+// fallback is fontconfig's, as before.
+const symbolFamilies = "Noto Sans Symbols 2,Noto Sans Symbols,Symbola,DejaVu Sans"
+
+// pictograph reports whether r has the Extended_Pictographic property:
+// uniseg joins r, ZWJ and an emoji into one cluster only then (GB11).
+func pictograph(r rune) bool {
+	var buf [3 * utf8.UTFMax]byte
+	text := utf8.AppendRune(utf8.AppendRune(utf8.AppendRune(buf[:0], r), '\u200d'), '\U0001f600')
+	_, rest, _, _ := uniseg.FirstGraphemeCluster(text, -1)
+	return len(rest) == 0
+}
+
 // pangoRaster renders glyphs with Pango/cairo into a reusable ARGB32
 // surface, white on transparent, so a coverage glyph comes out grey in
 // every channel and a colour font's glyph keeps its colours. The surface
@@ -211,13 +237,20 @@ type pangoRaster struct {
 	surf                   *cairo.Surface
 	cr                     *cairo.Context
 	layouts                [2]*pango.Layout // regular, bold
-	cells                  int              // the width of the last drawing
+	// symbols are layouts for a lone pictograph, regular and bold: the
+	// terminal font first, then symbolFamilies, then fontconfig's fallback.
+	symbols [2]*pango.Layout
+	cells   int // the width of the last drawing
 }
 
 func (p *pangoRaster) draw(text string, bold bool, cells int) (color, overflows bool) {
-	l := p.layouts[0]
+	b := 0
 	if bold {
-		l = p.layouts[1]
+		b = 1
+	}
+	l := p.layouts[b]
+	if r, n := utf8.DecodeRuneInString(text); n == len(text) && pictograph(r) {
+		l = p.symbols[b]
 	}
 	p.cr.SetOperator(cairo.OperatorClear)
 	p.cr.Paint()
@@ -328,6 +361,15 @@ func BuildAtlas(font string, scale float64) (*Atlas, error) {
 	pr := &pangoRaster{cellW: cellW, cellH: cellH, baseline: baseline, surf: surf, cr: cr}
 	pr.layouts[0] = newFontLayout(cr, desc, scale)
 	pr.layouts[1] = newFontLayout(cr, boldDesc, scale)
+	for i, d := range []*pango.FontDescription{desc, boldDesc} {
+		sym := d.Copy()
+		families := symbolFamilies
+		if f := d.Family(); f != "" {
+			families = f + "," + families
+		}
+		sym.SetFamily(families)
+		pr.symbols[i] = newFontLayout(cr, sym, scale)
+	}
 
 	a := newAtlas(cellW, cellH, pr)
 	a.Font, a.Scale, a.Baseline = font, scale, baseline

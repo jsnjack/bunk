@@ -28,6 +28,10 @@ BuildRequires:  appstream
 # The renderer loads OpenGL with dlopen, so RPM cannot see these.
 Requires:       libglvnd-egl
 Requires:       libglvnd-opengl
+# Pictographs the terminal font lacks, such as ⚠, come from these fonts in
+# their own proportions (symbolFamilies in atlas.go).
+Recommends:     font(notosanssymbols2)
+Recommends:     font(notosanssymbols)
 
 Provides:       bundled(golang(github.com/creack/pty)) = 1.1.24
 Provides:       bundled(golang(github.com/diamondburned/gotk4/pkg)) = 0.4.1

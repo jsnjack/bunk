@@ -836,9 +836,21 @@ its default; Design Decisions says where the defaults come from.
     when that cell is blank (`blankAt`, term.go), as in WezTerm; the
     atlas keeps both forms. In the last column or before a character, it
     draws fitted into its own cell.
+  - A pictograph (Extended_Pictographic, such as ⚠ ★ ☑ ⚙ ⏺) that the
+    terminal font lacks comes from a symbol font (`symbolFamilies`: Noto
+    Sans Symbols 2, Noto Sans Symbols, Symbola, DejaVu Sans) before
+    fontconfig's fallback. For Noto Sans Mono that fallback is Adwaita
+    Mono, which squeezes pictographs into its cell: its ⚠ was a triangle
+    10 px wide and 16 px tall. The fonts are named because after a
+    monospace font, fontconfig ranks monospace fonts first even for
+    "sans-serif". The RPM recommends the two Noto fonts; with none of the
+    four installed, the fallback is fontconfig's, as before. Other
+    symbols, such as Claude Code's ⎿ ✓ ❯, keep the monospace fallback,
+    whose glyphs fit a cell; Noto Sans Symbols' ⎿ does not reach the
+    cell's edges. `TestAtlasPictographs` checks the fonts and ⚠'s shape.
   - `TestAtlasFitsWideInk` draws every symbol of the arrow, mathematical,
     technical and dingbat blocks with the real fonts and checks that no
-    ink leaves its slot. About 750 of their 1,840 symbols overflow a cell.
+    ink leaves its slot. About 420 of their 1,840 symbols overflow a cell.
 
 - bunk-gui draws colour emoji in their own colours. The atlas has two
   pages (`atlas.go`): coverage (R8), which the text shader tints with the

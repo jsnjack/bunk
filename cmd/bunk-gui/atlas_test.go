@@ -4,9 +4,12 @@ import (
 	"encoding/binary"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/diamondburned/gotk4/pkg/pango"
 
 	"bunk/internal/boxdraw"
 )
@@ -176,5 +179,61 @@ func TestAtlasColorEmoji(t *testing.T) {
 		if area := 2 * a.CellW * a.CellH; blue < area/4 {
 			t.Errorf("scale %v: 🔵 has %d opaque blue pixels of %d", scale, blue, area)
 		}
+	}
+}
+
+func TestPictograph(t *testing.T) {
+	for _, r := range []rune{'⚠', '⏺', '★', '☑', '⚙', '❤', '©', '\U0001F600'} {
+		if !pictograph(r) {
+			t.Errorf("%c (U+%04X) is Extended_Pictographic", r, r)
+		}
+	}
+	for _, r := range []rune{'a', ' ', '✓', '✗', '⎿', '❯', '⟳', '●', '\u200d', '\u0301', '\u0600', '\u1100', '\U0001F1E6'} {
+		if pictograph(r) {
+			t.Errorf("U+%04X is not Extended_Pictographic", r)
+		}
+	}
+}
+
+// TestAtlasPictographs draws pictographs that Noto Sans Mono lacks from a
+// symbol font, in its proportions: the monospace fallback, Adwaita Mono,
+// drew ⚠ as a narrow triangle half as wide as it is tall. The terminal
+// font's own pictographs (©) stay; symbols that are not pictographs keep
+// the monospace fallback (TestPictograph).
+func TestAtlasPictographs(t *testing.T) {
+	a, err := BuildAtlas(defaultSettings().Font+" 11", 4.0/3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := a.raster.(*pangoRaster)
+	family := func(l *pango.Layout, text string) string {
+		l.SetText(text)
+		return pango.BaseFont(l.Iter().Run().Item().Analysis().Font()).Describe().Family()
+	}
+	for _, bold := range []int{0, 1} {
+		if f := family(p.symbols[bold], "⚠"); !slices.Contains(strings.Split(symbolFamilies, ","), f) {
+			t.Errorf("bold %d: ⚠ comes from %q, want one of %q", bold, f, symbolFamilies)
+		}
+		if f, want := family(p.symbols[bold], "©"), defaultSettings().Font; f != want {
+			t.Errorf("bold %d: © comes from %q, want the terminal font %q", bold, f, want)
+		}
+	}
+	// ⚠ spread over two cells keeps its proportions: a triangle about as
+	// wide as it is tall.
+	p.draw("⚠", false, 2)
+	src, stride := p.surf.Data(), p.surf.Stride()
+	x0, y0, x1, y1 := math.MaxInt, math.MaxInt, -1, -1
+	for y := range p.cellH {
+		for x := range 4 * p.cellW {
+			if binary.NativeEndian.Uint32(src[y*stride+4*x:])>>24 > 64 {
+				x0, y0, x1, y1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
+			}
+		}
+	}
+	if x1 < 0 {
+		t.Fatal("⚠ draws no ink")
+	}
+	if w, h := x1-x0+1, y1-y0+1; float64(w) < 0.9*float64(h) {
+		t.Errorf("⚠ is %dx%d px, squeezed: want it at least 0.9 times as wide as tall", w, h)
 	}
 }

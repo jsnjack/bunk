@@ -59,6 +59,10 @@ requires=$(rpm -qp --requires "$rpm")
 for r in 'libgtk-4.so.1()(64bit)' 'libadwaita-1.so.0()(64bit)' libglvnd-egl libglvnd-opengl; do
 	grep -qxF "$r" <<<"$requires" && pass "Requires $r" || fail "missing Requires $r"
 done
+recommends=$(rpm -qp --recommends "$rpm")
+for r in 'font(notosanssymbols2)' 'font(notosanssymbols)'; do
+	grep -qxF "$r" <<<"$recommends" && pass "Recommends $r" || fail "missing Recommends $r"
+done
 
 version=$(rpm -qp --qf '%{VERSION}' "$rpm")
 [[ $("$bin" --version) == "bunk-gui version $version" ]] && pass "--version prints $version" ||
