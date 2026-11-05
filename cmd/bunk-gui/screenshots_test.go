@@ -26,15 +26,36 @@ import (
 	"testing"
 )
 
-// demoShots are the PNGs the scenario writes, in the order it takes them.
+// demoShots are the PNGs the demo scenario writes, in the order it takes
+// them.
 var demoShots = []string{"gui-hero.png", "gui-switcher.png", "gui-bar.png", "gui-image.png", "gui-find.png", "gui-shortcuts.png"}
 
+// TestGUIScreenshots runs one scenario per group of README pictures, side
+// by side. Each copies its pictures when it passes (saveShots).
 func TestGUIScreenshots(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed: the demo repository needs it")
 	}
-	bin := filepath.Dir(guiBinary(t))
+	for _, sc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"demo", demoScreenshots},
+		{"rail", railScreenshots},
+		{"hooks", hooksScreenshots},
+		{"tui", tuiScreenshots},
+	} {
+		t.Run(sc.name, func(t *testing.T) {
+			t.Parallel()
+			sc.run(t)
+		})
+	}
+}
+
+// demoScreenshots: the hero, the switcher, the bar, an image, find and
+// the shortcuts window.
+func demoScreenshots(t *testing.T) {
 	demo := t.TempDir()
 	g := runGUI(t, scenario{
 		cost:    10,
@@ -43,12 +64,7 @@ func TestGUIScreenshots(t *testing.T) {
 		args: []string{"--size", "120x32",
 			"--command", `cd "$DEMO/src/api" && exec claude`,
 			"--tab", "", "--tab", "", "--tab", `exec sh "$DEMO/done.sh"`, "--tab", ""},
-		env: []string{
-			"PATH=" + filepath.Join(demo, "bin") + ":" + bin + ":" + os.Getenv("PATH"),
-			"DEMO=" + demo, "ENV=" + filepath.Join(demo, "shrc"),
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_PAGER=cat",
-			"LC_COLLATE=C", "LS_COLORS=",
-		},
+		env: demoEnv(t, demo),
 		// Shots wait until the panes have drawn their programs' output at
 		// their size (the fake agent redraws on SIGWINCH) and nothing moves.
 		// An entry's focus ring fades in (a 200 ms CSS transition) and its
@@ -206,10 +222,33 @@ func TestGUIScreenshots(t *testing.T) {
 			t.Errorf("%s: %dx%d px, want a whole window", demoShots[i], b.Dx(), b.Dy())
 		}
 	}
-	if out := os.Getenv("BUNK_SCREENSHOTS"); out != "" && !t.Failed() {
-		for _, name := range demoShots {
-			must(t, copyFile(g.file(name), filepath.Join(out, name)))
-		}
+	saveShots(t, g, demoShots...)
+}
+
+// demoEnv is the environment of a scenario that runs writeDemo's
+// fixtures from demo: its fake programs first on PATH, then bunk-gui.
+func demoEnv(t *testing.T, demo string) []string {
+	return []string{
+		"PATH=" + filepath.Join(demo, "bin") + ":" + filepath.Dir(guiBinary(t)) + ":" + os.Getenv("PATH"),
+		"DEMO=" + demo, "ENV=" + filepath.Join(demo, "shrc"),
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_PAGER=cat",
+		"LC_COLLATE=C", "LS_COLORS=",
+	}
+}
+
+// saveShots copies the named files of g's directory to BUNK_SCREENSHOTS
+// when the test has passed so far. A name may hold a directory, such as
+// frames/states-1.png for the file states-1.png.
+func saveShots(t *testing.T, g *guiRun, names ...string) {
+	t.Helper()
+	out := os.Getenv("BUNK_SCREENSHOTS")
+	if out == "" || t.Failed() {
+		return
+	}
+	for _, name := range names {
+		dst := filepath.Join(out, name)
+		must(t, os.MkdirAll(filepath.Dir(dst), 0o755))
+		must(t, copyFile(g.file(filepath.Base(name)), dst))
 	}
 }
 
@@ -230,7 +269,7 @@ func copyFile(src, dst string) error {
 	return out.Close()
 }
 
-// writeDemo fills dir with the scenario's fixtures: a fake agent CLI on
+// writeDemo fills dir with the scenarios' fixtures: fake agent CLIs on
 // PATH, a shell prompt, scripts for two tabs and a git repository.
 func writeDemo(t *testing.T, dir string) {
 	t.Helper()
@@ -250,6 +289,9 @@ func writeDemo(t *testing.T, dir string) {
 		"load-test.kitty": kittyChunks(demoChart()) + "\n",
 		"gotest.sh": "printf '\\033[1;34m~/src/api\\033[0m \\033[35mfeat/rate-limit\\033[0m\\n\\033[32m❯\\033[0m go test -v ./internal/limit/\\n'\n" +
 			"cat \"$DEMO/gotest.txt\"\nexec sh\n",
+		// A fake codex: prints its transcript and waits.
+		"bin/codex":      "#!/bin/sh\ncat \"$DEMO/codex.txt\"\nwhile :; do sleep 0.2 & wait $!; done\n",
+		"codex.txt":      demoCodex,
 		"transcript.txt": demoTranscript,
 		"gotest.txt":     demoTestLog,
 	}

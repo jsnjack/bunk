@@ -169,9 +169,14 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     snippet) and the toast for an agent without hooks
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
-assets/             TUI demo gif; bunk-gui screenshots (regenerate with make screenshots)
-docs/               agent-hooks.md: hook recipes and the notify protocol;
-                    remote-agent-status.md: agents on hosts reached over ssh
+assets/             README pictures from TestGUIScreenshots: bunk-gui shots and
+                    crops, the states loop (gui-states.webp), bunk's TUI
+                    (tui.png) and the social preview; make screenshots
+docs/               features.md: every feature and key; configuration.md;
+                    agent-status.md: states, rail, notifications, command
+                    marks; agent-hooks.md: hook recipes and the notify
+                    protocol; remote-agent-status.md: agents on hosts reached
+                    over ssh; development.md: packages, builds, tests
 scripts/            Terminal feature scripts (tested by terminal_features_test.go);
                     headless-gui.sh runs GUI tests; screenshots.sh renders assets/;
                     benchcheck/ runs and compares benchmarks (make bench-check)

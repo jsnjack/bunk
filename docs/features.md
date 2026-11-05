@@ -1,0 +1,126 @@
+# Features and keys
+
+This page lists every feature of bunk-gui and bunk with its default keys.
+[configuration.md](configuration.md) shows how to change the keys, and
+[agent-status.md](agent-status.md) explains the agent states.
+
+## bunk-gui
+
+bunk-gui's default keys are bunk's keys plus those of Ptyxis, GNOME's
+terminal, with F2 for a new tab and Ctrl+Left/Right or Ctrl+Up/Down to
+switch tabs.
+
+| Feature | Default keys | Details |
+| :- | :- | :- |
+| New / close tab | F2 / Ctrl+Shift+W | A new tab starts in `new_dir`, the home directory by default |
+| New window | Ctrl+Shift+N | Starts another bunk-gui in `new_dir`; GNOME's app menu has New Window too |
+| Switch tab | Ctrl+Right / Ctrl+Left, Ctrl+Down / Ctrl+Up, Alt+1…9, Alt+0 | Alt+0 selects tab 10 |
+| Move tab | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn, or drag | Moves the selected tab in the rail or the bar; any tab can be dragged to a new place |
+| Rename tab | | Double-click a tab, or choose "Rename tab…" in the menu; `rename_tab` in `[keys]` binds a key. The name replaces the agent or program name, and an empty name brings it back |
+| Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
+| Agent status | | Dot, state, repo ⎇ branch, container or SSH host, and the agent's notice; see [agent-status.md](agent-status.md) |
+| Switcher | Ctrl+Shift+O | Lists the tabs in their order and marks the current one; the cursor starts on the first other tab. Type to filter, Up and Down pick a row, Enter opens it |
+| Tab menu | Right-click a tab | Rename, Copy directory, Mark as seen (clears done marks and notifications), Mute notifications, Close tab, Close other tabs; closing asks first while something runs |
+| Pane menu | Right-click a pane | The link under the pointer, Copy, Paste, Select all, Find, Split, Zoom, Passthrough, Copy or open the directory, Clear scrollback, Close pane. Where the program uses the mouse, Shift+right-click opens it |
+| Next needing you | Alt+A | Visits needs-you tabs, then done tabs; a done tab counts as seen, and a needs-you tab stays until you answer |
+| Notifications | | A desktop notification when an agent in a tab you are not looking at needs you, is done or failed, or when a command there that ran 10 s or longer ends; clicking it opens the tab |
+| Split | F1 / Alt+F1 | Side by side or stacked by pane shape; Alt+F1 opens a shell in the same container. While you drag a divider, a label shows each side's share |
+| Zoom pane | F12 | |
+| Move between panes | Alt+arrows | |
+| Find | Ctrl+F or Ctrl+Shift+F | Enter or Ctrl+N: next; Ctrl+P: previous; Esc keeps the scroll position; Ctrl+C and Ctrl+V edit the bar's text |
+| Scrollback | Shift+PgUp / Shift+PgDn | |
+| Copy / paste | Ctrl+C / Ctrl+V, Ctrl+Shift+C / Ctrl+Shift+V | Ctrl+C copies a selection and ends it; with nothing selected it reaches the program. An image pastes as the path of a PNG file holding it; with nothing to paste, Ctrl+V reaches the program. Selecting copies to the primary selection; middle click pastes it |
+| Select all | Ctrl+Shift+A | Selects the scrollback and the screen, and copies them to the primary selection |
+| Text size | Ctrl+= / Ctrl+- / Ctrl+0 | |
+| Images | | SIXEL, Kitty and iTerm2 images drawn at full resolution, 1:1 in device pixels |
+| Links | Ctrl+click | Opens OSC 8 links and plain http, https and file URLs; Ctrl+hover underlines them |
+| Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
+| Shortcuts window | Ctrl+Shift+? / Ctrl+? | Rebind or turn off any action, and give it more than one key; ⚠ marks keys terminal programs may use |
+| Preferences | Ctrl+, | Layout, rail, font, text zoom, theme, notifications, agent hooks and extra agent CLIs |
+| Agent hooks | | Preferences shows which agents report their own state and installs their hooks; a banner offers to set them up when an agent runs without them or they are outdated |
+| Options menu | F10 | The ≡ button at the bottom of the rail, or at the right of the bar |
+| Fullscreen | F11 | |
+| Themes | | bunk's themes; picking one in Preferences repaints the panes at once |
+| Quit | Ctrl+Q / Ctrl+Shift+Q | Asks first while a pane runs more than an idle shell |
+| Restore session | | The next start offers the last session in a banner; see [Session restore](#session-restore) |
+
+### Images and input
+
+Programs in a pane see real cell pixels through TIOCGWINSZ and CSI 14/16/18 t,
+and bunk-gui draws their images 1:1.
+
+- Each pane keeps up to 64 MiB of image bitmaps (`--image-bytes`), and the
+  images drawn least recently fall back to half-block cells.
+- When a program stops reading its input, the window and other panes keep
+  working. Its pane queues up to 16 MiB of input (`--input-bytes`) and refuses
+  more with a toast.
+- When a program reads the mouse, Ctrl+Shift+click opens a link instead of
+  Ctrl+click.
+
+### Session restore
+
+bunk-gui saves each window as it changes, in `~/.local/state/bunk-gui/windows`,
+so a crash or a logout loses at most the last seconds. When bunk-gui starts and
+finds windows that are no longer open, a banner asks whether to restore them.
+
+- Restore brings the newest window back in place of the fresh tab and opens
+  each other window again. Dismiss deletes them.
+- Each pane gets its tab name, split, folder and scrollback back, with a line
+  marking where the old output ends.
+- An agent pane runs the agent's resume command, such as `claude --resume ID`,
+  with the session ID its hooks reported. Without hooks it resumes the folder's
+  latest conversation (`claude --continue`), unless two panes ran that agent in
+  the same folder. Agent panes skip the old scrollback, because the agent
+  prints its conversation again.
+- A pane that ran `ssh` or `mosh` gets that command typed at the prompt, but
+  not run. Other commands are not restarted.
+- Windows closed together are offered together, also while other bunk-gui
+  windows run, and New window offers them too. A window whose last shell
+  exited leaves nothing behind.
+- The saved scrollback can hold secrets that were printed in a pane. The files
+  are readable by you alone; `restore_scrollback = false` stops saving
+  scrollback, and `restore = false` turns the feature off.
+
+## bunk
+
+| Feature | Default keys | Details |
+| :- | :- | :- |
+| Split | F1 | Direction from the pixel cell aspect ratio, not the column count |
+| Split in the same context | Alt+F1 | New shell in the same container, SSH host or sudo |
+| Zoom pane | F12 | Other panes stay open |
+| Move between panes | Alt+arrows | |
+| Scrollback | Shift+PgUp / Shift+PgDn | 10 000 lines per pane, kept through vim and other alt-screen programs |
+| Search | Ctrl+F | Enter or Ctrl+N: next; Ctrl+P: previous; Esc: exit |
+| Copy / paste | Ctrl+C / Ctrl+V | Ctrl+C reaches the program when nothing is selected |
+| Passthrough | Ctrl+F12 | Per pane: every other key goes to the program |
+| Agent status | | A badge per pane: working, idle, needs you (amber), done (green) or failed, with the agent's notice |
+| Next needing you | Alt+A | Focuses the next pane whose agent needs you, else one that is done |
+| Notifications | | A desktop notification when an agent in a pane you are not looking at needs you, is done or failed, or when a command there that ran 10 s or longer ends; over SSH, OSC 777 to the host terminal |
+| Re-initialise host terminal | Alt+R | Recovers after binary output corrupts the host |
+| Quit | Ctrl+Q | Ctrl+D or `exit` closes one pane |
+| Mouse | | Click focuses, drag selects, double click selects a word; Shift overrides program mouse mode |
+| Reflow | | Text rewraps at the new width on every split and resize |
+| Themes | | `terminal` (host colours), `default`, `solarized-dark`, `dracula`, `nord`, or your own `[themes.NAME]` |
+
+Alt+F1 supports Podman, Docker, LXD/LXC, Incus, Toolbox, Distrobox, SSH and
+sudo/su.
+
+## Badges
+
+Each pane shows these badges in its top-right corner, in bunk and in bunk-gui:
+
+| Badge | Meaning |
+| :- | :- |
+| `◐ claude needs you · Allow npm install?` | The agent's state and notice; needs you and done fill the badge |
+| `● make running` | A command that has run for `command_after` seconds; `✓ done` or `✕ failed` after it ends while you look elsewhere |
+| `⬡ mycontainer` | Podman, Docker, LXD, LXC or Incus container |
+| `▣ my-toolbox` | Toolbox or Distrobox container |
+| `⇄ myserver.com` | SSH session |
+| `sudo` / `su` | Elevated shell |
+| `PASS` | Keyboard passthrough on; shown first when badges do not fit |
+| `ZOOM` | Pane zoomed with F12 |
+| `-42` | Scrolled back 42 lines |
+| `COPIED` | Selection copied to the clipboard |
+
+In bunk, the separators around a pane that needs you or is done take the
+badge's colour.

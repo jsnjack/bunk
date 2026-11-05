@@ -129,7 +129,7 @@ gui-test:
 	desktop-file-validate packaging/$(APP_ID).desktop
 	appstreamcli validate --no-net packaging/$(APP_ID).metainfo.xml
 
-# README screenshots of bunk-gui, rendered headlessly into assets/.
+# README pictures (bunk-gui and bunk's TUI), rendered headlessly into assets/
 screenshots:
 	scripts/screenshots.sh
 

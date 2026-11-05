@@ -313,6 +313,9 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	must(t, err)
 	g.stderr = string(errlog)
 	for _, line := range strings.Split(g.stderr, "\n") {
+		if strings.Contains(line, gtkFrameTimingsWarning) {
+			continue
+		}
 		if strings.Contains(line, "level=WARN") || strings.Contains(line, "level=ERROR") || strings.Contains(line, "CRITICAL") ||
 			strings.Contains(line, "DATA RACE") {
 			t.Errorf("bunk-gui logged: %s", line)
@@ -320,6 +323,15 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	}
 	return g
 }
+
+// gtkFrameTimingsWarning is a warning of GDK's own that runGUI does not
+// count. In GTK 4.24 a window and its popups share one frame clock and one
+// GdkFrameTimings per frame, and each surface's presentation feedback
+// reports to it. When an open popover and the window are presented in
+// different refreshes, the second report differs by whole refresh
+// intervals, and GDK warns once per process (gdkframetimings.c). bunk-gui
+// only reads frame timings; GDK's Wayland backend makes the call.
+const gtkFrameTimingsWarning = "Duplicate call to gdk_frame_timings_presented() with different values"
 
 func (g *guiRun) logOutput() {
 	for _, name := range []string{"stdout.txt", "stderr.txt"} {
