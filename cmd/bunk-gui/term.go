@@ -44,6 +44,7 @@ type termView struct {
 	// Scrollback view: row 0 shows virtual row vBase (scrollback rows come
 	// first, then live rows). sbOff is 0 in the live view.
 	sbOff, sbCount, vBase int
+	alt                   bool // the alternate screen is on, for the where badge
 	sel                   selState
 	find                  []session.Match // search matches by virtual row (find.go)
 	findCur               int             // the current match; -1 if none
@@ -88,6 +89,7 @@ func (v *termView) pull(s *session.Session) bool {
 	if off == 0 && t.Mode()&vt10x.ModeSync != 0 {
 		return false
 	}
+	v.alt = t.Mode()&vt10x.ModeAltScreen != 0
 	cols, rows := t.Size()
 	all := false
 	if cols != v.cols || rows != v.rows {

@@ -17,8 +17,10 @@ package main
 import (
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -98,9 +100,36 @@ func (p *Pane) badgeInput() badges.Input {
 	in.CommandState, in.Command = p.mark.State, p.mark.Name
 	in.Zoomed = p.tab != nil && p.tab.zoom == p
 	in.Flash = p.flash
+	in.Where, in.AltScreen = p.whereOf(st), p.tv.alt
 	in.Width = p.tv.cols
 	return in
 }
+
+// whereCache is the where badge's text and the status fields it comes
+// from.
+type whereCache struct {
+	repo, branch, cwd, process, host string
+	text                             string
+	ok                               bool
+}
+
+// whereOf is badges.WhereOf for st, kept until the fields it reads
+// change, so the badge sync after every frame allocates nothing.
+func (p *Pane) whereOf(st session.Status) string {
+	c := &p.where
+	if !c.ok || c.repo != st.Repo || c.branch != st.Branch || c.cwd != st.Cwd || c.process != st.Process || c.host != st.Host {
+		*c = whereCache{repo: st.Repo, branch: st.Branch, cwd: st.Cwd, process: st.Process, host: st.Host, ok: true}
+		c.text = badges.WhereOf(st, userHome())
+	}
+	return c.text
+}
+
+// userHome is the user's home directory, which the where badge shows as
+// "~"; "" when unknown.
+var userHome = sync.OnceValue(func() string {
+	home, _ := os.UserHomeDir()
+	return home
+})
 
 // contextInput is the badge input of the context badge, from a pane's
 // status: the foreground process, its ssh host and the container. The

@@ -56,18 +56,21 @@ func kind(r badges.Role) int {
 		return 2
 	case badges.RoleSudo, badges.RoleSSH, badges.RoleContainer, badges.RoleMosh:
 		return 3
-	case badges.RoleZoom:
+	case badges.RoleWhere:
 		return 4
-	case badges.RoleFlash:
+	case badges.RoleZoom:
 		return 5
+	case badges.RoleFlash:
+		return 6
 	}
 	return -1
 }
 
 // TestLayoutRules checks the fitting rules over many random states: the
 // badges fit the width less the inset, keep their order, appear only for
-// state that asks for them, hide every badge after one that does not fit,
-// and the notice never takes the row past two thirds of it.
+// state that asks for them, hide every badge after one that does not fit
+// (the where badge gives up alone), and the where badge and the notice
+// never take the row past two thirds of it.
 func TestLayoutRules(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	pick := func(xs ...string) string { return xs[rng.IntN(len(xs))] }
@@ -86,6 +89,8 @@ func TestLayoutRules(t *testing.T) {
 			SSHHost:       pick("", "build01"),
 			Zoomed:        rng.IntN(2) == 0,
 			Flash:         pick("", badges.Copied),
+			Where:         pick("", "~", "bunk ⎇ master", "~/src/リポジトリ", strings.Repeat("w", 90)),
+			AltScreen:     rng.IntN(4) == 0,
 			Width:         rng.IntN(130),
 		}
 		name := fmt.Sprintf("%d %+v", i, in)
@@ -103,7 +108,8 @@ func TestLayoutRules(t *testing.T) {
 		want := map[int]bool{
 			0: in.Passthrough, 1: in.ScrollOffset > 0, 2: in.State != session.AgentNone,
 			3: in.ContainerType != "" || slices.Contains([]string{"ssh", "mosh", "sudo", "su"}, in.Process),
-			4: in.Zoomed, 5: in.Flash != "",
+			4: in.Where != "" && (in.Agent != "" && in.State != session.AgentNone || in.AltScreen),
+			5: in.Zoomed, 6: in.Flash != "",
 		}
 		last := -1
 		for _, b := range row.Badges {
@@ -112,13 +118,22 @@ func TestLayoutRules(t *testing.T) {
 				t.Fatalf("%s: badge %q (%s) out of order or not asked for: %q", name, b.Text, b.Role, row.Badges)
 			}
 			for skipped := last + 1; skipped < k; skipped++ {
-				if want[skipped] {
+				if want[skipped] && skipped != 4 {
 					t.Fatalf("%s: kind %d hidden but %q shown after it", name, skipped, b.Text)
 				}
 			}
 			last = k
 			if !strings.HasPrefix(b.Text, " ") || !strings.HasSuffix(b.Text, " ") {
 				t.Fatalf("%s: badge %q lacks its padding", name, b.Text)
+			}
+			if k == 4 {
+				text := b.Text[1 : len(b.Text)-1]
+				if text != in.Where && (!strings.HasSuffix(text, "…") || !strings.HasPrefix(in.Where, strings.TrimSuffix(text, "…"))) {
+					t.Fatalf("%s: where badge %q is not %q or its start", name, b.Text, in.Where)
+				}
+				if room := in.Width - row.Inset; text != in.Where && row.Cells() > room*2/3 {
+					t.Fatalf("%s: a cut where badge takes the row past two thirds: %q", name, row.Badges)
+				}
 			}
 			if dot, label, _, _ := badges.AgentLook(in.State); k == 2 && b.Text != " "+dot+" "+in.Agent+" "+label+" " &&
 				b.Text != " "+dot+" "+label+" " && b.Text != " "+dot+" " {
@@ -240,5 +255,37 @@ func TestPlaces(t *testing.T) {
 		if got := fmt.Sprint(badges.Places(c.in)); got != c.want {
 			t.Errorf("Places(%+v) = %s, want %s", c.in, got, c.want)
 		}
+	}
+}
+
+// TestWhere: a repo and its branch, else the directory with ~ for home;
+// nothing while ssh or mosh runs unless a remote agent reported its own.
+func TestWhere(t *testing.T) {
+	const home = "/home/u"
+	for _, c := range []struct {
+		st   session.Status
+		want string
+	}{
+		{session.Status{Cwd: "/home/u/src/bunk", Repo: "bunk", Branch: "master"}, "bunk ⎇ master"},
+		{session.Status{Cwd: "/home/u/src/bunk", Repo: "bunk"}, "bunk"},
+		{session.Status{Cwd: "/home/u/notes"}, "~/notes"},
+		{session.Status{Cwd: "/home/u"}, "~"},
+		{session.Status{Cwd: "/home/user2/x"}, "/home/user2/x"},
+		{session.Status{Cwd: "/etc"}, "/etc"},
+		{session.Status{}, ""},
+		{session.Status{Process: "ssh", Cwd: "/home/u/src/bunk", Repo: "bunk", Branch: "master"}, ""},
+		{session.Status{Process: "mosh-client", Cwd: "/home/u"}, ""},
+		{session.Status{Process: "ssh", Host: "gpu01", Cwd: "/srv/app", Repo: "app", Branch: "main"}, "app ⎇ main"},
+		{session.Status{Process: "sudo", Cwd: "/home/u/src/bunk"}, "~/src/bunk"},
+		{session.Status{Process: "bunk", Cwd: "/home/u/src/bunk", Repo: "bunk", Branch: "master"}, ""},
+		{session.Status{Process: "tmux: client", Cwd: "/home/u"}, ""},
+		{session.Status{Process: "zellij", Cwd: "/home/u"}, ""},
+	} {
+		if got := badges.WhereOf(c.st, home); got != c.want {
+			t.Errorf("WhereOf(%+v) = %q, want %q", c.st, got, c.want)
+		}
+	}
+	if got := badges.Where("", "", "/home/u/x", ""); got != "/home/u/x" {
+		t.Errorf("Where without a home = %q", got)
 	}
 }

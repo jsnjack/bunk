@@ -65,6 +65,9 @@ type Pane struct {
 	// agent is the agent status that the last renderPane read for the
 	// badge and the borders. Protected by mu.
 	agent paneAgent
+	// where names where the pane's program works for its where badge
+	// (badges.WhereOf), from the same Status as agent. Protected by mu.
+	where string
 
 	// mark is the command mark the last forwardAlerts read, for the badge.
 	// Protected by mu.

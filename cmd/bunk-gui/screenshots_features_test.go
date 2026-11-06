@@ -358,10 +358,16 @@ func tuiScreenshots(t *testing.T) {
 	})
 	p := g.snap("tui").pane(t, 0)
 	screen := p.text()
-	for _, s := range []string{"claude working", "codex needs you", "Allow npm install?", "Start the API server", "Edit internal/limit/bucket.go"} {
+	// In the TUI's half-width panes the where badge takes the room the
+	// notice would have.
+	for _, s := range []string{"claude working", "codex needs you", "api ⎇ feat/rate-limit", "Start the API server", "Edit internal/limit/bucket.go"} {
 		if !strings.Contains(screen, s) {
 			t.Errorf("TUI lacks %q:\n%s", s, screen)
 		}
+	}
+	// bunk-gui's own badges would cover the TUI's.
+	if len(p.Badges) != 0 {
+		t.Errorf("the pane running bunk shows badges %+v", p.Badges)
 	}
 	x, y, w, h := p.Texture[0], p.Texture[1], p.Texture[2], p.Texture[3]
 	cropShot(t, g, "tui-window.png", "tui.png", image.Rect(x, y, x+w, y+h))

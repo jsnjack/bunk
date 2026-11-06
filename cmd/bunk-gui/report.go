@@ -225,6 +225,8 @@ type badgeInputReport struct {
 	Width         int    `json:"width"`
 	CommandState  string `json:"command_state"`
 	Command       string `json:"command"`
+	Where         string `json:"where"`
+	AltScreen     bool   `json:"alt_screen"`
 }
 
 // writerReport is what the session's PTY writer holds for a child that
@@ -289,6 +291,7 @@ type uiSnapshot struct {
 	FontSize      float64             `json:"font_size"`
 	TextPercent   int                 `json:"text_percent"`
 	Switcher      switchReport        `json:"switcher"`
+	RailPeek      []railPeekReport    `json:"rail_peek"`   // labels beside the collapsed rail while Alt is held; null when hidden
 	SplitRatio    *ratioReport        `json:"split_ratio"` // the label on a held divider; null when none
 	TabDrag       *tabDragReport      `json:"tab_drag"`    // a tab being dragged; null when none
 	MenuOpen      bool                `json:"menu_open"`
@@ -407,6 +410,16 @@ type tabDragReport struct {
 type ratioReport struct {
 	Text string      `json:"text"` // "60/40": the start child's share, then the end child's
 	Rect *rectReport `json:"rect"`
+}
+
+// railPeekReport is one label of the rail peek (railpeek.go): its tab,
+// its texts joined by spaces, its place and the rail item's place.
+type railPeekReport struct {
+	Tab  int         `json:"tab"` // 1-based index
+	Text string      `json:"text"`
+	Cut  bool        `json:"cut"` // a text is ellipsized
+	Rect *rectReport `json:"rect"`
+	Item *rectReport `json:"item"`
 }
 
 type switchReport struct {
@@ -592,6 +605,17 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			}
 		}
 	}
+	if a.peek.layer != nil {
+		s.RailPeek = []railPeekReport{}
+		for _, r := range a.peek.rows {
+			cut := false
+			for _, l := range r.labels {
+				cut = cut || l.Layout().IsEllipsized()
+			}
+			s.RailPeek = append(s.RailPeek, railPeekReport{Tab: a.tabIndex(r.t) + 1, Text: r.text, Cut: cut,
+				Rect: a.widgetRect(g, r.box), Item: a.widgetRect(g, r.item)})
+		}
+	}
 	s.KeyboardFocus = a.keyboardFocus()
 	s.CtxMenu = a.ctxMenuReport()
 	if a.closeDialog != nil {
@@ -721,7 +745,7 @@ func (a *App) paneReport(g winGeom, ox, oy int, p *Pane) paneReport {
 	r.BadgeInput = badgeInputReport{Passthrough: in.Passthrough, Scroll: in.ScrollOffset, Agent: in.Agent,
 		State: stateName[in.State], Notice: in.Notice, Process: in.Process, ContainerType: in.ContainerType,
 		ContainerID: in.ContainerID, SSHHost: in.SSHHost, Zoomed: in.Zoomed, Flash: in.Flash, Width: in.Width,
-		CommandState: stateName[in.CommandState], Command: in.Command}
+		CommandState: stateName[in.CommandState], Command: in.Command, Where: in.Where, AltScreen: in.AltScreen}
 	r.CommandMark = commandMarkReport{State: stateName[p.mark.State], Name: p.mark.Name, Summary: p.mark.Summary}
 	r.Badges = []badgeReport{}
 	for _, b := range p.badgeLabels {

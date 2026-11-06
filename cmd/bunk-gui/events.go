@@ -123,7 +123,11 @@ func (a *App) installShortcuts() {
 	keys := gtk.NewEventControllerKey()
 	keys.SetPropagationPhase(gtk.PhaseCapture)
 	keys.ConnectKeyPressed(func(keyval, keycode uint, state gdk.ModifierType) bool {
+		a.railPeekKey(keyval, state, true)
 		return a.onShortcut(keyval, keycode, state)
+	})
+	keys.ConnectKeyReleased(func(keyval, _ uint, state gdk.ModifierType) {
+		a.railPeekKey(keyval, state, false)
 	})
 	a.win.AddController(keys)
 }

@@ -26,6 +26,7 @@ func goBeforePaint() { theApp.beforePaint() }
 func goAfterPaint() {
 	theApp.afterPaint()
 	theApp.syncBadges()
+	theApp.placeRailPeek()
 }
 
 //export goViewRender

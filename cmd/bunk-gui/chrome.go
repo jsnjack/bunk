@@ -69,6 +69,12 @@ button.raildot { background: none; box-shadow: none; border: none; padding: 0; m
 button.raildot.active { background: #26292f; }
 button.raildot.needs { background: #2a2216; }
 .railmap { min-width: 30px; min-height: 30px; }
+.railpeek { background: #1b1c20; border: 1px solid #2f3238; border-radius: 8px; padding: 0 12px 0 6px;
+	box-shadow: 0 2px 8px alpha(black, 0.45); color: #d8dade; }
+.railpeek.active { background: #26292f; border-color: #4a4f57; }
+.railpeek.needs { border-color: #ffb454; }
+.peekkey { font-family: "Noto Sans Mono", monospace; font-size: 12px; font-weight: 700; color: #e6e8eb;
+	background: #2f3238; border-radius: 4px; padding: 1px 6px; }
 progressbar.tabprogress > trough { min-height: 3px; min-width: 24px; background: alpha(#ffffff, 0.10); border-radius: 2px; }
 progressbar.tabprogress > trough > progress { min-height: 3px; background: #5aa9ff; border-radius: 2px; }
 progressbar.tabprogress.error > trough > progress { background: #ff8a8a; }
@@ -324,18 +330,8 @@ func (a *App) tabInfos() []tabInfo {
 		if in.agent == "" {
 			in.agent = "shell"
 		}
-		in.path = st.Cwd
-		if home != "" && strings.HasPrefix(in.path, home) {
-			in.path = "~" + strings.TrimPrefix(in.path, home)
-		}
-		switch {
-		case st.Repo != "" && st.Branch != "":
-			in.repo = st.Repo + " ⎇ " + st.Branch
-		case st.Repo != "":
-			in.repo = st.Repo
-		default:
-			in.repo = in.path
-		}
+		in.path = badges.Where("", "", st.Cwd, home)
+		in.repo = badges.Where(st.Repo, st.Branch, st.Cwd, home)
 		in.loc, in.locGlyph = tabLoc(places)
 		parts := []string{in.agent, in.repo}
 		if in.name != "" {
@@ -574,6 +570,7 @@ func (a *App) buildChrome() {
 	if a.chrome != nil {
 		a.rootBox.Remove(a.chrome)
 	}
+	a.hideRailPeek() // the rail it sat beside is gone
 	a.tabsBox, a.chromeKey = nil, ""
 	if a.layout == "bar" {
 		a.rootBox.SetOrientation(gtk.OrientationVertical)

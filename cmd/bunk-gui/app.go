@@ -56,6 +56,7 @@ type App struct {
 	zoomLabel  *gtk.Label
 	switcher   *switcher
 	ratio      *splitRatio // the label on a held divider (splitratio.go)
+	peek       railPeek    // labels beside the collapsed rail while Alt is held (railpeek.go)
 	tabDrag    *tabDrag    // a tab being dragged (tabdrag.go)
 	chromeGen  uint64      // tab item rebuilds; paintedGen: those the last frame laid out
 	paintedGen uint64
@@ -199,6 +200,12 @@ func (a *App) activate() {
 	}
 	a.win.SetDefaultSize(w, h)
 	a.win.NotifyProperty("is-active", a.onActive)
+	a.win.NotifyProperty("is-active", func() {
+		if !a.win.IsActive() {
+			a.peek.pending = false
+			a.hideRailPeek()
+		}
+	})
 	a.initAlerts()
 	a.win.ConnectCloseRequest(a.onCloseRequest)
 	a.installShortcuts()

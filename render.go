@@ -28,6 +28,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"bunk/internal/badges"
 	"bunk/internal/session"
 	"bunk/internal/vt10x"
 
@@ -491,6 +492,7 @@ func renderPane(scr tcell.Screen, p *Pane, rt resolvedTheme) {
 	p.Lock()
 	defer p.Unlock()
 	p.agent = paneAgent{name: st.Agent, state: st.State, notice: st.Notice}
+	p.where = badges.WhereOf(st, userHome())
 
 	// Second guard: close the TOCTOU window between render()'s top-level
 	// check and this vt10x read. readPTY may have started a new sync frame

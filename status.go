@@ -10,7 +10,10 @@ import (
 	"bunk/internal/badges"
 	"bunk/internal/session"
 	"bunk/internal/theme"
+	"bunk/internal/vt10x"
 	"fmt"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -35,7 +38,7 @@ func drawAllPaneStatus(scr tcell.Screen, n *Node, active *Pane, rt resolvedTheme
 // p.mu must be held by the caller.
 func statusOverlayKeyLocked(p *Pane, now time.Time) string {
 	tempActive := !p.statusMsgEnd.IsZero() && now.Before(p.statusMsgEnd) && p.statusMsg != ""
-	return fmt.Sprintf("%t|%t|%s|%s|%s|%s|%s|%s|%d|%s|%d|%s",
+	return fmt.Sprintf("%t|%t|%s|%s|%s|%s|%s|%s|%d|%s|%d|%s|%s|%t",
 		p.passthrough,
 		tempActive,
 		p.statusMsg,
@@ -48,8 +51,17 @@ func statusOverlayKeyLocked(p *Pane, now time.Time) string {
 		p.agent.notice,
 		p.mark.State,
 		p.mark.Name,
+		p.where,
+		p.Term.Mode()&vt10x.ModeAltScreen != 0,
 	)
 }
+
+// userHome is the user's home directory, which the where badge shows as
+// "~"; "" when unknown.
+var userHome = sync.OnceValue(func() string {
+	home, _ := os.UserHomeDir()
+	return home
+})
 
 // Agent state colours (internal/theme), the same in both front ends. They
 // do not follow the theme.
@@ -142,6 +154,8 @@ func drawPaneStatus(scr tcell.Screen, p *Pane, isActive bool, rt resolvedTheme, 
 		CommandState:  p.mark.State,
 		Command:       p.mark.Name,
 		Zoomed:        zoomed,
+		Where:         p.where,
+		AltScreen:     p.Term.Mode()&vt10x.ModeAltScreen != 0,
 		Width:         p.w,
 	}
 	if !p.statusMsgEnd.IsZero() && time.Now().Before(p.statusMsgEnd) {

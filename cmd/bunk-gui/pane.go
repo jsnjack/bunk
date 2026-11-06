@@ -54,6 +54,7 @@ type Pane struct {
 	badgeRow    *gtk.Box
 	badgeLabels []badgeLabel // badgeLabels[i] shows Row.Badges[i]: right to left
 	badgeKey    badgeKey     // what the row shows
+	where       whereCache   // the where badge's text (whereOf)
 	flash       string       // flash badge text (Copied) until its timer clears it
 	flashGen    int          // bumped by each flash, so an older timer leaves it alone
 

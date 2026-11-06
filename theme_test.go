@@ -117,7 +117,11 @@ scrollbar_track = "0f1e2d"
 					}
 					// The old blend painted the terminal theme's dimmed badges
 					// white; TestTerminalThemeBadgesUseHostColours covers it.
+					// The where badge came later; TestBadgeLooksTUI checks it.
 					for _, role := range append(slices.Clone(badges.Roles), badges.RoleNone) {
+						if role == badges.RoleWhere {
+							continue
+						}
 						if g, w := badgeStyle(role, got), oldBadgeStyle(role, want); g != w && name != theme.Terminal {
 							t.Errorf("badge %s: style %v, was %v", role, g, w)
 						}

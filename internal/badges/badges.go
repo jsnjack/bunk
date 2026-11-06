@@ -6,6 +6,7 @@
 package badges
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ const (
 	RoleMosh           // context: mosh outside a container
 	RoleZoom           // the pane is zoomed
 	RoleFlash          // a short message, such as Copied
+	RoleWhere          // where an agent or a full-screen program works
 )
 
 var roleNames = [...]string{
@@ -43,12 +45,12 @@ var roleNames = [...]string{
 	RoleWorking: "agent-working", RoleIdle: "agent-idle", RoleNeedsYou: "agent-needs",
 	RoleDone: "agent-done", RoleFailed: "agent-failed",
 	RoleSudo: "sudo", RoleSSH: "ssh", RoleContainer: "container", RoleMosh: "mosh",
-	RoleZoom: "zoom", RoleFlash: "flash",
+	RoleZoom: "zoom", RoleFlash: "flash", RoleWhere: "where",
 }
 
 // Roles lists every role a badge can have.
 var Roles = []Role{RolePass, RoleScroll, RoleWorking, RoleIdle, RoleNeedsYou, RoleDone, RoleFailed,
-	RoleSudo, RoleSSH, RoleContainer, RoleMosh, RoleZoom, RoleFlash}
+	RoleSudo, RoleSSH, RoleContainer, RoleMosh, RoleZoom, RoleFlash, RoleWhere}
 
 // String returns the role's name, such as "pass" or "agent-needs".
 func (r Role) String() string {
@@ -119,6 +121,8 @@ const (
 	noticeSep = " · "
 	// minNoticeCells is the narrowest notice worth showing.
 	minNoticeCells = 8
+	// minWhereCells is the narrowest where badge text worth showing.
+	minWhereCells = 8
 )
 
 // Input is the state of one pane that its badges show.
@@ -141,7 +145,11 @@ type Input struct {
 	Command      string
 	Zoomed       bool
 	Flash        string // a short message such as Copied; "" for none
-	Width        int    // the pane's width in cells, its scrollbar column included
+	// Where names where the pane's program works (WhereOf); "" when
+	// unknown. It shows while an agent runs or AltScreen is set.
+	Where     string
+	AltScreen bool // the program draws on the alternate screen (vim, btop)
+	Width     int  // the pane's width in cells, its scrollbar column included
 }
 
 // Badge is one badge as drawn. Text includes the padding spaces at both
@@ -183,13 +191,16 @@ type candidate struct {
 //	● claude working  the agent, its state, then its notice when there is room;
 //	                  without an agent, a command mark: ● make running, ✓ make done
 //	⬡ box · ⇄ host    container, ssh or mosh host, sudo or su
+//	bunk ⎇ main       where an agent or a full-screen program works
 //	ZOOM              the pane is zoomed
 //	COPIED            a flash message
 //
-// A badge that does not fit hides itself and every badge after it. The
-// agent badge drops the agent's name, then its label, before it gives up.
-// The notice takes the room left over, up to two thirds of the row, so the
-// pane's own top line stays partly visible.
+// A badge that does not fit hides itself and every badge after it, except
+// the where badge: it takes what room the others leave, cut to fit, and
+// gives up alone. The agent badge drops the agent's name, then its label,
+// before it gives up. The where badge, then the notice, take the room left
+// over, up to two thirds of the row, so the pane's own top line stays
+// partly visible.
 func Layout(in Input) Row {
 	var cands []candidate
 	add := func(role Role, forms ...string) {
@@ -218,6 +229,7 @@ func Layout(in Input) Row {
 	if text, role := contextBadge(in); text != "" {
 		add(role, text)
 	}
+	whereAt := len(cands) // the where badge goes after the badges so far
 	if in.Zoomed {
 		add(RoleZoom, " ZOOM ")
 	}
@@ -229,7 +241,8 @@ func Layout(in Input) Row {
 	if in.ScrollOffset > 0 {
 		row.Inset = 1
 	}
-	if len(cands) == 0 {
+	where := in.Where != "" && (in.Agent != "" && in.State != session.AgentNone || in.AltScreen)
+	if len(cands) == 0 && !where {
 		return row
 	}
 	room := in.Width - row.Inset
@@ -247,6 +260,13 @@ func Layout(in Input) Row {
 		}
 		row.Badges = append(row.Badges, Badge{text, c.role})
 		used += uniseg.StringWidth(text)
+	}
+	if where && len(row.Badges) >= whereAt {
+		if spare := max(used, room*2/3) - used - 2; spare >= minWhereCells || spare >= uniseg.StringWidth(in.Where) {
+			text := " " + fitCells(in.Where, spare) + " "
+			row.Badges = slices.Insert(row.Badges, whereAt, Badge{text, RoleWhere})
+			used += uniseg.StringWidth(text)
+		}
 	}
 
 	if agentAt >= 0 && agentAt < len(row.Badges) && in.Notice != "" && row.Badges[agentAt].Text == cands[agentAt].forms[0] {
@@ -292,6 +312,42 @@ func Places(in Input) []Place {
 		out = append(out, Place{"⇄", host})
 	}
 	return out
+}
+
+// Where names where a program works, as the where badge and bunk-gui's
+// tabs show it: "repo ⎇ branch" in a git work tree, else the directory,
+// with "~" for home when home is set. It returns "" without a directory.
+func Where(repo, branch, cwd, home string) string {
+	switch {
+	case repo != "" && branch != "":
+		return repo + " ⎇ " + branch
+	case repo != "":
+		return repo
+	case home != "" && (cwd == home || strings.HasPrefix(cwd, home+"/")):
+		return "~" + strings.TrimPrefix(cwd, home)
+	}
+	return cwd
+}
+
+// WhereOf is Where for a pane's status. While ssh or mosh runs in the
+// foreground the local directory says nothing about the remote program,
+// so it returns "" unless a remote agent reported its own (Status.Host).
+// A terminal multiplexer (bunk, tmux, zellij, screen) gets "" too: its
+// panes work elsewhere, and the badge would cover the badges and status
+// line it draws itself.
+func WhereOf(st session.Status, home string) string {
+	switch st.Process {
+	case "ssh", "mosh", "mosh-client":
+		if st.Host == "" {
+			return ""
+		}
+	case "bunk", "tmux", "zellij", "screen":
+		return ""
+	}
+	if strings.HasPrefix(st.Process, "tmux:") { // tmux names its client "tmux: client"
+		return ""
+	}
+	return Where(st.Repo, st.Branch, st.Cwd, home)
 }
 
 // contextBadge returns the text and role of the context badge: the

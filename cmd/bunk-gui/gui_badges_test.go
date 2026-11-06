@@ -35,7 +35,11 @@ func TestBadgeParityGUI(t *testing.T) {
 				mark: alert.Mark{State: in.CommandState, Name: in.Command}}
 			p.st = session.Status{Agent: in.Agent, State: in.State, Notice: in.Notice, Process: in.Process,
 				Container: strings.TrimSpace(in.ContainerType + " " + in.ContainerID), SSHHost: in.SSHHost}
-			p.tv.sbOff, p.tv.cols = in.ScrollOffset, in.Width
+			p.st.Repo, p.st.Branch, p.st.Cwd = whereStatus(in.Where)
+			if in.Where != "" && (in.Process == "ssh" || in.Process == "mosh") {
+				p.st.Host = in.SSHHost // a remote agent reported where it works
+			}
+			p.tv.sbOff, p.tv.cols, p.tv.alt = in.ScrollOffset, in.Width, in.AltScreen
 			if in.Zoomed {
 				p.tab.zoom = p
 			}
@@ -49,6 +53,22 @@ func TestBadgeParityGUI(t *testing.T) {
 			}
 		})
 	}
+}
+
+// testHome is the home directory of the tests, and of the bunk-gui they
+// start: the where badge shows it as "~".
+var testHome, _ = os.UserHomeDir()
+
+// whereStatus is the repo, branch and directory a status holds for a
+// where badge's text: "repo ⎇ branch", or a directory with "~" for home.
+func whereStatus(where string) (repo, branch, cwd string) {
+	if r, b, ok := strings.Cut(where, " ⎇ "); ok {
+		return r, b, testHome + "/" + r
+	}
+	if rest, ok := strings.CutPrefix(where, "~"); ok {
+		return "", "", testHome + rest
+	}
+	return "", "", where
 }
 
 // TestBadgeLooksGUI: each role has the colours bunk's TUI gives it under
@@ -76,7 +96,7 @@ func inputOf(r badgeInputReport) badges.Input {
 	return badges.Input{Passthrough: r.Passthrough, ScrollOffset: r.Scroll, Agent: r.Agent, State: stateNames[r.State],
 		Notice: r.Notice, Process: r.Process, ContainerType: r.ContainerType, ContainerID: r.ContainerID,
 		SSHHost: r.SSHHost, Zoomed: r.Zoomed, Flash: r.Flash, Width: r.Width,
-		CommandState: stateNames[r.CommandState], Command: r.Command}
+		CommandState: stateNames[r.CommandState], Command: r.Command, Where: r.Where, AltScreen: r.AltScreen}
 }
 
 // checkBadgeRows checks every shown pane of a snapshot. The badge input is
@@ -95,7 +115,9 @@ func checkBadgeRows(t *testing.T, s *uiSnapshot) map[int]badges.Row {
 		ctype, cid, _ := strings.Cut(st.Container, " ")
 		want := badgeInputReport{Passthrough: p.Pass, Scroll: p.Scroll, Agent: st.Agent, State: st.State,
 			Notice: st.Notice, Process: st.Process, ContainerType: ctype, ContainerID: cid, SSHHost: st.SSHHost,
-			Zoomed: p.Zoomed, Flash: in.Flash, Width: p.Cols, CommandState: p.CommandMark.State, Command: p.CommandMark.Name}
+			Zoomed: p.Zoomed, Flash: in.Flash, Width: p.Cols, CommandState: p.CommandMark.State, Command: p.CommandMark.Name,
+			Where:     badges.WhereOf(session.Status{Process: st.Process, Host: st.Host, Repo: st.Repo, Branch: st.Branch, Cwd: st.Cwd}, testHome),
+			AltScreen: in.AltScreen}
 		if in != want || (in.Flash != "" && in.Flash != badges.Copied) {
 			t.Errorf("%s: pane %d badge input %+v, want %+v", s.Label, p.ID, in, want)
 		}

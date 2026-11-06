@@ -159,6 +159,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
   scope.go          Each pane's child in a systemd scope of its own, so an
                     OOM kill in a pane leaves bunk-gui and other panes alone
   tabname.go        Tab names: rename dialog, double-click on a tab
+  railpeek.go       Labels beside the collapsed rail's rings while Alt
+                    is held alone
   ctxmenu.go        Context menus of a tab (right-click) and a pane
                     (right-click, Shift+right-click under a mouse
                     program); muting a tab, marking it seen, closing
@@ -602,6 +604,17 @@ its default; Design Decisions says where the defaults come from.
   selects the tab. A pane without an agent takes part with its command
   mark (`alert.Mark`): running, or done or failed
   until the user looks at it, labelled by the command's name.
+  - Holding Alt alone for 400 ms (`railPeekDelay`) labels each ring
+    (`railpeek.go`) with its Alt+N key, dot, name or agent, repo ⎇
+    branch and places, as the expanded rail does. Another key first,
+    such as Alt+A or a shell's Alt+B, shows none. The labels float in
+    `App.overlay`, so the panes keep their size, and take no clicks.
+    Alt+N under them switches tabs. Releasing Alt, an inactive window,
+    a dialog, the switcher and leaving the collapsed rail hide them.
+    after-paint places them beside their items, because GTK knows the
+    items' places only once it lays them out. `GtkFixed` gives a child
+    its minimum width, an ellipsizing label's "…", so each label asks
+    for its natural width; `TestGUIRailPeek` checks none is cut.
 
 - The user can name a bunk-gui tab (`tabname.go`): a double-click on it,
   "Rename tab…" in the menu, or `rename_tab`, which has no default key.
@@ -694,6 +707,17 @@ its default; Design Decisions says where the defaults come from.
     the theme background, and fixed agent colours. The TUI resolves them in
     tcell colours (`badgeStyle`, status.go), and bunk-gui through
     `Theme.Badge` (`badgeLook`, cmd/bunk-gui/badge.go).
+  - The where badge (`RoleWhere`) names where an agent or a program on
+    the alternate screen works: repo ⎇ branch, else the directory with
+    `~` (`badges.Where`, which bunk-gui's tabs use too). It shows only
+    when every badge before it fits, takes the room left before the
+    notice up to two thirds of the row, is cut to fit or left out alone,
+    and sits left of the context badge. While ssh or mosh runs,
+    `badges.WhereOf` gives nothing unless a remote agent reported its
+    directory, because the local one says nothing about the remote
+    program. A multiplexer in the foreground (bunk, tmux, zellij, screen)
+    gets none either: the badge would cover the badges it draws itself.
+    The theme oracle predates it and skips its role.
   - Add a badge in `internal/badges`, never in one front end, and add a case
     to `badgetest.Cases`. `TestBadgeParityTUI` and `TestBadgeParityGUI` both
     draw every case, so the front ends cannot drift apart.

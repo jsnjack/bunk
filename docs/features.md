@@ -18,6 +18,7 @@ switch tabs.
 | Move tab | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn, or drag | Moves the selected tab in the rail or the bar; any tab can be dragged to a new place |
 | Rename tab | | Double-click a tab, or choose "Rename tab…" in the menu; `rename_tab` in `[keys]` binds a key. The name replaces the agent or program name, and an empty name brings it back |
 | Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
+| Tab labels | Hold Alt | In the collapsed rail, holding Alt alone for 0.4 s labels each tab's ring with its Alt+N key, agent or name, repo ⎇ branch and hosts; Alt+N switches while they show, and releasing Alt hides them |
 | Agent status | | Dot, state, repo ⎇ branch, the containers and SSH hosts of all the tab's panes as their badges name them, and the agent's notice; see [agent-status.md](agent-status.md) |
 | Switcher | Ctrl+Shift+O | Lists the tabs in their order and marks the current one; the cursor starts on the first other tab. Type to filter, Up and Down pick a row, Enter opens it. A row's × closes its tab, and the switcher stays open |
 | Tab menu | Right-click a tab | Rename, Copy directory, Mark as seen (clears done marks and notifications), Mute notifications, Close tab, Close other tabs; closing asks first while something runs |
@@ -117,6 +118,7 @@ Each pane shows these badges in its top-right corner, in bunk and in bunk-gui:
 | `▣ my-toolbox` | Toolbox or Distrobox container |
 | `⇄ myserver.com` | SSH session |
 | `sudo` / `su` | Elevated shell |
+| `bunk ⎇ main` | Where an agent or a full-screen program (vim, btop) works: repo ⎇ branch, else the directory. It takes the room the other badges leave, before the notice, and is cut to fit or left out in a narrow pane. Over ssh it shows only what a remote agent reports, and a multiplexer (bunk, tmux) gets none |
 | `PASS` | Keyboard passthrough on; shown first when badges do not fit |
 | `ZOOM` | Pane zoomed with F12 |
 | `-42` | Scrolled back 42 lines |

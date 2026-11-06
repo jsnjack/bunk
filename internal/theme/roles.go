@@ -52,7 +52,7 @@ func BadgeInks(role badges.Role) (fg, bg Ink, bold bool) {
 		return ansi(White), dimmed(Green), true
 	case badges.RoleWorking:
 		return fixed(AgentWorking), fixed(AgentBadge), false
-	case badges.RoleIdle:
+	case badges.RoleIdle, badges.RoleWhere:
 		return fixed(AgentIdle), fixed(AgentBadge), false
 	case badges.RoleFailed:
 		return fixed(AgentFailed), fixed(AgentBadge), true

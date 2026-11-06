@@ -27,6 +27,8 @@ type badgeState struct {
 	flashOn                   bool // the flash has not expired
 	width                     int
 	mark                      alert.Mark
+	where                     string
+	alt                       bool // the alternate screen is on
 }
 
 // apply sets p's fields to s.
@@ -41,6 +43,14 @@ func (s badgeState) apply(p *Pane) {
 		}
 	}
 	p.x, p.y, p.w = 0, 0, s.width
+	p.where = s.where
+	alt := "\x1b[?1049l"
+	if s.alt {
+		alt = "\x1b[?1049h"
+	}
+	if _, err := p.Term.Write([]byte(alt)); err != nil {
+		panic(err)
+	}
 }
 
 // randomBadgeStates returns n pane states drawn from values that reach
@@ -165,7 +175,7 @@ func TestBadgeParityTUI(t *testing.T) {
 			s := badgeState{pass: in.Passthrough, scroll: in.ScrollOffset, agent: paneAgent{in.Agent, in.State, in.Notice},
 				process: in.Process, ctype: in.ContainerType, cid: in.ContainerID, host: in.SSHHost,
 				zoomed: in.Zoomed, flash: in.Flash, flashOn: true, width: in.Width,
-				mark: alert.Mark{State: in.CommandState, Name: in.Command}}
+				mark: alert.Mark{State: in.CommandState, Name: in.Command}, where: in.Where, alt: in.AltScreen}
 			s.apply(p)
 			const cols = 140
 			scr := simScreen(t, cols, 2)
