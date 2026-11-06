@@ -47,7 +47,23 @@ if [[ ${1:-} != --inner ]]; then
 	export HEADLESS_DIR=$dir XDG_CONFIG_HOME=$dir/config XDG_STATE_HOME=${XDG_STATE_HOME_TEST:-$dir/state} GSETTINGS_BACKEND=keyfile
 	export GIO_USE_VFS=local
 	unset DISPLAY WAYLAND_SOCKET
-	exec dbus-run-session --config-file="$dir/bus.conf" -- "$0" --inner "$@"
+	# The runtime directory is the desktop's, so the bus above can start
+	# nothing: a document portal started on it would unmount the desktop's
+	# doc filesystem, and Flatpak apps would fail to start. Fail loudly if
+	# that mount disappears anyway.
+	desktop_doc=/run/user/$(id -u)/doc
+	had_doc=
+	if mountpoint -q "$desktop_doc" 2>/dev/null; then
+		had_doc=1
+	fi
+	status=0
+	dbus-run-session --config-file="$dir/bus.conf" -- "$0" --inner "$@" || status=$?
+	if [[ -n $had_doc ]] && ! mountpoint -q "$desktop_doc"; then
+		echo "headless-gui: $desktop_doc was unmounted during this run, so Flatpak apps cannot start." >&2
+		echo "headless-gui: restore it with: systemctl --user restart xdg-document-portal.service" >&2
+		status=1
+	fi
+	exit "$status"
 fi
 shift
 
