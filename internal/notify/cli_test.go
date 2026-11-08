@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -309,7 +310,11 @@ func TestCLIStdinStaysOpen(t *testing.T) {
 	}
 }
 
-// handlerCommands returns every hook command in a snippet, keyed by event.
+// hookKey names one hook of a snippet: its event and matcher.
+func hookKey(event, matcher string) string { return event + " " + matcher }
+
+// handlerCommands returns every hook command in a snippet, keyed by
+// hookKey.
 func handlerCommands(t *testing.T, agent, snippet string) map[string]string {
 	t.Helper()
 	cmds := map[string]string{}
@@ -339,7 +344,7 @@ func handlerCommands(t *testing.T, agent, snippet string) map[string]string {
 					if agent == "codex" && (ev == "Interrupt" || ev == "SessionEnd") && h.Timeout > 3 {
 						t.Errorf("codex %s: timeout %d s, Codex allows 3", ev, h.Timeout)
 					}
-					cmds[ev] = h.Command
+					cmds[hookKey(ev, g.Matcher)] = h.Command
 				}
 			}
 		}
@@ -348,6 +353,7 @@ func handlerCommands(t *testing.T, agent, snippet string) map[string]string {
 			Version int `json:"version"`
 			Hooks   map[string][]struct {
 				Type       string `json:"type"`
+				Matcher    string `json:"matcher"`
 				Bash       string `json:"bash"`
 				TimeoutSec int    `json:"timeoutSec"`
 			} `json:"hooks"`
@@ -363,7 +369,7 @@ func handlerCommands(t *testing.T, agent, snippet string) map[string]string {
 				if h.Type != "command" || h.TimeoutSec <= 0 {
 					t.Errorf("copilot %s: handler %+v", ev, h)
 				}
-				cmds[ev] = h.Bash
+				cmds[hookKey(ev, h.Matcher)] = h.Bash
 			}
 		}
 	}
@@ -383,9 +389,9 @@ func codexNotifyArgv(t *testing.T) []string {
 
 // TestHookSnippets parses each agent's snippet and runs every hook command
 // with sh. Outside bunk it succeeds without running anything. Inside it runs
-// "bunk-gui notify" with the recipe's arguments, or "bunk notify" when
-// bunk-gui is not on PATH, as on a server reached over ssh. The Codex
-// notify program passes Codex's JSON payload on.
+// "bunk-gui notify" or "bunk-gui present" with the recipe's arguments, or
+// bunk's when bunk-gui is not on PATH, as on a server reached over ssh. The
+// Codex notify program passes Codex's JSON payload on.
 func TestHookSnippets(t *testing.T) {
 	t.Parallel()
 	both, guiOnly, tuiOnly := t.TempDir(), t.TempDir(), t.TempDir()
@@ -426,10 +432,11 @@ func TestHookSnippets(t *testing.T) {
 				t.Fatalf("%d hook events in the snippet, want %d: %v", len(cmds), len(r.hooks), cmds)
 			}
 			for _, h := range r.hooks {
-				cmd, ok := cmds[h.event]
+				cmd, ok := cmds[hookKey(h.event, h.matcher)]
 				if !ok {
-					t.Fatalf("no %s hook", h.event)
+					t.Fatalf("no %s hook matching %q", h.event, h.matcher)
 				}
+				sub := cmp.Or(h.sub, "notify") + " " + h.args + "\n"
 				for _, tc := range []struct {
 					name string
 					env  []string
@@ -437,12 +444,12 @@ func TestHookSnippets(t *testing.T) {
 				}{
 					{"outside bunk", []string{"PATH=" + empty}, ""},
 					{"outside bunk with bunk installed", []string{"PATH=" + both}, ""},
-					{"inside bunk with both binaries", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk-gui notify " + h.args + "\n"},
-					{"inside bunk-gui without bunk", []string{"PATH=" + guiOnly, EnvSession + "=tok"}, "bunk-gui notify " + h.args + "\n"},
-					{"inside bunk without bunk-gui", []string{"PATH=" + tuiOnly, EnvSession + "=tok"}, "bunk notify " + h.args + "\n"},
+					{"inside bunk with both binaries", []string{"PATH=" + both, EnvSession + "=tok"}, "bunk-gui " + sub},
+					{"inside bunk-gui without bunk", []string{"PATH=" + guiOnly, EnvSession + "=tok"}, "bunk-gui " + sub},
+					{"inside bunk without bunk-gui", []string{"PATH=" + tuiOnly, EnvSession + "=tok"}, "bunk " + sub},
 					{"inside bunk without either binary", []string{"PATH=" + empty, EnvSession + "=tok"}, ""},
-					{"over ssh", []string{"PATH=" + tuiOnly, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, "bunk notify " + h.args + "\n"},
-					{"over ssh with both binaries", []string{"PATH=" + both, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, "bunk-gui notify " + h.args + "\n"},
+					{"over ssh", []string{"PATH=" + tuiOnly, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, "bunk " + sub},
+					{"over ssh with both binaries", []string{"PATH=" + both, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, "bunk-gui " + sub},
 					{"over ssh without bunk", []string{"PATH=" + empty, envSSH + "=10.0.0.2 50000 10.0.0.1 22"}, ""},
 				} {
 					if got := run(t, []string{"/bin/sh", "-c", cmd}, tc.env); got != tc.want {
@@ -507,11 +514,18 @@ func TestClaudeQuestionHooks(t *testing.T) {
 	matchers := map[string]string{"PreToolUse": "AskUserQuestion|ExitPlanMode", "PostToolUse": "", "PostToolUseFailure": ""}
 	command := func(event string) string {
 		t.Helper()
-		groups := cfg.Hooks[event]
-		if len(groups) != 1 || groups[0].Matcher != matchers[event] || len(groups[0].Hooks) != 1 {
-			t.Fatalf("%s hooks %+v, want one group matching %q", event, groups, matchers[event])
+		var cmds []string
+		for _, g := range cfg.Hooks[event] {
+			if g.Matcher == matchers[event] {
+				for _, h := range g.Hooks {
+					cmds = append(cmds, h.Command)
+				}
+			}
 		}
-		return groups[0].Hooks[0].Command
+		if len(cmds) != 1 {
+			t.Fatalf("%s hooks %+v, want one in a group matching %q", event, cfg.Hooks[event], matchers[event])
+		}
+		return cmds[0]
 	}
 	postAnswer := `{"session_id":"abc123","hook_event_name":"PostToolUse","tool_name":"AskUserQuestion",` +
 		`"tool_input":{"questions":[{"question":"Which framework?"}]},"tool_response":{"answers":{"Which framework?":"React"}}}`

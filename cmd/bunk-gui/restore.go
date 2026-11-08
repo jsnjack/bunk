@@ -277,9 +277,8 @@ func (a *App) restoreWindow(w restore.Window, slot *restore.Slot, all []restore.
 // restoreTab builds a tab from rt; cmds are its panes' resume commands,
 // and saved is when the snapshot was written.
 func (a *App) restoreTab(rt restore.Tab, cmds []string, slot *restore.Slot, saved time.Time) *Tab {
-	t := &Tab{app: a, holder: gtk.NewBox(gtk.OrientationVertical, 0), name: rt.Name}
-	t.holder.SetHExpand(true)
-	t.holder.SetVExpand(true)
+	t := a.newTabShell()
+	t.name = rt.Name
 	cols, rows := a.initCols, a.initRows
 	if cur := a.activePane(); cur != nil && cur.cols > 1 {
 		cols, rows = cur.cols, cur.rows
@@ -340,9 +339,12 @@ func (a *App) restoreTab(rt restore.Tab, cmds []string, slot *restore.Slot, save
 	}
 	t.holder.SetFocusChild(root.widget())
 	a.tabs = append(a.tabs, t)
-	a.stack.AddChild(t.holder)
+	a.stack.AddChild(t.page)
 	if rt.Zoom && len(panes) > 1 {
 		t.toggleZoom(t.focus)
+	}
+	if rt.Panel != nil {
+		t.restorePanel(*rt.Panel)
 	}
 	t.restyle()
 	a.refreshChrome()
@@ -508,7 +510,7 @@ func (a *App) snapshotWindow() restore.Window {
 		if root == nil {
 			continue
 		}
-		rt := restore.Tab{Name: t.name, Root: root, Zoom: t.zoom != nil}
+		rt := restore.Tab{Name: t.name, Root: root, Zoom: t.zoom != nil, Panel: t.panelSnapshot()}
 		for i, p := range panes {
 			if p == t.focus {
 				rt.Focus = i

@@ -58,6 +58,7 @@ func TestGUIRestoreSession(t *testing.T) {
 		env:    env,
 		config: "[keys]\nrename_tab = \"ctrl+shift+e\"\n",
 		args:   []string{"--size", "100x30"},
+		files:  map[string]string{"notes.md": "# Notes\n\nKept across restarts.\n"},
 		script: []string{
 			"wait tabs.#=1 focused.line=$ restore.slot!=\"\" restore.banner=false",
 			`type cd /tmp && echo first-pane-marker\r`,
@@ -72,6 +73,10 @@ func TestGUIRestoreSession(t *testing.T) {
 			"wait rename.ready=true keyboard_focus=rename",
 			`kbd-type logs\r`,
 			"wait rename=null tab.2.name=logs",
+			`type cd "$BUNK_TEST_DIR" && echo in-test-dir\r`,
+			"wait focused.screen~in-test-dir",
+			"present notes.md",
+			"wait tab.2.panel.open=true tab.2.panel.docs.0.loaded=true",
 			"restore save",
 			"wait restore.saves>0",
 			"quit",
@@ -84,6 +89,9 @@ func TestGUIRestoreSession(t *testing.T) {
 	first, w := saved[0].ID, saved[0].Window
 	if len(w.Tabs) != 2 || w.Selected != 1 || w.Tabs[1].Name != "logs" {
 		t.Fatalf("snapshot %+v", w)
+	}
+	if pn := w.Tabs[1].Panel; pn == nil || !pn.Open || len(pn.Docs) != 1 || filepath.Base(pn.Docs[0]) != "notes.md" || w.Tabs[0].Panel != nil {
+		t.Errorf("document panels: tab 1 %+v, tab 2 %+v", w.Tabs[0].Panel, w.Tabs[1].Panel)
 	}
 	root := w.Tabs[0].Root
 	if root.Pane != nil || root.A.Pane == nil || root.B.Pane == nil || root.Ratio < 0.3 || root.Ratio > 0.7 || w.Tabs[0].Focus != 1 {
@@ -102,6 +110,9 @@ func TestGUIRestoreSession(t *testing.T) {
 			"snap offered",
 			"restore accept",
 			"wait tabs.#=2 restore.banner=false restore.answer=restored selected_tab=2 tab.2.name=logs",
+			"wait tab.2.panel.open=true tab.2.panel.docs.0.loaded=true",
+			"present-eval document.querySelector('#bunk-doc h1').textContent",
+			"wait tab.2.panel.eval=Notes",
 			"select-tab 1",
 			"wait tab.1.panes.#=2 tab.1.agent=claude restore.typed.#=1",
 			"wait focused.status.session=sess-resumed",

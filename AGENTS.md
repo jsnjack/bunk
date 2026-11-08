@@ -22,6 +22,8 @@ cmd.go              cobra root command, run(), app initialization
 cmd_config.go       "bunk config" subcommand tree
 cmd_notify.go       "bunk notify": the agent hook CLI (notify.RunCLI)
 cmd_ssh.go          "bunk ssh": ssh that exports the pane's token (notify.RunSSH)
+cmd_present.go      "bunk present": shows a document in bunk-gui's panel, else
+                    the browser (notify.RunPresent)
 app.go              App struct, event loop, key handling, triggerRedraw()
 input_modes.go      Host focus forwarding
 input_tcell.go      tcell key/mouse events → internal/input (keyToBytesMode, mouseToBytes)
@@ -115,9 +117,17 @@ internal/notify/    Agent hook reports: Unix socket server (token → Session),
                     client, `notify` CLI (RunCLI), hook snippets per agent,
                     whether they are installed and installing the
                     standalone ones (hookstatus.go), the in-band writer
-                    without a socket, `ssh` (RunSSH)
+                    without a socket, `ssh` (RunSSH), present requests and
+                    the `present` CLI (present.go, RunPresent), the
+                    bunk-present skill and its install (skill.go,
+                    skill/SKILL.md)
   wire/             The report line, its OSC 1337 in-band form, tmux/screen
                     wrapping; imported by notify and session alike
+
+internal/present/   Documents for bunk-gui's panel: Markdown to an HTML page
+                    (goldmark, Chroma, math), the page runtime (bunkDoc:
+                    render, anchor, replace with change marks), Mermaid and
+                    KaTeX embedded, standalone pages for the browser
 
 internal/alert/     Agent and command notifications for both front ends:
                     when a state change or a long command's end notifies
@@ -143,6 +153,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
   cmd.go            cobra root command: flags, logging, notify socket, runApp()
   cmd_notify.go     "bunk-gui notify": the agent hook CLI (notify.RunCLI)
   cmd_ssh.go        "bunk-gui ssh": ssh that exports the tab's token (notify.RunSSH)
+  cmd_present.go    "bunk-gui present": shows a document in the tab's panel
+                    (notify.RunPresent)
   logger.go         slog setup for --debug and --trace; GLib messages arrive through slog
   app.go            App struct, window activation, test-run hooks and statistics
   themes.go         The theme shown: terminal colours, the CSS of the content
@@ -169,6 +181,12 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     rebuilds tabs and splits, resumes agents (--restore)
   prefs_hooks.go    Agent hooks in Preferences (state, Install, Copy
                     snippet) and the toast for an agent without hooks
+  panel.go          The document panel per tab: documents, reload in
+                    place, asking the agent, restore, its --do steps
+  presentserve.go   The bunk-present:// scheme: assets, each document's
+                    directory as its own origin, the HTML sandbox policy
+  webview.go        WebKitGTK views (cgo): one ephemeral session, the
+                    navigation policy, the context menu, script evaluation
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             README pictures from TestGUIScreenshots: bunk-gui shots and
@@ -178,7 +196,9 @@ docs/               features.md: every feature and key; configuration.md;
                     agent-status.md: states, rail, notifications, command
                     marks; agent-hooks.md: hook recipes and the notify
                     protocol; remote-agent-status.md: agents on hosts reached
-                    over ssh; development.md: packages, builds, tests
+                    over ssh; present.md: the document panel, `bunk present`,
+                    its protocol, hooks and skill; development.md: packages,
+                    builds, tests
 scripts/            Terminal feature scripts (tested by terminal_features_test.go);
                     headless-gui.sh runs GUI tests; screenshots.sh renders assets/;
                     benchcheck/ runs and compares benchmarks (make bench-check)
@@ -632,8 +652,8 @@ its default; Design Decisions says where the defaults come from.
   root box, because refreshChrome replaces the tab items under it.
   - A right-click on a tab, caught on the tab list like the rename and
     drag gestures, opens its menu without selecting it: Rename…, Copy
-    directory, Mark as seen, Mute notifications, Close tab and Close
-    other tabs.
+    directory, Mark as seen, Mute notifications, Show documents, Close
+    tab and Close other tabs.
   - Mark as seen does what looking at each pane does (`AckSeen`, and
     the tracker sees the panes watched once): done and inferred needs-you
     clear, command marks clear and notifications go. A reported needs-you
@@ -1013,6 +1033,49 @@ its default; Design Decisions says where the defaults come from.
   - Window tests pass `--agent-home`, a directory with every agent's hooks
     installed, so no hooks banner comes between a scenario's steps; the
     hook tests pass an empty one or one with outdated hooks.
+- bunk-gui shows documents that agents present in a side panel per tab
+  (`panel.go`, `docs/present.md`). The panel sits beside the tab's panes
+  in `Tab.page`, a GtkPaned: the pane tree is untouched, and hiding the
+  panel gives the panes their width back.
+  - `bunk present FILE` (or `bunk-gui present`) sends a present request
+    over the notify socket with the pane's token. bunk-gui answers
+    "shown" and opens the file in the panel of that pane's tab. bunk's TUI
+    has no presenter and answers "unsupported", so the CLI opens the
+    browser: a Markdown file rendered by `present.WriteStandalone`.
+  - Documents show in WebKitGTK 6 views (`webview.go`, cgo). One
+    ephemeral network session and web context serve them all; WebKit runs
+    page content in its sandboxed web process. Permission requests are
+    denied, and a navigation leaves the document only when the user
+    clicks a link, which opens in the browser.
+  - Pages load through `bunk-present://` (`presentserve.go`): `assets/`
+    serves the page runtime, Mermaid and KaTeX embedded in
+    `internal/present`; `doc-N/` serves document N's directory, each
+    document its own origin. Hidden files, symbolic links out of the
+    directory and, for a document in the home directory or `/`, every file
+    but the document itself are refused. HTML gets a Content-Security-
+    Policy, as a header and first in its head, that blocks the network,
+    `file://` and form submission. Markdown is rendered without raw HTML.
+  - The directory is watched (GFileMonitor). A change reloads after
+    250 ms: Markdown swaps the article in place (`bunkDoc.replace`),
+    keeps the reader at the same heading and marks the sections whose
+    `data-bunk-hash` changed; HTML loads again and scrolls back.
+  - "Ask the agent" (the header button, or the context menu on selected
+    text) reads the selection and its heading in an isolated script world
+    (`present.SelectionScript`), which page scripts cannot change. The
+    question is pasted into the pane that presented the document, else the
+    tab's agent, as one bracketed paste without Enter; the pane takes the
+    focus, and the user sends it. Without bracketed paste it is one line.
+  - Hook snippets run `present --hook AGENT -` after the agents'
+    file-writing tools. A reported Markdown or HTML file is listed in the
+    panel; `[present] auto` opens the panel for it.
+  - `bunk present install AGENT` writes the bunk-present skill
+    (`skills/bunk-present/SKILL.md` for claude, codex and copilot), which
+    tells agents when and how to present; Preferences offers it too.
+  - Session restore keeps each tab's documents, the one shown, the panel's
+    width and whether it is open. Restored questions go to the tab's agent.
+  - Window tests drive the panel with `present`, `present-eval`,
+    `present-wait`, `present-select`, `present-ask` and `present-toggle`
+    (`TestGUIPresentMarkdown`, `TestGUIPresentHTML`, `TestGUIPresentListed`).
 - Agents on hosts reached over ssh report in-band
   (`docs/remote-agent-status.md`). Without a reachable socket, `bunk notify`
   writes the report line as `OSC 1337 ; SetUserVar=bunk_notify=<base64>` to

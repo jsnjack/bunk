@@ -34,6 +34,9 @@ scripts = ["@me/myagent"]  # for agents that run under node, python, bun, deno o
 enabled = true
 states = ["needs-you", "done", "failed"]
 command_after = 10         # seconds a command must run to be marked and notify when it ends; 0 = never
+
+[present]                  # the document panel (docs/present.md)
+auto = false               # open it for documents agent hooks report; false only lists them
 ```
 
 - bunk-gui watches the file and applies edits to the running window.

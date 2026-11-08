@@ -58,6 +58,26 @@ and bunk-gui draws their images 1:1.
 - When a program reads the mouse, Ctrl+Shift+click opens a link instead of
   Ctrl+click.
 
+### Documents
+
+Agents can show you what they wrote in a panel beside the tab's panes
+(`docs/present.md`). An agent, or you, runs `bunk present FILE` in a pane.
+
+- Markdown shows as a formatted page with tables, highlighted code, Mermaid
+  diagrams and math. HTML pages run as they are, with no network access.
+- The page reloads when the file changes and keeps your place. Sections that
+  changed are marked.
+- Select text and choose "Ask the agent" (the header button or the context
+  menu). Your question is pasted into the agent's input with the file, the
+  section and the quoted text. Press Enter in the pane to send it.
+- "Show documents" in the tab's menu or the main menu shows and hides the
+  panel; the `documents` action has no default key. The header lists the
+  tab's documents and opens the shown one in the browser.
+- Agent hooks list the Markdown and HTML files an agent writes; with
+  `[present] auto = true` they open the panel too.
+- `bunk present install claude` (or `codex`, `copilot`) installs a skill that
+  tells the agent when to present a document.
+
 ### Session restore
 
 bunk-gui saves each window as it changes, in `~/.local/state/bunk-gui/windows`,
@@ -67,7 +87,7 @@ finds windows that are no longer open, a banner asks whether to restore them.
 - Restore brings the newest window back in place of the fresh tab and opens
   each other window again. Dismiss deletes them.
 - Each pane gets its tab name, split, folder and scrollback back, with a line
-  marking where the old output ends.
+  marking where the old output ends. Each tab gets its documents back.
 - An agent pane runs the agent's resume command, such as `claude --resume ID`,
   with the session ID its hooks reported. Without hooks it resumes the folder's
   latest conversation (`claude --continue`), unless two panes ran that agent in

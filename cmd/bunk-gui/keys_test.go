@@ -89,6 +89,7 @@ var defaultKeys = map[string][]string{
 	"close_tab":         {"ctrl+shift+w"},
 	"new_window":        {"ctrl+shift+n"},
 	"rename_tab":        nil,
+	"documents":         nil,
 	"next_tab":          {"ctrl+right", "ctrl+down"},
 	"prev_tab":          {"ctrl+left", "ctrl+up"},
 	"move_tab_left":     {"ctrl+shift+pgup"},

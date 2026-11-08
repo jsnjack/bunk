@@ -18,12 +18,14 @@ import (
 const defaultTitle = "bunk-gui"
 
 // Tab is one tab: a BSP tree of panes shown as nested GtkPaned widgets
-// inside holder, a child of the window's GtkStack. Only the visible stack
-// child is mapped, so panes of hidden tabs keep parsing output but never
-// render.
+// inside holder, beside the tab's document panel (panel.go) in page, a
+// child of the window's GtkStack. Only the visible stack child is mapped,
+// so panes of hidden tabs keep parsing output but never render.
 type Tab struct {
 	app    *App
 	holder *gtk.Box
+	page   *gtk.Paned // holder, then the panel when it was ever used
+	panel  *panel     // nil until a document is presented
 	root   *node
 	focus  *Pane // the pane that has (or last had) keyboard focus
 	zoom   *Pane // the zoomed pane, nil when none
@@ -111,9 +113,7 @@ func (t *Tab) agentPane() *Pane {
 // newTab starts a session running cmd (sh -c), or $SHELL when cmd is "",
 // in dir, and shows it in a new selected tab.
 func (a *App) newTab(cmd, dir string) *Tab {
-	t := &Tab{app: a, holder: gtk.NewBox(gtk.OrientationVertical, 0)}
-	t.holder.SetHExpand(true)
-	t.holder.SetVExpand(true)
+	t := a.newTabShell()
 	cols, rows := a.initCols, a.initRows
 	if cur := a.activePane(); cur != nil && cur.cols > 1 {
 		cols, rows = cur.cols, cur.rows // a new tab starts at the window's size
@@ -127,9 +127,24 @@ func (a *App) newTab(cmd, dir string) *Tab {
 	t.focus = p
 	t.holder.Append(p.frame)
 	a.tabs = append(a.tabs, t)
-	a.stack.AddChild(t.holder)
+	a.stack.AddChild(t.page)
 	a.selectTab(t)
 	a.refreshChrome()
+	return t
+}
+
+// newTabShell is a tab without panes: its holder in its page.
+func (a *App) newTabShell() *Tab {
+	t := &Tab{app: a, holder: gtk.NewBox(gtk.OrientationVertical, 0), page: gtk.NewPaned(gtk.OrientationHorizontal)}
+	t.holder.SetHExpand(true)
+	t.holder.SetVExpand(true)
+	t.page.SetStartChild(t.holder)
+	t.page.SetResizeStartChild(true)
+	t.page.SetShrinkStartChild(false)
+	t.page.SetResizeEndChild(false)
+	t.page.SetShrinkEndChild(false)
+	t.page.SetWideHandle(false)
+	t.page.AddCSSClass("bunk-page")
 	return t
 }
 
@@ -253,7 +268,7 @@ func (a *App) selectTab(t *Tab) {
 		a.closeFind()
 	}
 	a.active = t
-	a.stack.SetVisibleChild(t.holder)
+	a.stack.SetVisibleChild(t.page)
 	if t.focus != nil {
 		t.focus.widget.GrabFocus()
 		a.win.SetTitle(t.focus.title)
@@ -299,7 +314,10 @@ func (a *App) closeTab(t *Tab) {
 	if a.active == t {
 		a.selectTab(a.tabs[min(i, len(a.tabs)-1)])
 	}
-	a.stack.Remove(t.holder) // unrealizes the views: their GL objects are freed
+	if t.panel != nil {
+		t.panel.close()
+	}
+	a.stack.Remove(t.page) // unrealizes the views: their GL objects are freed
 	a.refreshChrome()
 }
 

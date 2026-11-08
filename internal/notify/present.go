@@ -1,0 +1,476 @@
+// present.go - "bunk present", which shows a Markdown or HTML document in
+// bunk-gui's side panel, or in a web browser where no panel can show it
+// (docs/present.md).
+package notify
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"syscall"
+
+	"bunk/internal/notify/wire"
+	"bunk/internal/present"
+)
+
+// presentUsage is the help text; %[1]s is the program name, bunk or
+// bunk-gui. Agents read it, so it stays short and exact.
+const presentUsage = `usage: %[1]s present FILE
+       %[1]s present --hook AGENT -
+       %[1]s present skill | status | install AGENT
+
+Shows a Markdown or HTML file to the user. In a bunk-gui pane it opens in
+the side panel of the pane's tab, which reloads the file whenever it is
+saved and marks the sections that changed. In bunk's terminal UI and
+outside bunk it opens in the web browser. On a host reached over ssh, or
+without a graphical display, it says that it cannot show the file.
+It prints one line saying which happened and exits 0; a missing file or
+an unsupported kind exits 1. Agents run it only inside bunk, where
+BUNK_NOTIFY_SESSION is set, and never open a browser on their own.
+
+Markdown (.md, .markdown, .mdown, .mkd): GitHub-flavoured Markdown with
+tables and task lists, code fences with syntax highlighting, ` + "```mermaid" + `
+fences as diagrams, $inline$ and $$display$$ math, and images by paths
+relative to the file.
+HTML (.html, .htm): shown from its own directory. Scripts, styles and
+images must be inline or relative files there; files whose names start
+with "." and anything outside the directory are not served, and nothing
+loads from the network or from file:// URLs. Mermaid and math are
+Markdown features: a page draws its own diagrams (inline SVG) and math.
+
+The user can select text in the panel and send a question about it. It
+arrives as the agent's next input:
+  About docs/plan.md › Session storage:
+  > the selected text
+  the user's question
+Answer it, and edit the file in place when asked: the panel reloads.
+
+--hook AGENT -   reads the JSON input of a PostToolUse hook of claude,
+                 codex or copilot from stdin and offers bunk-gui the
+                 Markdown and HTML files the tool call wrote whole, not
+                 the ones it edited. It prints nothing and always exits 0.
+skill            prints the bunk-present skill, which tells agents when
+                 and how to present.
+status           shows where each agent's copy of the skill is, and
+                 whether it is installed, outdated or missing.
+install AGENT    writes the skill for claude, codex or copilot.
+`
+
+// errNoOpener: no program that opens a file in its default application.
+var errNoOpener = errors.New("neither gio nor xdg-open is on PATH")
+
+// RunPresent runs the present command; args exclude the "present" word,
+// env is the process environment and stdin is read for "--hook AGENT -".
+// It returns the exit status. Messages name the program after os.Args[0],
+// so bunk and bunk-gui can both run it.
+func RunPresent(args, env []string, stdin io.Reader) int {
+	return runPresent(progName(), args, env, stdin, os.Stdout, os.Stderr)
+}
+
+func runPresent(prog string, args, env []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	help := fmt.Sprintf(presentUsage, prog)
+	if len(args) == 0 {
+		write(stderr, help)
+		return exitError
+	}
+	switch args[0] {
+	case "help", "-h", "-help", "--help":
+		write(stdout, help)
+		return 0
+	case "--hook":
+		presentHook(args[1:], env, stdin)
+		return 0
+	case "skill":
+		if len(args) == 1 {
+			write(stdout, skillText)
+			return 0
+		}
+	case "status":
+		if len(args) == 1 {
+			write(stdout, skillStatus(prog, envDirs(env)))
+			return 0
+		}
+	case "install":
+		if len(args) == 2 {
+			return installSkill(prog, args[1], envDirs(env), stdout, stderr)
+		}
+		write(stderr, fmt.Sprintf("%s present: install takes one of: %s\n", prog, strings.Join(skillAgents, ", ")))
+		return exitError
+	default:
+		if len(args) == 1 && !strings.HasPrefix(args[0], "-") {
+			return presentFile(prog, args[0], env, stdout, stderr)
+		}
+	}
+	write(stderr, fmt.Sprintf("%s present: unexpected arguments %q\n\n%s", prog, args, help))
+	return exitError
+}
+
+// progName names the program after os.Args[0], else "bunk".
+func progName() string {
+	prog := filepath.Base(os.Args[0])
+	if prog == "." || prog == string(filepath.Separator) {
+		prog = "bunk"
+	}
+	return prog
+}
+
+// presentFile shows one file: in bunk-gui's side panel when the pane's
+// front end shows it, else in the web browser.
+func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
+	path, err := filepath.Abs(arg)
+	if err != nil {
+		write(stderr, fmt.Sprintf("%s present: %s: %v\n", prog, arg, err))
+		return exitError
+	}
+	name := displayPath(path)
+	kind := present.KindOf(path)
+	if kind == present.KindNone {
+		write(stderr, fmt.Sprintf("%s present: %s is neither Markdown (.md) nor HTML (.html)\n", prog, name))
+		return exitError
+	}
+	if err := readableFile(path); err != nil {
+		write(stderr, fmt.Sprintf("%s present: cannot read %s: %v\n", prog, name, err))
+		return exitError
+	}
+	if !validPresentPath(path) {
+		write(stderr, fmt.Sprintf("%s present: the path of %s is longer than %d bytes or holds control characters\n", prog, name, wire.MaxPath))
+		return exitError
+	}
+	socket, token := lookupEnv(env, EnvSocket), lookupEnv(env, EnvSession)
+	if socket != "" && token != "" {
+		reply, err := Present(socket, token, path, false)
+		if err != nil {
+			slog.Debug("present: request", "err", err)
+		}
+		if reply == PresentShown {
+			write(stdout, "Showing "+name+" in bunk-gui's side panel.\n")
+			return 0
+		}
+	}
+	if why := noBrowser(env, socket); why != "" {
+		write(stdout, "Cannot show "+name+" here: "+why+".\n")
+		return 0
+	}
+	page := path
+	if kind == present.KindMarkdown {
+		if page, err = standalonePage(path, env); err != nil {
+			write(stderr, fmt.Sprintf("%s present: %v\n", prog, err))
+			return exitError
+		}
+	}
+	if err := openFile(page, env); err != nil {
+		if errors.Is(err, errNoOpener) {
+			write(stdout, "Cannot show "+name+" here: "+err.Error()+".\n")
+			return 0
+		}
+		write(stderr, fmt.Sprintf("%s present: open %s: %v\n", prog, name, err))
+		return exitError
+	}
+	write(stdout, "Opened "+name+" in the web browser.\n")
+	return 0
+}
+
+// displayPath writes path relative to the working directory when it lies
+// inside it, for messages.
+func displayPath(path string) string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return path
+	}
+	rel, err := filepath.Rel(wd, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return rel
+}
+
+// readableFile returns why path cannot be presented: it is missing,
+// unreadable or not a regular file.
+func readableFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			return pe.Err
+		}
+		return err
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			slog.Debug("present: close", "err", err)
+		}
+	}()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return errors.New("not a regular file")
+	}
+	return nil
+}
+
+// noBrowser returns why no browser can show a file here, or "". socket is
+// the pane's notify socket: without one, SSH_CONNECTION means a host
+// reached over ssh, whose browser the user does not see.
+func noBrowser(env []string, socket string) string {
+	if runtime.GOOS == "darwin" {
+		return ""
+	}
+	switch {
+	case socket == "" && lookupEnv(env, envSSH) != "":
+		return "this host is reached over ssh, where neither bunk-gui nor the user's browser runs"
+	case lookupEnv(env, "WAYLAND_DISPLAY") == "" && lookupEnv(env, "DISPLAY") == "":
+		return "there is no graphical display (WAYLAND_DISPLAY and DISPLAY are unset)"
+	}
+	return ""
+}
+
+// standalonePage renders the Markdown file at path into a page of its own
+// for a browser, in a directory per file under bunk's cache directory, and
+// returns the page's path.
+func standalonePage(path string, env []string) (string, error) {
+	cache := lookupEnv(env, "XDG_CACHE_HOME")
+	if !filepath.IsAbs(cache) {
+		home := lookupEnv(env, "HOME")
+		if home == "" {
+			home = UserDirs().Home
+		}
+		if home == "" {
+			return "", errors.New("no cache directory: XDG_CACHE_HOME and HOME are unset")
+		}
+		cache = filepath.Join(home, ".cache")
+	}
+	sum := sha256.Sum256([]byte(path))
+	dir := filepath.Join(cache, "bunk", "present", hex.EncodeToString(sum[:8]))
+	page, err := present.WriteStandalone(path, dir, present.DefaultTheme())
+	if err != nil {
+		return "", fmt.Errorf("render %s: %w", path, err)
+	}
+	return page, nil
+}
+
+// openFile opens path in the desktop's default application for it, with
+// gio open, else xdg-open (open on macOS). The opener runs detached, in a
+// session of its own, with its output discarded. Tests replace it.
+var openFile = func(path string, env []string) error {
+	argv := openerArgv(env)
+	if argv == nil {
+		return errNoOpener
+	}
+	c := exec.Command(argv[0], append(argv[1:], path)...)
+	c.Env = env
+	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := c.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", argv[0], err)
+	}
+	if err := c.Process.Release(); err != nil {
+		slog.Debug("present: release opener", "err", err)
+	}
+	return nil
+}
+
+// openerArgv returns the command that opens a file, without the file, or
+// nil when none is on env's PATH.
+func openerArgv(env []string) []string {
+	if runtime.GOOS == "darwin" {
+		return []string{"/usr/bin/open"}
+	}
+	if gio := lookPath(env, "gio"); gio != "" {
+		return []string{gio, "open"}
+	}
+	if xdg := lookPath(env, "xdg-open"); xdg != "" {
+		return []string{xdg}
+	}
+	return nil
+}
+
+// lookPath returns the executable name in a directory of env's PATH, or "".
+func lookPath(env []string, name string) string {
+	for _, dir := range filepath.SplitList(lookupEnv(env, "PATH")) {
+		if dir == "" {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0 {
+			return path
+		}
+	}
+	return ""
+}
+
+// presentHook runs "--hook AGENT -": it offers the front end each Markdown
+// and HTML file that the tool call the hook's input describes wrote whole.
+// It never prints and never fails, so no agent shows an error for it.
+func presentHook(args, env []string, stdin io.Reader) {
+	if len(args) != 2 || args[1] != "-" || !slices.Contains(skillAgents, args[0]) {
+		slog.Debug("present: bad hook arguments", "args", args)
+		return
+	}
+	socket, token := lookupEnv(env, EnvSocket), lookupEnv(env, EnvSession)
+	if socket == "" || token == "" {
+		return // no bunk front end to show it; in-band reports carry no requests
+	}
+	for _, path := range hookFiles(args[0], readStdin(stdin)) {
+		reply, err := Present(socket, token, path, true)
+		if err != nil {
+			slog.Debug("present: hook request", "err", err)
+			return
+		}
+		slog.Debug("present: hook request", "path", path, "reply", reply)
+	}
+}
+
+// writeTool returns the paths, as the tool's arguments give them, of the
+// files one tool call wrote whole.
+type writeTool func(args toolArgs) []string
+
+// writeTools are the tools of each agent that write whole files, whose
+// PostToolUse hooks run "present --hook", by tool name (hooks.go matches
+// them).
+var writeTools = map[string]map[string]writeTool{
+	"claude": {"Write": argPath("file_path")},
+	// Codex reports every file edit as apply_patch, with the patch in
+	// tool_input.command.
+	"codex": {"apply_patch": patchArg},
+	// Copilot CLI's toolArgs are the model's arguments: an object or its
+	// JSON text, or for apply_patch the patch itself.
+	"copilot": {
+		"create":      argPath("path"),
+		"apply_patch": patchArg,
+	},
+}
+
+// toolArgs is a tool call's arguments: a JSON object, or text when they
+// are not one.
+type toolArgs struct {
+	obj  map[string]json.RawMessage
+	text string
+}
+
+// parseToolArgs reads arguments that are an object, the JSON text of an
+// object, or other text.
+func parseToolArgs(raw json.RawMessage) toolArgs {
+	var a toolArgs
+	if json.Unmarshal(raw, &a.obj) == nil {
+		return a
+	}
+	if json.Unmarshal(raw, &a.text) == nil && json.Unmarshal([]byte(a.text), &a.obj) == nil {
+		a.text = ""
+	}
+	return a
+}
+
+// str returns the string argument key, or "".
+func (a toolArgs) str(key string) string {
+	var s string
+	if json.Unmarshal(a.obj[key], &s) != nil {
+		return ""
+	}
+	return s
+}
+
+// argPath reads the path a tool writes from its argument key.
+func argPath(key string) writeTool {
+	return func(a toolArgs) []string {
+		if p := a.str(key); p != "" {
+			return []string{p}
+		}
+		return nil
+	}
+}
+
+// patchArg reads the files an apply_patch call added from its patch: the
+// arguments' text, or their "command" as a string or an argv, or their
+// "input".
+func patchArg(a toolArgs) []string {
+	if a.text != "" {
+		return patchFiles(a.text)
+	}
+	if s := a.str("command"); s != "" {
+		return patchFiles(s)
+	}
+	var argv []string
+	if json.Unmarshal(a.obj["command"], &argv) == nil {
+		return patchFiles(strings.Join(argv, "\n"))
+	}
+	return patchFiles(a.str("input"))
+}
+
+// patchAdd starts the line of an apply_patch patch that adds a file.
+const patchAdd = "*** Add File: "
+
+// patchFiles returns the files a patch adds, in the patch's order. Files
+// it updates, moves or deletes do not count.
+func patchFiles(patch string) []string {
+	var out []string
+	for line := range strings.Lines(patch) {
+		if name, ok := strings.CutPrefix(line, patchAdd); ok && strings.TrimSpace(name) != "" {
+			out = append(out, strings.TrimSpace(name))
+		}
+	}
+	return out
+}
+
+// hookFiles returns the absolute paths of the Markdown and HTML files that
+// the tool call in text, the PostToolUse input of agent, wrote whole and
+// that are regular files now, each once, in the call's order. Relative
+// paths are taken from the input's working directory.
+func hookFiles(agent, text string) []string {
+	var in struct {
+		Cwd        string          `json:"cwd"`
+		WorkingDir string          `json:"workingDirectory"`
+		Tool       string          `json:"tool_name"`
+		ToolC      string          `json:"toolName"`
+		Input      json.RawMessage `json:"tool_input"`
+		Args       json.RawMessage `json:"toolArgs"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(text)), &in) != nil {
+		return nil
+	}
+	tool, raw, cwd := either(in.Tool, in.ToolC), in.Input, either(in.Cwd, in.WorkingDir)
+	if raw == nil {
+		raw = in.Args
+	}
+	read, ok := writeTools[agent][tool]
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, p := range read(parseToolArgs(raw)) {
+		if !filepath.IsAbs(p) {
+			if !filepath.IsAbs(cwd) {
+				continue
+			}
+			p = filepath.Join(cwd, p)
+		}
+		p = filepath.Clean(p)
+		if present.KindOf(p) == present.KindNone || !validPresentPath(p) || slices.Contains(out, p) {
+			continue
+		}
+		if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// either returns a, or b when a is empty.
+func either(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}

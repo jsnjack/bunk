@@ -22,6 +22,11 @@
 // variable (package wire), and the session parses it from its output.
 // "bunk ssh" (RunSSH) gives the remote shell the pane's token for that
 // path (docs/remote-agent-status.md).
+//
+// "bunk present FILE" (RunPresent) asks the front end to show a document
+// in the side panel of the pane's tab: a "present" line with the file's
+// path, which, unlike a report, gets a one-word reply (Present,
+// Server.SetPresenter, docs/present.md).
 package notify
 
 import (
@@ -91,6 +96,11 @@ func Decode(line []byte) (Message, error) {
 	if err != nil {
 		return Message{}, fmt.Errorf("notify: %w", err)
 	}
+	return message(r)
+}
+
+// message returns a decoded report line as a Message, as Decode does.
+func message(r wire.Report) (Message, error) {
 	ev, ok := session.ParseEvent(r.Event)
 	if !ok {
 		return Message{}, fmt.Errorf("decode: %w %q", errEvent, r.Event)

@@ -26,3 +26,7 @@ go list -deps -f '{{with .Module}}{{if and (not .Main) (ne .Path "bunk")}}{{.Pat
 		done
 	done
 install -Dpm0644 "$top/internal/vt10x/LICENSE" "$dest/github.com/hinshun/vt10x/LICENSE"
+# Mermaid and KaTeX are embedded in the binary for the document panel
+# (internal/present/assets).
+install -Dpm0644 "$top/internal/present/assets/mermaid.LICENSE" "$dest/mermaid/LICENSE"
+install -Dpm0644 "$top/internal/present/assets/katex/LICENSE" "$dest/katex/LICENSE"

@@ -47,6 +47,17 @@ type Tab struct {
 	Focus int    `json:"focus"`
 	Zoom  bool   `json:"zoom,omitempty"`
 	Root  *Node  `json:"root"`
+	// Panel is the tab's document panel; nil when it has no documents.
+	Panel *Panel `json:"panel,omitempty"`
+}
+
+// Panel is a tab's document panel: the documents it lists, the one it
+// shows as an index into Docs, whether it is open and its width.
+type Panel struct {
+	Docs    []string `json:"docs"`
+	Current int      `json:"current"`
+	Open    bool     `json:"open,omitempty"`
+	Width   int      `json:"width,omitempty"`
 }
 
 // Node is a pane (Pane set) or a split of two nodes. Ratio is the share of

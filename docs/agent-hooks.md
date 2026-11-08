@@ -12,6 +12,11 @@ Run `bunk notify hooks <agent>` (or `bunk-gui notify hooks <agent>`) to print
 a snippet. The snippets on this page are that output; a test keeps them in
 sync.
 
+The snippets of Claude Code, Codex and Copilot CLI also run `present --hook`
+after each tool call that writes a whole file. It offers the Markdown and
+HTML files the agent wrote to bunk-gui, which lists them in the tab's side
+panel; [present.md](present.md) describes the panel.
+
 ## Set up
 
 Do this once per machine, and on every host you reach over ssh where an
@@ -163,6 +168,10 @@ sequence as a user variable; other terminals ignore it.
 | `failed` | `AgentFailed` | the message, if any |
 | `clear` | inference again | inferred |
 
+A `present` line, which `bunk present` sends, carries a document's `path`
+instead and gets a one-word reply; [present.md](present.md#protocol)
+describes it. It travels over the socket only.
+
 ## How reports and inference combine
 
 - While a report holds, `Status` shows it and sets `Status.Reported`. Output
@@ -267,6 +276,16 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" present --hook claude -",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
@@ -334,6 +353,7 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 | UserPromptSubmit | `working` | none |
 | PreToolUse (AskUserQuestion, ExitPlanMode) | `needs-you` | the first question, or "Approve the plan: " and the plan's title |
 | PostToolUse, PostToolUseFailure (every tool, not in a subagent) | `working` | none |
+| PostToolUse (Write) | none: `present --hook claude -` offers the file to bunk-gui's side panel when it is Markdown or HTML | none |
 | Notification (permission, elicitation, agent input) | `needs-you` | `message` from stdin |
 | Stop | `done`, or `working` while `background_tasks` is not empty | `last_assistant_message` |
 | StopFailure (API error) | `failed` | `last_assistant_message`, e.g. "API Error: Rate limit reached" |
@@ -415,6 +435,18 @@ both, so the file can be deployed whole:
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" present --hook codex -",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -456,6 +488,7 @@ both, so the file can be deployed whole:
 | :- | :- | :- |
 | UserPromptSubmit | `working` | none |
 | PermissionRequest | `needs-you`, or `working` for the automatic reviewer | "Approval requested", with the first line of a Bash command |
+| PostToolUse (apply_patch) | none: `present --hook codex -` offers the Markdown and HTML files the patch adds to bunk-gui's side panel | none |
 | Stop | `done` | `last_assistant_message` |
 | Interrupt | `idle` | none |
 | SessionEnd | `clear` | none |
@@ -514,6 +547,14 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
         "timeoutSec": 5
       }
     ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "matcher": "create|apply_patch",
+        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" present --hook copilot -",
+        "timeoutSec": 5
+      }
+    ],
     "agentStop": [
       {
         "type": "command",
@@ -536,6 +577,7 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
 | :- | :- | :- |
 | userPromptSubmitted | `working` | none |
 | notification (`permission_prompt`, `elicitation_dialog`) | `needs-you` | `message` from stdin |
+| postToolUse (create, apply_patch) | none: `present --hook copilot -` offers the Markdown and HTML files the tool created to bunk-gui's side panel | none |
 | agentStop | `done` | none; the input has no message text |
 | sessionEnd | `clear` | none |
 

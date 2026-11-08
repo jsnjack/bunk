@@ -109,6 +109,10 @@ When an agent in a pane you are not watching needs you, finishes or fails, bunk-
 
 <img src="assets/gui-switcher.png" alt="The switcher listing five tabs with their repo, branch, agent, folder and state">
 
+### Documents beside the agent
+
+An agent shows you its plan, report or explanation in a panel beside the tab's panes: `bunk-gui present docs/plan.md`. Markdown renders with tables, highlighted code, Mermaid diagrams and math, and HTML pages run without network access. The page reloads in place as the agent edits the file and marks the sections that changed. Select a passage and choose "Ask the agent": your question is pasted into the agent's input with the file, section and quote, ready to send. `bunk-gui present install claude` (or `codex`, `copilot`) teaches the agent when to present.
+
 ### Session restore
 
 bunk-gui saves each window as it changes, so a crash or a logout loses at most a few seconds. The next start offers the windows back in a banner. Restore brings back the tabs, splits, folders and scrollback, and each agent pane runs the agent's resume command, such as `claude --resume` with the session ID its hooks reported. A pane that ran `ssh` gets the command typed at the prompt, ready to run.
@@ -248,6 +252,7 @@ You can also download a binary from [Releases](https://github.com/jsnjack/bunk/r
 | [Agent status and notifications](docs/agent-status.md) | How states are inferred, the rail's rings and maps, notifications and command marks |
 | [Agent hooks](docs/agent-hooks.md) | Hook setup and snippets for each agent, the notify CLI and the wire format |
 | [Remote agent status](docs/remote-agent-status.md) | How agents on hosts reached over ssh report their state |
+| [Documents](docs/present.md) | The document panel, `bunk present`, its formats and sandbox, hooks and the agent skill |
 | [Development](docs/development.md) | Packages, building, tests and the README pictures |
 | [Terminal audit](TERMINAL_AUDIT.md) | Every terminal sequence with its status |
 

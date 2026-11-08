@@ -10,10 +10,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
+	"bunk/internal/notify/wire"
 	"bunk/internal/session"
 )
 
@@ -54,6 +58,7 @@ type Server struct {
 	targets map[string]Target
 	issued  map[string]bool // every token registered since Listen
 	cur     *net.UnixConn   // connection being read; Close closes it
+	present func(token, path string, auto bool) bool
 }
 
 // Listen creates the socket $XDG_RUNTIME_DIR/bunk/notify-<pid>.sock
@@ -143,6 +148,18 @@ func (s *Server) Issued(token string) bool {
 	return s.issued[token]
 }
 
+// SetPresenter makes f show the documents of present requests (RunPresent):
+// path is absolute, auto marks a request from a hook, and true means f
+// shows it. f runs on the server's goroutine while the client waits for
+// the reply, so it must return quickly. Requests for tokens that are not
+// registered never reach f. Without a presenter, as in bunk's TUI, every
+// request gets PresentUnsupported.
+func (s *Server) SetPresenter(f func(token, path string, auto bool) bool) {
+	s.mu.Lock()
+	s.present = f
+	s.mu.Unlock()
+}
+
 // Unregister stops routing reports for token; later ones are dropped.
 func (s *Server) Unregister(token string) {
 	s.mu.Lock()
@@ -194,7 +211,8 @@ func (s *Server) serve() {
 	}
 }
 
-// handle reads up to maxLinesPerConn messages from one client.
+// handle reads up to maxLinesPerConn messages from one client. A present
+// request gets its reply and ends the connection.
 func (s *Server) handle(c *net.UnixConn) {
 	uid, err := peerUID(c)
 	if err != nil || uid != s.uid {
@@ -213,7 +231,10 @@ func (s *Server) handle(c *net.UnixConn) {
 			return
 		}
 		if len(bytes.TrimSpace(line)) > 0 {
-			s.dispatch(line)
+			if reply := s.dispatch(line); reply != "" {
+				s.reply(c, reply)
+				return
+			}
 		}
 		if err != nil {
 			return
@@ -221,22 +242,76 @@ func (s *Server) handle(c *net.UnixConn) {
 	}
 }
 
-func (s *Server) dispatch(line []byte) {
-	m, err := Decode(line)
+// reply writes a present request's reply line.
+func (s *Server) reply(c *net.UnixConn, reply string) {
+	if err := c.SetWriteDeadline(time.Now().Add(readTimeout)); err != nil {
+		slog.Debug("notify: set deadline", "err", err)
+		return
+	}
+	if _, err := c.Write([]byte(reply + "\n")); err != nil {
+		slog.Debug("notify: present reply", "err", err)
+	}
+}
+
+// dispatch passes a report to its target, or a present request to the
+// presenter. It returns the reply to a present request, else "".
+func (s *Server) dispatch(line []byte) string {
+	r, err := wire.Decode(line)
 	if err != nil {
 		slog.Debug("notify: dropped message", "err", err)
-		return
+		return ""
+	}
+	if r.Event == wire.EventPresent {
+		return s.presentRequest(r)
+	}
+	m, err := message(r)
+	if err != nil {
+		slog.Debug("notify: dropped message", "err", err)
+		return ""
 	}
 	s.mu.Lock()
 	t := s.targets[m.Session]
 	s.mu.Unlock()
 	if t == nil {
 		slog.Debug("notify: dropped message for an unknown session", "event", m.Event.String())
-		return
+		return ""
 	}
 	if rt, ok := t.(reportTarget); ok {
 		rt.NotifyReport(session.Report{Event: m.Event, Message: m.Text, AgentSession: m.AgentSession, Held: m.Held})
-		return
+		return ""
 	}
 	t.Notify(m.Event, m.Text)
+	return ""
+}
+
+// presentRequest runs a present request and returns its reply. A request
+// without a token or with a path that is not absolute and clean of
+// control characters gets none.
+func (s *Server) presentRequest(r wire.Report) string {
+	if r.Session == "" || !validPresentPath(r.Path) {
+		slog.Debug("notify: dropped present request", "token", r.Session != "", "path_bytes", len(r.Path))
+		return ""
+	}
+	s.mu.Lock()
+	known, f := s.targets[r.Session] != nil, s.present
+	s.mu.Unlock()
+	switch {
+	case !known:
+		return PresentUnknown
+	case f == nil:
+		return PresentUnsupported
+	case f(r.Session, r.Path, r.Auto):
+		return PresentShown
+	}
+	return PresentUnsupported
+}
+
+// validPresentPath reports whether path may name a document to present:
+// absolute, at most wire.MaxPath bytes of valid UTF-8 without control
+// characters.
+func validPresentPath(path string) bool {
+	if !filepath.IsAbs(path) || len(path) > wire.MaxPath || !utf8.ValidString(path) {
+		return false
+	}
+	return !strings.ContainsFunc(path, unicode.IsControl)
 }

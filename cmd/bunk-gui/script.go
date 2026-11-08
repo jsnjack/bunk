@@ -187,6 +187,9 @@ func (a *App) runStep(action string, next func()) {
 			next()
 			return false
 		})
+	case "present-wait":
+		fmt.Printf("do: %s\n", action)
+		a.presentWait(arg, next)
 	case "snap", "shot", "dump", "dump-pane", "ptr-at", "ptr-drag", "print-clip", "print-primary":
 		a.doAction(action, next)
 	default:
@@ -440,6 +443,10 @@ func (a *App) doAction(action string, done func()) {
 			return
 		}
 		coreglib.BaseObject(b).Emit("clicked")
+	case "present", "present-eval", "present-select", "present-ask", "present-toggle":
+		if err := a.presentStep(verb, arg); err != nil {
+			a.reportError("%s: %v", action, err)
+		}
 	case "ctx-tab":
 		// A tab's context menu, as a right-click on its item opens it.
 		if i := num(0, 1) - 1; i >= 0 && i < len(a.tabs) && a.tabsBox != nil {

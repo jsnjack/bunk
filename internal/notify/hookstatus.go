@@ -43,7 +43,8 @@ type Hooks struct {
 	Agent string
 	Path  string // the file the snippet goes in, with the home directory expanded
 	State HookState
-	// Missing lists the snippet's events whose hook the agent lacks.
+	// Missing lists the snippet's events with a hook the agent lacks, each
+	// once.
 	Missing []string
 	// Installable: InstallHooks sets the hooks up, always now; Merges: it
 	// merges them into a settings file that holds other settings, with a
@@ -146,10 +147,10 @@ func check(d Dirs, r agentHooks) Hooks {
 		h.Problem = err.Error()
 	}
 	for _, want := range r.hooks {
-		cmd := shellCommand(want.args)
+		cmd := want.command()
 		if !slices.ContainsFunc(found, func(f foundHook) bool {
 			return f.event == want.event && f.matcher == want.matcher && f.command == cmd
-		}) {
+		}) && !slices.Contains(h.Missing, want.event) {
 			h.Missing = append(h.Missing, want.event)
 		}
 	}
@@ -162,8 +163,9 @@ func check(d Dirs, r agentHooks) Hooks {
 	return h
 }
 
-// bunkHook matches the notify commands of bunk's snippets, older ones too.
-var bunkHook = regexp.MustCompile(`\bbunk(-gui)? notify\b|"\$b" notify\b`)
+// bunkHook matches the notify and present commands of bunk's snippets,
+// older ones too.
+var bunkHook = regexp.MustCompile(`\bbunk(-gui)? (notify|present)\b|"\$b" (notify|present)\b`)
 
 func bunkCommand(cmd string) bool { return bunkHook.MatchString(cmd) }
 
