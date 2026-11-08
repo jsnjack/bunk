@@ -60,6 +60,11 @@ func (a *App) applyTheme(t theme.Theme) {
 			p.themeChanged()
 		}
 	}
+	for _, t := range a.tabs {
+		if t.panel != nil {
+			t.panel.themeChanged()
+		}
+	}
 }
 
 // loadThemeCSS styles what follows the theme: the content background

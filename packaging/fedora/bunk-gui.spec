@@ -17,8 +17,11 @@ Version:        %{bunk_version}
 Release:        1%{?snapinfo:.%{snapinfo}}%{?dist}
 Summary:        Terminal for running coding agents side by side
 
-# bunk, vt10x, creack/pty, rivo/uniseg: MIT; gotk4, gotk4-adwaita: MPL-2.0;
-# gotk4/core: ISC; gotk4/cairo/swizzle, x/sync: BSD-3-Clause.
+# bunk, vt10x, creack/pty, rivo/uniseg, goldmark, chroma, regexp2, Mermaid,
+# KaTeX: MIT; gotk4, gotk4-adwaita: MPL-2.0; gotk4/core: ISC;
+# gotk4/cairo/swizzle, x/sync: BSD-3-Clause. Inside the Mermaid bundle:
+# DOMPurify (MPL-2.0 OR Apache-2.0, taken as MPL-2.0), d3 (ISC) and MIT
+# libraries (internal/present/assets/README.md).
 License:        MIT AND MPL-2.0 AND ISC AND BSD-3-Clause
 URL:            https://github.com/jsnjack/bunk
 
@@ -39,6 +42,12 @@ Provides:       bundled(golang(github.com/diamondburned/gotk4-adwaita/pkg)) = 0~
 Provides:       bundled(golang(github.com/rivo/uniseg)) = 0.4.7
 Provides:       bundled(golang(golang.org/x/sync)) = 0~20210220032951.036812b2e83c
 Provides:       bundled(golang(github.com/hinshun/vt10x))
+Provides:       bundled(golang(github.com/yuin/goldmark)) = 1.8.7
+Provides:       bundled(golang(github.com/alecthomas/chroma/v2)) = 2.27.0
+Provides:       bundled(golang(github.com/dlclark/regexp2/v2)) = 2.2.1
+# The document panel's scripts, embedded in the binary (internal/present).
+Provides:       bundled(js-mermaid) = 11.4.1
+Provides:       bundled(js-katex) = 0.16.11
 
 %description
 bunk-gui is a GPU-rendered terminal built on the emulator core of the bunk

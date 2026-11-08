@@ -52,6 +52,8 @@ import (
 //	enabled = true
 //	states = ["needs-you", "done", "failed"]
 //	command_after = 10       # a command runs this many seconds: marked, notifies at its end; 0 = never
+//	[present]                # the document panel (panel.go, docs/present.md)
+//	auto = false             # open it for documents agent hooks report, not only list them
 //
 // The file is watched: edits apply to the running window.
 type Settings struct {
@@ -81,14 +83,24 @@ type Settings struct {
 	// "~" for the home directory (the default), or "current" for the
 	// active pane's directory. Splits always start in their pane's.
 	NewDir string `toml:"new_dir"`
+	// Present is the [present] table: the document panel.
+	Present presentConfig `toml:"present"`
 
-	keymap    keymap              // Keys applied to the defaults
-	was       map[string][]string // bindings of disabled actions, from "# was" comments
-	themes    *theme.Registry     // the built-in themes and the valid ones of Themes
-	alerts    alert.Settings      // Notifications applied to the defaults
-	hooksHint bool                // HooksHint applied to the default, true
-	restore   bool                // Restore applied to the default, true
-	restoreSB bool                // RestoreScrollback applied to the default, true
+	keymap      keymap              // Keys applied to the defaults
+	was         map[string][]string // bindings of disabled actions, from "# was" comments
+	themes      *theme.Registry     // the built-in themes and the valid ones of Themes
+	alerts      alert.Settings      // Notifications applied to the defaults
+	hooksHint   bool                // HooksHint applied to the default, true
+	restore     bool                // Restore applied to the default, true
+	restoreSB   bool                // RestoreScrollback applied to the default, true
+	presentAuto bool                // Present.Auto applied to the default, false
+}
+
+// presentConfig is the [present] table.
+type presentConfig struct {
+	// Auto: a document an agent hook reports opens the panel; otherwise
+	// it is only listed in it.
+	Auto *bool `toml:"auto"`
 }
 
 // startSize is the text size at start and after Ctrl+0: font_size at
@@ -173,6 +185,9 @@ func loadSettings(path string) (Settings, error) {
 	}
 	if f.RestoreScrollback != nil {
 		st.RestoreScrollback, st.restoreSB = f.RestoreScrollback, *f.RestoreScrollback
+	}
+	if f.Present.Auto != nil {
+		st.Present, st.presentAuto = f.Present, *f.Present.Auto
 	}
 	if f.Font != "" {
 		st.Font = f.Font

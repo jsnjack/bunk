@@ -19,13 +19,20 @@ import (
 )
 
 // cliHelperEnv makes the test binary run RunCLI instead of the tests, so a
-// real child process can act as an agent hook.
-const cliHelperEnv = "BUNK_NOTIFY_TEST_CLI"
+// real child process can act as an agent hook; presentHelperEnv makes it
+// run RunPresent.
+const (
+	cliHelperEnv     = "BUNK_NOTIFY_TEST_CLI"
+	presentHelperEnv = "BUNK_NOTIFY_TEST_PRESENT"
+)
 
 func TestMain(m *testing.M) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if os.Getenv(cliHelperEnv) == "1" {
 		os.Exit(RunCLI(os.Args[1:], os.Environ(), os.Stdin))
+	}
+	if os.Getenv(presentHelperEnv) == "1" {
+		os.Exit(RunPresent(os.Args[1:], os.Environ(), os.Stdin))
 	}
 	// The tests never write to a real terminal: the walk up the process
 	// tree would reach the terminal they run in. stubInBand replaces this.

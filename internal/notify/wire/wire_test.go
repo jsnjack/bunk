@@ -21,6 +21,8 @@ func TestEncodeDecode(t *testing.T) {
 			`{"v":1,"session":"tok","event":"needs-you","message":"Allow <npm>?","agent":"claude","host":"build01","repo":"bunk","branch":"main","cwd":"/home/u/bunk"}` + "\n"},
 		{"cleaned fields", Report{Event: "idle", Agent: " cla\x1bude ", Branch: "a\xffb"},
 			`{"v":1,"event":"idle","agent":"cla ude","branch":"a` + "�" + `b"}` + "\n"},
+		{"present request", Report{Session: "tok", Event: EventPresent, Path: " /home/u/docs/<plan>.md", Auto: true},
+			`{"v":1,"session":"tok","event":"present","path":" /home/u/docs/<plan>.md","auto":true}` + "\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			line, err := tc.r.Encode()
@@ -50,6 +52,7 @@ func TestEncodeRejects(t *testing.T) {
 	}{
 		{"no event", Report{Session: "tok"}},
 		{"long token", Report{Session: strings.Repeat("a", MaxToken+1), Event: "idle"}},
+		{"long path", Report{Session: "tok", Event: EventPresent, Path: "/" + strings.Repeat("a", MaxPath)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if line, err := tc.r.Encode(); err == nil {
@@ -78,6 +81,7 @@ func TestDecodeRejects(t *testing.T) {
 		{"version 2", `{"v":2,"event":"working"}`},
 		{"no event", `{"v":1,"session":"tok"}`},
 		{"long token", `{"v":1,"session":"` + strings.Repeat("a", MaxToken+1) + `","event":"working"}`},
+		{"long path", `{"v":1,"session":"tok","event":"present","path":"/` + strings.Repeat("a", MaxPath) + `"}`},
 		{"trailing data", `{"v":1,"event":"working"} {}`},
 		{"too long", `{"v":1,"event":"idle","message":"` + strings.Repeat("x", MaxLine) + `"}`},
 	} {

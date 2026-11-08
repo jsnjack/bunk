@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,11 +68,7 @@ their own (codex, copilot). docs/agent-hooks.md describes the setup.
 // running the session, 1 on errors. Messages name the program after
 // os.Args[0], so bunk and bunk-gui can both run it.
 func RunCLI(args []string, env []string, stdin io.Reader) int {
-	prog := filepath.Base(os.Args[0])
-	if prog == "." || prog == string(filepath.Separator) {
-		prog = "bunk"
-	}
-	return runCLI(prog, args, env, stdin, os.Stdout, os.Stderr)
+	return runCLI(progName(), args, env, stdin, os.Stdout, os.Stderr)
 }
 
 func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.Writer) int {

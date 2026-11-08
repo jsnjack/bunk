@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
+	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/spf13/cobra"
 
@@ -205,6 +206,12 @@ func runApp(cfg config, debug, trace bool) error {
 		slog.Warn("notify: running without agent hook reports", "err", err)
 	} else {
 		a.notify = srv
+		// "bunk present FILE" shows FILE in the panel of the tab whose
+		// pane asked (panel.go); the work happens on the main thread.
+		srv.SetPresenter(func(token, path string, auto bool) bool {
+			coreglib.IdleAdd(func() { a.presentFor(token, path, auto) })
+			return true
+		})
 		logs.always("Listening on " + srv.Path())
 	}
 	a.app = adw.NewApplication(appID, gio.ApplicationNonUnique)

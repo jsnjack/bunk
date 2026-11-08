@@ -97,7 +97,8 @@ type App struct {
 
 	tabs               []*Tab
 	active             *Tab
-	panes              []*Pane // by id; nil once closed
+	panes              []*Pane    // by id; nil once closed
+	webViews           []*webView // document views (webview.go), by id
 	atlases            map[atlasKey]*Atlas
 	monScale           float64
 	initCols, initRows int

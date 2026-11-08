@@ -28,6 +28,10 @@ cmp -s "$lic/LICENSE" "$top/LICENSE" &&
 cmp -s "$lic/bundled-licenses/github.com/hinshun/vt10x/LICENSE" "$top/internal/vt10x/LICENSE" &&
 	pass "vt10x notice shipped" || fail "vt10x LICENSE missing or changed"
 
+for js in mermaid katex; do
+	[[ -s $lic/bundled-licenses/$js/LICENSE ]] && pass "$js license shipped" || fail "no license file shipped for $js"
+done
+
 # bunk itself is a module of cmd/bunk-gui; its LICENSE is not a bundled one.
 [[ ! -e $lic/bundled-licenses/bunk ]] && pass "no bunk copy among bundled licenses" ||
 	fail "bundled-licenses/bunk duplicates bunk's own LICENSE"

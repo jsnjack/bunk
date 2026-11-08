@@ -153,10 +153,11 @@ type tabReport struct {
 	Item     *rectReport  `json:"item,omitempty"`
 	NaturalW int          `json:"natural_w"` // the width its content asks for, logical px
 	Close    *rectReport  `json:"close,omitempty"`
-	Status   statusReport `json:"status"`   // of the agent pane
-	Pass     bool         `json:"pass"`     // shows the PASS tag
-	Muted    bool         `json:"muted"`    // its panes send no desktop notifications (ctxmenu.go)
-	Progress string       `json:"progress"` // OSC 9;4 as shown: "42%", "failed at 42%", "paused at 42%", "busy" (progressName)
+	Status   statusReport `json:"status"`          // of the agent pane
+	Pass     bool         `json:"pass"`            // shows the PASS tag
+	Muted    bool         `json:"muted"`           // its panes send no desktop notifications (ctxmenu.go)
+	Progress string       `json:"progress"`        // OSC 9;4 as shown: "42%", "failed at 42%", "paused at 42%", "busy" (progressName)
+	Panel    *panelReport `json:"panel,omitempty"` // the document panel, once a document was presented (panel.go)
 }
 
 type paneReport struct {
@@ -340,6 +341,10 @@ type prefsReport struct {
 	Hooks     []hooksReport `json:"hooks"`
 	HooksHint bool          `json:"hooks_hint"`
 	HooksNote string        `json:"hooks_note"`
+	// The Documents section: its switch, each agent's skill, its last note.
+	PresentAuto bool          `json:"present_auto"`
+	Skills      []hooksReport `json:"skills"`
+	SkillsNote  string        `json:"skills_note"`
 }
 
 type findReport struct {
@@ -553,6 +558,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		if t.zoom != nil {
 			tr.Zoomed = t.zoom.id
 		}
+		tr.Panel = a.panelReport(g, t)
 		for _, p := range t.panes() {
 			tr.Panes = append(tr.Panes, p.id)
 			tr.Notified = tr.Notified || a.alerts.tracker.Shown(p.id)
@@ -674,6 +680,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 		pr.Notify, pr.NotifyStates = w.notifyShown()
 		pr.NotifyCommandAfter = w.notify.commandAfter.ValueAsInt()
 		pr.Hooks, pr.HooksHint, pr.HooksNote = w.hooksShown(), w.hooks.hint.Active(), w.hooks.note.Text()
+		pr.PresentAuto, pr.Skills, pr.SkillsNote = w.present.auto.Active(), w.skillsShown(), w.present.note.Text()
 		s.Prefs = pr
 	}
 	s.Restore = a.restoreReport()

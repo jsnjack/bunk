@@ -8,25 +8,42 @@ import (
 	"strings"
 )
 
-// Command is how hook snippets run the notify CLI: bunk-gui's when bunk-gui
-// is on PATH, else bunk's, and nothing when neither is installed, as on a
-// server without bunk. Both binaries run the same CLI (RunCLI) and speak
-// the same protocol to the socket BUNK_NOTIFY_SOCKET names, so either
-// reaches the front end of the session. bunk-gui comes first because a
-// stale bunk on PATH may predate the notify command; over ssh usually only
-// bunk is installed.
-const Command = `! b=$(command -v bunk-gui || command -v bunk) || "$b" notify`
+// runBunk is how hook snippets run bunk's CLI, followed by the subcommand:
+// bunk-gui's when bunk-gui is on PATH, else bunk's, and nothing when
+// neither is installed, as on a server without bunk. Both binaries run the
+// same CLI (RunCLI, RunPresent) and speak the same protocol to the socket
+// BUNK_NOTIFY_SOCKET names, so either reaches the front end of the
+// session. bunk-gui comes first because a stale bunk on PATH may predate
+// the notify command; over ssh usually only bunk is installed.
+const runBunk = `! b=$(command -v bunk-gui || command -v bunk) || "$b"`
+
+// The subcommands hooks run.
+const (
+	cmdNotify  = "notify"
+	cmdPresent = "present"
+)
 
 // hookTimeout is the timeout snippets give each hook, in seconds. The CLI
 // gives up after clientTimeout plus stdinTimeout.
 const hookTimeout = 5
 
-// hook maps one of an agent's hook events to a notify command.
+// hook maps one of an agent's hook events to a bunk command. An event may
+// have several hooks, each a matcher group of its own.
 type hook struct {
 	event   string // the agent's event name
 	matcher string // "" matches every occurrence
-	args    string // notify arguments, such as "needs-you -"
+	sub     string // the subcommand; "" is cmdNotify
+	args    string // its arguments, such as "needs-you -"
 	timeout int    // seconds; 0 is hookTimeout
+}
+
+// command is the hook's shell command.
+func (h hook) command() string {
+	sub := h.sub
+	if sub == "" {
+		sub = cmdNotify
+	}
+	return shellCommand(sub + " " + h.args)
 }
 
 func (h hook) seconds() int {
@@ -81,6 +98,17 @@ const (
 	exitPlanMode    = "ExitPlanMode"
 )
 
+// The tools that write whole files, whose PostToolUse hooks offer the
+// documents they wrote to the front end (present --hook). Edits are left
+// out: a document the panel shows reloads by itself, and edits of files
+// such as AGENTS.md would open the panel. Codex adds files with
+// apply_patch, which edits them too, so its CLI reads the patch.
+const (
+	claudeWriteTools  = "Write"
+	codexWriteTools   = "apply_patch"
+	copilotWriteTools = "create|apply_patch"
+)
+
 // recipes are the agents "notify hooks" knows, in listing order.
 var recipes = []agentHooks{
 	{
@@ -93,6 +121,7 @@ var recipes = []agentHooks{
 			// question, or a call that a permission prompt held, which
 			// auto mode may approve after permission_prompt notified.
 			{event: "PostToolUse", args: "working -"},
+			{event: "PostToolUse", matcher: claudeWriteTools, sub: cmdPresent, args: "--hook claude -"},
 			{event: "PostToolUseFailure", args: "working -"},
 			{event: "Notification", matcher: "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input", args: "needs-you -"},
 			{event: "Stop", args: "done -"},
@@ -111,6 +140,7 @@ var recipes = []agentHooks{
 			// The CLI reads the input: a request that the automatic
 			// reviewer decides (approvals_reviewer) reports working.
 			{event: "PermissionRequest", args: "needs-you -"},
+			{event: "PostToolUse", matcher: codexWriteTools, sub: cmdPresent, args: "--hook codex -"},
 			{event: "Stop", args: "done -"},
 			// Codex allows Interrupt and SessionEnd hooks 3 s at most.
 			{event: "Interrupt", args: "idle", timeout: 3},
@@ -125,6 +155,7 @@ var recipes = []agentHooks{
 		hooks: []hook{
 			{event: "userPromptSubmitted", args: "working -"},
 			{event: "notification", matcher: "permission_prompt|elicitation_dialog", args: "needs-you -"},
+			{event: "postToolUse", matcher: copilotWriteTools, sub: cmdPresent, args: "--hook copilot -"},
 			{event: "agentStop", args: "done -"},
 			{event: "sessionEnd", args: "clear"},
 		},
@@ -168,11 +199,12 @@ func HookAgents(prog string) string {
 	return b.String()
 }
 
-// shellCommand runs the notify CLI inside a bunk session and on hosts
-// reached over ssh, where it reports in-band to the bunk pane ssh runs in.
-// Elsewhere the hook succeeds without running anything.
+// shellCommand runs bunk's CLI with args, a subcommand and its arguments,
+// inside a bunk session and on hosts reached over ssh, where notify reports
+// in-band to the bunk pane ssh runs in. Elsewhere the hook succeeds without
+// running anything.
 func shellCommand(args string) string {
-	return `[ -z "$` + EnvSession + `$` + envSSH + `" ] || ` + Command + " " + args
+	return `[ -z "$` + EnvSession + `$` + envSSH + `" ] || ` + runBunk + " " + args
 }
 
 // field is one key of an ordered JSON object.
@@ -183,6 +215,18 @@ type field struct {
 
 // object is a JSON object that keeps its key order.
 type object []field
+
+// addTo appends v to the list under key, which it adds after the other
+// keys when o has none, so an event with several hooks is one key.
+func (o object) addTo(key string, v any) object {
+	for i := range o {
+		if o[i].key == key {
+			o[i].value = append(o[i].value.([]any), v)
+			return o
+		}
+	}
+	return append(o, field{key, []any{v}})
+}
 
 // MarshalJSON writes the fields in order.
 func (o object) MarshalJSON() ([]byte, error) {
@@ -225,9 +269,9 @@ func renderClaude(hs []hook) (string, error) {
 		if h.matcher != "" {
 			group = append(group, field{"matcher", h.matcher})
 		}
-		handler := object{{"type", "command"}, {"command", shellCommand(h.args)}, {"timeout", h.seconds()}}
+		handler := object{{"type", "command"}, {"command", h.command()}, {"timeout", h.seconds()}}
 		group = append(group, field{"hooks", []any{handler}})
-		events = append(events, field{h.event, []any{group}})
+		events = events.addTo(h.event, group)
 	}
 	return indentJSON(object{{"hooks", events}})
 }
@@ -238,13 +282,13 @@ func renderGemini(hs []hook) (string, error) {
 	events := object{}
 	for _, h := range hs {
 		name := "bunk-" + strings.Fields(h.args)[0]
-		handler := object{{"name", name}, {"type", "command"}, {"command", shellCommand(h.args)}, {"timeout", h.seconds() * 1000}}
+		handler := object{{"name", name}, {"type", "command"}, {"command", h.command()}, {"timeout", h.seconds() * 1000}}
 		group := object{}
 		if h.matcher != "" {
 			group = append(group, field{"matcher", h.matcher})
 		}
 		group = append(group, field{"hooks", []any{handler}})
-		events = append(events, field{h.event, []any{group}})
+		events = events.addTo(h.event, group)
 	}
 	return indentJSON(object{{"hooks", events}})
 }
@@ -258,8 +302,8 @@ func renderCopilot(hs []hook) (string, error) {
 		if h.matcher != "" {
 			handler = append(handler, field{"matcher", h.matcher})
 		}
-		handler = append(handler, field{"bash", shellCommand(h.args)}, field{"timeoutSec", h.seconds()})
-		events = append(events, field{h.event, []any{handler}})
+		handler = append(handler, field{"bash", h.command()}, field{"timeoutSec", h.seconds()})
+		events = events.addTo(h.event, handler)
 	}
 	return indentJSON(object{{"version", 1}, {"hooks", events}})
 }
@@ -268,5 +312,5 @@ func renderCopilot(hs []hook) (string, error) {
 // releases without hooks, a top-level key. Codex appends its JSON payload
 // to the program's arguments, so sh passes it on as "$1".
 func codexNotifyLine() string {
-	return fmt.Sprintf("notify = [\"sh\", \"-c\", %s, \"sh\"]\n", strconv.Quote(shellCommand(`done "$1"`)))
+	return fmt.Sprintf("notify = [\"sh\", \"-c\", %s, \"sh\"]\n", strconv.Quote(shellCommand(cmdNotify+` done "$1"`)))
 }

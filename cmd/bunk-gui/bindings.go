@@ -40,6 +40,7 @@ var keyActions = []keyAction{
 	{"close_tab", "Close tab", []string{"ctrl+shift+w"}},
 	{"new_window", "New window", []string{"ctrl+shift+n"}},
 	{"rename_tab", "Rename the tab", nil},
+	{"documents", "Show or hide the tab's documents", nil},
 	{"next_tab", "Next tab", []string{"ctrl+right", "ctrl+down"}},
 	{"prev_tab", "Previous tab", []string{"ctrl+left", "ctrl+up"}},
 	{"move_tab_left", "Move the tab left", []string{"ctrl+shift+pgup"}},

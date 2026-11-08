@@ -123,6 +123,10 @@ button.swpick { background: none; box-shadow: none; border: none; min-height: 44
 button.switchclose { min-height: 36px; padding: 0 12px; border: 1px solid #34373e; border-radius: 6px; background: none;
 	color: #b4b9c1; box-shadow: none; margin-top: 4px; }
 paned > separator { min-width: 1px; min-height: 1px; }
+.bunk-panel { background: #1b1c20; }
+.bunk-panel-head { padding: 4px 6px; border-bottom: 1px solid #2a2c31; }
+.bunk-panel-status { font-size: 11px; color: #9aa0a8; padding: 3px 10px; border-top: 1px solid #2a2c31; }
+.bunk-ask-quote { font-style: italic; color: #c4c8ce; padding-left: 8px; border-left: 2px solid #5aa9ff; }
 .dragged { opacity: 0.5; }
 .bunk-rail .drop-before { box-shadow: inset 0 2px #5aa9ff; }
 .bunk-rail .drop-after { box-shadow: inset 0 -2px #5aa9ff; }
@@ -1057,6 +1061,7 @@ func (a *App) menuGroups() [][]menuItem {
 			{label: "New tab", action: "new_tab", run: func() { a.newTab("", a.cwdForNew()) }},
 			{label: "New window", action: "new_window", run: a.openWindow},
 			{label: "Rename tab…", action: "rename_tab", run: func() { a.renameTab(a.active) }},
+			{label: "Show documents", action: "documents", run: func() { a.toggleDocuments(a.active) }},
 			{label: "Close tab", action: "close_tab", run: func() { a.closeTab(a.active) }},
 		},
 		{

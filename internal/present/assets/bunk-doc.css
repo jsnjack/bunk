@@ -1,0 +1,225 @@
+/* The look of documents that bunk present renders from Markdown. The page
+   sets the theme's colours as custom properties on :root. */
+
+html {
+  background: var(--bunk-bg);
+  color: var(--bunk-fg);
+}
+
+body {
+  margin: 0;
+  font-family: "Noto Sans", Cantarell, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+
+::selection {
+  background: var(--bunk-selection);
+}
+
+#bunk-doc {
+  box-sizing: border-box;
+  max-width: 80ch;
+  margin: 0 auto;
+  padding: 24px 28px 48px;
+}
+
+#bunk-doc > :first-child {
+  margin-top: 0;
+}
+
+#bunk-doc > :last-child {
+  margin-bottom: 0;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  position: relative;
+  margin: 1.6em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+h1 {
+  font-size: 1.85em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--bunk-border);
+}
+
+h2 {
+  font-size: 1.45em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--bunk-border);
+}
+
+h3 { font-size: 1.2em; }
+h4 { font-size: 1.05em; }
+h5 { font-size: 1em; }
+h6 { font-size: 0.95em; color: var(--bunk-muted); }
+
+p, ul, ol, dl, table, pre, blockquote, details, .math-display {
+  margin: 0 0 1em;
+}
+
+a {
+  color: var(--bunk-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+strong, b {
+  font-weight: 600;
+}
+
+del {
+  color: var(--bunk-muted);
+}
+
+hr {
+  height: 1px;
+  margin: 1.6em 0;
+  border: 0;
+  background: var(--bunk-border);
+}
+
+ul, ol {
+  padding-left: 2em;
+}
+
+li + li {
+  margin-top: 0.25em;
+}
+
+li > p {
+  margin: 0.25em 0;
+}
+
+li > ul, li > ol {
+  margin: 0.25em 0 0;
+}
+
+.contains-task-list {
+  padding-left: 1.6em;
+}
+
+.task-list-item {
+  list-style: none;
+}
+
+.task-list-item input[type="checkbox"] {
+  margin: 0 0.45em 0.15em -1.4em;
+  vertical-align: middle;
+  accent-color: var(--bunk-accent);
+}
+
+blockquote {
+  margin-left: 0;
+  margin-right: 0;
+  padding: 0 1em;
+  color: var(--bunk-muted);
+  border-left: 3px solid var(--bunk-border);
+}
+
+code, kbd, samp, pre {
+  font-family: "Noto Sans Mono", monospace;
+  font-size: 0.88em;
+}
+
+:not(pre) > code {
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  background: var(--bunk-code-bg);
+}
+
+pre {
+  padding: 12px 14px;
+  overflow: auto;
+  line-height: 1.45;
+  border: 1px solid var(--bunk-border);
+  border-radius: 6px;
+  background: var(--bunk-code-bg);
+}
+
+pre code {
+  font-size: inherit;
+}
+
+pre.mermaid {
+  border: 0;
+  background: transparent;
+  text-align: center;
+}
+
+pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+}
+
+th, td {
+  padding: 6px 12px;
+  border: 1px solid var(--bunk-border);
+}
+
+th {
+  font-weight: 600;
+  background: var(--bunk-code-bg);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+.math-display {
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.math-display .katex-display {
+  margin: 0;
+}
+
+.footnotes {
+  margin-top: 2em;
+  padding-top: 0.5em;
+  font-size: 0.9em;
+  color: var(--bunk-muted);
+  border-top: 1px solid var(--bunk-border);
+}
+
+.footnotes > hr {
+  display: none;
+}
+
+/* A section that changed at the last replace: a bar beside its heading.
+   It fades at the next one. */
+.bunk-changed::before, .bunk-fading::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -14px;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--bunk-accent);
+}
+
+.bunk-fading::before {
+  animation: bunk-fade 1.5s ease-out forwards;
+}
+
+@keyframes bunk-fade {
+  to { opacity: 0; }
+}

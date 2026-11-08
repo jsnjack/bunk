@@ -1,7 +1,9 @@
 // Package wire is the format of agent status reports (docs/agent-hooks.md):
 // one JSON line, sent over the notify socket (internal/notify) or written
 // into a terminal as an OSC 1337 user variable and read back from session
-// output (internal/session, docs/remote-agent-status.md).
+// output (internal/session, docs/remote-agent-status.md). A present request
+// (EventPresent, docs/present.md) is a report line too, but only over the
+// socket: no session event has its name, so the in-band path drops it.
 //
 // It knows events only by their wire names, so it depends on neither
 // package and both can import it.
@@ -32,9 +34,13 @@ const (
 	MaxToken = 64
 	// MaxAgentSession caps the agent's own session ID, in bytes.
 	MaxAgentSession = 128
+	// MaxPath caps the path of a present request, in bytes.
+	MaxPath = 2048
 	// UserVar is the name of the OSC 1337 user variable that carries a
 	// report through a terminal.
 	UserVar = "bunk_notify"
+	// EventPresent asks the front end to show the document at Path.
+	EventPresent = "present"
 )
 
 // userVarPrefix starts the payload of an in-band report, after "1337;".
@@ -60,6 +66,12 @@ type Report struct {
 	// Held marks a needs-you whose end the agent reports itself, as its
 	// question tools' PostToolUse hooks do: typing does not end it.
 	Held bool `json:"held,omitempty"`
+
+	// Path is the absolute path of the document an EventPresent request
+	// shows. Auto marks a request from a hook rather than from the agent
+	// or the user asking.
+	Path string `json:"path,omitempty"`
+	Auto bool   `json:"auto,omitempty"`
 }
 
 var (
@@ -67,14 +79,19 @@ var (
 	errVersion = errors.New("unsupported protocol version")
 	errEvent   = errors.New("missing event")
 	errToken   = errors.New("oversized session token")
+	errPath    = errors.New("path longer than MaxPath")
 )
 
 // Encode returns r as one JSON line ending in a newline, with Version set.
 // It cleans the message (CleanText) and the other text fields (cleanField)
-// first. It does not check the event name.
+// first, but not Path, which must stay exact. It does not check the event
+// name.
 func (r Report) Encode() ([]byte, error) {
 	if len(r.Session) > MaxToken {
 		return nil, fmt.Errorf("encode: %w", errToken)
+	}
+	if len(r.Path) > MaxPath {
+		return nil, fmt.Errorf("encode: %w", errPath)
 	}
 	if r.Event == "" {
 		return nil, fmt.Errorf("encode: %w", errEvent)
@@ -99,9 +116,9 @@ func (r Report) Encode() ([]byte, error) {
 }
 
 // Decode parses one line, with or without its newline. It rejects lines
-// over MaxLine, other versions, a missing event and an oversized token. An
-// empty token passes; callers that need one check it. Text fields are valid
-// UTF-8 but not otherwise cleaned.
+// over MaxLine, other versions, a missing event, an oversized token and a
+// path over MaxPath. An empty token passes; callers that need one check it.
+// Text fields are valid UTF-8 but not otherwise cleaned.
 func Decode(line []byte) (Report, error) {
 	line = bytes.TrimSuffix(line, []byte("\n"))
 	if len(line) >= MaxLine {
@@ -119,6 +136,9 @@ func Decode(line []byte) (Report, error) {
 	}
 	if len(r.Session) > MaxToken {
 		return Report{}, fmt.Errorf("decode: %w", errToken)
+	}
+	if len(r.Path) > MaxPath {
+		return Report{}, fmt.Errorf("decode: %w", errPath)
 	}
 	return r, nil
 }

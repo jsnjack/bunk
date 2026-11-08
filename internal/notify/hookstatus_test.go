@@ -47,7 +47,11 @@ func codexTOML() string {
 	var b strings.Builder
 	b.WriteString("model = \"o3\"\n")
 	for _, h := range r.hooks {
-		fmt.Fprintf(&b, "\n[[hooks.%s]]\n[[hooks.%s.hooks]]\ntype = \"command\"\ncommand = '%s'\ntimeout = 5\n", h.event, h.event, shellCommand(h.args))
+		fmt.Fprintf(&b, "\n[[hooks.%s]]\n", h.event)
+		if h.matcher != "" {
+			fmt.Fprintf(&b, "matcher = '%s'\n", h.matcher)
+		}
+		fmt.Fprintf(&b, "[[hooks.%s.hooks]]\ntype = \"command\"\ncommand = '%s'\ntimeout = 5\n", h.event, h.command())
 	}
 	return b.String()
 }
