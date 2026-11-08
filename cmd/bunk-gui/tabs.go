@@ -561,13 +561,29 @@ func (t *Tab) dimmed(p *Pane) bool {
 // moveFocus focuses the nearest pane in a direction (Alt+arrows): the pane
 // whose rectangle lies beyond the focused one on that side and overlaps it
 // most on the other axis.
-func (t *Tab) moveFocus(dx, dy int) {
+func (t *Tab) moveFocus(dx, dy int) { t.moveFocusIn(dx, dy, moveFocusTries) }
+
+// moveFocusTries bounds the frames moveFocus waits for a pane split a
+// moment ago, which has no size until GTK lays it out; until then every
+// other pane still covers it.
+const moveFocusTries = 30
+
+func (t *Tab) moveFocusIn(dx, dy, tries int) {
 	cur := t.focus
 	if cur == nil || t.zoom != nil {
 		return
 	}
 	cb, ok := cur.widget.ComputeBounds(t.holder)
 	if !ok {
+		return
+	}
+	if cb.Width() <= 0 || cb.Height() <= 0 {
+		if tries > 0 {
+			coreglib.TimeoutAdd(16, func() bool {
+				t.moveFocusIn(dx, dy, tries-1)
+				return false
+			})
+		}
 		return
 	}
 	cx, cy, cw, ch := float64(cb.X()), float64(cb.Y()), float64(cb.Width()), float64(cb.Height())
