@@ -61,12 +61,29 @@ func TestGitHead(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(mainRepo, "internal", "session"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Not repositories: the empty .git a sandbox leaves as a mount point,
+	// and a .git file that names no git directory.
+	sandboxed := filepath.Join(mainRepo, "sandbox")
+	emptyTop := filepath.Join(root, "empty")
+	for _, d := range []string{filepath.Join(sandboxed, ".git"), filepath.Join(emptyTop, ".git")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	junk := filepath.Join(root, "junk")
+	write(filepath.Join(junk, ".git"), "not a gitdir line\n")
+	dangling := filepath.Join(root, "dangling")
+	write(filepath.Join(dangling, ".git"), "gitdir: "+filepath.Join(root, "gone")+"\n")
 
 	for _, tc := range []struct{ dir, repo, branch string }{
 		{mainRepo, "bunk", "shared-core"},
 		{filepath.Join(mainRepo, "internal", "session"), "bunk", "shared-core"},
 		{linked, "bunk", "bunk-gui"},
 		{detached, "detached", "0123456"},
+		{sandboxed, "bunk", "shared-core"},
+		{emptyTop, "", ""},
+		{junk, "", ""},
+		{dangling, "", ""},
 		{root, "", ""},
 		{"", "", ""},
 	} {
