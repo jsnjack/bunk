@@ -176,8 +176,8 @@ the code.
   root box, because refreshChrome replaces the tab items under it.
   - A right-click on a tab, caught on the tab list like the rename and
     drag gestures, opens its menu without selecting it: Rename…, Copy
-    directory, Mark as seen, Mute notifications, Close tab and Close
-    other tabs.
+    directory, Mark as seen, Mute notifications, Show documents, Open in
+    panel…, Close tab and Close other tabs.
   - Mark as seen does what looking at each pane does (`AckSeen`, and
     the tracker sees the panes watched once): done and inferred needs-you
     clear, command marks clear and notifications go. A reported needs-you
@@ -194,6 +194,90 @@ the code.
     starts on the first other row, so the switcher's key and Enter switch
     away. `TestGUITabMenu`, `TestGUIPaneMenu` and
     `TestGUISwitcherCurrent` check them.
+
+## The document panel
+
+bunk-gui shows documents that agents present in a side panel per tab
+(`panel.go`, `docs/present.md`). The panel sits beside the tab's panes
+in `Tab.page`, a GtkPaned: the pane tree is untouched, and hiding the
+panel gives the panes their width back.
+
+- Documents are HTML and Markdown (`present.Kind.Document`), which
+  agents write and hooks report; the skill and the session note ask for
+  HTML first, because it can be interactive. Any other file the user
+  previews (`present.Preview`): images, video and audio in a page that
+  loads the file, text highlighted by its name, all served at
+  `doc-N/NAME?bunk-preview` (`present.RenderPreview`); a PDF loads as it
+  is into WebKit's PDF viewer. A response WebKit cannot show is refused,
+  not downloaded, and the status line says so.
+- "Open in panel…" (`open_in_panel`, the header, the tab's menu, the
+  main menu, `documents` in a tab without documents) opens a GtkFileDialog
+  in the focused pane's directory; files dropped on `Tab.page` preview
+  too. Their questions go to the tab's agent.
+- HTML pages get bunk's assets (`present.AssetsURL`, allowed by
+  `htmlCSP`) and the theme's colours first in their head
+  (`present.ThemeCSS`, `present.InsertHead`); the page runtime works on
+  any page. A browser gets a copy of such a page that loads the assets
+  from disk (`present.NeedsPage`, `WriteStandalone`).
+- A document counts as loaded only once a load of its address committed
+  (`panel.committed`): a load that a newer one cancelled still finishes.
+- `bunk present FILE` (or `bunk-gui present`) sends a present request
+  over the notify socket with the pane's token. bunk-gui answers
+  "shown" and opens the file in the panel of that pane's tab. bunk's TUI
+  has no presenter and answers "unsupported", so the CLI opens the
+  browser: a Markdown file rendered by `present.WriteStandalone`.
+- Documents show in WebKitGTK 6 views (`webview.go`, cgo). One
+  ephemeral network session and web context serve them all; WebKit runs
+  page content in its sandboxed web process. Permission requests are
+  denied, and a navigation leaves the document only when the user
+  clicks a link, which opens in the browser.
+- Pages load through `bunk-present://` (`presentserve.go`): `assets/`
+  serves the page runtime, Mermaid and KaTeX embedded in
+  `internal/present`; `doc-N/` serves document N's directory, each
+  document its own origin. Hidden files, symbolic links out of the
+  directory and, for a document in the home directory or `/` (compared
+  with symbolic links resolved), every file but the document itself are
+  refused. HTML gets a Content-Security-Policy, as a header and first
+  in its head, that blocks the network, `file://` and form submission.
+  Markdown is rendered without raw HTML. Files are read and rendered
+  off the main loop: a 2 MiB Markdown file with code takes 1.5 s.
+- The directory is watched (GFileMonitor). A change of the file, an
+  image or, for HTML, a page's code, style, font or media reloads after
+  250 ms: Markdown swaps the article in place (`bunkDoc.replace`),
+  keeps the reader at the same heading and marks the sections whose
+  `data-bunk-hash` changed; HTML loads again and scrolls back. A page
+  whose web process ends loads again once until its file changes.
+- Closing a tab ends its view's web process (`closeWebView`); `--report`
+  counts the live views (`run.web_views`).
+- "Ask the agent" (the header button, or the context menu on selected
+  text) reads the selection and its heading in an isolated script world
+  (`present.SelectionScript`), which page scripts cannot change. The
+  question is pasted into the pane that presented the document, else the
+  tab's agent, as one bracketed paste without Enter; the pane takes the
+  focus, and the user sends it. Without bracketed paste it is one line.
+- Hook snippets run `present --hook AGENT -` after the agents'
+  file-writing tools. A reported Markdown or HTML file is listed in the
+  panel; `[present] auto` opens the panel for it. Before a plan approval
+  (Claude Code's ExitPlanMode, with `planFilePath`; Copilot CLI's
+  exit_plan_mode, with the session's `plan.md`) the same command shows
+  the plan with the panel open.
+- Agents cannot see their environment, so the snippets' SessionStart hook
+  (`present --session-start AGENT -`) tells them, in a bunk-gui pane
+  only (`TERM_PROGRAM=bunk-gui`), that the panel is there and how to
+  present (`sessionHint`), in each agent's additionalContext form.
+- `bunk present install AGENT` writes the bunk-present skill
+  (`skills/bunk-present/SKILL.md` for claude, codex and copilot), which
+  tells agents when and how to present; Preferences offers it too. Its
+  description names the task, not the environment variable, because
+  agents choose skills by it.
+- Session restore keeps each tab's documents, the one shown, the panel's
+  width and whether it is open. Restored questions go to the tab's agent.
+  A tab not shown yet has no width, so the panel takes its width when
+  GTK first lays the tab out (`max-position`), as restored splits do; a
+  hidden panel loads its document when it opens.
+- Window tests drive the panel with `present`, `present-eval`,
+  `present-wait`, `present-select`, `present-ask` and `present-toggle`
+  (`TestGUIPresentMarkdown`, `TestGUIPresentHTML`, `TestGUIPresentListed`).
 
 ## Session restore
 

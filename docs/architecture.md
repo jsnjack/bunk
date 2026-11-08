@@ -26,6 +26,8 @@ cmd.go              cobra root command, run(), app initialization
 cmd_config.go       "bunk config" subcommand tree
 cmd_notify.go       "bunk notify": the agent hook CLI (notify.RunCLI)
 cmd_ssh.go          "bunk ssh": ssh that exports the pane's token (notify.RunSSH)
+cmd_present.go      "bunk present": shows a document in bunk-gui's panel, else
+                    the browser (notify.RunPresent)
 app.go              App struct, event loop, key handling, triggerRedraw()
 input_modes.go      Host focus forwarding
 input_tcell.go      tcell key/mouse events → internal/input (keyToBytesMode, mouseToBytes)
@@ -119,9 +121,18 @@ internal/notify/    Agent hook reports: Unix socket server (token → Session),
                     client, `notify` CLI (RunCLI), hook snippets per agent,
                     whether they are installed and installing the
                     standalone ones (hookstatus.go), the in-band writer
-                    without a socket, `ssh` (RunSSH)
+                    without a socket, `ssh` (RunSSH), present requests and
+                    the `present` CLI (present.go, RunPresent), the
+                    bunk-present skill and its install (skill.go,
+                    skill/SKILL.md)
   wire/             The report line, its OSC 1337 in-band form, tmux/screen
                     wrapping; imported by notify and session alike
+
+internal/present/   Documents for bunk-gui's panel: Markdown to an HTML page
+                    (goldmark, Chroma, math), the page runtime (bunkDoc:
+                    render, anchor, replace with change marks), Mermaid and
+                    KaTeX embedded, standalone pages for the browser;
+                    file kinds and previews of other files (preview.go)
 
 internal/alert/     Agent and command notifications for both front ends:
                     when a state change or a long command's end notifies
@@ -147,6 +158,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
   cmd.go            cobra root command: flags, logging, notify socket, runApp()
   cmd_notify.go     "bunk-gui notify": the agent hook CLI (notify.RunCLI)
   cmd_ssh.go        "bunk-gui ssh": ssh that exports the tab's token (notify.RunSSH)
+  cmd_present.go    "bunk-gui present": shows a document in the tab's panel
+                    (notify.RunPresent)
   logger.go         slog setup for --debug and --trace; GLib messages arrive through slog
   app.go            App struct, window activation, test-run hooks and statistics
   themes.go         The theme shown: terminal colours, the CSS of the content
@@ -173,6 +186,12 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     rebuilds tabs and splits, resumes agents (--restore)
   prefs_hooks.go    Agent hooks in Preferences (state, Install, Copy
                     snippet) and the toast for an agent without hooks
+  panel.go          The document panel per tab: documents and previews,
+                    reload in place, asking the agent, restore, its --do steps
+  presentserve.go   The bunk-present:// scheme: assets, each document's
+                    directory as its own origin, the HTML sandbox policy
+  webview.go        WebKitGTK views (cgo): one ephemeral session, the
+                    navigation policy, the context menu, script evaluation
 packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
 
 assets/             README pictures from TestGUIScreenshots: bunk-gui shots and
@@ -182,7 +201,9 @@ docs/               features.md: every feature and key; configuration.md;
                     agent-status.md: states, rail, notifications, command
                     marks; agent-hooks.md: hook recipes and the notify
                     protocol; remote-agent-status.md: agents on hosts reached
-                    over ssh; development.md: packages, builds, tests
+                    over ssh; present.md: the document panel, `bunk present`,
+                    its protocol, hooks and skill; development.md: packages,
+                    builds, tests
 scripts/            Terminal feature scripts (tested by terminal_features_test.go);
                     headless-gui.sh runs GUI tests; screenshots.sh renders assets/;
                     benchcheck/ runs and compares benchmarks (make bench-check)

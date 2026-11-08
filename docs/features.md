@@ -21,7 +21,7 @@ switch tabs.
 | Tab labels | Hold Alt | In the collapsed rail, holding Alt alone for 0.4 s labels each tab's ring with its Alt+N key, agent or name, repo ⎇ branch and hosts; Alt+N switches while they show, and releasing Alt hides them |
 | Agent status | | Dot, state, repo ⎇ branch, the containers and SSH hosts of all the tab's panes as their badges name them, and the agent's notice; see [agent-status.md](agent-status.md) |
 | Switcher | Ctrl+Shift+O | Lists the tabs in their order and marks the current one; the cursor starts on the first other tab. Type to filter, Up and Down pick a row, Enter opens it. A row's × closes its tab, and the switcher stays open |
-| Tab menu | Right-click a tab | Rename, Copy directory, Mark as seen (clears done marks and notifications), Mute notifications, Close tab, Close other tabs; closing asks first while something runs |
+| Tab menu | Right-click a tab | Rename, Copy directory, Mark as seen (clears done marks and notifications), Mute notifications, Show documents, Open in panel…, Close tab, Close other tabs; closing asks first while something runs |
 | Pane menu | Right-click a pane | The link under the pointer, Copy, Paste, Select all, Find, Split, Zoom, Passthrough, Copy or open the directory, Clear scrollback, Close pane. Where the program uses the mouse, Shift+right-click opens it |
 | Next needing you | Alt+A | Visits needs-you tabs, then done tabs; a done tab counts as seen, and a needs-you tab stays until you answer |
 | Notifications | | A desktop notification when an agent in a tab you are not looking at needs you, is done or failed, or when a command there that ran 10 s or longer ends; clicking it opens the tab |

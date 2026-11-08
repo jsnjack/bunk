@@ -99,15 +99,18 @@ the code.
   - bunk-gui's Preferences show the same states with Install and Copy
     snippet buttons and a link to the setup guide.
   - bunk-gui offers the install in a banner above the panes (`banner.go`,
-    under the restore banner): at start for agents whose bunk hooks are
-    outdated, and when a tab first shows an agent whose hooks are missing
-    or outdated, unless the agent is remote, or has reported with hooks
-    that are only missing. It names each agent and the file it changes;
-    Update runs `InstallHooks` for each and toasts the result, Not now
-    hides it until the next start. `hooks_hint = false` turns it off.
+    under the restore banner): at start for agents whose bunk hooks or
+    bunk-present skill are outdated, and when a tab first shows an agent
+    whose hooks or skill are missing or outdated, unless the agent is
+    remote; hooks that are only missing are left out for an agent that
+    reported. It names each agent, what it lacks (`agentSetup`) and the
+    files it changes; Set up or Update runs `InstallHooks` and
+    `InstallSkill` as needed and toasts the result, Not now hides it until
+    the next start. `hooks_hint = false` turns it off.
   - Window tests pass `--agent-home`, a directory with every agent's hooks
-    installed, so no hooks banner comes between a scenario's steps; the
-    hook tests pass an empty one or one with outdated hooks.
+    and skill installed, so no setup banner comes between a scenario's
+    steps; the hook tests pass an empty one or one with outdated hooks or
+    an outdated skill.
 
 ## Agents on other hosts
 

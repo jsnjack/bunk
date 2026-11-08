@@ -27,6 +27,7 @@ changing it:
 | `internal/vt10x`, `internal/session`, `internal/graphics`, bunk's TUI (package main): parsing, cells, reflow, links, images, the PTY writer, closing a session | [docs/terminal.md](docs/terminal.md) |
 | `cmd/bunk-gui`, `internal/restore`, `internal/boxdraw`: keys, pointer, windows, tabs and the rail, menus, session restore, drawing glyphs and images | [docs/gui.md](docs/gui.md) |
 | `internal/badges`, `internal/theme`: the badges and colours both front ends share | [docs/badges-and-themes.md](docs/badges-and-themes.md) |
+| the document panel, `internal/present`, `bunk present`, the bunk-present skill | [docs/gui.md](docs/gui.md#the-document-panel); what users see in [docs/present.md](docs/present.md) |
 | agent detection, `internal/notify`, `internal/alert`, `internal/desktop`, notifications, installing hooks, agents over ssh | [docs/agent-internals.md](docs/agent-internals.md); the protocol in [docs/agent-hooks.md](docs/agent-hooks.md), the remote design in [docs/remote-agent-status.md](docs/remote-agent-status.md) |
 | any test: leak and soak tests, benchmarks, fuzz targets, window-test scenarios, terminal feature scripts, test recipes | [docs/testing.md](docs/testing.md) |
 | `config.go`, bunk-gui's settings and key bindings | [docs/configuration.md](docs/configuration.md#notes-for-working-on-the-code) |
@@ -42,7 +43,7 @@ One line per package or directory; [docs/architecture.md](docs/architecture.md)
 is the file index.
 
 ```
-*.go (package main)  bunk's TUI: cobra commands (config, notify, ssh), the App and its event
+*.go (package main)  bunk's TUI: cobra commands (config, notify, ssh, present), the App and its event
                      loop, panes, BSP layout, rendering, badges, alerts, relay, search, config
 internal/vt10x/      vendored VT100/xterm emulator (fork of hinshun/vt10x) with local extensions:
                      16-byte cells, graphemes, fast parse paths, rewrap, the OSC 8 link table
@@ -55,8 +56,11 @@ internal/restore/    bunk-gui's saved windows: snapshots, slots, scrollback file
 internal/badges/     pane badges for both front ends (Layout); badgetest holds the parity cases
 internal/theme/      colour themes for both front ends, [ui] overrides, badge and state colours
 internal/boxdraw/    cell masks for box drawing, blocks, braille and powerline that bunk-gui draws
-internal/notify/     agent hook reports: socket server, `notify` and `ssh` CLIs, hook snippets
-                     and installing them; wire/ is the report line and its OSC 1337 form
+internal/notify/     agent hook reports: socket server, `notify`, `ssh` and `present` CLIs, hook
+                     snippets, the bunk-present skill and installing them; wire/ is the report
+                     line and its OSC 1337 form
+internal/present/    documents and previews for bunk-gui's panel: Markdown and preview pages,
+                     the page runtime, Mermaid and KaTeX embedded, standalone browser pages
 internal/alert/      when an agent state or a long command notifies, for both front ends
 internal/desktop/    bunk's TUI desktop notifications through gdbus; desktoptest is a fake gdbus
 internal/leakcheck/  test helper: fds, goroutines, children and heap against a baseline
@@ -211,6 +215,9 @@ bunk-gui ([docs/gui.md](docs/gui.md)):
   are fitted; colour emoji sit on a colour page of the atlas.
 - Panes get `TERM_PROGRAM=bunk-gui`, so shell start-up files can skip
   starting bunk's TUI there.
+- Each tab has a document panel beside its panes (`panel.go`): what agents
+  present and any file the user opens, in WebKitGTK views that serve each
+  document as its own origin through `bunk-present://`.
 
 Both front ends ([docs/badges-and-themes.md](docs/badges-and-themes.md)):
 - Add a badge in `internal/badges`, never in one front end, and add a case
@@ -250,7 +257,10 @@ Agents ([docs/agent-internals.md](docs/agent-internals.md)):
   report wins until it is acknowledged or cleared, or the foreground
   changes.
 - Users set up agent hooks with guidance, not behind their back: bunk
-  writes an agent's configuration only when the user asks for it.
+  writes an agent's configuration only when the user asks for it. One
+  banner offers an agent's hooks and its bunk-present skill.
+- Agents cannot see their environment: a SessionStart hook tells them in a
+  bunk-gui pane that the panel is there, and the skill asks for HTML.
 - Agents on hosts reached over ssh report in-band when no socket is
   reachable.
 - The TUI reads `Session.Status` before taking the session lock.
@@ -308,8 +318,9 @@ Agents ([docs/agent-internals.md](docs/agent-internals.md)):
     `XDG_STATE_HOME`. `TestGUIRestoreSession` saves, quits and restores
     with a fake `claude` on PATH that reports a session ID.
   - Window tests pass `--agent-home`, a directory with every agent's hooks
-    installed, so no hooks banner comes between a scenario's steps; the
-    hook tests pass an empty one or one with outdated hooks.
+    and bunk-present skill installed, so no setup banner comes between a
+    scenario's steps; the hook tests pass an empty one or one with
+    outdated hooks or an outdated skill.
   - `TestMain` (`main_test.go`) replaces `writeNativeClipboard`, so no test
     writes the desktop clipboard. `clipboardHas(text)` reports what bunk tried
     to copy. `TestMain` also points `DBUS_SESSION_BUS_ADDRESS` at a socket that
