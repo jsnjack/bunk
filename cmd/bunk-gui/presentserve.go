@@ -9,9 +9,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
+
+	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 
 	"bunk/internal/present"
 )
@@ -20,12 +21,21 @@ import (
 const maxServed = 32 << 20
 
 // htmlCSP is the policy of agent-written HTML: the page may run its own
-// scripts and load files from its own directory, and nothing from the
+// scripts, load files from its own directory and bunk's assets (the page
+// runtime, its stylesheet, Mermaid and KaTeX), and nothing from the
 // network or the rest of the disk.
-const htmlCSP = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
-	"style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; " +
-	"media-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; " +
+const htmlCSP = "default-src 'self'; script-src 'self' " + assetSource + " 'unsafe-inline' 'unsafe-eval'; " +
+	"style-src 'self' " + assetSource + " 'unsafe-inline'; img-src 'self' " + assetSource + " data: blob:; " +
+	"font-src 'self' " + assetSource + " data:; media-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; " +
 	"worker-src 'self' blob:; form-action 'none'; base-uri 'self'; object-src 'none'"
+
+// assetSource names the origin of bunk's assets in a policy.
+const assetSource = presentScheme + "://assets"
+
+// previewQuery asks for the preview page of a file that shows through one
+// (present.Kind.PreviewPage), rather than the file itself, which the page
+// loads: bunk-present://doc-N/shot.png?bunk-preview.
+const previewQuery = "bunk-preview"
 
 var (
 	errNotFound = errors.New("not found")
@@ -39,66 +49,111 @@ var (
 //	                             document itself rendered when Markdown
 //
 // Each document has its own origin, so one document's page cannot read
-// another's files. A view serves only its own panel's documents.
+// another's files. A view serves only its own panel's documents. Files are
+// read and rendered off the main loop: a large Markdown document takes
+// seconds, and the panes keep running meanwhile.
 func (a *App) serveScheme(req uintptr, v *webView, raw string) {
-	data, ctype, csp, cors, err := a.schemeFile(v, raw)
+	job, err := a.schemeJob(v, raw)
 	if err != nil {
 		failScheme(req, fmt.Errorf("%s: %w", raw, err))
 		return
 	}
-	finishScheme(req, data, ctype, csp, cors)
+	go func() {
+		r, err := job()
+		coreglib.IdleAdd(func() {
+			if err != nil {
+				failScheme(req, fmt.Errorf("%s: %w", raw, err))
+				return
+			}
+			finishScheme(req, r.data, r.ctype, r.csp, r.cors)
+		})
+	}()
 }
 
-func (a *App) schemeFile(v *webView, raw string) (data []byte, ctype, csp string, cors bool, err error) {
+// served is the answer to a bunk-present request.
+type served struct {
+	data       []byte
+	ctype, csp string
+	cors       bool
+}
+
+// schemeJob finds what raw names, on the main loop, and returns the work
+// that reads it, which may run on any goroutine.
+func (a *App) schemeJob(v *webView, raw string) (func() (served, error), error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, "", "", false, err
+		return nil, err
 	}
 	rel := strings.TrimPrefix(path.Clean("/"+u.Path), "/")
 	if u.Host == "assets" {
-		data, err := fs.ReadFile(present.Assets(), rel)
-		if err != nil {
-			return nil, "", "", false, errNotFound
-		}
-		return data, contentType(rel), "", true, nil
+		return func() (served, error) {
+			data, err := fs.ReadFile(present.Assets(), rel)
+			if err != nil {
+				return served{}, errNotFound
+			}
+			return served{data: data, ctype: contentType(rel), cors: true}, nil
+		}, nil
 	}
 	if v == nil || v.panel == nil {
-		return nil, "", "", false, errRefused
+		return nil, errRefused
 	}
 	id, ok := strings.CutPrefix(u.Host, "doc-")
 	if !ok {
-		return nil, "", "", false, errNotFound
+		return nil, errNotFound
 	}
-	var d *panelDoc
+	var doc string
 	for _, o := range v.panel.docs {
 		if strconv.Itoa(o.id) == id {
-			d = o
+			doc = o.path
 		}
 	}
-	if d == nil {
-		return nil, "", "", false, errNotFound
+	if doc == "" {
+		return nil, errNotFound
 	}
-	file, err := docFile(d.path, rel)
+	theme, preview := a.presentTheme(), u.RawQuery == previewQuery
+	return func() (served, error) { return docServed(doc, rel, theme, preview) }, nil
+}
+
+// docServed reads the file rel of the document at doc: Markdown rendered,
+// HTML with its policy and the theme's colours, and with preview set the
+// preview page of a file that has one.
+func docServed(doc, rel string, theme present.Theme, preview bool) (served, error) {
+	file, err := docFile(doc, rel)
 	if err != nil {
-		return nil, "", "", false, err
+		return served{}, err
+	}
+	opts := present.Options{Title: filepath.Base(file), AssetBase: present.AssetsURL, Theme: theme}
+	if kind, err := present.Preview(file); preview && err == nil && kind.PreviewPage() {
+		var src []byte
+		if kind == present.KindText {
+			if src, err = readCapped(file); err != nil {
+				return served{}, err
+			}
+		} else if _, err := os.Stat(file); err != nil {
+			return served{}, errNotFound
+		}
+		page, err := present.RenderPreview(filepath.Base(file), kind, src, opts)
+		if err != nil {
+			return served{}, err
+		}
+		return served{data: page, ctype: "text/html; charset=utf-8"}, nil
 	}
 	src, err := readCapped(file)
 	if err != nil {
-		return nil, "", "", false, err
+		return served{}, err
 	}
 	switch present.KindOf(file) {
 	case present.KindMarkdown:
-		page, err := present.RenderMarkdown(src, present.Options{
-			Title: filepath.Base(file), AssetBase: presentScheme + "://assets/", Theme: a.presentTheme(),
-		})
+		page, err := present.RenderMarkdown(src, opts)
 		if err != nil {
-			return nil, "", "", false, err
+			return served{}, err
 		}
-		return page, "text/html; charset=utf-8", "", false, nil
+		return served{data: page, ctype: "text/html; charset=utf-8"}, nil
 	case present.KindHTML:
-		return withCSP(src, htmlCSP), "text/html; charset=utf-8", htmlCSP, false, nil
+		page := withCSP(present.InsertHead(src, "<style>"+present.ThemeCSS(theme)+"</style>"), htmlCSP)
+		return served{data: page, ctype: "text/html; charset=utf-8", csp: htmlCSP}, nil
 	}
-	return src, contentType(file), htmlCSP, false, nil
+	return served{data: src, ctype: contentType(file), csp: htmlCSP}, nil
 }
 
 // docFile is the file rel names in the directory of the document at doc.
@@ -120,12 +175,14 @@ func docFile(doc, rel string) (string, error) {
 			return "", errRefused
 		}
 	}
-	if home, err := os.UserHomeDir(); err == nil && dir == filepath.Clean(home) || dir == "/" {
-		return "", errRefused
-	}
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return "", errNotFound
+	}
+	// Resolved, so that another path to the home directory, through a
+	// symbolic link such as Fedora Atomic's /home, counts as well.
+	if realDir == "/" || realDir == realHome() {
+		return "", errRefused
 	}
 	real, err := filepath.EvalSymlinks(file)
 	if err != nil {
@@ -135,6 +192,19 @@ func docFile(doc, rel string) (string, error) {
 		return "", errRefused
 	}
 	return file, nil
+}
+
+// realHome is the home directory with symbolic links resolved, or "".
+func realHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	real, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		return ""
+	}
+	return real
 }
 
 func readCapped(file string) ([]byte, error) {
@@ -155,33 +225,10 @@ func readCapped(file string) ([]byte, error) {
 	return data, nil
 }
 
-var (
-	headTag    = regexp.MustCompile(`(?i)<head(\s[^>]*)?>`)
-	htmlTag    = regexp.MustCompile(`(?i)<html(\s[^>]*)?>`)
-	doctypeTag = regexp.MustCompile(`(?i)^\s*<!doctype[^>]*>`)
-)
-
 // withCSP puts the policy into the page itself as well, first in its head,
 // so it holds whatever WebKit makes of the response's header.
 func withCSP(page []byte, csp string) []byte {
-	meta := []byte(`<meta http-equiv="Content-Security-Policy" content="` + csp + `">`)
-	at, wrap := -1, false
-	if loc := headTag.FindIndex(page); loc != nil {
-		at = loc[1]
-	} else if loc := htmlTag.FindIndex(page); loc != nil {
-		at, wrap = loc[1], true
-	} else if loc := doctypeTag.FindIndex(page); loc != nil {
-		at, wrap = loc[1], true
-	} else {
-		at, wrap = 0, true
-	}
-	if wrap {
-		meta = append(append([]byte("<head>"), meta...), "</head>"...)
-	}
-	out := make([]byte, 0, len(page)+len(meta))
-	out = append(out, page[:at]...)
-	out = append(out, meta...)
-	return append(out, page[at:]...)
+	return present.InsertHead(page, `<meta http-equiv="Content-Security-Policy" content="`+csp+`">`)
 }
 
 // contentType names a served file's type by its extension.

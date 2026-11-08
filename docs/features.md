@@ -63,18 +63,29 @@ and bunk-gui draws their images 1:1.
 Agents can show you what they wrote in a panel beside the tab's panes
 (`docs/present.md`). An agent, or you, runs `bunk present FILE` in a pane.
 
-- Markdown shows as a formatted page with tables, highlighted code, Mermaid
-  diagrams and math. HTML pages run as they are, with no network access.
+- HTML pages run as they are, with no network access, and can use bunk's
+  stylesheet, theme colours, Mermaid and KaTeX. Agents are told to prefer
+  them, because they can be interactive. Markdown shows as a formatted page
+  with tables, highlighted code, Mermaid diagrams and math.
+- Any other file previews there too: images, PDFs, video, audio, and code
+  or text highlighted by its name. "Preview a file…" (the panel's header,
+  the tab's menu, the main menu, the `preview_file` action) opens a file
+  dialog in the focused pane's directory, and files dropped on a tab
+  preview as well.
 - The page reloads when the file changes and keeps your place. Sections that
   changed are marked.
 - Select text and choose "Ask the agent" (the header button or the context
   menu). Your question is pasted into the agent's input with the file, the
   section and the quoted text. Press Enter in the pane to send it.
 - "Show documents" in the tab's menu or the main menu shows and hides the
-  panel; the `documents` action has no default key. The header lists the
+  panel, or asks for a file in a tab without documents; the `documents`
+  and `preview_file` actions have no default keys. The header lists the
   tab's documents and opens the shown one in the browser.
 - Agent hooks list the Markdown and HTML files an agent writes; with
-  `[present] auto = true` they open the panel too.
+  `[present] auto = true` they open the panel too. When Claude Code or
+  Copilot CLI asks you to approve a plan, the plan opens in the panel.
+- In a bunk-gui pane, the hooks tell each agent at session start that the
+  panel is there and how to present to it.
 - `bunk present install claude` (or `codex`, `copilot`) installs a skill that
   tells the agent when to present a document.
 

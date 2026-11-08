@@ -443,7 +443,7 @@ func (a *App) doAction(action string, done func()) {
 			return
 		}
 		coreglib.BaseObject(b).Emit("clicked")
-	case "present", "present-eval", "present-select", "present-ask", "present-toggle":
+	case "present", "present-eval", "present-select", "present-ask", "present-toggle", "present-kill", "preview":
 		if err := a.presentStep(verb, arg); err != nil {
 			a.reportError("%s: %v", action, err)
 		}

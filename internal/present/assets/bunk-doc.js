@@ -1,13 +1,20 @@
-// The runtime of pages that bunk present renders from Markdown. It typesets
-// math with KaTeX and draws Mermaid diagrams, loading each library only for
-// a document that needs it, and lets bunk-gui swap the document's content
-// while the reader keeps their place. bunk-gui calls window.bunkDoc.
+// The runtime of pages that bunk present renders from Markdown, which
+// agents' HTML pages load too. It typesets math with KaTeX (.math and
+// .math.math-display elements) and draws Mermaid diagrams (pre.mermaid),
+// loading each library only for a page that needs it, and lets bunk-gui
+// swap the document's content while the reader keeps their place.
+// bunk-gui calls window.bunkDoc.
 (function () {
   'use strict';
 
   var self = document.currentScript;
   var base = self ? self.src.replace(/[^/]*$/, '') : '';
-  var dark = document.documentElement.getAttribute('data-bunk-theme') === 'dark';
+  // A rendered Markdown page names its theme; an agent's HTML page in
+  // bunk-gui's panel gets --bunk-dark, and elsewhere asks the system.
+  var theme = document.documentElement.getAttribute('data-bunk-theme');
+  var flag = getComputedStyle(document.documentElement).getPropertyValue('--bunk-dark').trim();
+  var dark = theme ? theme === 'dark' :
+    flag ? flag === '1' : window.matchMedia('(prefers-color-scheme: dark)').matches;
   var loading = {};
   var mermaidReady = false;
 
@@ -28,6 +35,17 @@
     return loading[name];
   }
 
+  // style adds KaTeX's stylesheet once, unless the page links it already,
+  // as a rendered Markdown page does. Without it KaTeX's MathML copy of
+  // each formula shows beside the formula.
+  function style() {
+    if (document.querySelector('link[href$="katex/katex.min.css"]')) return;
+    var l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.href = base + 'katex/katex.min.css';
+    document.head.appendChild(l);
+  }
+
   function warn(err) {
     console.warn('bunk-doc:', err);
   }
@@ -35,6 +53,7 @@
   function typeset(root) {
     var nodes = root.querySelectorAll('.math:not([data-bunk-tex])');
     if (!nodes.length) return Promise.resolve();
+    style();
     return load('katex/katex.min.js').then(function () {
       nodes.forEach(function (el) {
         var tex = el.textContent;
@@ -168,5 +187,10 @@
   });
 
   window.bunkDoc = {render: render, anchor: anchor, restore: restore, replace: replace};
-  render();
+  // An HTML page may load the runtime in its <head>, before the body.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { render(); });
+  } else {
+    render();
+  }
 })();

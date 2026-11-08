@@ -1,14 +1,18 @@
 # Presenting documents
 
-bunk-gui can show Markdown and HTML documents in a side panel beside each
-tab. An agent that writes a plan, a design, a report or an explanation for
-the user runs `bunk present FILE` in its pane, and the document opens in the
-side panel of the pane's tab. The user reads it there, selects a passage
-and sends a question about it to the agent. The panel reloads the file
-whenever it is saved and marks the sections that changed.
+bunk-gui can show documents in a side panel beside each tab. An agent that
+writes a plan, a design, a report or an explanation for the user, best as
+an interactive HTML page, runs `bunk present FILE` in its pane, and the
+document opens in the side panel of the pane's tab. The user reads it
+there, selects a passage and sends a question about it to the agent. The
+panel reloads the file whenever it is saved.
+
+The user can preview any other file there too: images, PDFs, video, audio,
+and code or other text with syntax highlighting.
 
 bunk's terminal UI has no side panel. There, and outside bunk, the same
-command opens the document in the web browser.
+command opens the document in the web browser, and other files in their
+default application.
 
 ## The panel
 
@@ -17,19 +21,32 @@ and give up only the panel's width. Drag its edge to resize it; the width
 stays while the window resizes.
 
 - The header lists the tab's documents. Its buttons ask the agent about
-  the selected text, open the document in the web browser, remove it from
-  the list and hide the panel.
+  the selected text, preview a file, open the document in the web browser,
+  remove it from the list and hide the panel.
 - "Show documents" in the tab's menu and in the main menu shows and hides
-  the panel. The `documents` action has no default key; bind one in
-  `[keys]`.
+  the panel; in a tab without documents it asks for a file to preview.
+- "Preview a file…" in the header, the tab's menu and the main menu opens
+  a file dialog in the focused pane's directory. Dropping files on a tab,
+  from a file manager, previews them too. Questions about a file you
+  opened go to the tab's agent.
+- The `documents` and `preview_file` actions have no default keys; bind
+  them in `[keys]`.
 - The line at the bottom says when the document last reloaded, how many
   sections changed and where the file is, or why it could not be shown.
 - A Markdown document reloads in place: the panel keeps the heading you
   were reading at the top and marks the headings whose sections changed.
   The marks fade at the next change. An HTML page loads again and scrolls
   back.
+- A document reloads when its file changes, and when an image beside it
+  does. An HTML page also reloads for the scripts, styles, fonts and media
+  beside it, not for other files, which change all the time in a
+  directory such as `/tmp`. A preview reloads when its file changes.
+- A page whose web process ends, as when it uses up its memory, loads
+  again once. If it ends it again, the status line says so, and it stays
+  down until its file changes or you show it again.
 - Session restore brings back each tab's documents, the one shown, the
-  panel's width and whether it was open.
+  panel's width and whether it was open. A hidden panel loads its document
+  when you open it.
 
 To ask about a passage, select it and choose "Ask the agent about this…"
 from the context menu, or the header's button. A popover shows the quote
@@ -49,6 +66,7 @@ anywhere by itself.
 ```
 bunk present FILE
 bunk present --hook AGENT -
+bunk present --session-start AGENT -
 bunk present skill | status | install AGENT
 ```
 
@@ -64,34 +82,61 @@ that applies, prints one line and exits:
 | A bunk-gui pane | The side panel of the pane's tab shows the file | `Showing docs/plan.md in bunk-gui's side panel.` | 0 |
 | A host reached over ssh, without a bunk socket | Nothing | `Cannot show docs/plan.md here: this host is reached over ssh, …` | 0 |
 | No `WAYLAND_DISPLAY` or `DISPLAY` | Nothing | `Cannot show docs/plan.md here: there is no graphical display …` | 0 |
-| bunk's terminal UI, or outside bunk | The web browser opens the file | `Opened docs/plan.md in the web browser.` | 0 |
-| Anywhere | FILE is missing, unreadable, not a regular file or of another kind | the reason, on stderr | 1 |
+| bunk's terminal UI, or outside bunk | The web browser opens a document or text; an image, PDF, video or audio file opens in its default application | `Opened docs/plan.md in the web browser.`, or `Opened shot.png in its default application.` | 0 |
+| Anywhere | FILE is missing, unreadable, not a regular file, or a kind bunk cannot show | the reason, on stderr | 1 |
 
 The path in the output is relative to the working directory when the file
 lies inside it. An agent never sees a failure only because nothing can show
 the file.
 
-The browser gets a Markdown file as a page that bunk renders into
+The browser gets a Markdown or text file as a page that bunk renders into
 `$XDG_CACHE_HOME/bunk/present/<hash>/index.html` (`~/.cache/…` when
-`XDG_CACHE_HOME` is unset), one directory per document, with the scripts
-and styles it needs beside it. An HTML file opens as it is. bunk starts
-`gio open`, else `xdg-open` (`open` on macOS), in a session of its own and
-discards its output.
+`XDG_CACHE_HOME` is unset), one directory per file, and an HTML page that
+uses bunk's assets or theme colours as a copy there that loads them from
+disk. The pages share the scripts, styles and fonts in
+`…/bunk/present/assets`, which bunk writes only when they are missing or
+another version of bunk wrote them. bunk-gui's "Open in the browser" uses
+the same pages. Other HTML pages and other files open as they are. bunk
+starts `gio open`, else `xdg-open` (`open` on macOS), in a session of its
+own and discards its output.
 
 ## Formats
 
 | Kind | Extensions | What it shows |
 | :- | :- | :- |
+| HTML | `.html`, `.htm` | The page, served from its own directory, with bunk's assets and theme colours (below) |
 | Markdown | `.md`, `.markdown`, `.mdown`, `.mkd` | GitHub-flavoured Markdown with tables and task lists, code fences with syntax highlighting, ` ```mermaid ` fences as diagrams, `$inline$` and `$$display$$` math, images by paths relative to the file |
-| HTML | `.html`, `.htm` | The page, served from its own directory |
+| Image | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp`, `.ico`, `.svg` | The image, at most as wide as the panel, on a checkerboard |
+| PDF | `.pdf` | WebKit's PDF viewer |
+| Video, audio | `.mp4`, `.m4v`, `.webm`, `.ogv`, `.mov`; `.mp3`, `.ogg`, `.oga`, `.opus`, `.wav`, `.flac`, `.m4a`, `.aac` | A player, as far as GStreamer decodes the format |
+| Text | any other file of UTF-8 text without NUL bytes, judged from its first 8 KiB | The text, highlighted by the file's name as Chroma knows it; files over 1 MiB plain |
+
+Other files, such as binaries, cannot be shown: `bunk present` exits 1, and
+bunk-gui shows a toast.
 
 The side panel loads nothing from the network, and pages cannot read files
 through `file://` URLs. An HTML page's scripts, styles and images must be
-inline or relative files in its directory. Nothing outside that directory
-is served, nor files whose names start with `.`, and a page in the home
-directory or in `/` gets no files beside it at all. Markdown pages get
-Mermaid, KaTeX and the highlighting styles from bunk itself; an HTML page
-draws its own diagrams, as inline SVG, and its own math.
+inline or relative files in its directory, or bunk's assets. Nothing
+outside that directory is served, nor files whose names start with `.`,
+and a page in the home directory or in `/` gets no files beside it at all.
+
+HTML pages get bunk's assets at `bunk-present://assets/`, which Markdown
+pages use too:
+
+| Asset | What it gives the page |
+| :- | :- |
+| `bunk-doc.css` | The look of bunk's documents in the panel's theme, for content in `<article id="bunk-doc">` |
+| `bunk-doc.js` | Mermaid diagrams in `<pre class="mermaid">` and KaTeX math in `<span class="math">` and `<div class="math math-display">`, each library loaded only when the page needs it |
+| `mermaid.min.js`, `katex/katex.min.js`, `katex/katex.min.css` | The libraries themselves |
+
+bunk-gui also puts the theme's colours first in every HTML page's head, as
+`:root` custom properties: `--bunk-bg`, `--bunk-fg`, `--bunk-muted`,
+`--bunk-accent`, `--bunk-border`, `--bunk-code-bg`, `--bunk-selection`, and
+`--bunk-dark` (1 or 0). It sets `color-scheme` to match, so a page without
+styles of its own shows light text on the dark theme. A page's own styles
+override all of it. When a browser opens a page that uses the assets or the
+colours, `bunk present` gives it a copy that loads them from disk
+(`present.WriteStandalone`).
 
 Agents present only inside bunk: the skill tells them not to run `bunk
 present` when `BUNK_NOTIFY_SESSION` is unset, because there it would open
@@ -136,6 +181,39 @@ bunk-gui's `[present]` table holds `auto`. With `auto = true`, a file that a
 hook reports opens the side panel. With `auto = false`, the default, it is
 only added to the tab's list of documents, where the user can open it. A
 file the agent presents with `bunk present FILE` always opens the panel.
+
+When Claude Code or Copilot CLI asks the user to approve a plan, the same
+command shows the plan, and opens the panel whatever `auto` says, because
+the user reads it now:
+
+| Agent | Hook | Tool | Where the plan comes from |
+| :- | :- | :- | :- |
+| Claude Code | PreToolUse | ExitPlanMode | `tool_input.planFilePath`, the plan file Claude Code writes in plan mode (`~/.claude/plans/` unless `plansDirectory` moves it) |
+| Copilot CLI | preToolUse | exit_plan_mode | `plan.md` in the session's state directory, `~/.copilot/session-state/<sessionId>/` (`$COPILOT_HOME/…`) |
+
+Codex's plan mode writes no file, so there is nothing to show.
+
+## Telling agents about the panel
+
+An agent cannot see its environment, so it cannot tell by itself that it
+runs in bunk-gui and that the panel is there. Three things tell it:
+
+1. At session start, the hook snippets run `present --session-start AGENT -`.
+   In a bunk-gui pane (`TERM_PROGRAM=bunk-gui` and the notify socket set) it
+   prints a few sentences that the agent adds to its context: that the
+   panel exists, which documents to show there and how, how the user's
+   questions arrive, and that the bunk-present skill has the rest. It
+   prints them in the form each agent reads: Claude Code's and Codex's
+   `hookSpecificOutput.additionalContext`, Copilot CLI's
+   `additionalContext`. In bunk's terminal UI, outside bunk and on hosts
+   reached over ssh it prints nothing, so the agent spends no tokens on it.
+   Claude Code runs the hook again after `/clear` and compaction.
+2. The bunk-present skill ([The skill](#the-skill)) says when to present
+   and how. Agents see its description all the time and load the rest when
+   a task matches.
+3. The user can ask: `/bunk-present` in Claude Code, `$bunk-present` in
+   Codex, or "use the bunk-present skill", or simply "show it in the
+   panel".
 
 ## The skill
 

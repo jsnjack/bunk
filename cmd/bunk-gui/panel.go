@@ -17,16 +17,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
@@ -57,9 +58,11 @@ type panelDoc struct {
 	auto   bool  // added by a hook, not asked for
 	mon    gio.FileMonitorrer
 	timer  coreglib.SourceHandle
-	stale  bool   // changed while another document showed
 	loaded bool   // its page finished loading at least once
 	broken string // why its last load failed; "" when it did not
+
+	crashed bool // its page ended the web process since the file last changed
+	gen     int  // counts reloads begun; a render finishing late is dropped
 
 	reloads int // reloads since it was added
 	changed int // sections the last Markdown reload marked
@@ -80,6 +83,13 @@ type panel struct {
 	cur    *panelDoc
 	open   bool
 	width  int
+	// placing: the panel waits for GTK to lay the tab out before it takes
+	// its width (reveal); until then GTK's own position is not the user's.
+	placing bool
+	// committed is the address of the page the view committed to since
+	// the last load began, or "". A load that a newer one cancelled still
+	// finishes, and must not count for the document shown now.
+	committed string
 	// picking: the drop-down is being rebuilt; its selection signal is ours.
 	picking bool
 
@@ -133,6 +143,7 @@ func (a *App) newPanel(t *Tab) *panel {
 	head.Append(pn.pick)
 	pn.askBtn = panelButton("chat-bubble-text-symbolic", "Ask the agent about the selected text", pn.ask)
 	head.Append(pn.askBtn)
+	head.Append(panelButton("document-open-symbolic", "Preview a file…", func() { a.pickPreview(t) }))
 	head.Append(panelButton("web-browser-symbolic", "Open in the browser", pn.openExternal))
 	head.Append(panelButton("list-remove-symbolic", "Remove this document from the panel", pn.removeCurrent))
 	head.Append(panelButton("window-close-symbolic", "Hide the panel", pn.hide))
@@ -152,8 +163,15 @@ func (a *App) newPanel(t *Tab) *panel {
 
 	t.page.SetEndChild(pn.box)
 	t.page.NotifyProperty("position", func() {
-		if pn.open && t.page.Width() > 0 {
+		if pn.open && !pn.placing && t.page.Width() > 0 {
 			pn.width = t.page.Width() - t.page.Position()
+		}
+	})
+	// A tab not shown yet has no width: the panel takes its width when GTK
+	// first lays the tab out, as a restored split takes its ratio.
+	t.page.NotifyProperty("max-position", func() {
+		if pn.placing {
+			coreglib.IdleAdd(pn.place) // not during the allocation that announced the size
 		}
 	})
 	return pn
@@ -186,8 +204,12 @@ func (a *App) presentFor(token, path string, auto bool) {
 // present adds path to the panel, or finds it there, and shows it unless
 // a hook reported it and [present] auto is off.
 func (pn *panel) present(path string, from *Pane, auto bool) {
-	kind := present.KindOf(path)
-	if kind == present.KindNone || !filepath.IsAbs(path) {
+	if !filepath.IsAbs(path) {
+		return
+	}
+	kind, err := present.Preview(path)
+	if err != nil {
+		slog.Debug("present: cannot show", "path", path, "err", err)
 		return
 	}
 	d := pn.find(path)
@@ -227,21 +249,26 @@ func (pn *panel) reveal() {
 		return
 	}
 	pn.open = true
+	pn.placing = true
 	pn.box.SetVisible(true)
-	place := func() {
-		w := pn.tab.page.Width()
-		if w <= 0 {
-			return
-		}
-		width := pn.width
-		if width <= 0 {
-			width = max(panelMinWidth, int(float64(w)*panelShare))
-		}
-		width = min(width, w-panelMinWidth)
-		pn.tab.page.SetPosition(max(panelMinWidth, w-width))
+	pn.place()
+	coreglib.IdleAdd(pn.place) // the first time, after GTK has laid the panel out
+}
+
+// place gives the open panel its width once the tab has one.
+func (pn *panel) place() {
+	w := pn.tab.page.Width()
+	if !pn.open || !pn.placing || w <= 0 {
+		return
 	}
-	place()
-	coreglib.IdleAdd(place) // the first time, after GTK has laid the panel out
+	width := pn.width
+	if width <= 0 {
+		width = max(panelMinWidth, int(float64(w)*panelShare))
+	}
+	width = min(width, w-panelMinWidth)
+	pn.tab.page.SetPosition(max(panelMinWidth, w-width))
+	pn.width = w - pn.tab.page.Position()
+	pn.placing = false
 }
 
 // hide closes the panel; its documents stay for the next time.
@@ -250,6 +277,7 @@ func (pn *panel) hide() {
 		return
 	}
 	pn.open = false
+	pn.placing = false
 	pn.box.SetVisible(false)
 	if f := pn.tab.focus; f != nil && pn.app.active == pn.tab {
 		f.widget.GrabFocus()
@@ -258,16 +286,83 @@ func (pn *panel) hide() {
 }
 
 // toggleDocuments is the documents action: it shows or hides t's panel,
-// or says how documents get there when it has none.
+// or asks for a file to preview when it has none.
 func (a *App) toggleDocuments(t *Tab) {
 	if t == nil {
 		return
 	}
 	if t.panel == nil || len(t.panel.docs) == 0 {
-		a.toast("No documents yet: an agent shows one with \"bunk present FILE\"")
+		a.pickPreview(t)
 		return
 	}
 	t.panel.toggle()
+}
+
+// pickPreview is the preview_file action: a file dialog, which starts in
+// the directory of t's focused pane, picks a file to preview in t's panel.
+func (a *App) pickPreview(t *Tab) {
+	if t == nil || a.finished {
+		return
+	}
+	d := gtk.NewFileDialog()
+	d.SetTitle("Preview a file")
+	d.SetAcceptLabel("Preview")
+	if p := t.focus; p != nil {
+		if cwd := p.s.Cwd(); cwd != "" {
+			d.SetInitialFolder(gio.NewFileForPath(cwd))
+		}
+	}
+	a.previewDialog = true
+	d.Open(context.Background(), &a.win.Window, func(res gio.AsyncResulter) {
+		a.previewDialog = false
+		f, err := d.OpenFinish(res)
+		if err != nil || f == nil || f.Object == nil {
+			slog.Debug("present: file dialog", "err", err) // dismissed
+			return
+		}
+		path := f.Path()
+		if path == "" {
+			a.toast("Cannot preview " + f.Basename() + ": not a local file")
+			return
+		}
+		a.previewFile(t, path)
+	})
+}
+
+// previewFile shows the file at path in t's panel, as the user asked for
+// it (the file dialog, a drop, --do preview), or says why it cannot.
+// Questions about it go to the tab's agent.
+func (a *App) previewFile(t *Tab, path string) {
+	if !slices.Contains(a.tabs, t) {
+		return // closed meanwhile
+	}
+	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+		a.toast("Cannot preview " + filepath.Base(path) + ": not a file")
+		return
+	}
+	if _, err := present.Preview(path); err != nil {
+		a.toast("Cannot preview " + filepath.Base(path) + ": " + err.Error())
+		return
+	}
+	t.docPanel().present(path, nil, false)
+}
+
+// dropPreviews lets files dropped on the tab's page preview in its panel.
+func (a *App) dropPreviews(t *Tab) {
+	drop := gtk.NewDropTarget(gdk.GTypeFileList, gdk.ActionCopy)
+	drop.ConnectDrop(func(v *coreglib.Value, _, _ float64) bool {
+		list, ok := v.GoValue().(*gdk.FileList)
+		if !ok {
+			return false
+		}
+		for _, f := range list.Files() {
+			if path := f.Path(); path != "" {
+				a.previewFile(t, path)
+			}
+		}
+		return true
+	})
+	t.page.AddController(drop)
 }
 
 // toggle shows or hides the panel; it has nothing to show without documents.
@@ -276,8 +371,11 @@ func (pn *panel) toggle() {
 	case pn.open:
 		pn.hide()
 	case len(pn.docs) > 0:
-		if pn.cur == nil {
+		switch {
+		case pn.cur == nil:
 			pn.show(pn.docs[len(pn.docs)-1])
+		case !pn.cur.loaded:
+			pn.show(pn.cur) // restored closed: it loads when it opens
 		}
 		pn.reveal()
 		pn.app.refreshChrome()
@@ -287,16 +385,26 @@ func (pn *panel) toggle() {
 // show loads d into the view.
 func (pn *panel) show(d *panelDoc) {
 	pn.cur = d
-	d.stale = false
+	d.crashed = false
 	d.broken = ""
 	d.scrollY = ""
-	pn.view.load(d.uri(filepath.Base(d.path)))
+	pn.load(d.page())
 	pn.syncPick()
 	pn.updateStatus()
 }
 
 // uri is the address of the file rel (slash-separated, relative to the
 // document's directory) in d's origin.
+// page is the address the view loads for d: the file itself, or the page
+// that previews it.
+func (d *panelDoc) page() string {
+	u := d.uri(filepath.Base(d.path))
+	if d.kind.PreviewPage() {
+		u += "?" + previewQuery
+	}
+	return u
+}
+
 func (d *panelDoc) uri(rel string) string {
 	return fmt.Sprintf("%s://doc-%d/%s", presentScheme, d.id, escapePath(rel))
 }
@@ -395,18 +503,10 @@ func (pn *panel) watch(d *panelDoc) {
 		if other != nil {
 			names = append(names, other.Basename())
 		}
-		ours := d.kind == present.KindHTML
+		ours := false
 		for _, n := range names {
-			if n == base {
+			if n == base || d.kind.Document() && imageFile(n) || d.kind == present.KindHTML && pageFile(n) {
 				ours = true
-			}
-		}
-		if !ours && d.kind == present.KindMarkdown {
-			// An image the document may show.
-			for _, n := range names {
-				if imageFile(n) {
-					ours = true
-				}
 			}
 		}
 		if ours {
@@ -429,6 +529,22 @@ func imageFile(name string) bool {
 	return false
 }
 
+// pageFile reports whether name is code, a style, a font or media an HTML
+// page may load besides images. Other files change too often in a busy
+// directory such as /tmp, logs and data included, and each reload
+// restarts the page's scripts.
+func pageFile(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".html", ".htm", ".css", ".js", ".mjs",
+		".woff", ".woff2", ".ttf", ".otf", ".mp4", ".webm", ".mp3", ".ogg", ".wav":
+		return true
+	}
+	return false
+}
+
 func (pn *panel) changedLater(d *panelDoc) {
 	if d.timer != 0 {
 		coreglib.SourceRemove(d.timer)
@@ -446,38 +562,41 @@ func (pn *panel) reload(d *panelDoc) {
 	if pn.find(d.path) == nil {
 		return
 	}
+	d.crashed = false // a new version may run
 	if d != pn.cur || !d.loaded {
-		d.stale = d != pn.cur
-		return
+		return // it loads whole when shown
 	}
 	if d.kind == present.KindMarkdown {
-		src, err := os.ReadFile(d.path)
-		if err != nil {
-			// The page keeps the last content; the status says why.
-			d.broken = "the file is gone"
-			if !errors.Is(err, fs.ErrNotExist) {
-				d.broken = err.Error()
+		// Rendered off the main loop, like the page itself (serveScheme).
+		d.gen++
+		gen, path := d.gen, d.path
+		go func() {
+			src, readErr := readCapped(path)
+			var body []byte
+			var err error
+			if readErr == nil {
+				body, err = present.RenderBody(src)
 			}
-			pn.updateStatus()
-			return
-		}
-		d.broken = ""
-		body, err := present.RenderBody(src)
-		if err != nil {
-			slog.Debug("present: render", "path", d.path, "err", err)
-			return
-		}
-		arg, _ := json.Marshal(string(body))
-		pn.view.eval("bunkDoc.replace("+string(arg)+")", false, func(v string, err error) {
-			if err != nil {
-				pn.show(d) // the page runtime is not there: load it whole
-				return
-			}
-			d.changed, _ = strconv.Atoi(strings.TrimSpace(v))
-			d.reloads++
-			d.updated = time.Now()
-			pn.updateStatus()
-		})
+			coreglib.IdleAdd(func() {
+				if gen != d.gen || pn.find(d.path) != d || d != pn.cur {
+					return // a newer reload, or no longer shown
+				}
+				switch {
+				case errors.Is(readErr, errNotFound):
+					d.broken = "the file is gone" // the page keeps the last content
+				case readErr != nil:
+					d.broken = readErr.Error()
+				case err != nil:
+					slog.Debug("present: render", "path", d.path, "err", err)
+					return
+				default:
+					d.broken = ""
+					pn.replace(d, body)
+					return
+				}
+				pn.updateStatus()
+			})
+		}()
 		return
 	}
 	pn.view.eval("String(window.scrollY)", true, func(v string, err error) {
@@ -486,15 +605,38 @@ func (pn *panel) reload(d *panelDoc) {
 		}
 		d.reloads++
 		d.updated = time.Now()
-		pn.view.load(d.uri(filepath.Base(d.path)))
+		d.broken = "" // load-failed sets it again
+		pn.load(d.page())
 		pn.updateStatus()
 	})
 }
 
-// loaded runs when the view finished loading a page.
+// replace swaps the article of d's page for body, marking what changed.
+func (pn *panel) replace(d *panelDoc, body []byte) {
+	arg, _ := json.Marshal(string(body))
+	pn.view.eval("bunkDoc.replace("+string(arg)+")", false, func(v string, err error) {
+		if err != nil {
+			pn.show(d) // the page runtime is not there: load it whole
+			return
+		}
+		d.changed, _ = strconv.Atoi(strings.TrimSpace(v))
+		d.reloads++
+		d.updated = time.Now()
+		pn.updateStatus()
+	})
+}
+
+// load starts loading uri in the view.
+func (pn *panel) load(uri string) {
+	pn.committed = ""
+	pn.view.load(uri)
+}
+
+// loaded runs when the view finished loading a page: the shown document's,
+// once a load of its address committed.
 func (pn *panel) loaded() {
 	d := pn.cur
-	if d == nil || d.broken != "" {
+	if d == nil || d.broken != "" || !strings.HasPrefix(pn.committed, d.uri("")) {
 		pn.updateStatus()
 		return
 	}
@@ -518,12 +660,22 @@ func (pn *panel) failed(uri, msg string) {
 	pn.updateStatus()
 }
 
-// crashed reloads the document after its web process ended.
+// crashed loads the document again after its web process ended, once: a
+// page that ends it again, say by using up its memory, stays down until
+// its file changes or the user shows it again.
 func (pn *panel) crashed() {
-	slog.Warn("present: the web process ended")
-	if pn.cur != nil {
-		pn.show(pn.cur)
+	d := pn.cur
+	slog.Info("present: the web process ended", "doc", d != nil && d.crashed)
+	if d == nil {
+		return
 	}
+	if d.crashed {
+		d.broken = "its page stopped twice; it loads again when the file changes"
+		pn.updateStatus()
+		return
+	}
+	pn.show(d)
+	d.crashed = true
 }
 
 // navigate decides a navigation in the view, of the page or of a frame in
@@ -560,7 +712,7 @@ func (pn *panel) removeCurrent() {
 	pn.drop(d)
 	if len(pn.docs) == 0 {
 		pn.cur = nil
-		pn.view.load("about:blank")
+		pn.load("about:blank")
 		pn.syncPick()
 		pn.updateStatus()
 		pn.hide()
@@ -591,7 +743,7 @@ func (pn *panel) close() {
 	for len(pn.docs) > 0 {
 		pn.drop(pn.docs[0])
 	}
-	pn.view.panel = nil
+	pn.app.closeWebView(pn.view)
 }
 
 // openExternal opens the shown document in the default browser: HTML as
@@ -602,7 +754,7 @@ func (pn *panel) openExternal() {
 		return
 	}
 	if d.kind == present.KindHTML {
-		openURL(pn.app, "file://"+d.path)
+		openURL(pn.app, present.FileURL(d.path))
 		return
 	}
 	dir, err := os.UserCacheDir()
@@ -610,13 +762,12 @@ func (pn *panel) openExternal() {
 		pn.app.toast("Could not open the document: " + err.Error())
 		return
 	}
-	out := filepath.Join(dir, "bunk-gui", "present", strconv.Itoa(os.Getpid())+"-"+strconv.Itoa(d.id))
-	index, err := present.WriteStandalone(d.path, out, pn.app.presentTheme())
+	index, err := present.WriteStandalone(d.path, filepath.Join(dir, present.CacheDir), pn.app.presentTheme())
 	if err != nil {
 		pn.app.toast("Could not open the document: " + err.Error())
 		return
 	}
-	openURL(pn.app, "file://"+index)
+	openURL(pn.app, present.FileURL(index))
 }
 
 // target is the pane a question about d goes to: the pane that presented
@@ -837,12 +988,13 @@ func luminance(rgb uint32) float64 {
 // themeChanged restyles the shown document after a theme change.
 func (pn *panel) themeChanged() {
 	pn.view.setBackground(pn.app.theme.Background.Hex())
-	if d := pn.cur; d != nil && d.kind == present.KindMarkdown {
+	// Every page but a PDF has the theme's colours.
+	if d := pn.cur; d != nil && d.kind != present.KindPDF {
 		pn.view.eval("String(window.scrollY)", true, func(v string, err error) {
 			if err == nil {
 				d.scrollY = v
 			}
-			pn.view.load(d.uri(filepath.Base(d.path)))
+			pn.load(d.page())
 		})
 	}
 }
@@ -862,12 +1014,13 @@ type panelReport struct {
 
 type docReport struct {
 	Path    string `json:"path"`
-	Kind    string `json:"kind"` // markdown, html
+	Kind    string `json:"kind"` // markdown, html, image, pdf, video, audio, text
 	Loaded  bool   `json:"loaded"`
 	Reloads int    `json:"reloads"`
 	Changed int    `json:"changed"` // sections the last reload marked
 	Auto    bool   `json:"auto"`
-	Pane    int    `json:"pane"` // the pane that presented it, -1 when none
+	Pane    int    `json:"pane"`    // the pane that presented it, -1 when none
+	Crashed bool   `json:"crashed"` // its page ended the web process since the file changed
 }
 
 type askReport struct {
@@ -888,11 +1041,7 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 		r.AskBtn = a.widgetRect(g, pn.askBtn)
 	}
 	for i, d := range pn.docs {
-		kind := "markdown"
-		if d.kind == present.KindHTML {
-			kind = "html"
-		}
-		dr := docReport{Path: d.path, Kind: kind, Loaded: d.loaded, Reloads: d.reloads, Changed: d.changed, Auto: d.auto, Pane: -1}
+		dr := docReport{Path: d.path, Kind: d.kind.String(), Loaded: d.loaded, Reloads: d.reloads, Changed: d.changed, Auto: d.auto, Pane: -1, Crashed: d.crashed}
 		if d.pane != nil {
 			dr.Pane = d.pane.id
 		}
@@ -930,6 +1079,8 @@ const presentSelectScript = `(function(t){
 //	present-select TEXT     select TEXT in the shown page
 //	present-ask             Ask the agent, as its button does
 //	present-toggle          the documents action of the selected tab
+//	present-kill            end the shown page's web process, as a crash would
+//	preview PATH            what the file dialog of preview_file does with PATH
 func (a *App) presentStep(verb, arg string) error {
 	t := a.active
 	if t == nil {
@@ -954,6 +1105,14 @@ func (a *App) presentStep(verb, arg string) error {
 		a.toggleDocuments(t)
 		return nil
 	}
+	if verb == "preview" {
+		path := arg
+		if p := t.focus; p != nil && !filepath.IsAbs(path) {
+			path = filepath.Join(p.s.Cwd(), path)
+		}
+		a.previewFile(t, path)
+		return nil
+	}
 	pn := t.panel
 	if pn == nil || pn.cur == nil {
 		return fmt.Errorf("no document shown")
@@ -976,6 +1135,8 @@ func (a *App) presentStep(verb, arg string) error {
 		})
 	case "present-ask":
 		pn.ask()
+	case "present-kill":
+		pn.view.kill()
 	}
 	return nil
 }
@@ -1007,8 +1168,8 @@ func (t *Tab) restorePanel(rp restore.Panel) {
 		if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() || !filepath.IsAbs(path) {
 			continue
 		}
-		kind := present.KindOf(path)
-		if kind == present.KindNone || pn.find(path) != nil {
+		kind, err := present.Preview(path)
+		if err != nil || pn.find(path) != nil {
 			continue
 		}
 		nextDocID++
@@ -1023,10 +1184,16 @@ func (t *Tab) restorePanel(rp restore.Panel) {
 		return
 	}
 	pn.width = rp.Width
-	pn.show(cur)
-	if rp.Open {
-		pn.reveal()
+	if !rp.Open {
+		// Listed: it loads when the panel opens (toggle), so hidden
+		// panels start no web process.
+		pn.cur = cur
+		pn.syncPick()
+		pn.updateStatus()
+		return
 	}
+	pn.show(cur)
+	pn.reveal()
 }
 
 // presentWait is --do present-wait EXPR: it evaluates EXPR in the shown

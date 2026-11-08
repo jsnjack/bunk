@@ -15,7 +15,10 @@ sync.
 The snippets of Claude Code, Codex and Copilot CLI also run `present --hook`
 after each tool call that writes a whole file. It offers the Markdown and
 HTML files the agent wrote to bunk-gui, which lists them in the tab's side
-panel; [present.md](present.md) describes the panel.
+panel. When Claude Code or Copilot CLI asks the user to approve a plan, the
+same command opens the plan in the panel. `present --session-start` tells
+the agent about the panel when a session starts in a bunk-gui pane;
+[present.md](present.md) describes the panel.
 
 ## Set up
 
@@ -244,6 +247,17 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 ```json
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" present --session-start claude -",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -262,6 +276,16 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
           {
             "type": "command",
             "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify needs-you -",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" present --hook claude -",
             "timeout": 5
           }
         ]
@@ -350,8 +374,10 @@ Merge into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 
 | Claude Code hook | Event | Message |
 | :- | :- | :- |
+| SessionStart | none: `present --session-start claude -` tells the agent about bunk-gui's side panel | none |
 | UserPromptSubmit | `working` | none |
 | PreToolUse (AskUserQuestion, ExitPlanMode) | `needs-you` | the first question, or "Approve the plan: " and the plan's title |
+| PreToolUse (ExitPlanMode) | none: `present --hook claude -` shows the plan's file (`planFilePath`) in bunk-gui's side panel | none |
 | PostToolUse, PostToolUseFailure (every tool, not in a subagent) | `working` | none |
 | PostToolUse (Write) | none: `present --hook claude -` offers the file to bunk-gui's side panel when it is Markdown or HTML | none |
 | Notification (permission, elicitation, agent input) | `needs-you` | `message` from stdin |
@@ -413,6 +439,17 @@ both, so the file can be deployed whole:
 ```json
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" present --session-start codex -",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -486,6 +523,7 @@ both, so the file can be deployed whole:
 
 | Codex hook | Event | Message |
 | :- | :- | :- |
+| SessionStart | none: `present --session-start codex -` tells the agent about bunk-gui's side panel | none |
 | UserPromptSubmit | `working` | none |
 | PermissionRequest | `needs-you`, or `working` for the automatic reviewer | "Approval requested", with the first line of a Bash command |
 | PostToolUse (apply_patch) | none: `present --hook codex -` offers the Markdown and HTML files the patch adds to bunk-gui's side panel | none |
@@ -532,6 +570,13 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
 {
   "version": 1,
   "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" present --session-start copilot -",
+        "timeoutSec": 5
+      }
+    ],
     "userPromptSubmitted": [
       {
         "type": "command",
@@ -544,6 +589,14 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
         "type": "command",
         "matcher": "permission_prompt|elicitation_dialog",
         "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" notify needs-you -",
+        "timeoutSec": 5
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "exit_plan_mode",
+        "bash": "[ -z \"$BUNK_NOTIFY_SESSION$SSH_CONNECTION\" ] || ! b=$(command -v bunk-gui || command -v bunk) || \"$b\" present --hook copilot -",
         "timeoutSec": 5
       }
     ],
@@ -575,8 +628,10 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
 
 | Copilot CLI hook | Event | Message |
 | :- | :- | :- |
+| sessionStart | none: `present --session-start copilot -` tells the agent about bunk-gui's side panel | none |
 | userPromptSubmitted | `working` | none |
 | notification (`permission_prompt`, `elicitation_dialog`) | `needs-you` | `message` from stdin |
+| preToolUse (exit_plan_mode) | none: `present --hook copilot -` shows the session's `plan.md` in bunk-gui's side panel | none |
 | postToolUse (create, apply_patch) | none: `present --hook copilot -` offers the Markdown and HTML files the tool created to bunk-gui's side panel | none |
 | agentStop | `done` | none; the input has no message text |
 | sessionEnd | `clear` | none |

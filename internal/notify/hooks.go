@@ -115,8 +115,12 @@ var recipes = []agentHooks{
 		name: "claude", homeDir: ".claude", envDir: "CLAUDE_CONFIG_DIR", file: "settings.json", how: mergeKey + " or run %[1]s notify hooks install claude",
 		read: readSettingsHooks("settings.json"),
 		hooks: []hook{
+			// In bunk-gui, tells the agent about the document panel.
+			{event: "SessionStart", sub: cmdPresent, args: "--session-start claude -"},
 			{event: "UserPromptSubmit", args: "working -"},
 			{event: "PreToolUse", matcher: claudeQuestionTools, args: "needs-you -"},
+			// Shows the plan the user is asked to approve.
+			{event: "PreToolUse", matcher: exitPlanMode, sub: cmdPresent, args: "--hook claude -"},
 			// Any tool's end means the agent works again: the answer to a
 			// question, or a call that a permission prompt held, which
 			// auto mode may approve after permission_prompt notified.
@@ -136,6 +140,7 @@ var recipes = []agentHooks{
 		after: "Run /hooks in Codex once to trust the hooks.",
 		read:  readCodexHooks,
 		hooks: []hook{
+			{event: "SessionStart", sub: cmdPresent, args: "--session-start codex -"},
 			{event: "UserPromptSubmit", args: "working -"},
 			// The CLI reads the input: a request that the automatic
 			// reviewer decides (approvals_reviewer) reports working.
@@ -153,8 +158,10 @@ var recipes = []agentHooks{
 		how:  "%[1]s notify hooks install copilot",
 		read: readCopilotHooks,
 		hooks: []hook{
+			{event: "sessionStart", sub: cmdPresent, args: "--session-start copilot -"},
 			{event: "userPromptSubmitted", args: "working -"},
 			{event: "notification", matcher: "permission_prompt|elicitation_dialog", args: "needs-you -"},
+			{event: "preToolUse", matcher: copilotPlanTool, sub: cmdPresent, args: "--hook copilot -"},
 			{event: "postToolUse", matcher: copilotWriteTools, sub: cmdPresent, args: "--hook copilot -"},
 			{event: "agentStop", args: "done -"},
 			{event: "sessionEnd", args: "clear"},

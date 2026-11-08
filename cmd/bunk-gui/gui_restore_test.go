@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -77,6 +78,9 @@ func TestGUIRestoreSession(t *testing.T) {
 			"wait focused.screen~in-test-dir",
 			"present notes.md",
 			"wait tab.2.panel.open=true tab.2.panel.docs.0.loaded=true",
+			// The panel's tab restores in the background.
+			"select-tab 1",
+			"wait selected_tab=1",
 			"restore save",
 			"wait restore.saves>0",
 			"quit",
@@ -87,7 +91,7 @@ func TestGUIRestoreSession(t *testing.T) {
 		t.Fatalf("saved %d windows, want 1", len(saved))
 	}
 	first, w := saved[0].ID, saved[0].Window
-	if len(w.Tabs) != 2 || w.Selected != 1 || w.Tabs[1].Name != "logs" {
+	if len(w.Tabs) != 2 || w.Selected != 0 || w.Tabs[1].Name != "logs" {
 		t.Fatalf("snapshot %+v", w)
 	}
 	if pn := w.Tabs[1].Panel; pn == nil || !pn.Open || len(pn.Docs) != 1 || filepath.Base(pn.Docs[0]) != "notes.md" || w.Tabs[0].Panel != nil {
@@ -109,10 +113,12 @@ func TestGUIRestoreSession(t *testing.T) {
 			"wait tabs.#=1 focused.line=$ restore.banner=true",
 			"snap offered",
 			"restore accept",
-			"wait tabs.#=2 restore.banner=false restore.answer=restored selected_tab=2 tab.2.name=logs",
-			"wait tab.2.panel.open=true tab.2.panel.docs.0.loaded=true",
+			"wait tabs.#=2 restore.banner=false restore.answer=restored selected_tab=1 tab.2.name=logs",
+			"select-tab 2",
+			"wait selected_tab=2 tab.2.panel.open=true tab.2.panel.docs.0.loaded=true",
 			"present-eval document.querySelector('#bunk-doc h1').textContent",
 			"wait tab.2.panel.eval=Notes",
+			"snap panel",
 			"select-tab 1",
 			"wait tab.1.panes.#=2 tab.1.agent=claude restore.typed.#=1",
 			"wait focused.status.session=sess-resumed",
@@ -122,6 +128,10 @@ func TestGUIRestoreSession(t *testing.T) {
 	})
 	if offer := g.snap("offered").Restore.Offer; !strings.Contains(offer, "2 tabs, 1 agent") {
 		t.Errorf("banner offers %q", offer)
+	}
+	// The panel of a tab first shown after the restore keeps its width.
+	if pn := g.snap("panel").Tabs[1].Panel; pn == nil || pn.Rect == nil || math.Abs(pn.Rect.W-float64(w.Tabs[1].Panel.Width)) > 2 {
+		t.Errorf("restored panel %+v, saved %d wide", pn, w.Tabs[1].Panel.Width)
 	}
 	s := g.snap("restored")
 	if typed := s.Restore.Typed; len(typed) != 1 || typed[0].Text != "claude --resume sess-one\r" {

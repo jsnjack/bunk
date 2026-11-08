@@ -4,8 +4,6 @@
 package notify
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,26 +26,36 @@ import (
 // bunk-gui. Agents read it, so it stays short and exact.
 const presentUsage = `usage: %[1]s present FILE
        %[1]s present --hook AGENT -
+       %[1]s present --session-start AGENT -
        %[1]s present skill | status | install AGENT
 
-Shows a Markdown or HTML file to the user. In a bunk-gui pane it opens in
-the side panel of the pane's tab, which reloads the file whenever it is
-saved and marks the sections that changed. In bunk's terminal UI and
-outside bunk it opens in the web browser. On a host reached over ssh, or
-without a graphical display, it says that it cannot show the file.
-It prints one line saying which happened and exits 0; a missing file or
-an unsupported kind exits 1. Agents run it only inside bunk, where
-BUNK_NOTIFY_SESSION is set, and never open a browser on their own.
+Shows a file to the user. In a bunk-gui pane it opens in the side panel
+of the pane's tab, which reloads it whenever it is saved. In bunk's
+terminal UI and outside bunk it opens in the web browser, or in its
+default application. On a host reached over ssh, or without a graphical
+display, it says that it cannot show the file. It prints one line saying
+which happened and exits 0; a missing file or one it cannot show exits 1.
+Agents run it only inside bunk, where BUNK_NOTIFY_SESSION is set, and
+never open a browser on their own.
 
-Markdown (.md, .markdown, .mdown, .mkd): GitHub-flavoured Markdown with
-tables and task lists, code fences with syntax highlighting, ` + "```mermaid" + `
-fences as diagrams, $inline$ and $$display$$ math, and images by paths
-relative to the file.
-HTML (.html, .htm): shown from its own directory. Scripts, styles and
-images must be inline or relative files there; files whose names start
+Documents for the user to read:
+HTML (.html, .htm), preferred: one page with inline CSS and JavaScript,
+interactive where it helps. It is shown from its own directory: other
+files it loads must be relative files there; files whose names start
 with "." and anything outside the directory are not served, and nothing
-loads from the network or from file:// URLs. Mermaid and math are
-Markdown features: a page draws its own diagrams (inline SVG) and math.
+loads from the network or from file:// URLs. bunk serves its own assets
+at ` + present.AssetsURL + `: bunk-doc.css styles a page as bunk's
+documents, and bunk-doc.js draws <pre class="mermaid"> diagrams and
+typesets <span class="math"> and <div class="math math-display"> TeX.
+The panel's theme colours are var(--bunk-bg), var(--bunk-fg),
+var(--bunk-muted), var(--bunk-accent), var(--bunk-border) and
+var(--bunk-code-bg).
+Markdown (.md, .markdown, .mdown, .mkd): GitHub-flavoured Markdown with
+tables, task lists, highlighted code, ` + "```mermaid" + ` diagrams, $inline$ and
+$$display$$ math, and images by paths relative to the file. The panel
+reloads it in place and marks the sections that changed.
+Other files show as previews: images, PDF, video, audio, and text with
+syntax highlighting.
 
 The user can select text in the panel and send a question about it. It
 arrives as the agent's next input:
@@ -56,10 +64,15 @@ arrives as the agent's next input:
   the user's question
 Answer it, and edit the file in place when asked: the panel reloads.
 
---hook AGENT -   reads the JSON input of a PostToolUse hook of claude,
-                 codex or copilot from stdin and offers bunk-gui the
-                 Markdown and HTML files the tool call wrote whole, not
-                 the ones it edited. It prints nothing and always exits 0.
+--hook AGENT -   reads the JSON input of a tool hook of claude, codex or
+                 copilot from stdin and offers bunk-gui the Markdown and
+                 HTML files the tool call wrote whole, not the ones it
+                 edited, or shows the plan the agent asks the user to
+                 approve. It prints nothing and always exits 0.
+--session-start AGENT -
+                 in a bunk-gui pane, prints the context of a SessionStart
+                 hook that tells the agent about the panel; elsewhere
+                 nothing. It always exits 0.
 skill            prints the bunk-present skill, which tells agents when
                  and how to present.
 status           shows where each agent's copy of the skill is, and
@@ -90,6 +103,9 @@ func runPresent(prog string, args, env []string, stdin io.Reader, stdout, stderr
 		return 0
 	case "--hook":
 		presentHook(args[1:], env, stdin)
+		return 0
+	case "--session-start":
+		sessionStart(prog, args[1:], env, stdin, stdout)
 		return 0
 	case "skill":
 		if len(args) == 1 {
@@ -134,13 +150,13 @@ func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
 		return exitError
 	}
 	name := displayPath(path)
-	kind := present.KindOf(path)
-	if kind == present.KindNone {
-		write(stderr, fmt.Sprintf("%s present: %s is neither Markdown (.md) nor HTML (.html)\n", prog, name))
-		return exitError
-	}
 	if err := readableFile(path); err != nil {
 		write(stderr, fmt.Sprintf("%s present: cannot read %s: %v\n", prog, name, err))
+		return exitError
+	}
+	kind, err := present.Preview(path)
+	if err != nil {
+		write(stderr, fmt.Sprintf("%s present: cannot show %s: %v\n", prog, name, err))
 		return exitError
 	}
 	if !validPresentPath(path) {
@@ -162,12 +178,15 @@ func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
 		write(stdout, "Cannot show "+name+" here: "+why+".\n")
 		return 0
 	}
-	page := path
-	if kind == present.KindMarkdown {
+	page, where := path, "the web browser"
+	switch {
+	case present.NeedsPage(path, kind):
 		if page, err = standalonePage(path, env); err != nil {
 			write(stderr, fmt.Sprintf("%s present: %v\n", prog, err))
 			return exitError
 		}
+	case kind != present.KindHTML:
+		where = "its default application" // an image viewer, a PDF reader, a player
 	}
 	if err := openFile(page, env); err != nil {
 		if errors.Is(err, errNoOpener) {
@@ -177,7 +196,7 @@ func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
 		write(stderr, fmt.Sprintf("%s present: open %s: %v\n", prog, name, err))
 		return exitError
 	}
-	write(stdout, "Opened "+name+" in the web browser.\n")
+	write(stdout, "Opened "+name+" in "+where+".\n")
 	return 0
 }
 
@@ -237,9 +256,8 @@ func noBrowser(env []string, socket string) string {
 	return ""
 }
 
-// standalonePage renders the Markdown file at path into a page of its own
-// for a browser, in a directory per file under bunk's cache directory, and
-// returns the page's path.
+// standalonePage writes the page a browser shows for the file at path, under
+// bunk's cache directory (present.WriteStandalone), and returns its path.
 func standalonePage(path string, env []string) (string, error) {
 	cache := lookupEnv(env, "XDG_CACHE_HOME")
 	if !filepath.IsAbs(cache) {
@@ -252,9 +270,7 @@ func standalonePage(path string, env []string) (string, error) {
 		}
 		cache = filepath.Join(home, ".cache")
 	}
-	sum := sha256.Sum256([]byte(path))
-	dir := filepath.Join(cache, "bunk", "present", hex.EncodeToString(sum[:8]))
-	page, err := present.WriteStandalone(path, dir, present.DefaultTheme())
+	page, err := present.WriteStandalone(path, filepath.Join(cache, present.CacheDir), present.DefaultTheme())
 	if err != nil {
 		return "", fmt.Errorf("render %s: %w", path, err)
 	}
@@ -311,8 +327,9 @@ func lookPath(env []string, name string) string {
 }
 
 // presentHook runs "--hook AGENT -": it offers the front end each Markdown
-// and HTML file that the tool call the hook's input describes wrote whole.
-// It never prints and never fails, so no agent shows an error for it.
+// and HTML file that the tool call the hook's input describes wrote whole,
+// or shows the plan the call asks the user to approve. It never prints and
+// never fails, so no agent shows an error for it.
 func presentHook(args, env []string, stdin io.Reader) {
 	if len(args) != 2 || args[1] != "-" || !slices.Contains(skillAgents, args[0]) {
 		slog.Debug("present: bad hook arguments", "args", args)
@@ -322,14 +339,79 @@ func presentHook(args, env []string, stdin io.Reader) {
 	if socket == "" || token == "" {
 		return // no bunk front end to show it; in-band reports carry no requests
 	}
-	for _, path := range hookFiles(args[0], readStdin(stdin)) {
-		reply, err := Present(socket, token, path, true)
+	paths, show := hookFiles(args[0], readStdin(stdin), envDirs(env))
+	for _, path := range paths {
+		reply, err := Present(socket, token, path, !show)
 		if err != nil {
 			slog.Debug("present: hook request", "err", err)
 			return
 		}
 		slog.Debug("present: hook request", "path", path, "reply", reply)
 	}
+}
+
+// sessionHint is the context the SessionStart hook gives an agent in a
+// bunk-gui pane, %[1]s the program. Agents cannot see the environment, so
+// without it they cannot tell that the bunk-present skill applies.
+const sessionHint = "This terminal is bunk-gui, which shows documents in a panel beside you. " +
+	"When you write a plan, spec, design, report, comparison or explanation for the user to read " +
+	"(not code or logs), make it one self-contained HTML page, interactive where that helps " +
+	"(tabs, collapsible sections, sortable tables, SVG diagrams), or Markdown for plain prose, " +
+	"and run `%[1]s present FILE` to show it there. " +
+	"The panel reloads the file whenever you save it. " +
+	"The user's questions about it arrive as your input, starting \"About FILE › Section:\". " +
+	"The bunk-present skill has the details, with bunk's stylesheet, theme colours, Mermaid and KaTeX for HTML pages."
+
+// sessionStart runs "--session-start AGENT -", a SessionStart hook: in a
+// bunk-gui pane, which has the panel, it prints sessionHint as the context
+// the agent reads from the hook; elsewhere, bunk's terminal UI and hosts
+// reached over ssh included, nothing.
+func sessionStart(prog string, args, env []string, stdin io.Reader, stdout io.Writer) {
+	if len(args) != 2 || args[1] != "-" || !slices.Contains(skillAgents, args[0]) {
+		slog.Debug("present: bad session-start arguments", "args", args)
+		return
+	}
+	readStdin(stdin) // the agent writes its input; take it all before exiting
+	if lookupEnv(env, EnvSocket) == "" || lookupEnv(env, EnvSession) == "" || lookupEnv(env, "TERM_PROGRAM") != "bunk-gui" {
+		return
+	}
+	hint := fmt.Sprintf(sessionHint, prog)
+	var out any = map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "SessionStart", "additionalContext": hint}}
+	if args[0] == "copilot" {
+		out = map[string]string{"additionalContext": hint}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		slog.Debug("present: session hint", "err", err)
+		return
+	}
+	write(stdout, string(data)+"\n")
+}
+
+// planFile returns the plan file of a tool call that asks the user to
+// approve a plan, or "".
+type planFile func(in hookInput, d Dirs) string
+
+// copilotPlanTool is Copilot CLI's tool that asks the user to approve the
+// plan of plan mode.
+const copilotPlanTool = "exit_plan_mode"
+
+// planTools are the tools that ask the user to approve a plan, by agent.
+// Their PreToolUse hooks show the plan with the panel open, whatever
+// [present] auto says: the user reads it now.
+var planTools = map[string]map[string]planFile{
+	// Claude Code adds the plan and its file to ExitPlanMode's input.
+	"claude": {exitPlanMode: func(in hookInput, _ Dirs) string { return parseToolArgs(in.raw()).str("planFilePath") }},
+	// Copilot CLI keeps the plan in plan.md of the session's state
+	// directory, which the session's ID names.
+	"copilot": {copilotPlanTool: func(in hookInput, d Dirs) string {
+		id := in.SessionID
+		if id == "" || id != filepath.Base(id) || strings.HasPrefix(id, ".") {
+			return ""
+		}
+		r, _ := recipe("copilot")
+		return filepath.Join(d.dir(r), "session-state", id, "plan.md")
+	}},
 }
 
 // writeTool returns the paths, as the tool's arguments give them, of the
@@ -423,32 +505,49 @@ func patchFiles(patch string) []string {
 	return out
 }
 
+// hookInput is the input of an agent's tool hook: Claude Code's and Codex's
+// names, or Copilot CLI's.
+type hookInput struct {
+	Cwd        string          `json:"cwd"`
+	WorkingDir string          `json:"workingDirectory"`
+	Tool       string          `json:"tool_name"`
+	ToolC      string          `json:"toolName"`
+	Input      json.RawMessage `json:"tool_input"`
+	Args       json.RawMessage `json:"toolArgs"`
+	SessionID  string          `json:"sessionId"`
+}
+
+// raw is the tool call's arguments.
+func (in hookInput) raw() json.RawMessage {
+	if in.Input != nil {
+		return in.Input
+	}
+	return in.Args
+}
+
 // hookFiles returns the absolute paths of the Markdown and HTML files that
-// the tool call in text, the PostToolUse input of agent, wrote whole and
-// that are regular files now, each once, in the call's order. Relative
-// paths are taken from the input's working directory.
-func hookFiles(agent, text string) []string {
-	var in struct {
-		Cwd        string          `json:"cwd"`
-		WorkingDir string          `json:"workingDirectory"`
-		Tool       string          `json:"tool_name"`
-		ToolC      string          `json:"toolName"`
-		Input      json.RawMessage `json:"tool_input"`
-		Args       json.RawMessage `json:"toolArgs"`
-	}
+// the tool call in text, the input of agent's tool hook, wrote whole and
+// that are regular files now, each once, in the call's order; or the plan
+// it asks the user to approve, with show set. Relative paths are taken
+// from the input's working directory; d places agents' directories.
+func hookFiles(agent, text string, d Dirs) (out []string, show bool) {
+	var in hookInput
 	if json.Unmarshal([]byte(strings.TrimSpace(text)), &in) != nil {
-		return nil
+		return nil, false
 	}
-	tool, raw, cwd := either(in.Tool, in.ToolC), in.Input, either(in.Cwd, in.WorkingDir)
-	if raw == nil {
-		raw = in.Args
+	tool, cwd := either(in.Tool, in.ToolC), either(in.Cwd, in.WorkingDir)
+	var paths []string
+	if plan, ok := planTools[agent][tool]; ok {
+		paths, show = []string{plan(in, d)}, true
+	} else if read, ok := writeTools[agent][tool]; ok {
+		paths = read(parseToolArgs(in.raw()))
+	} else {
+		return nil, false
 	}
-	read, ok := writeTools[agent][tool]
-	if !ok {
-		return nil
-	}
-	var out []string
-	for _, p := range read(parseToolArgs(raw)) {
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
 		if !filepath.IsAbs(p) {
 			if !filepath.IsAbs(cwd) {
 				continue
@@ -456,7 +555,7 @@ func hookFiles(agent, text string) []string {
 			p = filepath.Join(cwd, p)
 		}
 		p = filepath.Clean(p)
-		if present.KindOf(p) == present.KindNone || !validPresentPath(p) || slices.Contains(out, p) {
+		if !present.KindOf(p).Document() || !validPresentPath(p) || slices.Contains(out, p) {
 			continue
 		}
 		if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
@@ -464,7 +563,7 @@ func hookFiles(agent, text string) []string {
 		}
 		out = append(out, p)
 	}
-	return out
+	return out, show
 }
 
 // either returns a, or b when a is empty.

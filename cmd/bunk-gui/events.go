@@ -213,6 +213,8 @@ func (a *App) runAction(name string, termKey bool) bool {
 		return global(func() { a.renameTab(t) })
 	case "documents":
 		return global(func() { a.toggleDocuments(t) })
+	case "preview_file":
+		return global(func() { a.pickPreview(t) })
 	case "new_window":
 		return global(a.openWindow)
 	case "next_tab":

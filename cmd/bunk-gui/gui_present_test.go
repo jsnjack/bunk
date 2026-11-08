@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,7 +109,10 @@ func TestGUIPresentMarkdown(t *testing.T) {
 // TestGUIPresentHTML shows an agent's HTML page reported by a hook, which
 // opens the panel with [present] auto. The page runs its scripts and reads
 // files of its own directory, but reaches neither the network, nor other
-// files on disk, nor hidden files beside it.
+// files on disk, nor hidden files beside it. A page whose web process ends
+// loads again once; ending it again keeps it down until its file changes.
+// A page whose file went comes back with the file, and closing the tab ends
+// its web view.
 func TestGUIPresentHTML(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
@@ -135,11 +142,30 @@ Promise.all([
 		script: []string{
 			"wait focused.line=$",
 			"present page.html auto",
-			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true run.web_views=1",
 			"present-wait document.body.dataset.done === '1'",
 			"present-eval document.getElementById('result').textContent + ' img:' + document.getElementById('remote').naturalWidth",
 			"wait tab.1.panel.eval=\"net:blocked file:blocked same:ok hidden:blocked img:0\"",
 			"snap html",
+			"present-kill",
+			"wait tab.1.panel.docs.0.crashed=true",
+			"present-wait document.body.dataset.done === '1'",
+			"present-kill",
+			"wait tab.1.panel.status~\"stopped twice\"",
+			"type echo >> page.html\\r",
+			"wait tab.1.panel.docs.0.reloads=1 tab.1.panel.docs.0.crashed=false tab.1.panel.status!~\"Could not\"",
+			"present-wait document.body.dataset.done === '1'",
+			"type mv page.html page.gone\\r",
+			"wait tab.1.panel.status~\"Could not show\"",
+			"type mv page.gone page.html\\r",
+			"wait tab.1.panel.docs.0.reloads=3 tab.1.panel.status!~\"Could not\"",
+			"present-wait document.body.dataset.done === '1'",
+			"new-tab",
+			"wait tabs.#=2 selected_tab=2",
+			"select-tab 1",
+			"wait selected_tab=1",
+			"close-tab",
+			"wait tabs.#=1 run.web_views=0",
 			"quit",
 		},
 	})
@@ -184,7 +210,7 @@ func TestGUIPresentListed(t *testing.T) {
 // TestGUIPresentPrefs: the Documents section of the preferences lists the
 // bunk-present skill of Claude Code, Codex and Copilot CLI, missing in an
 // empty home directory. Install writes Codex's, and the switch saves
-// [present] auto in config.toml.
+// [present] auto in config.toml and holds without a restart.
 func TestGUIPresentPrefs(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -192,6 +218,7 @@ func TestGUIPresentPrefs(t *testing.T) {
 		cost:   2,
 		config: "# mine\n",
 		args:   []string{"--size", "100x30", "--agent-home", home},
+		files:  map[string]string{"notes.md": "# Notes\n"},
 		script: []string{
 			"maximize", "wait window.maximized=true window.w>1800",
 			"kbd ctrl+comma",
@@ -206,6 +233,9 @@ func TestGUIPresentPrefs(t *testing.T) {
 			"wait prefs.present_auto=true run.reloads>=1",
 			"dialog-close",
 			"wait prefs=null",
+			// The switch holds at once: a hook's document opens the panel.
+			"present notes.md auto",
+			"wait tab.1.panel.open=true",
 			"quit",
 		},
 	})
@@ -228,5 +258,84 @@ func TestGUIPresentPrefs(t *testing.T) {
 	}
 	if got := readFile(t, g.file("config.toml")); !strings.Contains(got, "[present]\nauto = true") || !strings.Contains(got, "# mine") {
 		t.Errorf("config.toml:\n%s", got)
+	}
+}
+
+// tinyPDF is a PDF with one blank page.
+const tinyPDF = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
+	"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
+
+// designPage is an agent's HTML page that loads bunk's page runtime for a
+// diagram and math, and takes its colours from the theme.
+const designPage = `<!doctype html><html><head><title>Design</title>
+<script src="bunk-present://assets/bunk-doc.js" defer></script>
+<style>body{background:var(--bunk-bg);color:var(--bunk-fg)}</style></head>
+<body><h1>Design</h1><pre class="mermaid">graph LR
+  A --> B</pre><p>Cost <span class="math">a^2+b^2</span>.</p></body></html>`
+
+// TestGUIPresentPreview previews files as the file dialog of preview_file
+// does: code highlighted by its name and reloaded when it changes, an
+// image, a PDF in WebKit's viewer, text without an extension, and an
+// agent's HTML page that draws a diagram and math with bunk's runtime in
+// the theme's colours. A binary file is refused with a toast, and the
+// action opens the file dialog.
+func TestGUIPresentPreview(t *testing.T) {
+	t.Parallel()
+	var shot bytes.Buffer
+	if err := png.Encode(&shot, image.NewRGBA(image.Rect(0, 0, 3, 2))); err != nil {
+		t.Fatal(err)
+	}
+	g := runGUI(t, scenario{
+		cost: 2,
+		args: []string{"--size", "100x30"},
+		files: map[string]string{
+			"main.go": "package main\n\nfunc main() {}\n", "shot.png": shot.String(), "doc.pdf": tinyPDF,
+			"design.html": designPage, "notes": "plain notes\n", "data.bin": "\x00\x01\x02",
+		},
+		script: []string{
+			"wait focused.line=$",
+			"preview main.go",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"present-eval [document.querySelectorAll('pre.chroma .kn').length > 0, getComputedStyle(document.documentElement).getPropertyValue('--bunk-dark').trim()].join(',')",
+			"wait tab.1.panel.eval=\"true,1\"",
+			"type echo '// more' >> main.go\\r",
+			"wait tab.1.panel.docs.0.reloads=1",
+			"preview shot.png",
+			"wait tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true",
+			"present-eval String(document.querySelector('img').naturalWidth)",
+			"wait tab.1.panel.eval=3",
+			"preview doc.pdf",
+			"wait tab.1.panel.current=2 tab.1.panel.docs.2.loaded=true",
+			"present-eval document.contentType",
+			"wait tab.1.panel.eval=application/pdf",
+			"preview design.html",
+			"wait tab.1.panel.current=3 tab.1.panel.docs.3.loaded=true",
+			"present-wait document.querySelector('.mermaid svg') && document.querySelector('.katex')",
+			// KaTeX's stylesheet hides the MathML copy of the formula.
+			"present-wait getComputedStyle(document.querySelector('.katex-mathml')).position === 'absolute'",
+			"present-eval getComputedStyle(document.documentElement).getPropertyValue('--bunk-bg').trim() + ' ' + getComputedStyle(document.body).backgroundColor",
+			"wait tab.1.panel.eval~rgb",
+			"snap design",
+			"preview notes",
+			"wait tab.1.panel.current=4 tab.1.panel.docs.4.loaded=true",
+			"preview data.bin",
+			"wait last_toast~\"Cannot preview data.bin\"",
+			"snap previews",
+			"menu-item Preview a file…",
+			"wait preview_dialog=true",
+			"quit",
+		},
+	})
+	var kinds []string
+	for _, d := range g.snap("previews").Tabs[0].Panel.Docs {
+		kinds = append(kinds, d.Kind)
+	}
+	if strings.Join(kinds, ",") != "text,image,pdf,html,text" {
+		t.Errorf("documents of kinds %q", kinds)
+	}
+	var hex string
+	var r, gr, b int
+	if _, err := fmt.Sscanf(g.snap("design").Tabs[0].Panel.Eval, "%s rgb(%d, %d, %d)", &hex, &r, &gr, &b); err != nil || hex != fmt.Sprintf("#%02x%02x%02x", r, gr, b) {
+		t.Errorf("the page's background %q is not the theme's (%v)", g.snap("design").Tabs[0].Panel.Eval, err)
 	}
 }

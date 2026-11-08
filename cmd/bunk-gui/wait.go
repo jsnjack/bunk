@@ -29,7 +29,7 @@ package main
 //	pane.ID            the pane with that id, e.g. pane.0.status.state=needs
 //	focused            the selected tab's focused pane
 //	run.FIELD          frames, clock_frames, reloads, toasts, opened, windows,
-//	                   errors, notifications
+//	                   errors, notifications, web_views
 //	res.FIELD          fds, goroutines, children, zombies, panes, textures (as "mark")
 //
 // A numeric segment indexes an array (0-based); another segment picks the
@@ -365,6 +365,7 @@ type runState struct {
 	Errors      []string `json:"errors"`
 	// Notifications are the desktop notification calls so far.
 	Notifications []alertRecord `json:"notifications"`
+	WebViews      int           `json:"web_views"` // document views alive
 }
 
 // resolve finds the value a condition path names.
@@ -419,7 +420,7 @@ func (w *waiter) resolve(path string) (reflect.Value, error) {
 	case "run":
 		v, segs = reflect.ValueOf(runState{Frames: a.st.frames, ClockFrames: a.st.clockFrames, KeyRenders: len(a.st.keyRender),
 			Reloads: a.rep.Reloads, Toasts: a.toastLog, Opened: a.rep.Opened, Windows: a.rep.Windows, Errors: a.rep.Errors,
-			Notifications: a.rep.Notifications}), segs[1:]
+			Notifications: a.rep.Notifications, WebViews: a.rep.WebViews}), segs[1:]
 	case "res":
 		if w.res == nil {
 			r := a.resources()

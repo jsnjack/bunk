@@ -8,7 +8,7 @@ package main
 
 extern void goPresentScheme(uintptr_t req, int view, char* uri);
 extern int goPresentNavigate(int view, char* uri, int user, int window);
-extern void goPresentLoad(int view, int event);
+extern void goPresentLoad(int view, int event, char* uri);
 extern void goPresentFailed(int view, char* uri, char* err);
 extern void goPresentAsk(int view);
 extern void goPresentEval(int view, int call, char* value, char* err);
@@ -25,8 +25,11 @@ static int bp_id(gpointer obj) {
 	return GPOINTER_TO_INT(g_object_get_data(G_OBJECT(obj), "bunk-view")) - 1;
 }
 
+// bp_scheme_cb hands a request to Go, which may answer it later, from the
+// main loop: it holds a reference until bp_scheme_finish or bp_scheme_fail.
 static void bp_scheme_cb(WebKitURISchemeRequest* req, gpointer data) {
 	WebKitWebView* v = webkit_uri_scheme_request_get_web_view(req);
+	g_object_ref(req);
 	goPresentScheme((uintptr_t)req, v ? bp_id(v) : -1, (char*)webkit_uri_scheme_request_get_uri(req));
 }
 
@@ -47,7 +50,8 @@ static void bp_init(void) {
 	webkit_settings_set_enable_write_console_messages_to_stdout(bp_settings, FALSE);
 }
 
-// bp_scheme_finish answers a bunk-present request with data, copied.
+// bp_scheme_finish answers a bunk-present request with data, copied, and
+// drops the request.
 static void bp_scheme_finish(uintptr_t r, const char* data, gsize len, const char* ctype, const char* csp, int cors) {
 	WebKitURISchemeRequest* req = (WebKitURISchemeRequest*)r;
 	GBytes* b = g_bytes_new(data, len);
@@ -65,16 +69,28 @@ static void bp_scheme_finish(uintptr_t r, const char* data, gsize len, const cha
 	g_object_unref(resp);
 	g_object_unref(s);
 	g_bytes_unref(b);
+	g_object_unref(req);
 }
 
 static void bp_scheme_fail(uintptr_t r, const char* msg) {
 	GError* e = g_error_new_literal(g_quark_from_static_string("bunk-present"), 404, msg);
 	webkit_uri_scheme_request_finish_error((WebKitURISchemeRequest*)r, e);
 	g_error_free(e);
+	g_object_unref((WebKitURISchemeRequest*)r);
 }
 
+// A response that WebKit cannot show would otherwise become a download.
+static const char bp_unsupported[] = "WebKit cannot show this kind of file";
+
 static gboolean bp_decide(WebKitWebView* v, WebKitPolicyDecision* d, WebKitPolicyDecisionType t, gpointer u) {
-	if (t == WEBKIT_POLICY_DECISION_TYPE_RESPONSE) return FALSE;
+	if (t == WEBKIT_POLICY_DECISION_TYPE_RESPONSE) {
+		WebKitResponsePolicyDecision* r = WEBKIT_RESPONSE_POLICY_DECISION(d);
+		if (webkit_response_policy_decision_is_mime_type_supported(r)) return FALSE;
+		const char* uri = webkit_uri_request_get_uri(webkit_response_policy_decision_get_request(r));
+		goPresentFailed(bp_id(v), (char*)(uri ? uri : ""), (char*)bp_unsupported);
+		webkit_policy_decision_ignore(d);
+		return TRUE;
+	}
 	WebKitNavigationAction* a = webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(d));
 	WebKitURIRequest* r = webkit_navigation_action_get_request(a);
 	const char* uri = webkit_uri_request_get_uri(r);
@@ -86,9 +102,14 @@ static gboolean bp_decide(WebKitWebView* v, WebKitPolicyDecision* d, WebKitPolic
 	return TRUE;
 }
 
-static void bp_load(WebKitWebView* v, WebKitLoadEvent ev, gpointer u) { goPresentLoad(bp_id(v), (int)ev); }
+static void bp_load(WebKitWebView* v, WebKitLoadEvent ev, gpointer u) {
+	const char* uri = webkit_web_view_get_uri(v);
+	goPresentLoad(bp_id(v), (int)ev, (char*)(uri ? uri : ""));
+}
 
 static gboolean bp_failed(WebKitWebView* v, WebKitLoadEvent ev, char* uri, GError* err, gpointer u) {
+	// bp_decide said why it stopped the load.
+	if (err && g_error_matches(err, WEBKIT_POLICY_ERROR, WEBKIT_POLICY_ERROR_FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE)) return FALSE;
 	goPresentFailed(bp_id(v), uri, err ? err->message : "");
 	return FALSE;
 }
@@ -127,6 +148,17 @@ static GtkWidget* bp_view_new(int id) {
 	g_signal_connect(v, "web-process-terminated", G_CALLBACK(bp_crashed), NULL);
 	return GTK_WIDGET(v);
 }
+
+// bp_view_close ends the view's web process, so a closed tab's page stops
+// running at once. The view's signals name no view after it.
+static void bp_view_close(uintptr_t v) {
+	WebKitWebView* w = WEBKIT_WEB_VIEW((gpointer)v);
+	g_object_set_data(G_OBJECT(w), "bunk-view", NULL);
+	webkit_web_view_terminate_web_process(w);
+}
+
+// bp_view_kill ends the web process as a crash would, for window tests.
+static void bp_view_kill(uintptr_t v) { webkit_web_view_terminate_web_process(WEBKIT_WEB_VIEW((gpointer)v)); }
 
 static void bp_load_uri(uintptr_t v, const char* uri) { webkit_web_view_load_uri(WEBKIT_WEB_VIEW((gpointer)v), uri); }
 
@@ -186,10 +218,23 @@ type webView struct {
 func (a *App) newWebView(pn *panel) *webView {
 	v := &webView{id: len(a.webViews), panel: pn, calls: map[int]func(string, error){}}
 	a.webViews = append(a.webViews, v)
+	a.rep.WebViews++
 	ptr := C.bp_view_new(C.int(v.id))
 	v.ptr = uintptr(unsafe.Pointer(ptr))
 	v.widget = wrapWidget(unsafe.Pointer(ptr))
 	return v
+}
+
+// closeWebView ends v's web process and forgets v, whose widget GTK frees
+// with its tab. Other calls on v do nothing after it.
+func (a *App) closeWebView(v *webView) {
+	if v.ptr == 0 {
+		return
+	}
+	C.bp_view_close(C.uintptr_t(v.ptr))
+	a.webViews[v.id] = nil
+	a.rep.WebViews--
+	v.ptr, v.widget, v.panel, v.calls = 0, nil, nil, nil
 }
 
 func webViewByID(id C.int) *webView {
@@ -200,19 +245,35 @@ func webViewByID(id C.int) *webView {
 }
 
 func (v *webView) load(uri string) {
+	if v.ptr == 0 {
+		return
+	}
 	cs := C.CString(uri)
 	defer C.free(unsafe.Pointer(cs))
 	C.bp_load_uri(C.uintptr_t(v.ptr), cs)
 }
 
+// kill ends the web process as a crash would (--do present-kill).
+func (v *webView) kill() {
+	if v.ptr != 0 {
+		C.bp_view_kill(C.uintptr_t(v.ptr))
+	}
+}
+
 func (v *webView) setBackground(rgb uint32) {
+	if v.ptr == 0 {
+		return
+	}
 	C.bp_set_bg(C.uintptr_t(v.ptr), C.double(float64(rgb>>16&0xff)/255), C.double(float64(rgb>>8&0xff)/255), C.double(float64(rgb&0xff)/255))
 }
 
 // eval runs script in the page and calls done with its value: a string as
 // it is, anything else as JSON, "" for undefined. isolated runs it in
-// bunk's own script world.
+// bunk's own script world. A closed view never calls done.
 func (v *webView) eval(script string, isolated bool, done func(string, error)) {
+	if v.ptr == 0 {
+		return
+	}
 	v.call++
 	v.calls[v.call] = done
 	cs := C.CString(script)
@@ -271,8 +332,15 @@ func goPresentNavigate(view C.int, uri *C.char, user, window C.int) C.int {
 }
 
 //export goPresentLoad
-func goPresentLoad(view, event C.int) {
-	if v := webViewByID(view); v != nil && v.panel != nil && event == C.WEBKIT_LOAD_FINISHED {
+func goPresentLoad(view, event C.int, uri *C.char) {
+	v := webViewByID(view)
+	if v == nil || v.panel == nil {
+		return
+	}
+	switch event {
+	case C.WEBKIT_LOAD_COMMITTED:
+		v.panel.committed = C.GoString(uri)
+	case C.WEBKIT_LOAD_FINISHED:
 		v.panel.loaded()
 	}
 }

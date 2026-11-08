@@ -1,20 +1,21 @@
 ---
 name: bunk-present
-description: Show a Markdown or HTML document to the user in bunk-gui's side panel. Use it only when you run inside bunk (the environment variable BUNK_NOTIFY_SESSION is set) and you have written, or are about to write, a document for the user to read - a plan, spec, design, diagram, comparison, report or an HTML explanation.
+description: Show the user a document you wrote - a plan, spec, design, report, comparison, diagram or explanation, best as an interactive HTML page - in a panel beside the terminal, where they read it, click through it, ask about passages and see your edits live. Use it whenever you write such a document for the user to read while you run inside bunk: bunk-gui says so at session start, and bunk sets BUNK_NOTIFY_SESSION.
 ---
 
 # Presenting documents in bunk
 
-bunk-gui shows Markdown and HTML files in a side panel beside the terminal
-tab you run in. The user reads them there, selects passages and asks you
-about them. Outside bunk-gui the same command opens the file in a web
-browser.
+bunk-gui shows HTML pages and Markdown documents in a side panel beside
+the terminal tab you run in. The user reads them there, clicks through
+them, selects passages and asks you about them. Outside bunk-gui the same
+command opens the file in a web browser.
 
 ## When to present
 
-Present only inside bunk. When BUNK_NOTIFY_SESSION is unset, do not run the
-command: outside bunk it opens a web browser, which you should not do on
-your own. The user can still run it themselves.
+Present only inside bunk. In bunk-gui, a note at the start of the session
+says so; otherwise run `printenv BUNK_NOTIFY_SESSION` once. When it is
+unset, do not run the command: outside bunk it opens a web browser, which
+you should not do on your own. The user can still run it themselves.
 
 Present a file when you wrote something the user should read rather than
 skim in the terminal:
@@ -23,9 +24,10 @@ skim in the terminal:
 - a report, review or comparison at the end of a task;
 - an explanation where a diagram, table or formula says more than prose.
 
-Do not present every file you touch, and never source code, configuration
-or logs. Keep one document per topic and update it rather than writing a
-new one.
+Do not present every file you touch, nor source code, configuration or
+logs on your own. Keep one document per topic and update it rather than
+writing a new one. When the user asks to see a file, present it whatever
+it is: images, PDFs, video, audio, code and other text show as previews.
 
 ## How
 
@@ -43,8 +45,10 @@ The command prints one line:
 All three exit 0. Anything else, such as a missing file or an unsupported
 extension, exits 1 with the reason on stderr; fix it and run again.
 
-The panel reloads the file whenever it is saved and marks the sections
-that changed, so you do not need to present a file again after editing it.
+The panel reloads the file whenever it is saved, so you do not need to
+present a file again after editing it. An HTML page loads again and
+scrolls back, so its scripts start over; a Markdown document keeps the
+reader's place and marks the sections that changed.
 
 Where to put files:
 
@@ -53,30 +57,51 @@ Where to put files:
 - Throwaway explanations go in a scratch or temporary directory, not in
   the repository.
 
-## Formats
+## Write HTML
 
-Markdown (.md, .markdown):
+Prefer one self-contained HTML page: the user can interact with it, which
+Markdown cannot give. Use what helps the reader:
+
+- tabs, or collapsible <details> sections, for alternatives and detail;
+- tables the user can sort or filter;
+- diagrams and charts as inline SVG, or Mermaid (below);
+- controls that show behaviour: sliders, toggles, a step-through of a flow.
+
+Keep it one file with inline <style> and <script>. Give it h1-h3 headings
+with ids: the user's questions name the section they come from.
+
+The panel serves bunk's own assets at bunk-present://assets/:
+
+    <link rel="stylesheet" href="bunk-present://assets/bunk-doc.css">
+    <script src="bunk-present://assets/bunk-doc.js" defer></script>
+
+- bunk-doc.css gives the page the look of bunk's documents in the panel's
+  theme; put the content in <article id="bunk-doc">.
+- bunk-doc.js draws <pre class="mermaid"> diagrams and typesets TeX in
+  <span class="math"> and <div class="math math-display"> with KaTeX.
+- The theme's colours are CSS variables: var(--bunk-bg), var(--bunk-fg),
+  var(--bunk-muted), var(--bunk-accent), var(--bunk-border) and
+  var(--bunk-code-bg); --bunk-dark is 1 in a dark theme. Use them rather
+  than fixed colours, so the page matches the panel.
+
+Limits:
+
+- The page is shown from its own directory. Other files it loads must be
+  relative files in that directory. Nothing outside it is served, nor
+  files whose names start with ".", and a page in the home directory or
+  in / gets no files beside it at all.
+- Nothing loads from the internet: no CDNs, web fonts or remote images, and
+  no file:// URLs.
+
+## Markdown
+
+Markdown (.md) suits plain prose, notes and lists:
 
 - GitHub-flavoured Markdown: headings, lists, tables, task lists, links.
 - Code fences with a language get syntax highlighting.
 - ```mermaid fences become diagrams.
 - $inline$ and $$display$$ math.
 - Images by a path relative to the Markdown file.
-
-Use headings: the user's questions name the section they come from.
-
-HTML (.html, .htm):
-
-- The page is shown from its own directory. Scripts, styles and images must
-  be inline or relative files in that directory. Nothing outside it is
-  served, nor files whose names start with ".", and a page in the home
-  directory or in / gets no files beside it at all.
-- Nothing loads from the internet: no CDNs, web fonts or remote images, and
-  no file:// URLs.
-- Mermaid and math are Markdown features. An HTML page draws its own
-  diagrams (inline SVG) and math.
-- Prefer Markdown unless the page needs layout or interaction that Markdown
-  cannot give.
 
 ## Feedback from the panel
 

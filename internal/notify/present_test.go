@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"io"
@@ -271,7 +272,10 @@ func TestPresentCLI(t *testing.T) {
 	md, html := filepath.Join(dir, "plan.md"), filepath.Join(dir, "page.HTML")
 	writeFile(t, md, "# Plan\n\nText.\n")
 	writeFile(t, html, "<!doctype html><p>Hi</p>\n")
-	writeFile(t, filepath.Join(dir, "notes.txt"), "notes\n")
+	notes, shot := filepath.Join(dir, "notes.txt"), filepath.Join(dir, "shot.png")
+	writeFile(t, notes, "notes\n")
+	writeFile(t, shot, "\x89PNG\r\n")
+	writeFile(t, filepath.Join(dir, "data.bin"), "\x00\x01\x02")
 	if err := os.Mkdir(filepath.Join(dir, "folder.md"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -289,14 +293,17 @@ func TestPresentCLI(t *testing.T) {
 		code      int
 		stdout    string // substring; "" means no output at all
 		stderr    string // substring; "" means no output at all
-		shown     bool   // the presenter got md
-		opened    string // the file openFile got, "page" for md's rendered page
+		shown     string // the file the presenter got, or ""
+		opened    string // the file openFile got, "page" for a rendered page
 	}{
 		{name: "help", args: []string{"--help"}, stdout: "usage: bunk present FILE"},
 		{name: "no arguments", code: 1, stderr: "usage: bunk present FILE"},
 		{name: "two files", args: []string{md, html}, env: inGUI, code: 1, stderr: "unexpected arguments"},
 		{name: "unknown option", args: []string{"--open"}, env: inGUI, code: 1, stderr: "unexpected arguments"},
-		{name: "in bunk-gui", args: []string{md}, env: inGUI, stdout: "Showing " + md + " in bunk-gui's side panel.\n", shown: true},
+		{name: "in bunk-gui", args: []string{md}, env: inGUI, stdout: "Showing " + md + " in bunk-gui's side panel.\n", shown: md},
+		{name: "text in bunk-gui", args: []string{notes}, env: inGUI, stdout: "Showing " + notes + " in bunk-gui's side panel.\n", shown: notes},
+		{name: "text in bunk's terminal UI", args: []string{notes}, env: inTUI, stdout: "Opened " + notes + " in the web browser.\n", opened: "page"},
+		{name: "image in bunk's terminal UI", args: []string{shot}, env: inTUI, stdout: "Opened " + shot + " in its default application.\n", opened: shot},
 		{name: "in bunk's terminal UI", args: []string{md}, env: inTUI, stdout: "Opened " + md + " in the web browser.\n", opened: "page"},
 		{name: "HTML in bunk's terminal UI", args: []string{html}, env: inTUI, stdout: "Opened " + html + " in the web browser.\n", opened: html},
 		{name: "outside bunk", args: []string{md}, env: desktop, stdout: "Opened", opened: "page"},
@@ -305,7 +312,7 @@ func TestPresentCLI(t *testing.T) {
 		{name: "token not registered", args: []string{html}, env: stale, stdout: "Opened", opened: html},
 		{name: "over ssh", args: []string{md}, env: append(slices.Clone(desktop), envSSH+"=10.0.0.2 50000 10.0.0.1 22"),
 			stdout: "Cannot show " + md + " here: this host is reached over ssh"},
-		{name: "over ssh in bunk-gui", args: []string{md}, env: append(slices.Clone(inGUI), envSSH+"=x"), stdout: "Showing", shown: true},
+		{name: "over ssh in bunk-gui", args: []string{md}, env: append(slices.Clone(inGUI), envSSH+"=x"), stdout: "Showing", shown: md},
 		{name: "no display", args: []string{md}, env: []string{EnvSocket + "=" + tui.Path(), EnvSession + "=" + tuiToken},
 			stdout: "Cannot show " + md + " here: there is no graphical display"},
 		{name: "no opener", args: []string{html}, env: desktop, openErr: errNoOpener, opened: html,
@@ -313,7 +320,8 @@ func TestPresentCLI(t *testing.T) {
 		{name: "opener fails", args: []string{html}, env: desktop, openErr: errors.New("exec format error"), opened: html, code: 1, stderr: "exec format error"},
 		{name: "missing file", args: []string{filepath.Join(dir, "gone.md")}, env: inGUI, code: 1, stderr: "cannot read " + filepath.Join(dir, "gone.md") + ": no such file"},
 		{name: "directory", args: []string{filepath.Join(dir, "folder.md")}, env: inGUI, code: 1, stderr: "not a regular file"},
-		{name: "other kind", args: []string{filepath.Join(dir, "notes.txt")}, env: inGUI, code: 1, stderr: "neither Markdown (.md) nor HTML (.html)"},
+		{name: "binary", args: []string{filepath.Join(dir, "data.bin")}, env: inGUI, code: 1,
+			stderr: "cannot show " + filepath.Join(dir, "data.bin") + ": not a document, image, PDF, video, audio or text file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opened := stubOpen(t, tc.openErr)
@@ -329,8 +337,8 @@ func TestPresentCLI(t *testing.T) {
 					t.Fatalf("%s = %q, want %q", out.name, out.got, out.want)
 				}
 			}
-			if tc.shown {
-				if p := nextPresented(t, shown); p != (presented{guiToken, md, false}) {
+			if tc.shown != "" {
+				if p := nextPresented(t, shown); p != (presented{guiToken, tc.shown, false}) {
 					t.Fatalf("presenter got %+v", p)
 				}
 			}
@@ -342,7 +350,7 @@ func TestPresentCLI(t *testing.T) {
 				if len(*opened) != 1 || !strings.HasPrefix((*opened)[0], filepath.Join(cache, "bunk", "present")+"/") || filepath.Base((*opened)[0]) != "index.html" {
 					t.Fatalf("opened %q, want a page in the cache", *opened)
 				}
-				if page, err := os.ReadFile((*opened)[0]); err != nil || !bytes.Contains(page, []byte("Plan")) {
+				if page, err := os.ReadFile((*opened)[0]); err != nil || !bytes.Contains(page, []byte(strings.TrimSuffix(filepath.Base(tc.args[0]), filepath.Ext(tc.args[0])))) {
 					t.Fatalf("page: %v\n%s", err, page)
 				}
 			case tc.opened != "" && !slices.Equal(*opened, []string{tc.opened}):
@@ -471,39 +479,90 @@ func TestHookFiles(t *testing.T) {
 		{"cut-off JSON", "claude", `{"tool_name":"Write","tool_input":{"file_path":"`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := hookFiles(tc.agent, tc.input); !slices.Equal(got, tc.want) {
-				t.Fatalf("hookFiles = %q, want %q", got, tc.want)
+			if got, show := hookFiles(tc.agent, tc.input, Dirs{}); !slices.Equal(got, tc.want) || show {
+				t.Fatalf("hookFiles = %q, %v; want %q", got, show, tc.want)
 			}
 		})
 	}
 }
 
-// TestPresentHook: "--hook AGENT -" sends each document with auto set,
-// prints nothing and exits 0, also outside bunk and when misused.
+// TestHookPlans: the plan an agent asks the user to approve is shown, from
+// Claude Code's ExitPlanMode input or Copilot CLI's plan.md in the state
+// directory of the session.
+func TestHookPlans(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	const session = "58e6b599-e886-4339-ab00-200003507f62"
+	claudePlan := filepath.Join(home, ".claude", "plans", "quiet-river.md")
+	copilotPlan := filepath.Join(home, ".copilot", "session-state", session, "plan.md")
+	moved := filepath.Join(home, "moved")
+	movedPlan := filepath.Join(moved, "session-state", "s1", "plan.md")
+	for _, f := range []string{claudePlan, copilotPlan, movedPlan} {
+		writeFile(t, f, "# Plan\n")
+	}
+	d := Dirs{Home: home}
+	dm := Dirs{Home: home, Getenv: func(k string) string {
+		if k == "COPILOT_HOME" {
+			return moved
+		}
+		return ""
+	}}
+	for _, tc := range []struct {
+		name, agent, input string
+		d                  Dirs
+		want               []string
+		show               bool
+	}{
+		{"claude ExitPlanMode", "claude", `{"hook_event_name":"PreToolUse","cwd":"/elsewhere","tool_name":"ExitPlanMode","tool_input":{"plan":"# Plan","planFilePath":"` + claudePlan + `"}}`,
+			d, []string{claudePlan}, true},
+		{"claude ExitPlanMode without a file", "claude", `{"tool_name":"ExitPlanMode","tool_input":{"plan":"# Plan"}}`, d, nil, true},
+		{"copilot exit_plan_mode", "copilot", `{"sessionId":"` + session + `","timestamp":1,"cwd":"/elsewhere","toolName":"exit_plan_mode","toolArgs":{"summary":"Add a cache"}}`,
+			d, []string{copilotPlan}, true},
+		{"copilot with COPILOT_HOME", "copilot", `{"sessionId":"s1","toolName":"exit_plan_mode","toolArgs":{}}`, dm, []string{movedPlan}, true},
+		{"copilot without a plan yet", "copilot", `{"sessionId":"none","toolName":"exit_plan_mode","toolArgs":{}}`, d, nil, true},
+		{"copilot session ID that leaves the directory", "copilot", `{"sessionId":"../` + session + `","toolName":"exit_plan_mode"}`, d, nil, true},
+		{"copilot session ID ..", "copilot", `{"sessionId":"..","toolName":"exit_plan_mode"}`, d, nil, true},
+		{"codex has no plan tool", "codex", `{"tool_name":"ExitPlanMode","tool_input":{"planFilePath":"` + claudePlan + `"}}`, d, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, show := hookFiles(tc.agent, tc.input, tc.d); !slices.Equal(got, tc.want) || show != tc.show {
+				t.Fatalf("hookFiles = %q, %v; want %q, %v", got, show, tc.want, tc.show)
+			}
+		})
+	}
+}
+
+// TestPresentHook: "--hook AGENT -" sends each document with auto set, and
+// a plan to approve without it, prints nothing and exits 0, also outside
+// bunk and when misused.
 func TestPresentHook(t *testing.T) {
 	srv, token, _, got := startPresenter(t, true)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.md"), "# A\n")
 	writeFile(t, filepath.Join(dir, "b.html"), "<p>B</p>\n")
 	input := `{"cwd":"` + dir + `","tool_name":"apply_patch","tool_input":{"command":"*** Add File: a.md\n*** Add File: b.html\n"}}`
+	plan := `{"tool_name":"ExitPlanMode","tool_input":{"plan":"# A","planFilePath":"` + filepath.Join(dir, "a.md") + `"}}`
 	inside := []string{EnvSocket + "=" + srv.Path(), EnvSession + "=" + token, "DISPLAY=:0"}
 	for _, tc := range []struct {
-		name string
-		args []string
-		env  []string
-		want []presented
+		name  string
+		args  []string
+		env   []string
+		input string // "" is input
+		want  []presented
 	}{
-		{"inside bunk", []string{"--hook", "codex", "-"}, inside,
+		{"inside bunk", []string{"--hook", "codex", "-"}, inside, "",
 			[]presented{{token, filepath.Join(dir, "a.md"), true}, {token, filepath.Join(dir, "b.html"), true}}},
-		{"outside bunk", []string{"--hook", "codex", "-"}, []string{"DISPLAY=:0"}, nil},
-		{"over ssh", []string{"--hook", "codex", "-"}, []string{envSSH + "=x", EnvSession + "=" + token}, nil},
-		{"unknown agent", []string{"--hook", "emacs", "-"}, inside, nil},
-		{"no stdin argument", []string{"--hook", "codex"}, inside, nil},
+		{"a plan to approve", []string{"--hook", "claude", "-"}, inside, plan,
+			[]presented{{token, filepath.Join(dir, "a.md"), false}}},
+		{"outside bunk", []string{"--hook", "codex", "-"}, []string{"DISPLAY=:0"}, "", nil},
+		{"over ssh", []string{"--hook", "codex", "-"}, []string{envSSH + "=x", EnvSession + "=" + token}, "", nil},
+		{"unknown agent", []string{"--hook", "emacs", "-"}, inside, "", nil},
+		{"no stdin argument", []string{"--hook", "codex"}, inside, "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opened := stubOpen(t, nil)
 			var stdout, stderr bytes.Buffer
-			if code := runPresent("bunk", tc.args, tc.env, strings.NewReader(input), &stdout, &stderr); code != 0 || stdout.Len() > 0 || stderr.Len() > 0 {
+			if code := runPresent("bunk", tc.args, tc.env, strings.NewReader(cmp.Or(tc.input, input)), &stdout, &stderr); code != 0 || stdout.Len() > 0 || stderr.Len() > 0 {
 				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 			}
 			for _, want := range tc.want {
@@ -519,12 +578,10 @@ func TestPresentHook(t *testing.T) {
 	}
 }
 
-// TestPresentHookSnippets runs the present hook of each agent's snippet
-// with sh and the real CLI (this test binary as bunk-gui) on the agent's
-// PostToolUse input: the file the tool wrote reaches the presenter with
-// auto set, and the hook prints nothing.
-func TestPresentHookSnippets(t *testing.T) {
-	srv, token, _, got := startPresenter(t, true)
+// presentBin is a directory with a "bunk-gui" that runs this test binary
+// as the present CLI, for hook snippets to run.
+func presentBin(t *testing.T) string {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -534,30 +591,158 @@ func TestPresentHookSnippets(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "bunk-gui"), []byte(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return bin
+}
+
+// TestPresentHookSnippets runs the present hooks of each agent's snippet
+// with sh and the real CLI (this test binary as bunk-gui) on the agent's
+// hook input: the file the tool wrote reaches the presenter with auto set,
+// the plan to approve without it, and the hook prints nothing.
+func TestPresentHookSnippets(t *testing.T) {
+	srv, token, _, got := startPresenter(t, true)
+	bin := presentBin(t)
 	dir := t.TempDir()
 	doc := filepath.Join(dir, "docs", "plan.md")
 	writeFile(t, doc, "# Plan\n")
+	copilotHome := filepath.Join(dir, "copilot")
+	copilotPlan := filepath.Join(copilotHome, "session-state", "s1", "plan.md")
+	writeFile(t, copilotPlan, "# Plan\n")
 	for _, tc := range []struct {
-		agent, event, matcher, input string
+		name, agent, event, matcher, input string
+		want                               presented
 	}{
-		{"claude", "PostToolUse", claudeWriteTools, `{"hook_event_name":"PostToolUse","cwd":"` + dir + `","tool_name":"Write","tool_input":{"file_path":"` + doc + `"}}`},
-		{"codex", "PostToolUse", codexWriteTools, `{"hook_event_name":"PostToolUse","cwd":"` + dir + `","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: docs/plan.md\n+# Plan\n*** End Patch\n"}}`},
-		{"copilot", "postToolUse", copilotWriteTools, `{"sessionId":"s","cwd":"` + dir + `","toolName":"create","toolArgs":` + quote(`{"path":"`+doc+`","file_text":"# Plan"}`) + `}`},
+		{"claude Write", "claude", "PostToolUse", claudeWriteTools, `{"hook_event_name":"PostToolUse","cwd":"` + dir + `","tool_name":"Write","tool_input":{"file_path":"` + doc + `"}}`,
+			presented{token, doc, true}},
+		{"claude ExitPlanMode", "claude", "PreToolUse", exitPlanMode, `{"hook_event_name":"PreToolUse","cwd":"` + dir + `","tool_name":"ExitPlanMode","tool_input":{"plan":"# Plan","planFilePath":"` + doc + `"}}`,
+			presented{token, doc, false}},
+		{"codex apply_patch", "codex", "PostToolUse", codexWriteTools, `{"hook_event_name":"PostToolUse","cwd":"` + dir + `","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: docs/plan.md\n+# Plan\n*** End Patch\n"}}`,
+			presented{token, doc, true}},
+		{"copilot create", "copilot", "postToolUse", copilotWriteTools, `{"sessionId":"s","cwd":"` + dir + `","toolName":"create","toolArgs":` + quote(`{"path":"`+doc+`","file_text":"# Plan"}`) + `}`,
+			presented{token, doc, true}},
+		{"copilot exit_plan_mode", "copilot", "preToolUse", copilotPlanTool, `{"sessionId":"s1","cwd":"` + dir + `","toolName":"exit_plan_mode","toolArgs":{"summary":"Plan"}}`,
+			presented{token, copilotPlan, false}},
 	} {
-		t.Run(tc.agent, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			snippet, _ := HookSnippet(tc.agent)
 			cmd, ok := handlerCommands(t, tc.agent, snippet)[hookKey(tc.event, tc.matcher)]
 			if !ok || !strings.Contains(cmd, "present --hook "+tc.agent+" -") {
 				t.Fatalf("no present hook for %s %q: %q", tc.event, tc.matcher, cmd)
 			}
 			c := exec.Command("/bin/sh", "-c", cmd)
-			c.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", EnvSocket + "=" + srv.Path(), EnvSession + "=" + token}
+			c.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", EnvSocket + "=" + srv.Path(), EnvSession + "=" + token, "COPILOT_HOME=" + copilotHome}
 			c.Stdin = strings.NewReader(tc.input)
 			if out, err := c.CombinedOutput(); err != nil || len(out) > 0 {
 				t.Fatalf("hook: %v, output %q", err, out)
 			}
-			if p := nextPresented(t, got); p != (presented{token, doc, true}) {
-				t.Fatalf("presenter got %+v", p)
+			if p := nextPresented(t, got); p != tc.want {
+				t.Fatalf("presenter got %+v, want %+v", p, tc.want)
+			}
+		})
+	}
+}
+
+// TestSessionStart: "--session-start AGENT -" tells the agent about the
+// panel in a bunk-gui pane, in the form each agent reads, and prints
+// nothing in bunk's terminal UI, outside bunk, over ssh or when misused.
+func TestSessionStart(t *testing.T) {
+	t.Parallel()
+	pane := []string{EnvSocket + "=/run/bunk.sock", EnvSession + "=tok", "TERM_PROGRAM=bunk-gui"}
+	input := `{"session_id":"s","hook_event_name":"SessionStart","source":"startup","cwd":"/src"}`
+	for _, tc := range []struct {
+		name string
+		args []string
+		env  []string
+		want string // the JSON key that holds the hint; "" for no output
+	}{
+		{"claude in bunk-gui", []string{"--session-start", "claude", "-"}, pane, "hookSpecificOutput"},
+		{"codex in bunk-gui", []string{"--session-start", "codex", "-"}, pane, "hookSpecificOutput"},
+		{"copilot in bunk-gui", []string{"--session-start", "copilot", "-"}, pane, "additionalContext"},
+		{"bunk's terminal UI", []string{"--session-start", "claude", "-"}, []string{EnvSocket + "=/run/bunk.sock", EnvSession + "=tok", "TERM_PROGRAM=ptyxis"}, ""},
+		{"outside bunk", []string{"--session-start", "claude", "-"}, []string{"TERM_PROGRAM=bunk-gui"}, ""},
+		{"over ssh", []string{"--session-start", "claude", "-"}, []string{envSSH + "=x", EnvSession + "=tok", "TERM_PROGRAM=bunk-gui"}, ""},
+		{"unknown agent", []string{"--session-start", "gemini", "-"}, pane, ""},
+		{"no stdin argument", []string{"--session-start", "claude"}, pane, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := runPresent("bunk-gui", tc.args, tc.env, strings.NewReader(input), &stdout, &stderr); code != 0 || stderr.Len() > 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr.String())
+			}
+			if tc.want == "" {
+				if stdout.Len() > 0 {
+					t.Fatalf("printed %q", stdout.String())
+				}
+				return
+			}
+			hint := sessionHintOf(t, tc.args[1], stdout.String())
+			for _, want := range []string{"bunk-gui", "`bunk-gui present FILE`", "self-contained HTML page", "Markdown", "About FILE › Section:", "bunk-present skill"} {
+				if !strings.Contains(hint, want) {
+					t.Errorf("hint lacks %q: %s", want, hint)
+				}
+			}
+		})
+	}
+}
+
+// sessionHintOf returns the context that a SessionStart hook's output out
+// gives agent: hookSpecificOutput.additionalContext for Claude Code and
+// Codex, additionalContext for Copilot CLI.
+func sessionHintOf(t *testing.T, agent, out string) string {
+	t.Helper()
+	var got struct {
+		Context  string `json:"additionalContext"`
+		Specific *struct {
+			Event   string `json:"hookEventName"`
+			Context string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || !strings.HasSuffix(out, "}\n") {
+		t.Fatalf("output %q: %v", out, err)
+	}
+	if agent == "copilot" {
+		if got.Specific != nil || got.Context == "" {
+			t.Fatalf("copilot output %q", out)
+		}
+		return got.Context
+	}
+	if got.Context != "" || got.Specific == nil || got.Specific.Event != "SessionStart" || got.Specific.Context == "" {
+		t.Fatalf("%s output %q", agent, out)
+	}
+	return got.Specific.Context
+}
+
+// TestSessionStartSnippets runs each agent's SessionStart hook with sh and
+// the real CLI: in a bunk-gui pane it prints the hint for the agent, and
+// in bunk's terminal UI nothing.
+func TestSessionStartSnippets(t *testing.T) {
+	t.Parallel()
+	bin := presentBin(t)
+	for _, tc := range []struct{ agent, event string }{
+		{"claude", "SessionStart"}, {"codex", "SessionStart"}, {"copilot", "sessionStart"},
+	} {
+		t.Run(tc.agent, func(t *testing.T) {
+			snippet, _ := HookSnippet(tc.agent)
+			cmd, ok := handlerCommands(t, tc.agent, snippet)[hookKey(tc.event, "")]
+			if !ok || !strings.Contains(cmd, "present --session-start "+tc.agent+" -") {
+				t.Fatalf("no session-start hook for %s: %q", tc.event, cmd)
+			}
+			for _, term := range []string{"bunk-gui", ""} {
+				c := exec.Command("/bin/sh", "-c", cmd)
+				c.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", EnvSocket + "=/run/bunk.sock", EnvSession + "=tok", "TERM_PROGRAM=" + term}
+				c.Stdin = strings.NewReader(`{"source":"startup"}`)
+				out, err := c.Output()
+				if err != nil {
+					t.Fatalf("hook in %q: %v", term, err)
+				}
+				if term == "" {
+					if len(out) > 0 {
+						t.Fatalf("hook outside bunk-gui printed %q", out)
+					}
+					continue
+				}
+				if hint := sessionHintOf(t, tc.agent, string(out)); !strings.Contains(hint, " present FILE`") {
+					t.Fatalf("hint %q", hint)
+				}
 			}
 		})
 	}

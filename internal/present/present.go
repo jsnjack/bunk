@@ -15,26 +15,66 @@ import (
 	"strings"
 )
 
-// Kind is the kind of document present shows.
+// Kind is the kind of file present shows.
 type Kind int
 
-// The kinds of documents, by file extension.
+// The kinds of files. Markdown and HTML are documents, which agents write
+// for the user; the others are files the user previews.
 const (
 	KindNone     Kind = iota
 	KindMarkdown      // .md .markdown .mdown .mkd
 	KindHTML          // .html .htm
+	KindImage         // .png .jpg .jpeg .gif .webp .avif .bmp .ico .svg
+	KindPDF           // .pdf
+	KindVideo         // .mp4 .m4v .webm .ogv .mov
+	KindAudio         // .mp3 .ogg .oga .opus .wav .flac .m4a .aac
+	KindText          // any other UTF-8 text: code, data, logs (Preview)
 )
 
-// KindOf returns the kind of the document at path, by its extension in any
-// case.
+// KindOf returns the kind of the file at path by its extension in any
+// case. Text has no extensions of its own, so KindOf never returns
+// KindText; Preview looks inside the file.
 func KindOf(path string) Kind {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".md", ".markdown", ".mdown", ".mkd":
 		return KindMarkdown
 	case ".html", ".htm":
 		return KindHTML
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico", ".svg":
+		return KindImage
+	case ".pdf":
+		return KindPDF
+	case ".mp4", ".m4v", ".webm", ".ogv", ".mov":
+		return KindVideo
+	case ".mp3", ".ogg", ".oga", ".opus", ".wav", ".flac", ".m4a", ".aac":
+		return KindAudio
 	}
 	return KindNone
+}
+
+// Document reports whether k is a document: Markdown or HTML, what agents
+// write for the user to read. Hooks offer only documents.
+func (k Kind) Document() bool { return k == KindMarkdown || k == KindHTML }
+
+// String names k as --report and the docs do.
+func (k Kind) String() string {
+	switch k {
+	case KindMarkdown:
+		return "markdown"
+	case KindHTML:
+		return "html"
+	case KindImage:
+		return "image"
+	case KindPDF:
+		return "pdf"
+	case KindVideo:
+		return "video"
+	case KindAudio:
+		return "audio"
+	case KindText:
+		return "text"
+	}
+	return "none"
 }
 
 // Theme is the colours a rendered page uses, as CSS colour strings
@@ -179,10 +219,7 @@ func renderPage(src []byte, opts Options, baseHref string) ([]byte, error) {
 	fmt.Fprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", asset(assetStyle))
 	fmt.Fprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", asset(assetKatexCSS))
 	b.WriteString("<style>\n")
-	fmt.Fprintf(&b, ":root{color-scheme:%s;--bunk-bg:%s;--bunk-fg:%s;--bunk-muted:%s;--bunk-accent:%s;"+
-		"--bunk-border:%s;--bunk-code-bg:%s;--bunk-selection:%s}\n",
-		mode, theme.Background, theme.Foreground, theme.Muted, theme.Accent,
-		theme.Border, theme.CodeBackground, theme.Selection)
+	b.WriteString(ThemeCSS(theme))
 	b.WriteString(codeCSS(theme.Dark))
 	b.WriteString("</style>\n</head>\n<body>\n")
 	b.WriteString(articleOpen)
@@ -191,6 +228,49 @@ func renderPage(src []byte, opts Options, baseHref string) ([]byte, error) {
 	fmt.Fprintf(&b, "<script src=\"%s\"></script>\n", asset(assetScript))
 	b.WriteString("</body>\n</html>\n")
 	return b.Bytes(), nil
+}
+
+// ThemeCSS is the rule that gives a page the theme's colours as custom
+// properties on :root (--bunk-bg, --bunk-fg, --bunk-muted, --bunk-accent,
+// --bunk-border, --bunk-code-bg, --bunk-selection; --bunk-dark is 1 for a
+// dark theme, else 0) and its color-scheme, so unstyled text and controls
+// suit the background.
+func ThemeCSS(t Theme) string {
+	t = t.filled()
+	mode, dark := "light", 0
+	if t.Dark {
+		mode, dark = "dark", 1
+	}
+	return fmt.Sprintf(":root{color-scheme:%s;--bunk-dark:%d;--bunk-bg:%s;--bunk-fg:%s;--bunk-muted:%s;--bunk-accent:%s;"+
+		"--bunk-border:%s;--bunk-code-bg:%s;--bunk-selection:%s}\n",
+		mode, dark, t.Background, t.Foreground, t.Muted, t.Accent, t.Border, t.CodeBackground, t.Selection)
+}
+
+var (
+	headTag    = regexp.MustCompile(`(?i)<head(\s[^>]*)?>`)
+	htmlTag    = regexp.MustCompile(`(?i)<html(\s[^>]*)?>`)
+	doctypeTag = regexp.MustCompile(`(?i)^\s*<!doctype[^>]*>`)
+)
+
+// InsertHead puts markup first into the page's <head>, so it comes before
+// anything of the page's own: a policy holds for all of it, and the page's
+// styles override the ones inserted. A page without a <head> gets one.
+func InsertHead(page []byte, markup string) []byte {
+	at, wrap := 0, true // no tags: a <head> first
+	if loc := headTag.FindIndex(page); loc != nil {
+		at, wrap = loc[1], false
+	} else if loc := htmlTag.FindIndex(page); loc != nil {
+		at = loc[1]
+	} else if loc := doctypeTag.FindIndex(page); loc != nil {
+		at = loc[1]
+	}
+	if wrap {
+		markup = "<head>" + markup + "</head>"
+	}
+	out := make([]byte, 0, len(page)+len(markup))
+	out = append(out, page[:at]...)
+	out = append(out, markup...)
+	return append(out, page[at:]...)
 }
 
 // contentSecurityPolicy allows the page its assets and the document's own
