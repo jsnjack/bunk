@@ -33,8 +33,8 @@ type keyAction struct {
 // them. The names shared with bunk's TUI mean the same there. The defaults
 // are bunk's TUI keys plus Ptyxis's, with F2 and Ctrl+Left/Right for tabs as
 // the user set them in Ptyxis, and Ctrl+Up/Down for tabs, which the user
-// asked for to match the rail's vertical tab list (AGENTS.md, Design
-// Decisions).
+// asked for to match the rail's vertical tab list (docs/gui.md, Default
+// keys).
 var keyActions = []keyAction{
 	{"new_tab", "New tab", []string{"f2"}},
 	{"close_tab", "Close tab", []string{"ctrl+shift+w"}},

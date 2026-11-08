@@ -62,7 +62,17 @@ lint: vet
 	}
 	golangci-lint run
 
-check: fmt vet $(BUNK_BINS) lint
+# Every agent session loads AGENTS.md whole, and Codex reads only its first
+# 32 KiB: keep it under the limit (AGENTS.universal.md, "AGENTS.md size").
+AGENTS_MAX_BYTES ?= 30000
+agents-size:
+	@size=$$(wc -c < AGENTS.md); \
+	if [ "$$size" -gt $(AGENTS_MAX_BYTES) ]; then \
+	  echo "AGENTS.md is $$size bytes, over the $(AGENTS_MAX_BYTES)-byte limit: move detail to docs/ (AGENTS.universal.md, \"AGENTS.md size\")"; \
+	  exit 1; \
+	fi
+
+check: fmt vet $(BUNK_BINS) lint agents-size
 	@echo "==> make check: all green"
 
 standards:
@@ -135,7 +145,7 @@ screenshots:
 
 # Everything: format and vet, then bunk's tests and bunk-gui's window tests
 # at the same time (separate modules; logs print after both finish), then
-# the binaries and lint without running the tests again.
+# the binaries, lint and the AGENTS.md size without running the tests again.
 check-all: fmt vet
 	@mkdir -p bin; \
 	$(MAKE) --no-print-directory test > bin/check-test.log 2>&1 & t=$$!; \
@@ -143,7 +153,7 @@ check-all: fmt vet
 	wait $$t; tr=$$?; wait $$g; gr=$$?; \
 	cat bin/check-test.log bin/check-gui.log; \
 	test $$tr -eq 0 && test $$gr -eq 0
-	@$(MAKE) --no-print-directory build lint TEST_GATE= GUI_TEST_GATE=
+	@$(MAKE) --no-print-directory build lint agents-size TEST_GATE= GUI_TEST_GATE=
 	@echo "==> make check-all: all green"
 
 # Runs every Fuzz target in turn for FUZZTIME each. Not part of check or
@@ -222,5 +232,5 @@ clean:
 	rm -rf bin/ $(BINARY)
 
 # bin/bunk-gui is phony so a build without its test gate still rebuilds it.
-.PHONY: version build release test vet fmt lint check standards run clean gui gui-test screenshots check-all rpm fuzz soak \
+.PHONY: version build release test vet fmt lint check agents-size standards run clean gui gui-test screenshots check-all rpm fuzz soak \
 	bench-check bench-baseline bin/bunk-gui

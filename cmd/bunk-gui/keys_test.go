@@ -83,7 +83,7 @@ func TestCollides(t *testing.T) {
 }
 
 // defaultKeys are bunk-gui's default bindings: the keys of bunk's TUI and
-// Ptyxis the user has today (AGENTS.md, Design Decisions).
+// Ptyxis the user has today (docs/gui.md, Default keys).
 var defaultKeys = map[string][]string{
 	"new_tab":           {"f2"},
 	"close_tab":         {"ctrl+shift+w"},

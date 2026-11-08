@@ -14,226 +14,68 @@ other TUI apps.
 
 ---
 
+## Where the details are
+
+This file holds what every session needs: the package map, the rules that
+cross packages, the commands, and the traps. The design of each area, with
+the reasons behind it, is in `docs/`. Read the file for the area before
+changing it:
+
+| Working on | Read |
+|---|---|
+| a file you have not seen before; vt10x's local extensions | [docs/architecture.md](docs/architecture.md) |
+| `internal/vt10x`, `internal/session`, `internal/graphics`, bunk's TUI (package main): parsing, cells, reflow, links, images, the PTY writer, closing a session | [docs/terminal.md](docs/terminal.md) |
+| `cmd/bunk-gui`, `internal/restore`, `internal/boxdraw`: keys, pointer, windows, tabs and the rail, menus, session restore, drawing glyphs and images | [docs/gui.md](docs/gui.md) |
+| `internal/badges`, `internal/theme`: the badges and colours both front ends share | [docs/badges-and-themes.md](docs/badges-and-themes.md) |
+| agent detection, `internal/notify`, `internal/alert`, `internal/desktop`, notifications, installing hooks, agents over ssh | [docs/agent-internals.md](docs/agent-internals.md); the protocol in [docs/agent-hooks.md](docs/agent-hooks.md), the remote design in [docs/remote-agent-status.md](docs/remote-agent-status.md) |
+| any test: leak and soak tests, benchmarks, fuzz targets, window-test scenarios, terminal feature scripts, test recipes | [docs/testing.md](docs/testing.md) |
+| `config.go`, bunk-gui's settings and key bindings | [docs/configuration.md](docs/configuration.md#notes-for-working-on-the-code) |
+| what users see: every feature and key, the agent states | [docs/features.md](docs/features.md), [docs/agent-status.md](docs/agent-status.md) |
+
+This file stays under 30,000 bytes, and `make check` fails when it is over (AGENTS.universal.md, "AGENTS.md size"). When a change alters a flow, update that flow's file in `docs/`, not this one.
+
+---
+
 ## Architecture
 
+One line per package or directory; [docs/architecture.md](docs/architecture.md)
+is the file index.
+
 ```
-main.go             Entry point — calls Execute()
-cmd.go              cobra root command, run(), app initialization
-cmd_config.go       "bunk config" subcommand tree
-cmd_notify.go       "bunk notify": the agent hook CLI (notify.RunCLI)
-cmd_ssh.go          "bunk ssh": ssh that exports the pane's token (notify.RunSSH)
-app.go              App struct, event loop, key handling, triggerRedraw()
-input_modes.go      Host focus forwarding
-input_tcell.go      tcell key/mouse events → internal/input (keyToBytesMode, mouseToBytes)
-pane.go             Pane (embeds *session.Session): placement, render state, NewPane, Hooks
-render.go           render(), renderPane(), vtColor(), border/scrollbar drawing
-graphics.go         Image colour blending
-layout.go           BSP tree: Node, split/remove/resize math
-osc.go              Host passthrough buffer for OSC 7/52/133
-mouse.go            Mouse events → PTY byte sequences
-status.go           Draws the pane badges (rules in internal/badges) in theme
-                    colours; agent-state separator colours
-alerts.go           Agent notifications: desktop ones through D-Bus on the
-                    user's desktop (internal/desktop), else OSC 777 to the
-                    host terminal
-relay.go            Relays the most urgent pane to the host terminal in-band
-                    when bunk runs inside a bunk front end or over ssh
-search.go           In-pane search UI (matching is session.FindAll)
-config.go           TOML config, the theme in tcell colours, keybinding resolution
-hostcolors.go       Host terminal OSC colour probing
-clipboard.go        OSC 52 clipboard passthrough
-logger.go           Structured logging (slog)
-cellaspect.go       Cell pixel aspect ratio detection
-
-internal/vt10x/     Vendored VT100/ANSI emulator (fork of github.com/hinshun/vt10x)
-  state.go          State struct, Cursor, Glyph, ModeFlag constants, setAttr, setMode
-  csi.go            CSI escape sequence dispatcher (handleCSI)
-  str.go            String escape handler (OSC, DCS, APC)
-  parse.go          Parser state machine (put); scan, putText and putCSI handle
-                    text runs and CSI sequences in bulk
-  vt.go             Terminal / View interfaces, New() constructor
-  links.go          OSC 8 URL table: interning, sweeps, ID reuse
-  vt_posix.go       terminal concrete type, Write, Parse (POSIX)
-  color.go          Color type, named colour constants
-  row.go            16-byte cell storage, Row with per-row side table
-  grapheme.go       Incremental grapheme assembly, bounded cell text, cached
-                    segmentations and the simple-grapheme classes
-  status.go         DECRQSS setting serialization
-  graphics.go       Image-to-cell painting, Kitty placement deletion
-  rewrap.go         Rewrap: packs stored cells of logical lines at a new width
-
-internal/graphics/ Bounded SIXEL, Kitty, and iTerm2 static image decoders;
-                    store.go keeps placement bitmaps for full-resolution drawing
-
-internal/termcorpus/ Realistic output streams for the parser benchmarks
-                    (agent transcript, highlighted Go, TUI, CJK, emoji)
-
-internal/input/     Toolkit-neutral key, mouse, focus and paste encoding
-                    (legacy, application cursor/keypad, Kitty CSI u)
-
-internal/session/   One terminal session, shared by front ends
-  session.go        Session, Start/Run/ReadLoop/Feed, Hooks, query replies, Kitty keys, selection
-  scrollback.go     Ring of compact scrollback rows without trailing blanks
-  links.go          Marks the link IDs the scrollback keeps for link sweeps
-  reflow.go         Cell-based reflow and scroll anchoring
-  ptystream.go      Bounded streaming UTF-8/control framing before parsing
-  osc.go            OSC pre-scanner and sanitising (7, 52, 133)
-  process.go        Foreground process, SSH host and container detection
-  command.go        Commands the shell runs, from OSC 133;C/D marks or the
-                    process poll; the last one that ended (Status.Command)
-  search.go         Case-insensitive search over scrollback and the live grid
-  history.go        History: the primary screen and scrollback as SGR text
-                    with OSC 8 links, which a restored pane replays
-  status.go         Agent status: AgentSpec detection, attention requests
-                    (OSC 9/99/777, BEL), failures (OSC 133;D), done after a
-                    long working stretch, git branch, explicit agent
-                    reports (Notify), OSC 9;4 progress (Status.Progress)
-  winsize.go        PTY window size in cells and virtual pixels
-  timing.go         Timing: per-session timer intervals (Options.Timing)
-  ptyfd.go          Setsize: window-size ioctl that holds the PTY descriptor
-  ptyfd_linux.go    Pollable PTY master, so Close ends ReadLoop
-  writer.go         PTY writer: one queue for query replies and input,
-                    written by one goroutine; caps, drops and refusals
-
-internal/restore/   Saved windows for session restore: snapshot types, the
-                    store of slots (one per window, held by a lock while it
-                    runs), scrollback files, each agent's resume command
-
-internal/badges/    Pane status badges for both front ends: which show, their
-                    order, text and fitting (Layout); badgetest holds the cases
-                    both front ends' parity tests draw
-
-internal/theme/     Colour themes for both front ends: the built-in themes,
-                    custom [themes.NAME] tables, [ui] overrides, and the
-                    colours of badge roles (BadgeInks) and agent states
-
-internal/boxdraw/   Cell masks for box drawing, blocks, shades, braille,
-                    legacy computing symbols, powerline and branch symbols
-                    (kitty's set); bunk-gui's atlas uses them, not the font
-
-internal/notify/    Agent hook reports: Unix socket server (token → Session),
-                    client, `notify` CLI (RunCLI), hook snippets per agent,
-                    whether they are installed and installing the
-                    standalone ones (hookstatus.go), the in-band writer
-                    without a socket, `ssh` (RunSSH)
-  wire/             The report line, its OSC 1337 in-band form, tmux/screen
-                    wrapping; imported by notify and session alike
-
-internal/alert/     Agent and command notifications for both front ends:
-                    when a state change or a long command's end notifies
-                    (Tracker), the text, [notifications] settings, the
-                    sanitised OSC 777 sequence and desktop text
-
-internal/desktop/   Desktop notifications for bunk's TUI through the gdbus
-                    command: session bus choice (SessionBus), one per pane,
-                    replace and withdraw off the render loop (Notifier);
-                    desktoptest holds the fake gdbus tests use
-
-internal/leakcheck/ Test helper: fds, goroutines, child processes and live heap
-                    of the process, compared with a baseline after a settle wait
-
-internal/ptychild/  Test helper: a raw-mode child that floods numbered DECRQM
-                    queries and reads its input only when the test says so
-
-third_party/tcell/  Pinned tcell v2.13.9 with overline/keypad/keycap-width patches
-                    (local go.mod replacement; see BUNK_PATCHES.md)
-
-cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make check)
-  main.go           Entry point: calls Execute(); Version
-  cmd.go            cobra root command: flags, logging, notify socket, runApp()
-  cmd_notify.go     "bunk-gui notify": the agent hook CLI (notify.RunCLI)
-  cmd_ssh.go        "bunk-gui ssh": ssh that exports the tab's token (notify.RunSSH)
-  logger.go         slog setup for --debug and --trace; GLib messages arrive through slog
-  app.go            App struct, window activation, test-run hooks and statistics
-  themes.go         The theme shown: terminal colours, the CSS of the content
-                    background, dividers and badges; repaints on a change
-  prefs_theme.go    The Theme section of Preferences: a choice per theme with
-                    a preview of its colours
-  progress.go       OSC 9;4 progress as a bar under each tab
-  alerts.go         Desktop notifications per pane: when (internal/alert), the
-                    show-pane action, --report records, preferences section
-  desknotify.go     org.freedesktop.Notifications client: replace, withdraw,
-                    clicks with their activation token
-  newwindow.go      New window: another bunk-gui process in the pane's
-                    directory, with an activation token
-  scope.go          Each pane's child in a systemd scope of its own, so an
-                    OOM kill in a pane leaves bunk-gui and other panes alone
-  tabname.go        Tab names: rename dialog, double-click on a tab
-  railpeek.go       Labels beside the collapsed rail's rings while Alt
-                    is held alone
-  ctxmenu.go        Context menus of a tab (right-click) and a pane
-                    (right-click, Shift+right-click under a mouse
-                    program); muting a tab, marking it seen, closing
-                    with confirmation
-  restore.go        Session restore: saves the window, the startup banner,
-                    rebuilds tabs and splits, resumes agents (--restore)
-  prefs_hooks.go    Agent hooks in Preferences (state, Install, Copy
-                    snippet) and the toast for an agent without hooks
-packaging/          Desktop entry, icon, metainfo; fedora/ holds the RPM spec
-
-assets/             README pictures from TestGUIScreenshots: bunk-gui shots and
-                    crops, the states loop (gui-states.webp), bunk's TUI
-                    (tui.png) and the social preview; make screenshots
-docs/               features.md: every feature and key; configuration.md;
-                    agent-status.md: states, rail, notifications, command
-                    marks; agent-hooks.md: hook recipes and the notify
-                    protocol; remote-agent-status.md: agents on hosts reached
-                    over ssh; development.md: packages, builds, tests
-scripts/            Terminal feature scripts (tested by terminal_features_test.go);
-                    headless-gui.sh runs GUI tests; screenshots.sh renders assets/;
-                    benchcheck/ runs and compares benchmarks (make bench-check)
-testdata/           bench-baseline.txt: the timings bench-check compares with
+*.go (package main)  bunk's TUI: cobra commands (config, notify, ssh), the App and its event
+                     loop, panes, BSP layout, rendering, badges, alerts, relay, search, config
+internal/vt10x/      vendored VT100/xterm emulator (fork of hinshun/vt10x) with local extensions:
+                     16-byte cells, graphemes, fast parse paths, rewrap, the OSC 8 link table
+internal/graphics/   bounded SIXEL, Kitty and iTerm2 image decoders; the bitmap store
+internal/termcorpus/ realistic output streams for the parser benchmarks
+internal/input/      key, mouse, focus and paste encoding (legacy, application modes, Kitty CSI u)
+internal/session/    one terminal session for both front ends: PTY, emulator, scrollback, reflow,
+                     the PTY writer, OSC scanning, search, history, commands, agent status
+internal/restore/    bunk-gui's saved windows: snapshots, slots, scrollback files, resume commands
+internal/badges/     pane badges for both front ends (Layout); badgetest holds the parity cases
+internal/theme/      colour themes for both front ends, [ui] overrides, badge and state colours
+internal/boxdraw/    cell masks for box drawing, blocks, braille and powerline that bunk-gui draws
+internal/notify/     agent hook reports: socket server, `notify` and `ssh` CLIs, hook snippets
+                     and installing them; wire/ is the report line and its OSC 1337 form
+internal/alert/      when an agent state or a long command notifies, for both front ends
+internal/desktop/    bunk's TUI desktop notifications through gdbus; desktoptest is a fake gdbus
+internal/leakcheck/  test helper: fds, goroutines, children and heap against a baseline
+internal/ptychild/   test helper: a raw-mode child that floods DECRQM queries
+third_party/tcell/   pinned tcell v2.13.9 with local patches (BUNK_PATCHES.md)
+cmd/bunk-gui/        GTK4 front end: own Go module, cgo, OpenGL panes (gl/); make check skips it
+packaging/           desktop entry, icon, metainfo; fedora/ holds the RPM spec
+assets/              README pictures from TestGUIScreenshots (make screenshots)
+docs/                user guides and the design notes in the table above
+scripts/             terminal feature scripts, headless-gui.sh, screenshots.sh, benchcheck/
+testdata/            bench-baseline.txt, the timings make bench-check compares with
 ```
-
-The vendored vt10x has these local extensions:
-- It supports SGR 2/8/9/21/53/58 and 4:N underline styles.
-- `Cursor.Shape` stores the shape set by DECSCUSR.
-- `ModeSetPaste` tracks DECSET 2004, and `ModeSync` tracks DECSET 2026.
-- `QueryPrivateMode(n)` returns the DECRQM status byte for any tracked
-  private mode.
-- A private-parameter SGR guard stops `\x1b[?4m` from misfiring as SGR 4.
-- Cells use display-cell widths and wide-glyph continuations. `ReplaceScreen`
-  preserves terminal modes, attributes, callbacks, and hyperlink identities
-  during reflow.
-- It supports DEC 12 cursor blink and DEC 2027 grapheme widths (enabled by
-  default). `Glyph.Combining` stores an immutable grapheme suffix, bounded
-  to 1 KiB/cell.
-  With DECRST 2027, a zero-width code point (VS16, keycap) joins a cell
-  without widening it; `renderPane` then paints only the base character.
-- In `Color`, values 0-255 are palette indexes. Truecolour comes from
-  `vt10x.RGB` and carries bit 24, so `38;2;0;0;255` never equals palette 255.
-  Decode with `c < 256` (palette), then `c < DefaultFG` (RGB in the low 24
-  bits). The `Default*` values start at `1<<25`.
-- DECRQSS reports SGR, scroll margins, and cursor style; unsupported settings
-  return a negative response. Unknown DECRQM modes return status 0, not 4.
-- CSI parameters are unsigned decimal numbers capped at 65535, as in xterm
-  (`MAX_I_PARAM`); a larger count acts as 65535 instead of wrapping negative.
-  OSC 4/104 take palette indices 0-255 only, because every cell colour goes
-  through the override table.
-- The grid stores 16-byte, pointer-free cells (`row.go`). Combining text,
-  underline colour, hyperlink and image samples live in a per-row side table.
-  Each Row tracks `used`: every cell from that index on equals `tail`, so
-  clearing and scrollback trimming cost the text length, not the row width.
-  Write cells through `set`, `fill`, `writeASCII` or `setWrap`; a direct
-  `cells[x]` write must call `touch(x)` (or `touchAll` after shifting).
-  `Cell`/`RawCell` still return `Glyph`; the scroll callback receives a `Row`,
-  which bunk's scrollback ring copies without trailing blanks.
-- `Write` sends most input through `scan` instead of `put`. `putText` writes
-  printable ASCII and runes that never join a neighbour without grapheme
-  segmentation; `putCSI` collects CSI parameters in one pass. The rune
-  classes (`simpleGrapheme`, `endsCluster`) are cached with the width in
-  `runeInfo`. Joining runes still go through `extendGrapheme`, which keeps
-  recent segmentations in `State.clusters`.
-- Any change to `parse`, `print`, `setChar`, the scan paths or the rune
-  classes must keep `TestASCIIFastPathMatchesRuneParser`,
-  `TestFastPathsMatchRuneParser`, `TestSimpleGraphemesNeverJoin`,
-  `TestEndsCluster` and the `FuzzParse`/`FuzzFastPaths` seeds green. Track
-  speed with `go test ./internal/vt10x -bench BenchmarkWrite` and
-  `go test ./internal/session -bench BenchmarkOutput`.
 
 ---
 
 ## Key Flows
+
+The core flows of bunk's TUI and the session both front ends share. Their
+design decisions are in [docs/terminal.md](docs/terminal.md).
 
 1. At startup, `main()` → `Execute()` → `run()` loads config, initialises
    slog, queries cell aspect, probes host OSC colours, initialises tcell,
@@ -254,6 +96,20 @@ The vendored vt10x has these local extensions:
 4. For OSC passthrough, bounded `ptyStream` framing runs before `osc.go`
    scanning. OSC 7/52/133 reach the host through `app.oscBuf`; OSC 8 links
    are stored on glyphs and emitted with their rendered text.
+
+Two more areas run beside these:
+
+- **bunk-gui** ([docs/gui.md](docs/gui.md)). Each window is its own GTK4
+  process with its own notify socket. Each pane holds a `session.Session`,
+  runs its child in a systemd scope of its own, and is drawn with OpenGL
+  from a glyph atlas. The window saves its tabs, splits and scrollback for
+  session restore.
+- **Agent status** ([docs/agent-internals.md](docs/agent-internals.md)).
+  `session.Status` infers each pane's agent state from the foreground
+  process and its output. Hook reports through `internal/notify` (a Unix
+  socket, or in-band over ssh) take priority. After every
+  `Hooks.StatusChanged`, `internal/alert`'s Tracker decides for both front
+  ends whether to notify.
 
 Locks are taken in a fixed order: `app.mu` before the session lock
 (`p.Lock()`, the mutex embedded in `session.Session`). Never acquire
@@ -284,108 +140,6 @@ Every binary target stamps `main.Version` through `-ldflags` with the
 version monova reports, or 0.0.0 without monova; `--version` prints it. The
 RPM gets the same version as its package version.
 
-Leak and soak tests check that sessions, panes and the notify socket release
-everything they take. Each takes a `leakcheck.Snapshot`, runs a workload and
-calls `leakcheck.Check`, which waits for the counts to settle and lists new
-descriptors and child processes and the goroutine stacks on failure.
-`TestCheckCatchesLeaks` injects each kind of leak to prove the detectors.
-bunk-gui's `mark` action records the same counts plus live panes and their
-GL textures in `--report`.
-
-| Test | Short run (`make test`) | `make soak` |
-|------|-------------------------|-------------|
-| `TestSessionLeaks` (session) | 300 sessions in 2 batches | 2000 in 10 |
-| `TestOutputSoak` (session) | 3 MiB with -race, 20 MiB without | 500 MiB |
-| `TestTUISoak` (root) | 5 split/zoom/resize/exit cycles | 200 |
-| `TestNotifySessionLeaks` (notify) | 60 reporting sessions | 400 |
-| `TestGUITabLeaks` (bunk-gui, `make gui-test`) | 20 tabs with splits | 200 |
-
-`make soak` runs without the race detector; `SOAKFLAGS=-race make soak` adds
-it. Session kinds cover shells that exit, busy output closed mid-stream
-(`yes`, `/dev/urandom`), children that ignore SIGHUP and children that leave
-a process holding the PTY. A raw-mode child that never reads is closed with
-its PTY writer blocked; TestTUISoak and TestGUITabLeaks run such panes too.
-A helper child that is the test binary itself sets
-`GORACE=atexit_sleep_ms=0`; otherwise a -race build sleeps 1 s at exit.
-
-Run `make bench-check` before merging a performance-sensitive change. It
-compares the key benchmarks with `testdata/bench-baseline.txt`. Neither
-bench target is part of `check` or `check-all`, because timings depend on load.
-It also runs bunk-gui's `TestGUIFrame` with `BUNKGUI_LATENCY_P99=1`, which
-adds the p99 bound on key-to-render latency; check-all keeps only the p50
-bound, because one stalled key under load decides p99.
-- `scripts/benchcheck` builds each test binary once. It runs every vt10x
-  benchmark, session `BenchmarkOutput` and `BenchmarkReflow`, and bunk-gui
-  `BenchmarkFullScreenFrame`. Write and Output include the `termcorpus`
-  streams. A run takes about 4 minutes at the default count.
-- Rounds are interleaved: each of the `BENCH_COUNT` rounds (10) runs every
-  suite once, so a burst of load hits all benchmarks alike.
-- Every run is pinned with `taskset -c $(BENCH_CPU)` (CPU 0, a fast Zen 5
-  core) and `GOMAXPROCS=1`. The benchmarked paths are single-threaded, so
-  garbage collection runs on the measured core.
-- A disturbed run is repeated up to twice, and the least disturbed attempt
-  is kept. Any of three signs marks a run as disturbed. CPU time under 90%
-  of wall time means a shared core. A clock under 80% of the top clock means
-  a power limit or heavy load. An SMT sibling (CPU 12) over 50% busy shares
-  the core's caches.
-- The verdict compares medians of `cpu-ns/op` where both files have it
-  (reflow), and of `ns/op` otherwise. A benchmark fails only when two
-  conditions hold together: a Mann-Whitney U test gives p < 0.05, and the
-  median grew by over `BENCH_THRESHOLD` percent (10).
-- New or missing benchmarks, faster results and warnings are not failures.
-- These conditions give a warning: a load average above `BENCH_MAX_LOAD`
-  (4; the benchmark adds 1); disturbed runs that were kept; a different Go
-  version, CPU, kernel, power profile or core clock; changed suite settings;
-  and an allocation-free benchmark that now allocates.
-- Load on other cores lowers the pinned core's clock from 5.1 GHz: load 10
-  gives about 4.6 GHz, and load 50 about 3.7 GHz. Compute-bound times grow
-  by as much. Same-code runs under different load differ by up to about 10%.
-  Rerun a failure that comes with a clock or load warning.
-- `BENCH_SUITES=vt10x,session-output` runs a subset of the suites, and the
-  rest show as missing. `BENCH_TIME` overrides every suite's benchtime,
-  which changes results, so compare only runs with equal settings.
-- The GUI frame benchmark runs with `-test.short`, without a display, into a
-  fake rasterizer. When bunk-gui does not build, it is skipped with a note.
-  Its TestMain sets `runtime.MemProfileRate = 1`, which slows allocating code.
-- After an intended speed change, run `make bench-baseline` on a quiet
-  machine to record a new baseline. Commit `testdata/bench-baseline.txt`
-  with the change. Its header records Go, CPU, kernel, power settings,
-  commit, date and load.
-- `go run ./scripts/benchcheck compare BASE CUR` exits 1 on a regression and
-  2 on an error. `bin/bench-current.txt` keeps the last run.
-
-Fuzz targets cover every parser of program output and user input:
-`internal/vt10x` (FuzzParse, FuzzResize), `internal/session` (FuzzPTYStream,
-FuzzOSCScanner, FuzzStatusOSC, FuzzQueryReplies, FuzzXTGETTCAP,
-FuzzFindAndSelect, FuzzPTYWriterOrder), `internal/input` (FuzzEncodeKey, FuzzEncodeMouse),
-`internal/graphics` (FuzzGraphicsDecoder, FuzzStore) and `internal/alert`
-(FuzzOSC777, program text in the notification sent to the host). Their seed corpora in
-`testdata/fuzz` run with every `go test`, so keep seeds small. When a target
-fails, keep the input it wrote to `testdata/fuzz`, fix the code, and add a
-named regression test to the package's `fuzz_regression_test.go`. Run one
-target longer with `go test ./internal/vt10x -run '^$' -fuzz '^FuzzParse$'
--fuzztime 10m`.
-
-bunk-gui window tests run on a private headless mutter through
-`scripts/headless-gui.sh`, never on the desktop. It gives one 2560x1600@120
-virtual monitor at 133% on the GPU, with its own D-Bus and clipboard. Every
-GUI check, including pixel, idle-frame, allocation and latency checks, lives
-in the test suite; turn a manual check into a test before relying on it.
-`go test -short` skips the window tests.
-Scenarios drive bunk-gui with `--do` steps that run in sequence. A `wait`
-step holds until the UI reaches a state (`cmd/bunk-gui/wait.go`): a field of
-the `--report` snapshot, frames drawn, no frames for a while, or injected
-input received. Use `sleep` only where a check measures time (idle frames,
-typing latency, CSS fades in screenshots). At most `BUNK_GUI_PARALLEL`
-scenarios run at once (default 8); those with a higher `cost` start first.
-Desktop notifications are recorded in `--report` (`notifications`) and
-never reach a notification server on the test compositor. `decoy open`
-gives the keyboard focus to a second window, so the main window is
-inactive, and `alert-click ID` clicks the notification of the pane with
-that ID as the server would. `make gui-test` builds with `-race -gcflags=all=-d=checkptr=0`,
-as the window tests' bunk-gui does, because gotk4's GLib callbacks trip
-checkptr.
-
 Run `make check-all` before reporting any work as done. Work is done only
 when the full suite is green; report its result, including failures.
 Run `make check-all FRESH=1` before a merge or commit, because the plain form
@@ -408,748 +162,101 @@ Tests run with `-race` and are required to pass before any binary is built.
 Targets are serialized even with `make -j`; check-all runs the two test
 suites as background jobs itself and builds only after both pass.
 
-The terminal feature scripts are `terminal_features.sh` and the files in
-`scripts/terminal_features/`.
-- All seven groups are automated. `terminal_features_test.go` has one
-  `TestTerminalFeatures*` test per group, and `make test` runs them in under
-  1 s.
-- Each test runs the real script with bash on a PTY in a bunk pane
-  (`features_harness_test.go`). It uses bunk's hooks, key handling, paste
-  and render path, answers each pause, and checks the simulation screen,
-  cursor, printed replies and host output (`App.hostOut`).
-- Change a script and its test together. The tests read 06's assertion
-  names and 05's "Bunk typically reports" lines from the scripts.
-- Run a group by hand only to judge the host terminal: fonts, emoji shaping,
-  visible underline styles, clicking links and the real clipboard.
-  `TERMINAL_FEATURES_AUTO=1` skips the pauses, and 04 writes the clipboard.
-
-| Group | Script | Test |
-|-------|--------|------|
-| text | `01_text_attributes.sh` | `TestTerminalFeaturesText` |
-| colors | `02_colors.sh` | `TestTerminalFeaturesColors` |
-| cursor | `03_cursor_unicode.sh` | `TestTerminalFeaturesCursor` (shapes, widths, 2027, reflow) |
-| integration | `04_host_integration.sh` | `TestTerminalFeaturesIntegration` (OSC 8, paste, OSC 7/52/133) |
-| queries | `05_queries.sh` | `TestTerminalFeaturesQueries` |
-| osc | `06_osc_smoke.sh` | `TestTerminalFeaturesOSC` |
-| graphics | `07_graphics.sh` | `TestTerminalFeaturesGraphics` (clipping, resize, scrollback) |
-
-Query helpers in `lib.sh` send DA1 after each query and read until its
-reply, so they need no fixed sleep. `TERMINAL_FEATURES_QUERY_TIMEOUT`
-(default 2 s) bounds the wait for a silent terminal.
+[docs/testing.md](docs/testing.md) has the leak and soak tests, the
+benchmark gate (run `make bench-check` before merging a performance-sensitive
+change), the fuzz targets (a failing one gets a named regression test), the
+window-test scenarios, the terminal feature scripts (change a script and its
+test together) and the test recipes.
 
 ---
 
 ## Configuration
 
-bunk reads `~/.config/bunk/config.toml`; `--config` overrides the path.
-Generate a documented default with `bunk config init`.
-Malformed/unreadable files and missing explicit `--config` paths fail at startup;
-a missing default file uses built-in defaults.
-
-These are the key fields agents may need to know about:
-- `theme` is a built-in name (`terminal`, `default`, `solarized-dark`,
-  `dracula`, `nord`) or the name of a custom theme. A `[themes.NAME]` table
-  defines one with `background`, `foreground` and 16 `palette` colours;
-  `cursor` and the border and scrollbar colours are optional
-  (`internal/theme`, `Def`). An unknown name or an invalid table is logged
-  at startup, and bunk uses the default theme.
-- `scrollback` is the per-pane scrollback line cap (default 10 000).
-- `log_file` is the destination for `--debug` / `--trace` output (default
-  `/tmp/bunk.log`).
-- `cell_aspect` is the fallback height/width ratio when the host terminal
-  doesn't answer the pixel-size query.
-- `[keys]` overrides split / zoom / quit / search / copy / paste /
-  next_needs_you; "none" disables an action and sends its key to the pane.
-- `[ui]` holds hex colour overrides for borders and scrollbar. An invalid
-  value is logged, and the theme's colour stays.
-- `[notifications]` turns notifications on or off (`enabled`), picks
-  the agent states that send one (`states`, default needs-you, done and
-  failed), and sets how many seconds a command must run for its end to
-  send one and for its pane to be marked (`command_after`, default 10; 0
-  turns both off). A state name bunk does not know or a negative
-  `command_after` fails at startup.
-
-`config.go` is the authoritative reference for every field and its default.
-
-bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
-`rail_open`, `rail_style`, `font`, `font_size`, `text_zoom`, `theme`, `hooks_hint`,
-`restore`, `restore_scrollback`, `new_dir`, `[themes.NAME]`, `[[agents]]`, `[notifications]` and `[keys]`. `theme` and
-`[themes.NAME]` work as in bunk's config, and `--theme` overrides `theme`
-for one run. `new_dir` is where new tabs and windows start: `~` (the
-default), `~/…`, an absolute path, or `current` for the active pane's
-directory; a directory that is gone gives the home directory, and splits
-start in their pane's directory.
-`[notifications]` has the same keys as in bunk's config. `[keys]` uses
-bunk's action names and key syntax where they overlap; "none" sends the key
-to the terminal. The file is watched and reloads live, and a bad value shows
-a toast and keeps the default. The shortcuts window (Ctrl+Shift+?) and the
-preferences window (Ctrl+,) rewrite only the lines they change
-(`cmd/bunk-gui/keysfile.go`). `cmd/bunk-gui/bindings.go` lists every action and
-its default; Design Decisions says where the defaults come from.
+bunk reads `~/.config/bunk/config.toml` (`bunk config init` writes a
+documented one) and bunk-gui `~/.config/bunk-gui/config.toml`; `--config`
+overrides either. A malformed or unreadable bunk file, or a missing
+`--config` path, stops bunk at startup; a missing default file uses built-in
+defaults. bunk-gui reloads its file live, and a bad value there shows a toast
+and keeps the default. `config.go` is the reference for bunk's fields, and
+`cmd/bunk-gui/bindings.go` for bunk-gui's actions and default keys. Details:
+[docs/configuration.md](docs/configuration.md#notes-for-working-on-the-code).
 
 ---
 
 ## Design Decisions
 
-- bunk-gui's default keys are the keys the user presses today in bunk's
-  TUI inside Ptyxis. They are bunk's TUI defaults plus Ptyxis's shortcuts,
-  with the user's own Ptyxis keys: F2 opens a tab and Ctrl+Left/Right
-  switch tabs. Ctrl+Up/Down switch tabs too, at the user's request, to
-  match the rail's vertical list. A change to a default needs the user's
-  agreement; `TestDefaultKeys` lists every action's keys.
-  - Ctrl+C copies only while text is selected, and ends the selection, so
-    the next Ctrl+C reaches the program; with nothing selected it sends ^C.
-    Ctrl+Shift+C always copies. The rule follows `keyCombo.collides`: a copy
-    key a terminal program may use falls through without a selection. Any
-    key sent to the program ends the selection too, as in bunk's TUI.
-  - Ctrl+V and Ctrl+Shift+V paste text. An image goes as the path of a PNG
-    file in the temporary directory, as in bunk's TUI, and agents attach
-    it. With neither on the clipboard, Ctrl+V sends ^V; Ctrl+Shift+V sends
-    nothing.
-  - While the find bar has the keyboard, Ctrl+C and Ctrl+V edit its text,
-    and Ctrl+N, Ctrl+P, Enter and Esc step through matches and close it.
-    Elsewhere Ctrl+N, Ctrl+P, Enter and Esc reach the program.
-  - Ctrl+Shift+PgUp/PgDn move the selected tab in `App.tabs`, which orders
-    the rail, the bar, Alt+1…0 and the report's tabs. Dragging a tab moves
-    it too (`tabdrag.go`): a gesture on the tab list claims the press past
-    8 px, so the tab's button never clicks. A line marks the slot, and the
-    release moves the tab. Chrome rebuilds wait while a tab is pressed, so
-    a status change cannot replace the button being clicked.
-  - The shortcuts window marks keys terminal programs use (Ctrl+C, Alt+A,
-    F2 and others) with ⚠. Passthrough (Ctrl+F12) sends all of them to the
-    program. Each key is a chip: a click captures a key in its place, ×
-    removes it, and + adds one. A row's chips are rebuilt only when its
-    keys change, because a button replaced under the pointer can miss the
-    next click.
-  - The switcher lists the tabs in their order (`App.tabs`), and a
-    status change never moves a row: a notice takes the directory's
-    place on the second line, and the state label has a fixed width.
-    Up and Down move a cursor, which starts on the first match and stays
-    on its tab as rows are rebuilt; Enter opens its tab. A row's × closes
-    its tab as the rail's × does, without asking; the switcher stays open,
-    the filter field keeps the keyboard, and a cursor whose tab closed
-    stays at its place (`TestGUISwitcherClose`).
+One line each; the docs file named above each group has the full text.
 
-- bunk-gui's pointer and focus handling matches bunk's TUI. The
-  scrollbar thumb can be dragged while it shows (`grabThumb`). A selection
-  dragged to the top or bottom row keeps scrolling (`edgeScroll`), and the
-  wheel during a drag moves the selection's end with the view. Shift+PgUp
-  and Shift+PgDn scroll half a page. Focus events (DECSET 1004) go to the
-  focused pane of the selected tab in the active window
-  (`focusreport.go`). `TestGUIScrollbarDrag`, `TestGUISelectionDrag` and
-  `TestGUIFocusReports` check them.
+bunk-gui ([docs/gui.md](docs/gui.md)):
+- Default keys are the keys the user presses today in bunk's TUI inside
+  Ptyxis. A change to a default needs the user's agreement;
+  `TestDefaultKeys` lists every action's keys.
+- Pointer, selection and focus handling matches bunk's TUI.
+- A held divider shows the split's shares; a legacy event controller written
+  in C sees the press, because gotk4 passes a GdkEvent to Go as a GObject.
+- Each window is its own process with its own notify socket; New window
+  starts bunk-gui again with an XDG activation token.
+- Each pane runs in a systemd scope of its own (`scope.go`), so an OOM kill
+  in a pane no longer closes bunk-gui with every pane.
+- A tab with several agents keeps its first agent's label and shows the
+  most urgent state; the collapsed rail draws each tab as a ring (or a map),
+  and holding Alt alone labels the rings.
+- Tabs can be named (`tabname.go`); tabs and panes have context menus
+  (`ctxmenu.go`) whose popover hangs on the root box.
+- Session restore keeps one slot per window in
+  `$XDG_STATE_HOME/bunk-gui/windows` (files 0600, held by a lock) and offers
+  the windows that were closed together.
+- Image cells draw as textured quads. Box drawing and similar characters
+  come from `internal/boxdraw`, not the font; glyphs wider than their cell
+  are fitted; colour emoji sit on a colour page of the atlas.
+- Panes get `TERM_PROGRAM=bunk-gui`, so shell start-up files can skip
+  starting bunk's TUI there.
 
-- While a divider is held, bunk-gui shows the split's shares on it
-  (`splitratio.go`). A legacy event controller written in C sees the press
-  first, because gotk4 v0.4.1 passes a GdkEvent to Go handlers as a
-  GObject and GLib asserts. GtkPaned's `position` updates the label, and
-  the release hides it. `gtk_widget_measure` includes the margins that
-  place the label, so they are subtracted. bunk's TUI has no divider to
-  drag.
+Both front ends ([docs/badges-and-themes.md](docs/badges-and-themes.md)):
+- Add a badge in `internal/badges`, never in one front end, and add a case
+  to `badgetest.Cases`; the parity tests draw every case in both.
+- Themes come from `internal/theme`; an unset colour is left to the host
+  terminal, and bunk-gui shows every theme filled from the default theme.
 
-- Each bunk-gui window is its own process. The application is non-unique,
-  and each process has its own notify socket. New window (Ctrl+Shift+N,
-  the menu) starts bunk-gui again in `new_dir` (home by default), in a new
-  session, with an XDG activation token so the window takes the focus. The
-  desktop entry's `new-window` action gives GNOME Shell's app menu the same
-  item: Shell offers no New Window for a running GTK application without
-  one. On the test compositor the window is recorded in `--report`
-  (`windows`) and not started.
+The terminal core ([docs/terminal.md](docs/terminal.md)):
+- Keyboard passthrough (Ctrl+F12) is per pane.
+- The PTY is one column narrower than the pane; the rightmost column is the
+  scrollbar's.
+- Cursor shape and cell content must be read under the same lock
+  acquisition (`TestReadPTYSingleLock_ClaudeCursorRace`).
+- vt10x coordinates are display cells: a wide character is a lead cell and
+  a continuation, which rendering, search and selection skip.
+- Query replies belong to the pane, in stream order, and are never
+  delegated to the outer terminal.
+- No PTY write blocks a front end or holds the session lock: every write
+  goes through the session's writer, which caps replies and input.
+- Graphics are ordinary cells, and no image escape reaches the host.
+  bunk-gui keeps the bitmaps in a per-session store; bunk's TUI keeps none.
+- Hyperlink IDs are swept and reused; rows kept outside the terminal must
+  be marked through `WithLinkReferences`.
+- Primary-screen reflow uses stored cells; a reflow change must keep
+  `FuzzReflowEquivalence` and `internal/session/reflow_test.go` green.
+- Cursor colour follows the active pane; synchronized updates are per pane;
+  Kitty keyboard state belongs to the process group that negotiated it.
+- Terminal cleanup runs synchronously in `main` after the event loop.
+- Session timers are set per session (`Options.Timing`); tests shorten them
+  per session, never through package variables.
+- Nested sessions are refused: panes get `BUNK=1`.
+- Closing a session ends it, whatever its child does: SIGHUP, then a kill of
+  its process group after `HangupGrace`.
 
-- Each bunk-gui pane runs in a systemd scope of its own (`scope.go`), as
-  VTE's terminals do. GNOME starts bunk-gui in
-  `app-gnome-<app ID>-<PID>.scope` with `OOMPolicy=stop`. A program that
-  the kernel's OOM killer ended in a pane therefore stopped that scope,
-  which closed bunk-gui with every pane.
-  - `newPane` asks the user's systemd on the session bus
-    (`StartTransientUnit`) to move the child into
-    `bunk-gui-<PID>-pane-<ID>.scope` in `app.slice`.
-  - `OOMPolicy=continue` ends only the process the kernel picked, so the
-    pane's shell and agents go on. `CollectMode=inactive-or-failed` removes
-    the unit when its last process ends, also after a kill.
-  - systemd moves the child about 15 ms after it starts. A process forked
-    before then stays in bunk-gui's scope.
-  - Without systemd on the bus, as on the window tests' bus, the pane stays
-    in bunk-gui's scope, logged at debug level. `TestPaneScope` checks the
-    call against a fake systemd.
-  - bunk's TUI is unchanged: its panes share the host terminal's scope.
-
-- A bunk-gui tab can hold several agents in split panes. Its label keeps
-  the name and repo of the first pane with an agent (`Tab.agentPane`),
-  so it does not change as the agents change state. Its location lists
-  every pane's places as the pane's context badge names them
-  (`badges.Places`: the container, then the ssh or mosh host; sudo and su
-  are left out), so the tab and the badges agree (`tabLoc`). Each kind
-  shows once, with its names in pane order, the agent's first: "⬡ fedora
-  · ⇄ ti-ci, int-build". The open rail wraps it onto a second line, the
-  switcher cuts it at 36 characters, and the tooltip holds all of it
-  (`TestGUITabHosts`).
-  "+N" counts the agents in its other panes. The dot, colour and needs-you
-  highlight show the most urgent state among them (`stateOrder`), and the
-  rail shows that agent's notice as "agent: notice". The tooltip lists
-  every agent. Notifications are per pane, as in the TUI, and Alt+A
-  focuses the pane that needs the user. The collapsed rail draws every
-  tab as one ring (`railring.go`, `rail_style = "ring"`, the default):
-  closed for one pane, else an equal arc per pane in its state's
-  colour, a plain shell's arc dimmed, around an empty centre. Each arc
-  faces its pane (`ringArcs`): with each split halved, as in the map,
-  the arcs go round in the order of the panes' directions from the
-  tab's middle, turned to lie as close to them as they can, so panes
-  side by side get the left and right halves. Past 6 panes the count shows under it.
-  With `rail_style = "map"` (Preferences offer both) a tab shows its
-  state glyph, and a tab of 2 to 4 panes is drawn as a map (`railMap`): a cell per pane, placed as the
-  splits place the panes with each split halved, holding its agent's or
-  command's dot, or ○ for a plain shell as in a one-pane tab. More
-  panes show the most urgent dot over the pane count. A click still
-  selects the tab. A pane without an agent takes part with its command
-  mark (`alert.Mark`): running, or done or failed
-  until the user looks at it, labelled by the command's name.
-  - Holding Alt alone for 400 ms (`railPeekDelay`) labels each ring
-    (`railpeek.go`) with its Alt+N key, dot, name or agent, repo ⎇
-    branch and places, as the expanded rail does. Another key first,
-    such as Alt+A or a shell's Alt+B, shows none. The labels float in
-    `App.overlay`, so the panes keep their size, and take no clicks.
-    Alt+N under them switches tabs. Releasing Alt, an inactive window,
-    a dialog, the switcher and leaving the collapsed rail hide them.
-    after-paint places them beside their items, because GTK knows the
-    items' places only once it lays them out. `GtkFixed` gives a child
-    its minimum width, an ellipsizing label's "…", so each label asks
-    for its natural width; `TestGUIRailPeek` checks none is cut.
-
-- The user can name a bunk-gui tab (`tabname.go`): a double-click on it,
-  "Rename tab…" in the menu, or `rename_tab`, which has no default key.
-  The name (`Tab.name`) replaces the agent or process name in the rail,
-  the bar and the switcher; the dot, state, repo ⎇ branch, location and
-  notice stay, and the tooltip starts with the name, then the agent. An
-  empty name gives the automatic one back. The double-click is watched
-  on the tab list, like tab dragging: the first click selects the tab and
-  rebuilds the items, so the tab is the one under GTK's first press. The
-  dialog's sheet maps its content a frame after it opens, and GTK drops
-  keys for unmapped widgets although the entry already has the focus;
-  window tests wait for `rename.ready` before they type.
-
-- bunk-gui has context menus (`ctxmenu.go`). Their popover hangs on the
-  root box, because refreshChrome replaces the tab items under it.
-  - A right-click on a tab, caught on the tab list like the rename and
-    drag gestures, opens its menu without selecting it: Rename…, Copy
-    directory, Mark as seen, Mute notifications, Close tab and Close
-    other tabs.
-  - Mark as seen does what looking at each pane does (`AckSeen`, and
-    the tracker sees the panes watched once): done and inferred needs-you
-    clear, command marks clear and notifications go. A reported needs-you
-    stays, as the agent still waits.
-  - A muted tab's panes run the tracker with notifications off, so a
-    shown notification is withdrawn and marks stay. Muting lasts for the
-    window's life and is not restored.
-  - A right-click in a pane opens its menu, the link under the pointer
-    first. While the program reports the mouse, the right-click goes to
-    it and Shift+right-click opens the menu, as in VTE.
-  - Closing from a menu asks while a pane runs more than an idle shell
-    (`Pane.busy`, as quitting does); the close_tab key does not ask.
-  - The switcher marks the selected tab's row as current, and its cursor
-    starts on the first other row, so the switcher's key and Enter switch
-    away. `TestGUITabMenu`, `TestGUIPaneMenu` and
-    `TestGUISwitcherCurrent` check them.
-
-- bunk-gui restores sessions (`restore.go`, `internal/restore`).
-  - Each window holds a slot in `$XDG_STATE_HOME/bunk-gui/windows`:
-    `<id>.json` (tabs, split ratios, focus, zoom, and each pane's
-    directory, agent, agent session ID and ssh or mosh argv), `<id>/`
-    with each pane's scrollback (`Session.History`), and `<id>.lock`,
-    which the running window holds with flock. Files are 0600, in a 0700
-    directory.
-  - The layout is written every 2 s when it changed, and scrollback of
-    panes with new output every 30 s, off the main thread, and both once
-    more as bunk-gui quits. Agent panes skip scrollback: the agent prints
-    its conversation again.
-  - A start whose slot is new lists the slots no lock holds and shows a
-    banner over the panes. Restore builds the newest here, in place of a
-    first tab nobody typed in, and starts `bunk-gui --restore ID` for each
-    other; Dismiss deletes them. New window (Ctrl+Shift+N) offers them
-    too.
-  - A restored pane starts the shell in its directory, replays its
-    scrollback with a "restored from" line, and types its command once the
-    shell has been quiet for 300 ms (at most 5 s): the agent's resume
-    command with Enter, or the ssh or mosh command line without it.
-    `restore.ResumeCommands` uses the session ID that hooks report
-    (`Status.AgentSession`), else the directory's latest conversation
-    when no other pane ran that agent there. Remote agents are not
-    resumed.
-  - A split's ratio is applied when GTK first lays it out (`node.ratio`,
-    `newPaned`), so tabs not shown yet get theirs when selected. The
-    containers' focus children point at the focused pane, or GTK would
-    focus the first pane when the tab is shown.
-  - Every orderly end (a quit, the last tab closed, SIGTERM or SIGHUP at
-    logout) keeps the slot and stamps `Window.Closed`; a window without a
-    live pane leaves none. `restore.Offer` offers the windows closed
-    together: the last one closed and each closed within `CloseGap` (1
-    min) of the next, so the order the user closes them in does not
-    matter. A window closed earlier is deleted. Closed windows are offered
-    while other windows run too, so a window closed beside others comes
-    back in the next one opened; a crashed or killed one is always offered.
-  - Window tests get their own state directory: the harness sets
-    `XDG_STATE_HOME_TEST`, which `scripts/headless-gui.sh` turns into
-    `XDG_STATE_HOME`. `TestGUIRestoreSession` saves, quits and restores
-    with a fake `claude` on PATH that reports a session ID.
-
-- Keyboard passthrough is per pane. Ctrl+F12 (`[keys].passthrough`) toggles
-  forwarding of all other keys through the normal terminal encoder. The toggle
-  remains reserved and exits bunk search. Mouse handling is unchanged. The PASS
-  badge shares the status layout, takes highest priority, and invalidates the
-  render overlay when toggled.
-
-- Pane badges come from `internal/badges`, for both front ends.
-  - `badges.Layout` decides which badges show, their order, text and fitting
-    from plain pane state. Each badge has a `Role`. `badges.Places` gives
-    the context badge's places, which bunk-gui's tabs list too.
-  - The front ends only paint. `theme.BadgeInks` names each role's colours:
-    palette slots, most backgrounds blended `theme.BadgeDim` (40%) toward
-    the theme background, and fixed agent colours. The TUI resolves them in
-    tcell colours (`badgeStyle`, status.go), and bunk-gui through
-    `Theme.Badge` (`badgeLook`, cmd/bunk-gui/badge.go).
-  - The where badge (`RoleWhere`) names where an agent or a program on
-    the alternate screen works: repo ⎇ branch, else the directory with
-    `~` (`badges.Where`, which bunk-gui's tabs use too). It shows only
-    when every badge before it fits, takes the room left before the
-    notice up to two thirds of the row, is cut to fit or left out alone,
-    and sits left of the context badge. While ssh or mosh runs,
-    `badges.WhereOf` gives nothing unless a remote agent reported its
-    directory, because the local one says nothing about the remote
-    program. A multiplexer in the foreground (bunk, tmux, zellij, screen)
-    gets none either: the badge would cover the badges it draws itself.
-    The theme oracle predates it and skips its role.
-  - Add a badge in `internal/badges`, never in one front end, and add a case
-    to `badgetest.Cases`. `TestBadgeParityTUI` and `TestBadgeParityGUI` both
-    draw every case, so the front ends cannot drift apart.
-  - bunk-gui draws the badges as GtkInscriptions in the terminal font, over
-    the pane's texture. A badge change draws no pane frame. The row syncs
-    after each frame and on status, passthrough, zoom, find and flash events.
-  - The find bar keeps the top right, and the badges sit right below it while
-    it is open. A badge that appears while a query is typed never moves the
-    bar.
-
-- Themes come from `internal/theme`, for both front ends.
-  - `theme.NewRegistry` holds the built-in themes and a config's
-    `[themes.NAME]` tables, and `Registry.Select` picks one and applies
-    `[ui]` overrides. Problems come back as a `*theme.Error`, and the theme
-    falls back to the default one. The TUI logs them; bunk-gui shows the
-    settings toast.
-  - A `theme.Color` is 0xRRGGBB with a set bit. Its zero value, `Unset`,
-    leaves the colour to the host terminal; the `terminal` theme leaves
-    every colour unset, and the TUI probes the host's colours.
-  - bunk-gui has no host terminal, so it shows every theme
-    `Filled` from the default theme. There, `terminal` looks like
-    `default`, the colours bunk-gui had before themes existed. bunk-gui
-    forces libadwaita's dark style, so a theme that followed the desktop's
-    light or dark preference would always be dark.
-  - In bunk-gui the theme sets the ANSI palette, the default foreground,
-    background and cursor, the badge colours, the content background and
-    the dividers between panes (`InactiveBorder`). The rail, the bar and
-    the dialogs keep libadwaita's dark style. Programs' OSC 4/10/11/12
-    colours stay in front of the theme.
-  - A theme change in bunk-gui (Preferences, a config edit) restyles the
-    CSS and repaints each pane once: `Pane.themeChanged` reloads the
-    colours and marks every row dirty. An idle window then draws no frames.
-  - `TestThemesMatchOldConfig` compares the TUI's colours with the code
-    from before the move (`theme_oracle_test.go`) for every built-in theme.
-    `TestThemeParityTUI` and `TestThemeParityGUI` check both front ends
-    against `internal/theme`, so they show the same colours.
-  - In the `terminal` theme, the TUI blends a dimmed badge background from
-    unset colours as tcell's RGB of them, -1 per channel, which gives white.
-    The oracle keeps this behaviour.
-
-- The PTY is one column narrower than the pane. The rightmost column
-  (`p.x + p.w - 1`) is reserved for the scrollbar; the PTY never writes there.
-- Cursor shape and cell content must be read under the same lock. Both live
-  inside `p.term`; `render()` must read them within the same `p.mu`
-  acquisition so that `readPTY` cannot write between the two reads.
-  `TestReadPTYSingleLock_ClaudeCursorRace` guards this.
-- vt10x coordinates are display cells. Wide characters occupy a lead cell
-  (`Glyph.Width == 2`) and a continuation (`-1`); `-2` marks padding before a
-  wide-character wrap. Padding is only ever the last cell of a wrapped row;
-  `repairWideRow` turns padding that a shift or resize moves into a blank.
-  Rendering, search, and selection skip continuations.
-  Combining marks, variation selectors, and multi-codepoint emoji stay together
-  in the lead cell through render, copy, search, and reflow. Mode 2027 can switch
-  back to per-codepoint widths for legacy applications.
-- Query replies belong to the pane. They are generated in stream order in
-  both primary and alternate screens, including SSH/mosh panes; they are never
-  delegated to the outer terminal. Unknown host colour defaults remain unknown.
-  XTGETTCAP key replies use the normal input encoder with the current pane modes
-  and Kitty flags; its terminal-name reply matches the TERM exported to panes.
-- No PTY write blocks a front end or holds the session lock. Every write
-  to a session's PTY goes through its writer (`internal/session/writer.go`).
-  That covers query replies, graphics replies, keys, pastes, mouse and focus.
-  - Each session has one FIFO queue. A goroutine starts when bytes are
-    queued and exits when the queue is empty. `go` on a bound func
-    allocates nothing.
-  - Bytes leave in the order they were queued. Each reply and each input
-    event is queued whole, so no reply lands inside a key or a paste.
-  - `CaptureAndWrite` queues replies under the session lock, and the writer
-    goroutine writes them without it. `WriteInput` returns at once.
-  - Unwritten replies are capped at `ReplyBytes` (64 KiB). A reply that
-    would pass the cap is dropped whole and counted in `WriteStats`.
-  - Queued input is capped at `Options.InputBytes`, which defaults to
-    `DefaultInputBytes` (16 MiB). An event that would pass the cap is
-    refused whole with `ErrInputFull`.
-  - When input is refused, bunk flashes "input not sent" on the pane.
-    bunk-gui shows a toast, at most one per pane every 3 s; `--input-bytes`
-    sets its cap.
-  - A drained queue keeps at most 4 KiB, and a paste's buffer is freed.
-  - Closing the PTY drops the queue and ends a blocked write. Close does
-    this, and ReadLoop does it when the child exits.
-  - In the TUI, tcell delivers host pastes as key events. bunk collects
-    them between the paste markers and queues one event. A paste without an
-    end marker is sent after `pasteTimeout` (1 s).
-  - For tests, `WriteStats` reports queued, dropped and refused bytes, and
-    `WaitWritten` waits for an empty queue before a test reads the PTY.
-- Graphics are ordinary cells. Static SIXEL, Kitty, and iTerm2 images become
-  half-block glyphs with immutable `Glyph.Image` samples. They clip, erase, scroll,
-  and reflow with the grid; source bitmaps are not retained by scrollback. No image
-  escape is forwarded to the host. Kitty file/shared-memory access is rejected.
-  PTYs and CSI 14/16/18 replies use the session's cell pixels: virtual in bunk's
-  TUI (8 wide, height from cell aspect); real device pixels in bunk-gui, which
-  sets `Options.CellPixels` and calls `Session.SetCellPixels` on zoom or scale.
-  Transfers are capped at 8 MiB, decoded images at 4 million pixels / 4096 per
-  axis, and Kitty caches at 32 MiB / 32 images. Reflow retains cell samples
-  without replaying image transfers.
-- Image bitmaps live in a per-session store, and cells name them by ID.
-  `Options.ImageBytes` (bunk-gui: 64 MiB per pane, `--image-bytes`) creates a
-  `graphics.Store`; bunk's TUI keeps none. A cell's `ImageCell` holds
-  `Placement.Bitmap` (store ID) and its own `Col`/`Row` in the placement, in
-  the side table, so references survive scrolling, scrollback and reflow.
-  The store counts each bitmap once, sweeps placements no cell refers to
-  (`MarkImages` over both screens and the scrollback) after Kitty deletion,
-  ED 3, RIS, reflow, every 64 additions and before evicting, then evicts the
-  least recently drawn. Cells without a bitmap draw their samples.
-  `reflow_test.go` checks every image cell's reference after each reflow.
-- bunk-gui draws image cells as textured quads (`cmd/bunk-gui/images.go`).
-  Each placement gets a texture, uploaded on first draw. Drawing uses
-  texelFetch when the cell size matches the placement's and linear
-  filtering otherwise. Textures of dropped placements are freed; textures
-  not on screen are freed oldest first past `--image-gpu-bytes` (256 MiB per
-  pane). Links are handled in `links.go`. Ctrl+hover underlines OSC 8 links
-  and plain URLs, and Ctrl+click opens them through `gtk.UriLauncher` behind
-  `openURL`; Ctrl+Shift+click does the same while the application reports
-  the mouse. `launchRefused` keeps the launcher off the test compositor;
-  window tests read the links from `--report` (`opened`).
-- bunk-gui draws box drawing and similar characters itself
-  (`internal/boxdraw`), as kitty and VTE do. A font's glyphs for them
-  seldom reach the cell's edges, so neighbouring cells showed seams.
-  - The set is kitty's 1,098 characters: box drawing, blocks and shades,
-    braille, the symbols for legacy computing and their supplement,
-    powerline separators, Fira Code's progress bar and spinner, and the
-    branch drawing symbols of git graphs.
-  - `Atlas.add` puts the mask into the glyph's slot on first use, so a
-    frame costs what it did. Bold draws the same mask, and a character
-    with a combining mark still goes to the font.
-  - A light line is `LineWidth(cellW)` pixels wide: the cell width / 6.5,
-    at least 1. A heavy line keeps the light line's parity, so both share
-    a centre. A double line is two light lines a light line apart.
-  - Fractions of the cell round through one function (`part`), so a half
-    block ends where the second row of quarter blocks does. Shades are
-    flat coverage (25, 50 and 75%), not dither patterns.
-  - Curves, diagonals and triangles are antialiased from signed distance
-    functions. Where a line leaves the cell it has the straight line's
-    edge, so it meets the next cell's line. `TestLinesMeet` checks every
-    edge, and `TestGUIBoxDrawing` compares the window's pixels with the
-    masks.
-  - bunk's TUI is unchanged: there the host terminal draws every glyph.
-
-- bunk-gui fits glyphs that are wider than their cell. A fallback font
-  draws the symbols that the terminal font lacks, often wider than a cell:
-  Noto Sans Math's ⟳ is 21 px wide in a 12 px cell, and the atlas kept
-  only its first 12 px.
-  - The rasterizer measures each glyph's ink (`fitInk`, atlas.go). Ink
-    within a pixel of the cell (cellW/8) keeps its place, so the terminal
-    font draws as before. Wider ink moves into the cell, and shrinks when
-    it is wider than the cell.
-  - Such a glyph (`flagOverflow`) draws across the next cell at full size
-    when that cell is blank (`blankAt`, term.go), as in WezTerm; the
-    atlas keeps both forms. In the last column or before a character, it
-    draws fitted into its own cell.
-  - A pictograph (Extended_Pictographic, such as ⚠ ★ ☑ ⚙ ⏺) that the
-    terminal font lacks comes from a symbol font (`symbolFamilies`: Noto
-    Sans Symbols 2, Noto Sans Symbols, Symbola, DejaVu Sans) before
-    fontconfig's fallback. For Noto Sans Mono that fallback is Adwaita
-    Mono, which squeezes pictographs into its cell: its ⚠ was a triangle
-    10 px wide and 16 px tall. The fonts are named because after a
-    monospace font, fontconfig ranks monospace fonts first even for
-    "sans-serif". The RPM recommends the two Noto fonts; with none of the
-    four installed, the fallback is fontconfig's, as before. Other
-    symbols, such as Claude Code's ⎿ ✓ ❯, keep the monospace fallback,
-    whose glyphs fit a cell; Noto Sans Symbols' ⎿ does not reach the
-    cell's edges. `TestAtlasPictographs` checks the fonts and ⚠'s shape.
-  - `TestAtlasFitsWideInk` draws every symbol of the arrow, mathematical,
-    technical and dingbat blocks with the real fonts and checks that no
-    ink leaves its slot. About 420 of their 1,840 symbols overflow a cell.
-
-- bunk-gui draws colour emoji in their own colours. The atlas has two
-  pages (`atlas.go`): coverage (R8), which the text shader tints with the
-  cell's foreground, and premultiplied RGBA (`Atlas.Color`).
-  - The rasterizer draws every glyph white on an ARGB32 surface. A glyph
-    whose pixels are not grey came from a colour font, so it goes to the
-    colour page and its slot gets `flagColor`; any other keeps its
-    coverage, the alpha channel. The font decides, not a code point
-    range: ❤ alone stays text, ❤️ with VS16 is colour.
-  - The colour page is a second texture on unit 2. Its slots number from
-    1 like the coverage page's, and the text shader picks the texture by
-    the flag. Colour glyphs fade with an inactive pane and spread over a
-    blank cell like other overflowing glyphs.
-  - `TestAtlasColorEmoji` checks the real fonts, and `TestGUIColorEmoji`
-    the window's pixels. Before, every emoji showed as U+FFFD.
-
-- Hyperlink IDs are swept and reused. A cell's `Glyph.Link` is a uint16
-  ID into its terminal's URL table. A sweep frees the IDs no cell of either
-  screen, cursor attribute or kept row refers to; new URLs reuse them, lowest
-  first. Sweeps run when the table reaches 4,096 URLs or twice what the last
-  sweep kept, and after ED 3 and RIS. A cell never changes its ID, so it keeps
-  its URL. Rows kept outside the terminal must be marked through
-  `WithLinkReferences` (the session marks its scrollback ring); a terminal
-  with a scroll callback but no marker never frees IDs. When live links alone
-  exceed 65,535 IDs or 16 MiB, new links lose their URL until rows holding
-  links leave; the sweep then retries once per 1,024 new URLs. A front end
-  that resolves IDs from rows it copied earlier compares `LinkGen` first, as
-  bunk-gui's Ctrl+click does; the TUI resolves them under the session lock.
-- Primary-screen reflow uses stored cells. Soft-wrap markers join physical
-  rows into logical lines; explicit line breaks remain separate. Cursor and
-  scroll anchors follow their cells. Styles, links, and image samples survive
-  reflow, and output storage is bounded by scrollback capacity plus pane height.
-  Width changes clear selections whose coordinates are no longer valid.
-  `vt10x.Rewrap` copies compact cells. A scrollback row that is a whole line
-  and fits the new width moves without a copy; `Ring` caches that fit per
-  row. Any reflow change must keep `FuzzReflowEquivalence` and the tests in
-  `internal/session/reflow_test.go` green: they compare against the
-  pre-rewrite implementation in `reflow_oracle_test.go`. Track speed with
-  `go test ./internal/session -run '^$' -bench BenchmarkReflow`.
-- Cursor colour follows the active pane. OSC 12 overrides and OSC 112 resets
-  are emitted through tcell; shutdown restores the host cursor colour.
-- Synchronized updates are per pane. Other panes continue repainting;
-  an abandoned update is released after one second.
-- Kitty keyboard state belongs to its negotiating foreground process group.
-  Polling clears it only after that owner leaves the foreground.
-- Terminal cleanup runs synchronously in `main` after the event loop,
-  because background goroutines can't be relied on to finish their cleanup
-  before the process exits.
-- Agent status is inferred unless the agent reports it. `session.Status`
-  names the foreground agent from `DefaultAgents` (add a CLI there, or via
-  `Options.Agents`), counts output in the last 2 s as working, and treats
-  OSC 9/99/777 notifications and BEL from an agent as "needs you". VTE's
-  "Command completed" notices are ignored. Agent hooks can report state
-  through `internal/notify` (`docs/agent-hooks.md`); `Session.Notify` takes
-  priority over inference until `AcknowledgeAs`, `clear` or a foreground
-  change.
-  - A reported needs-you means the agent still waits, so looking at the
-    pane leaves it: focus, Alt+A, a notification click and keys that answer
-    nothing (`AckSeen`) keep it, Enter (`AckAnswer`) and Esc or Ctrl+C
-    (`AckCancel`) end it. A held one (`Report.Held`, from the PreToolUse
-    of AskUserQuestion or ExitPlanMode) survives Enter, which may only move
-    to the next question, and ends with PostToolUse's report or a cancel.
-    A plain needs-you from the same group while it waits keeps it held
-    with its notice: Claude Code's `permission_prompt` notification follows
-    AskUserQuestion by about 6 s. Every tool's PostToolUse and
-    PostToolUseFailure report working, because in auto mode that
-    notification can come for a call auto mode then approves; a subagent's
-    tools (`agent_id` in the input) report nothing.
-    Done, failed and inferred requests clear at any acknowledgement.
-    bunk-gui draws no frame around a pane that needs the user; the badge,
-    the tab and the rail show it. Every change of the agent state runs `Hooks.StatusChanged` once:
-  the reader, its idle timer, the 1 s process tick and `Notify` share one
-  record of the last announced state. Without hooks, Claude Code only sends
-  OSC notifications to terminals it recognises; set its
-  `preferredNotifChannel` to `terminal_bell`.
-  - A known local agent whose working stretch lasted `Timing.Done`
-    (`DoneAfter`, 10 s) is done, not idle, once its output stops. A stretch
-    runs from the first output after `Timing.Idle` of silence, after the
-    user's input (`WriteInput`) or after `Acknowledge`, to the last output.
-  - The inferred done holds like a reported one: until `Acknowledge`, new
-    output, `clear` or a foreground change. Its notice is empty, and
-    `Status.Reported` is false.
-  - An agent that has reported through hooks is never inferred done, until
-    `clear` or until its process group leaves the foreground. The hook
-    snippets report `working` as each turn starts, so a turn ends with the
-    agent's own `done` alone and alerts once.
-  - The hook snippets run `bunk-gui notify` when bunk-gui is on PATH, else
-    `bunk notify`; both reach the socket `BUNK_NOTIFY_SOCKET` names. The
-    Claude snippet reports AskUserQuestion and ExitPlanMode as needs-you
-    from PreToolUse, with the question as the notice, and work again from
-    PostToolUse. `notify done` reports working instead when the Stop input
-    lists `background_tasks`: Claude resumes when they end. An artifact's
-    comment watch ("live updates for artifact …") does not count, because
-    it runs until the session ends.
-  - Codex runs PermissionRequest before it picks a reviewer, so `notify
-    needs-you -` reads the turn's `approvals_reviewer` from the last
-    `turn_context` of the hook's `transcript_path` (`notify/codex.go`).
-    Any reviewer but `user` (Codex's automatic reviewer) reports working;
-    without a transcript or reviewer the request asks the user.
+Agents ([docs/agent-internals.md](docs/agent-internals.md)):
+- Agent status is inferred unless the agent reports it through hooks; a
+  report wins until it is acknowledged or cleared, or the foreground
+  changes.
 - Users set up agent hooks with guidance, not behind their back: bunk
   writes an agent's configuration only when the user asks for it.
-  - `notify.CheckHooks` reads each agent's configuration (honouring
-    `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`) and calls an agent's
-    hooks installed when every hook of the current snippet is there by
-    event, matcher and command, outdated when only some bunk hooks are, and
-    missing otherwise. Codex's `config.toml` counts beside its
-    `hooks.json`, and every `*.json` in Copilot CLI's `hooks/`.
-  - `bunk notify hooks` lists the states and next steps; `bunk notify hooks
-    install AGENT` (`notify.InstallHooks`) sets them up. Codex's and Copilot
-    CLI's files of bunk's own are written whole, replacing older bunk hooks.
-    Settings files that hold other settings or hooks (Claude Code's and
-    Gemini CLI's settings.json, a Codex hooks.json with the user's hooks)
-    get a merge (`merge.go`): handlers whose command runs bunk's notify CLI
-    (`bunkCommand`, any version) go, the snippet's are appended, and every
-    other key, event, group and handler keeps its order. The old file is
-    saved as `<file>.bunk-backup`, the mode and indentation stay, a
-    symbolic link's target is written, and a file that is not JSON is
-    refused. A Copilot CLI file with other hooks is refused too.
-  - bunk-gui's Preferences show the same states with Install and Copy
-    snippet buttons and a link to the setup guide.
-  - bunk-gui offers the install in a banner above the panes (`banner.go`,
-    under the restore banner): at start for agents whose bunk hooks are
-    outdated, and when a tab first shows an agent whose hooks are missing
-    or outdated, unless the agent is remote, or has reported with hooks
-    that are only missing. It names each agent and the file it changes;
-    Update runs `InstallHooks` for each and toasts the result, Not now
-    hides it until the next start. `hooks_hint = false` turns it off.
-  - Window tests pass `--agent-home`, a directory with every agent's hooks
-    installed, so no hooks banner comes between a scenario's steps; the
-    hook tests pass an empty one or one with outdated hooks.
-- Agents on hosts reached over ssh report in-band
-  (`docs/remote-agent-status.md`). Without a reachable socket, `bunk notify`
-  writes the report line as `OSC 1337 ; SetUserVar=bunk_notify=<base64>` to
-  the agent's terminal (`/dev/tty`, else the nearest parent's), wrapped for
-  tmux or screen. The snippets run when `BUNK_NOTIFY_SESSION` or
-  `SSH_CONNECTION` is set.
-  - The session accepts an in-band report whose token
-    `Options.KnownToken` knows (`notify.Server.Issued`) in any pane, and any
-    other while `ssh`, `mosh` or `mosh-client` is the foreground process.
-  - A report's `agent`, `host`, `repo`, `branch` and `cwd` replace the local
-    ssh process's values in `Status` (`Status.Host` is new) until `clear` or
-    a foreground change; acknowledging keeps them.
-  - While ssh or mosh runs, OSC 9/99/777 mean needs-you without a known
-    agent; bells from there never count.
-  - bunk's TUI relays its most urgent pane (`relay.go`) when it inherited a
-    token or runs over ssh, and sends `clear` on exit. `bunk ssh` exports the
-    pane's token with a remote command.
-- The TUI shows agent status per pane. `renderPane` reads
-  `Session.Status` before taking the session lock; the badge and the
-  needs-you/done separator colours use that copy (`Pane.agent`).
-  `Hooks.StatusChanged` only wakes the render loop. Focus or typing calls
-  `AcknowledgeAs` (`session.KeyAck` sorts keys into answers, cancels and
-  the rest); `next_needs_you` (Alt+A) jumps. bunk serves the notify
-  socket like bunk-gui, and `bunk notify` runs the same CLI.
-- An agent notifies the user when nobody is looking at it.
-  `internal/alert`'s Tracker decides for both front ends, from the status
-  after every `Hooks.StatusChanged`, so inferred states, hook reports and
-  any other source of a status change notify alike.
-  - A source alerts when its agent enters a `[notifications]` state, or
-    its notice changes there, while it is not watched. In bunk-gui a pane
-    is watched while the window is active and the pane is the focused pane
-    of the selected tab; in bunk a pane is watched while it is active and
-    the host terminal has the focus (DECSET 1004).
-  - The title names the agent and its host ("claude on gpu01 needs you"):
-    `Status.Host` from a remote report, else `SSHHost`. The body is the notice, or a default for the state,
-    and "repo ⎇ branch".
-  - Watching the source, the state leaving those states, turning
-    notifications off and the source going away withdraw the notification.
-    The same state notifies again only 10 s (`alert.DefaultRepeat`) after
-    the last one unless the user watched the source; until then it is held,
-    and `Tracker.Next` says when to look again.
-  - A command that ran `command_after` (`Settings.CommandAfter`) or longer
-    notifies once when it ends while its pane is not watched: "tar
-    finished after 2m 14s", or "failed" with a non-zero exit status, the
-    command line as the body. It stays until the user watches the pane, a
-    newer alert replaces it or command alerts are turned off; a later
-    short command leaves it up.
-  - Commands also get marks (`Tracker.Mark`), with notifications on or
-    off. A command that has run `command_after` is marked running; a long
-    one that ended while its pane was not watched is marked done or
-    failed until the user watches it. `Tracker.Next` includes the moment a
-    running command crosses `command_after`, so front ends wake then.
-    Both front ends show the mark in the pane's badge (`badges.Input`
-    `CommandState`, labelled by `badges.CommandLook`) where no agent runs;
-    bunk-gui also shows it in the tab, in the agent states' order and
-    colours.
-  - `Status.Command` is the last command that ended (`command.go`). With
-    OSC 133 marks (vte.sh, which runs only when `VTE_VERSION` is set), a
-    command runs from 133;C to 133;D, loops and lists included, and has
-    an exit status. Without marks, it runs while a group other than the
-    shell's holds the foreground, as the process poll sees it, without an
-    exit status. A 133;C marks a command only after a 133;D since the
-    previous 133;C: vte.sh puts 133;D in PS1, so a PS1 set after it drops
-    that mark alone, and a command its 133;C starts then ends through the
-    poll. The poll names it after the first group it sees that
-    started after the last prompt, so the ssh carrying a remote shell's
-    marks names nothing. A command an agent ran in is not recorded: the
-    agent's states notify instead.
-  - `Status.Running` is the command running now, while it is one the user
-    may wait on. Agents and full-screen programs (the alternate screen)
-    are left out, and so is a foreground that runs a session of its own
-    (`carrier`): ssh or mosh, a container entered, a shell without a
-    script, sudo, su or doas starting a shell. A command its shell's
-    marks start after that session appeared counts, such as one in a
-    remote or nested shell with vte.sh.
-  - bunk-gui keeps one notification per pane on org.freedesktop.Notifications
-    (`desknotify.go`), keyed by the pane's ID. The user watches a pane while
-    it is the focused pane of the selected tab in the active window, as in
-    bunk. A click runs `app.show-pane` with that ID: the window takes the
-    focus with the shell's activation token, selects the pane's tab and
-    focuses the pane.
-    GNotification is not used: on GNOME, GLib sends it through
-    org.gtk.Notifications, where GNOME Shell needs an installed desktop file
-    and runs the action through the application's bus name, which a
-    non-unique application never owns; GLib's freedesktop backend drops the
-    activation token. A missing server only logs at debug level.
-  - The window is not marked as needing attention. GTK 4 has no urgency
-    hint, and on Wayland a present without a token makes GNOME Shell post a
-    second "bunk-gui is ready" notification.
-  - bunk decides in the render pass, which reads every pane's status under
-    `app.mu`, and each alert takes one of two ways, never both.
-  - On the user's desktop, bunk keeps one desktop notification per pane on
-    org.freedesktop.Notifications, with the same replace and withdraw rules
-    as bunk-gui. It uses them when the session bus is reachable
-    (`DBUS_SESSION_BUS_ADDRESS`, else the socket `$XDG_RUNTIME_DIR/bus`),
-    `SSH_CONNECTION` is unset and `gdbus` is on PATH (`desktop.SessionBus`,
-    `startDesktopAlerts`). `desktop.Notifier` runs `gdbus call` with typed
-    GVariant text, on one goroutine at a time, with at most one waiting
-    request per pane; gdbus's output goes to buffers, never the terminal.
-    Quitting withdraws the notifications, waiting up to 2 s.
-  - The desktop notifications have no actions. Receiving a click would need
-    a process listening on the bus for as long as the notification lives,
-    and bunk cannot raise its host terminal's window anyway.
-  - A failed Notify call logs at debug level and sends that alert as OSC 777
-    through `app.oscBuf` with the next frame. A call that gets no answer in
-    3 s does not fall back, because the server may have shown it.
-  - Otherwise, over SSH or without a bus or gdbus, bunk writes
-    `alert.OSC777` to the host. Control and bidi characters go, ';' becomes
-    ',', and the title and body are cut to 120 and 360 bytes. foot,
-    WezTerm, Ghostty and urxvt show it; VTE 0.84 (GNOME Terminal, Ptyxis on
-    Fedora 44) reads OSC 777 notify only as "Command completed".
-  - Both front ends clean desktop text with `alert.DesktopText`: the same
-    character rules and limits, the body escaped as markup for GNOME Shell.
-- Session timers are set per session. `Options.Timing` holds the
-  foreground poll (`ProcessPoll`, 1 s), idle (`IdleAfter`, 2 s), done
-  (`DoneAfter`, 10 s), hang-up grace (`HangupGrace`, 1 s), recently-left
-  (2 s) and sync-release (`SyncUpdateTimeout`, 1 s) intervals. A zero
-  field takes the default; both front ends leave it zero. Tests shorten it
-  per session, never through package variables, so parallel tests cannot
-  race on it.
-- Nested sessions are refused. `BUNK=1` is exported into every pane's
-  environment; the binary exits at startup if it sees it set.
-- bunk-gui's panes get `TERM_PROGRAM=bunk-gui` and `TERM_PROGRAM_VERSION`
-  in place of inherited ones, so shell start-up files can skip starting
-  bunk's TUI there (README). bunk's TUI passes an inherited `TERM_PROGRAM`
-  on: Claude Code sends OSC notifications only to terminals it recognises
-  by it, such as iTerm on macOS.
-- Closing a session ends it, whatever its child does. `Session.Close`
-  closes the PTY master and sends SIGHUP; a child still running after
-  `HangupGrace` (1 s) is killed with its process group. On Linux the master
-  is re-wrapped as a pollable file (`ptyfd_linux.go`), so Close ends
-  ReadLoop even while a process the child left behind (`server &`) holds
-  the PTY. Both front ends close a pane's session when its child exits
-  (the TUI in `removePane`). Resize the PTY with `session.Setsize`, not
-  `pty.Setsize`: the latter reads the descriptor with `Fd`, which races
-  with ReadLoop's Close and can hit a reused descriptor number
-  (`TestResizeWhileOutputCloses`).
+- Agents on hosts reached over ssh report in-band when no socket is
+  reachable.
+- The TUI reads `Session.Status` before taking the session lock.
+- `internal/alert`'s Tracker decides when an agent or a long command
+  notifies, for both front ends; bunk's TUI sends each alert as a desktop
+  notification or as OSC 777, never both.
 
 ---
 
@@ -1182,71 +289,51 @@ its default; Design Decisions says where the defaults come from.
   features are implemented, partial, or missing. When investigating a
   rendering or input bug, consult it first; when fixing a feature, update it
   to reflect the new status.
+- Tests never reach the user's desktop session:
+  - bunk-gui window tests run on a private headless mutter through
+    `scripts/headless-gui.sh`, never on the desktop. It gives one
+    2560x1600@120 virtual monitor at 133% on the GPU, with its own D-Bus and
+    clipboard. Run every GUI test through it, as `make gui-test`, `make
+    soak` and `make bench-check` do, never with a bus of your own: the
+    wrapper's bus can start no service, because a document portal started
+    on a bus that shares the desktop's runtime directory unmounts the
+    desktop's `doc` filesystem, and Flatpak apps then fail to start.
+  - Desktop notifications are recorded in `--report` (`notifications`) and
+    never reach a notification server on the test compositor. On the test
+    compositor the window is recorded in `--report` (`windows`) and not
+    started. `launchRefused` keeps the launcher off the test compositor;
+    window tests read the links from `--report` (`opened`).
+  - Window tests get their own state directory: the harness sets
+    `XDG_STATE_HOME_TEST`, which `scripts/headless-gui.sh` turns into
+    `XDG_STATE_HOME`. `TestGUIRestoreSession` saves, quits and restores
+    with a fake `claude` on PATH that reports a session ID.
+  - Window tests pass `--agent-home`, a directory with every agent's hooks
+    installed, so no hooks banner comes between a scenario's steps; the
+    hook tests pass an empty one or one with outdated hooks.
+  - `TestMain` (`main_test.go`) replaces `writeNativeClipboard`, so no test
+    writes the desktop clipboard. `clipboardHas(text)` reports what bunk tried
+    to copy. `TestMain` also points `DBUS_SESSION_BUS_ADDRESS` at a socket that
+    does not exist and puts a `gdbus` that only fails first on PATH, so no test
+    reaches the session bus. Tests of desktop notifications use
+    `desktoptest.New`, a fake gdbus that records its calls; bunk-gui's
+    `TestTUIDesktopNotifierWithGdbus` runs the real gdbus against a fake server
+    on a private bus.
+- Resize the PTY with `session.Setsize`, not `pty.Setsize`: the latter reads
+  the descriptor with `Fd`, which races with ReadLoop's Close and can hit a
+  reused descriptor number (`TestResizeWhileOutputCloses`).
+- Any change to vt10x's `parse`, `print`, `setChar`, the scan paths or the
+  rune classes must keep the fast-path equivalence tests and the
+  `FuzzParse`/`FuzzFastPaths` seeds green ([docs/architecture.md](docs/architecture.md#vt10xs-local-extensions)).
+- A direct `cells[x]` write in vt10x's `row.go` must call `touch(x)` (or
+  `touchAll` after shifting); write cells through `set`, `fill`,
+  `writeASCII` or `setWrap` instead.
 
 ---
 
-## Test recipes
+## Known Issues
 
-Build a minimal Pane without a PTY like this:
-```go
-term := vt10x.New(vt10x.WithSize(cols, rows))
-p := &Pane{
-    Session: &session.Session{
-        Term:            term,
-        Cmd:             &exec.Cmd{}, // non-nil prevents Cwd() nil-deref in emitTitle
-        ScrollbackLines: 100,
-        Scrollback:      session.Ring{MaxLines: 100},
-    },
-    x: 0, y: 0, w: cols, h: rows,
-}
-```
-
-Set up a simulation screen like this:
-```go
-scr := tcell.NewSimulationScreen("UTF-8")
-scr.Init()
-defer scr.Fini()
-scr.SetSize(w, h)
-// scr.GetContent(x, y) → (mainc rune, combc []rune, style, width)
-```
-
-Build a minimal App for calling render() like this:
-```go
-app := &App{
-    screen:  scr,
-    root:    &Node{pane: p},
-    active:  p,
-    oscBuf:  newOSCBuffer(),
-    theme:   testTheme(),
-    hostOut: &buf, // what render sends to the host; nil means os.Stdout
-}
-```
-
-For short timers, session tests pass `fastTiming` (`helpers_test.go`) in
-`Options.Timing`, and bunk's tests set `App.timing` or `paneSpec.timing`.
-- A timer test loops over `timings(fast)` so that the defaults stay
-  covered. That gives a `short` subtest, plus a `default` one unless
-  `-short`, run in parallel. `TestStatusTiming` checks Idle and RecentlyLeft
-  against their defaults without waiting, and `TestInferredDoneStretch`
-  does the same for Done.
-- Wait for a state rather than a time. Poll `Status()`, a hook or the PTY
-  until the state arrives, with a deadline of seconds.
-- Independent slow tests call `t.Parallel()`. They start after every serial
-  test of the package ends.
-- Keep a test serial if it counts process-wide descriptors, goroutines,
-  children or heap (`leakcheck`, `runtime.GC`), uses `testing.AllocsPerRun`,
-  bounds a latency, swaps a package variable, or calls `t.Setenv`.
-
-`TestMain` (`main_test.go`) replaces `writeNativeClipboard`, so no test
-writes the desktop clipboard. `clipboardHas(text)` reports what bunk tried
-to copy. `TestMain` also points `DBUS_SESSION_BUS_ADDRESS` at a socket that
-does not exist and puts a `gdbus` that only fails first on PATH, so no test
-reaches the session bus. Tests of desktop notifications use
-`desktoptest.New`, a fake gdbus that records its calls; bunk-gui's
-`TestTUIDesktopNotifierWithGdbus` runs the real gdbus against a fake server
-on a private bus.
-
-To run a script in a real pane, call
-`runFeatureScript(t, "03_cursor_unicode.sh", cols, rows)`, which returns a
-`scriptPane`. Use `waitPrompt`, `pressEnter`, `paste`, `resizeHost`,
-`finish`, `render`, then `find`, `row` and `rows`.
+- bunk-gui is Linux-only and builds only for the machine it runs on: cgo and
+  GTK4 rule out cross builds (Makefile).
+- bunk's OSC 777 fallback for alerts: foot, WezTerm, Ghostty and urxvt show
+  it; VTE 0.84 (GNOME Terminal, Ptyxis on Fedora 44) reads OSC 777 notify
+  only as "Command completed" (docs/agent-internals.md).

@@ -1,8 +1,9 @@
 # Development
 
-[AGENTS.md](../AGENTS.md) holds the full architecture, design decisions and
-test recipes. This page is the short version: how the code is laid out, how
-to build it and how it is tested.
+The design notes listed in [AGENTS.md](../AGENTS.md#where-the-details-are)
+hold the full architecture, design decisions and test recipes. This page is
+the short version: how the code is laid out, how to build it and how it is
+tested.
 
 ## Packages
 

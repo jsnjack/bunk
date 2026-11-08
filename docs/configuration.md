@@ -118,3 +118,54 @@ fi
 bunk sets `BUNK=1` in every pane and refuses to start inside itself. bunk-gui
 sets `TERM_PROGRAM=bunk-gui`, so its tabs get a plain shell; it has its own
 splits.
+
+## Notes for working on the code
+
+How both programs read and validate their files, and where the code keeps each
+setting and its default.
+
+bunk reads `~/.config/bunk/config.toml`; `--config` overrides the path.
+Generate a documented default with `bunk config init`.
+Malformed/unreadable files and missing explicit `--config` paths fail at startup;
+a missing default file uses built-in defaults.
+
+These are the key fields agents may need to know about:
+- `theme` is a built-in name (`terminal`, `default`, `solarized-dark`,
+  `dracula`, `nord`) or the name of a custom theme. A `[themes.NAME]` table
+  defines one with `background`, `foreground` and 16 `palette` colours;
+  `cursor` and the border and scrollbar colours are optional
+  (`internal/theme`, `Def`). An unknown name or an invalid table is logged
+  at startup, and bunk uses the default theme.
+- `scrollback` is the per-pane scrollback line cap (default 10 000).
+- `log_file` is the destination for `--debug` / `--trace` output (default
+  `/tmp/bunk.log`).
+- `cell_aspect` is the fallback height/width ratio when the host terminal
+  doesn't answer the pixel-size query.
+- `[keys]` overrides split / zoom / quit / search / copy / paste /
+  next_needs_you; "none" disables an action and sends its key to the pane.
+- `[ui]` holds hex colour overrides for borders and scrollbar. An invalid
+  value is logged, and the theme's colour stays.
+- `[notifications]` turns notifications on or off (`enabled`), picks
+  the agent states that send one (`states`, default needs-you, done and
+  failed), and sets how many seconds a command must run for its end to
+  send one and for its pane to be marked (`command_after`, default 10; 0
+  turns both off). A state name bunk does not know or a negative
+  `command_after` fails at startup.
+
+`config.go` is the authoritative reference for every field and its default.
+
+bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
+`rail_open`, `rail_style`, `font`, `font_size`, `text_zoom`, `theme`, `hooks_hint`,
+`restore`, `restore_scrollback`, `new_dir`, `[themes.NAME]`, `[[agents]]`, `[notifications]` and `[keys]`. `theme` and
+`[themes.NAME]` work as in bunk's config, and `--theme` overrides `theme`
+for one run. `new_dir` is where new tabs and windows start: `~` (the
+default), `~/…`, an absolute path, or `current` for the active pane's
+directory; a directory that is gone gives the home directory, and splits
+start in their pane's directory.
+`[notifications]` has the same keys as in bunk's config. `[keys]` uses
+bunk's action names and key syntax where they overlap; "none" sends the key
+to the terminal. The file is watched and reloads live, and a bad value shows
+a toast and keeps the default. The shortcuts window (Ctrl+Shift+?) and the
+preferences window (Ctrl+,) rewrite only the lines they change
+(`cmd/bunk-gui/keysfile.go`). `cmd/bunk-gui/bindings.go` lists every action and
+its default; Design Decisions says where the defaults come from.

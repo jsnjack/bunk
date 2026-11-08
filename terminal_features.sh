@@ -19,7 +19,7 @@
 #   - Queries wait for the terminal's DA1 reply instead of sleeping;
 #     TERMINAL_FEATURES_QUERY_TIMEOUT (seconds, default 2) bounds the wait.
 #   - `go test -run TestTerminalFeatures .` runs every group inside a bunk
-#     pane and checks the result; see AGENTS.md.
+#     pane and checks the result; see docs/testing.md.
 #   - `integration` copies "bunk OSC 52 test" to the clipboard.
 
 set -u
