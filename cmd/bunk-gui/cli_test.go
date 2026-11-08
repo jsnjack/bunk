@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -160,10 +161,16 @@ func TestRootCommandConventions(t *testing.T) {
 			t.Fatal("notify must disable flag parsing, leave error messages to RunCLI and use RunE")
 		}
 	})
+	t.Run("present passes its arguments through", func(t *testing.T) {
+		if !presentCmd.DisableFlagParsing || !presentCmd.SilenceErrors || presentCmd.RunE == nil {
+			t.Fatal("present must disable flag parsing, leave error messages to RunPresent and use RunE")
+		}
+	})
 }
 
-// TestNotifyCLI runs "bunk-gui notify" as the agent hooks do and checks
-// its exit codes, output and the report that reaches the server.
+// TestNotifyCLI runs "bunk-gui notify" as the agent hooks do, and
+// "bunk-gui present" as agents do, and checks their exit codes, output and
+// the report or present request that reaches the server.
 func TestNotifyCLI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds bunk-gui; skipped with -short")
@@ -191,7 +198,16 @@ func TestNotifyCLI(t *testing.T) {
 	})
 	got := make(chan report, 4)
 	srv.Register("tok", reportTarget(got))
+	shown := make(chan string, 4)
+	srv.SetPresenter(func(token, path string, auto bool) bool {
+		shown <- fmt.Sprintf("%s %s %v", token, path, auto)
+		return true
+	})
 	inside := []string{session.EnvNotifySocket + "=" + srv.Path(), session.EnvNotifySession + "=tok"}
+	doc := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(doc, []byte("# Plan\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name   string
 		args   []string
@@ -200,6 +216,7 @@ func TestNotifyCLI(t *testing.T) {
 		stdout string // substring; "" means none
 		stderr string // substring; "" means none
 		want   *report
+		shown  string // the present request the server got: "token path auto"
 	}{
 		{name: "outside bunk", args: []string{"notify", "done", "hi"}},
 		{name: "report", args: []string{"notify", "needs-you", "Allow", "npm", "install?"}, env: inside,
@@ -210,6 +227,11 @@ func TestNotifyCLI(t *testing.T) {
 		{name: "no event", args: []string{"notify"}, code: 1, stderr: "usage: bunk-gui notify"},
 		{name: "help", args: []string{"notify", "--help"}, stdout: "usage: bunk-gui notify"},
 		{name: "hook snippet", args: []string{"notify", "hooks", "claude"}, stdout: `notify needs-you -`},
+		{name: "present", args: []string{"present", doc}, env: inside,
+			stdout: "plan.md in bunk-gui's side panel", shown: "tok " + doc + " false"},
+		{name: "present a missing file", args: []string{"present", doc + ".gone"}, env: inside, code: 1, stderr: "bunk-gui present"},
+		{name: "present hook outside bunk", args: []string{"present", "--hook", "claude", "-"}},
+		{name: "present help", args: []string{"present", "--help"}, stdout: "usage: bunk-gui present"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command(bin, tc.args...)
@@ -227,6 +249,16 @@ func TestNotifyCLI(t *testing.T) {
 			} {
 				if (out.want == "") != (out.got == "") || !strings.Contains(out.got, out.want) {
 					t.Fatalf("%s = %q, want %q", out.name, out.got, out.want)
+				}
+			}
+			if tc.shown != "" {
+				select {
+				case s := <-shown:
+					if s != tc.shown {
+						t.Fatalf("present request %q, want %q", s, tc.shown)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("no present request")
 				}
 			}
 			if tc.want == nil {
