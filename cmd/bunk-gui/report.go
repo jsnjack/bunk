@@ -48,9 +48,10 @@ type runReport struct {
 	Toasts      []string             `json:"toasts"`
 	Settings    map[string]any       `json:"settings"`
 	ConfigError string               `json:"config_error"`
-	Reloads     int                  `json:"reloads"` // config.toml reloads after a change
-	Opened      []string             `json:"opened"`  // links opened (openURL)
-	Windows     []string             `json:"windows"` // directories of new windows (App.openWindow)
+	Reloads     int                  `json:"reloads"`   // config.toml reloads after a change
+	WebViews    int                  `json:"web_views"` // document views alive (webview.go)
+	Opened      []string             `json:"opened"`    // links opened (openURL)
+	Windows     []string             `json:"windows"`   // directories of new windows (App.openWindow)
 	// Desktop notification calls (postAlert, withdrawAlert) and clicks.
 	Notifications []alertRecord `json:"notifications"`
 }
@@ -296,6 +297,7 @@ type uiSnapshot struct {
 	SplitRatio    *ratioReport        `json:"split_ratio"` // the label on a held divider; null when none
 	TabDrag       *tabDragReport      `json:"tab_drag"`    // a tab being dragged; null when none
 	MenuOpen      bool                `json:"menu_open"`
+	PreviewDialog bool                `json:"preview_dialog"` // the file dialog of preview_file is open
 	AboutOpen     bool                `json:"about_open"`
 	AboutVersion  string              `json:"about_version"` // as the About dialog shows it
 	LastToast     string              `json:"last_toast"`
@@ -535,6 +537,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	if a.optionsBtn != nil {
 		s.Options = a.widgetRect(g, a.optionsBtn)
 		s.MenuOpen = a.optionsBtn.Active()
+		s.PreviewDialog = a.previewDialog
 	}
 	s.AboutOpen = a.about != nil
 	if a.about != nil {

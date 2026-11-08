@@ -145,6 +145,7 @@ func (a *App) newTabShell() *Tab {
 	t.page.SetShrinkEndChild(false)
 	t.page.SetWideHandle(false)
 	t.page.AddCSSClass("bunk-page")
+	a.dropPreviews(t)
 	return t
 }
 

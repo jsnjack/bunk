@@ -99,6 +99,7 @@ type App struct {
 	active             *Tab
 	panes              []*Pane    // by id; nil once closed
 	webViews           []*webView // document views (webview.go), by id
+	previewDialog      bool       // the file dialog of preview_file is open
 	atlases            map[atlasKey]*Atlas
 	monScale           float64
 	initCols, initRows int

@@ -1062,6 +1062,7 @@ func (a *App) menuGroups() [][]menuItem {
 			{label: "New window", action: "new_window", run: a.openWindow},
 			{label: "Rename tab…", action: "rename_tab", run: func() { a.renameTab(a.active) }},
 			{label: "Show documents", action: "documents", run: func() { a.toggleDocuments(a.active) }},
+			{label: "Preview a file…", action: "preview_file", run: func() { a.pickPreview(a.active) }},
 			{label: "Close tab", action: "close_tab", run: func() { a.closeTab(a.active) }},
 		},
 		{

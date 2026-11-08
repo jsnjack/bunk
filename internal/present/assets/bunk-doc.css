@@ -223,3 +223,32 @@ img {
 @keyframes bunk-fade {
   to { opacity: 0; }
 }
+
+/* Previews of other files (present.RenderPreview): text, images, video
+   and audio, as wide as the panel. */
+
+#bunk-doc.bunk-file {
+  max-width: none;
+  padding: 12px 16px;
+}
+
+#bunk-doc.bunk-text pre {
+  margin: 0;
+}
+
+#bunk-doc.bunk-image {
+  text-align: center;
+}
+
+#bunk-doc.bunk-image img {
+  max-width: 100%;
+  height: auto;
+  /* A checkerboard shows through transparent pixels. */
+  background: repeating-conic-gradient(#8884 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+}
+
+#bunk-doc.bunk-media video,
+#bunk-doc.bunk-media audio {
+  display: block;
+  width: 100%;
+}

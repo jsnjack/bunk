@@ -59,7 +59,7 @@ func TestDisplayPath(t *testing.T) {
 
 // TestDocFile: a document's page reads its own directory, and nothing
 // hidden, nothing outside it and nothing beside a document in the home
-// directory.
+// directory, whichever path leads there.
 func TestDocFile(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
@@ -73,6 +73,9 @@ func TestDocFile(t *testing.T) {
 	}
 	must(t, os.Symlink(outside, filepath.Join(dir, "link.txt")))
 	must(t, os.Symlink(filepath.Join(dir, "img"), filepath.Join(dir, "pics")))
+	// Another path to the home directory, as /home is on Fedora Atomic.
+	must(t, os.Symlink(filepath.Join(root, "home"), filepath.Join(root, "alias")))
+	aliasDoc := filepath.Join(root, "alias", "notes.html")
 	doc := filepath.Join(dir, "plan.md")
 	cases := []struct {
 		doc, rel string
@@ -90,6 +93,8 @@ func TestDocFile(t *testing.T) {
 		{homeDoc, "", nil},
 		{homeDoc, "notes.html", nil},
 		{homeDoc, "id_rsa", errRefused},
+		{aliasDoc, "", nil},
+		{aliasDoc, "id_rsa", errRefused},
 	}
 	for _, c := range cases {
 		got, err := docFile(c.doc, c.rel)

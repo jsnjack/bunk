@@ -9,7 +9,15 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 var (
 	urlAttr  = regexp.MustCompile(`(?:src|href)="([^"]*)"`)
@@ -88,8 +96,8 @@ func TestWriteStandalone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteStandalone: %v", err)
 	}
-	if want := filepath.Join(outDir, "index.html"); index != want {
-		t.Errorf("WriteStandalone returned %q, want %q", index, want)
+	if filepath.Dir(filepath.Dir(index)) != outDir || filepath.Base(index) != "index.html" {
+		t.Errorf("WriteStandalone returned %q, want %s/<key>/index.html", index, outDir)
 	}
 	data, err := os.ReadFile(index)
 	if err != nil {
@@ -101,7 +109,7 @@ func TestWriteStandalone(t *testing.T) {
 	if m == nil {
 		t.Fatalf("page has no <base>:\n%s", page)
 	}
-	if want := fileURL(docDir) + "/"; m[1] != want {
+	if want := FileURL(docDir) + "/"; m[1] != want {
 		t.Errorf("<base href> = %q, want %q", m[1], want)
 	}
 	for _, want := range []string{`<title>plan.md</title>`, `src="img/a.png"`, `href="spec.md"`, `href="#plan"`} {
@@ -157,9 +165,38 @@ func TestWriteStandalone(t *testing.T) {
 		t.Fatalf("walk assets: %v", err)
 	}
 
+	// The same document gets the same page, and the assets stay as they
+	// are; another document gets a page of its own beside them.
 	t.Run("again", func(t *testing.T) {
+		js := filepath.Join(outDir, "assets", "bunk-doc.js")
+		old := time.Now().Add(-time.Hour)
+		must(t, os.Chtimes(js, old, old))
+		again, err := WriteStandalone(mdPath, outDir, DefaultTheme())
+		if err != nil || again != index {
+			t.Errorf("second WriteStandalone = %q, %v; want %q", again, err, index)
+		}
+		if fi, err := os.Stat(js); err != nil || !fi.ModTime().Equal(old) {
+			t.Errorf("assets written again: %v", err)
+		}
+		other := filepath.Join(docDir, "spec.md")
+		must(t, os.WriteFile(other, []byte("# Spec\n"), 0o600))
+		page, err := WriteStandalone(other, outDir, DefaultTheme())
+		if err != nil || filepath.Dir(filepath.Dir(page)) != outDir || page == index {
+			t.Errorf("another document's page = %q, %v", page, err)
+		}
+		entries, err := os.ReadDir(outDir)
+		if err != nil || len(entries) != 3 {
+			t.Errorf("%s holds %d entries, want assets and two pages: %v", outDir, len(entries), err)
+		}
+	})
+	t.Run("repairs assets", func(t *testing.T) {
+		js := filepath.Join(outDir, "assets", "bunk-doc.js")
+		must(t, os.Remove(js))
 		if _, err := WriteStandalone(mdPath, outDir, DefaultTheme()); err != nil {
-			t.Errorf("second WriteStandalone into the same directory: %v", err)
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(js); err != nil {
+			t.Errorf("a missing asset was not written again: %v", err)
 		}
 	})
 	t.Run("missing document", func(t *testing.T) {
