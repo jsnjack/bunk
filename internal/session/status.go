@@ -414,37 +414,54 @@ func GitHead(dir string) (repo, branch string) {
 		return "", ""
 	}
 	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
-		gitPath := filepath.Join(d, ".git")
-		if fi, err := os.Stat(gitPath); err == nil {
-			gitDir, repo := gitPath, filepath.Base(d)
-			if !fi.IsDir() {
-				// A linked worktree or submodule: ".git" holds "gitdir: <path>".
-				data, err := os.ReadFile(gitPath)
-				if err != nil {
-					return repo, ""
-				}
-				gitDir = strings.TrimSpace(strings.TrimPrefix(string(data), "gitdir:"))
-				if !filepath.IsAbs(gitDir) {
-					gitDir = filepath.Join(d, gitDir)
-				}
-				if main, _, ok := strings.Cut(gitDir, string(filepath.Separator)+".git"+string(filepath.Separator)+"worktrees"+string(filepath.Separator)); ok {
-					repo = filepath.Base(main)
-				}
-			}
-			head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
-			if err != nil {
-				return repo, ""
-			}
-			h := strings.TrimSpace(string(head))
-			if ref, ok := strings.CutPrefix(h, "ref: refs/heads/"); ok {
-				return repo, ref
-			}
-			return repo, h[:min(7, len(h))]
+		if repo, branch, ok := gitRepo(d); ok {
+			return repo, branch
 		}
 		if parent := filepath.Dir(d); parent == d {
 			return "", ""
 		}
 	}
+}
+
+// gitRepo reads the repository whose work tree is d. ok is false when d
+// has no .git or one that git would not take for a repository: a directory
+// without HEAD, such as the empty one a sandbox leaves as a mount point, or
+// a file without "gitdir:". The search then goes on to the parent, as git's
+// does.
+func gitRepo(d string) (repo, branch string, ok bool) {
+	gitPath := filepath.Join(d, ".git")
+	fi, err := os.Stat(gitPath)
+	if err != nil {
+		return "", "", false
+	}
+	gitDir, repo := gitPath, filepath.Base(d)
+	if !fi.IsDir() {
+		// A linked worktree or submodule: ".git" holds "gitdir: <path>".
+		data, err := os.ReadFile(gitPath)
+		if err != nil {
+			return "", "", false
+		}
+		target, found := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+		if !found {
+			return "", "", false
+		}
+		gitDir = strings.TrimSpace(target)
+		if !filepath.IsAbs(gitDir) {
+			gitDir = filepath.Join(d, gitDir)
+		}
+		if main, _, cut := strings.Cut(gitDir, string(filepath.Separator)+".git"+string(filepath.Separator)+"worktrees"+string(filepath.Separator)); cut {
+			repo = filepath.Base(main)
+		}
+	}
+	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return "", "", false
+	}
+	h := strings.TrimSpace(string(head))
+	if ref, found := strings.CutPrefix(h, "ref: refs/heads/"); found {
+		return repo, ref, true
+	}
+	return repo, h[:min(7, len(h))], true
 }
 
 // statusOSC is what an OSC sequence says about the agent.
