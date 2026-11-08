@@ -164,8 +164,10 @@ func TestGUIPaneMenu(t *testing.T) {
 			"click 0 0 3",
 			"ctx-item Split pane",
 			"wait panes.#=2",
-			"type printf '\\\\033[?1000h'\\r",
-			"wait focused.line=$",
+			// The output follows the escape, so once it shows, the
+			// program reports the mouse; the typed line lacks "mouse-on".
+			"type printf '\\\\033[?1000h'; echo mouse-o''n\\r",
+			"wait focused.screen~mouse-on focused.line=$",
 			"click 0 0 3",
 			"snap mouse-app",
 			"click 0 0 3 shift",
