@@ -273,7 +273,7 @@ const designPage = `<!doctype html><html><head><title>Design</title>
 <body><h1>Design</h1><pre class="mermaid">graph LR
   A --> B</pre><p>Cost <span class="math">a^2+b^2</span>.</p></body></html>`
 
-// TestGUIPresentPreview previews files as the file dialog of preview_file
+// TestGUIPresentPreview previews files as the file dialog of open_in_panel
 // does: code highlighted by its name and reloaded when it changes, an
 // image, a PDF in WebKit's viewer, text without an extension, and an
 // agent's HTML page that draws a diagram and math with bunk's runtime in
@@ -321,8 +321,8 @@ func TestGUIPresentPreview(t *testing.T) {
 			"preview data.bin",
 			"wait last_toast~\"Cannot preview data.bin\"",
 			"snap previews",
-			"menu-item Preview a file…",
-			"wait preview_dialog=true",
+			"menu-item Open in panel…",
+			"wait open_dialog=true",
 			"quit",
 		},
 	})

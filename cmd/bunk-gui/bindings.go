@@ -41,7 +41,7 @@ var keyActions = []keyAction{
 	{"new_window", "New window", []string{"ctrl+shift+n"}},
 	{"rename_tab", "Rename the tab", nil},
 	{"documents", "Show or hide the tab's documents", nil},
-	{"preview_file", "Preview a file in the tab's panel", nil},
+	{"open_in_panel", "Open a file in the tab's panel", nil},
 	{"next_tab", "Next tab", []string{"ctrl+right", "ctrl+down"}},
 	{"prev_tab", "Previous tab", []string{"ctrl+left", "ctrl+up"}},
 	{"move_tab_left", "Move the tab left", []string{"ctrl+shift+pgup"}},

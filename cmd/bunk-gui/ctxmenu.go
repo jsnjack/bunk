@@ -2,7 +2,7 @@ package main
 
 // Context menus. A right-click on a tab in the rail or the bar opens the
 // tab's menu without selecting it: Rename…, Copy directory, Mark as seen,
-// Mute notifications, Show documents, Preview a file…, Close tab and Close
+// Mute notifications, Show documents, Open in panel…, Close tab and Close
 // other tabs. A right-click in a pane opens the pane's menu: the link under
 // the pointer, copy and paste, find, split, zoom, passthrough, the pane's
 // directory, Clear scrollback and Close pane. While the program in the pane reports
@@ -124,7 +124,7 @@ func (a *App) openTabMenu(t *Tab, from gtk.Widgetter, x, y float64) {
 			{label: "Mute notifications", check: true, checked: t.muted, run: func() { a.setMuted(t, !t.muted) }},
 			{label: "Show documents", action: "documents", check: true, checked: t.panel != nil && t.panel.open,
 				disabled: t.panel == nil || len(t.panel.docs) == 0, run: func() { a.toggleDocuments(t) }},
-			{label: "Preview a file…", action: "preview_file", run: func() { a.pickPreview(t) }},
+			{label: "Open in panel…", action: "open_in_panel", run: func() { a.pickPreview(t) }},
 		},
 		{
 			{label: "Close tab", action: "close_tab", run: func() {

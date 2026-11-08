@@ -62,8 +62,10 @@ agent as outdated, with the hooks it lacks. Repeat step 2 for it.
 
 - bunk-gui offers to set the hooks up in a banner above the panes: at start
   for agents whose bunk hooks are outdated, and when a tab first shows an
-  agent whose hooks are missing or outdated. The banner names each agent
-  and the file it changes. Update (Set up) runs the same install for every
+  agent whose hooks are missing or outdated. The same banner offers
+  Claude Code's, Codex's and Copilot CLI's bunk-present skill
+  ([present.md](present.md#the-skill)) when it is missing or outdated. The
+  banner names each agent, what it lacks and the files it changes. Update (Set up) runs the same install for every
   agent it names; Not now asks again at the next start. `hooks_hint =
   false` in bunk-gui's config.toml, or the switch in that section, turns
   the banner off.

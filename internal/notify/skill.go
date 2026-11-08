@@ -68,6 +68,17 @@ func CheckSkills(d Dirs) []SkillState {
 	return out
 }
 
+// CheckSkill returns agent's copy of the skill; false for an agent bunk
+// has no skill for.
+func CheckSkill(d Dirs, agent string) (SkillState, bool) {
+	for _, s := range CheckSkills(d) {
+		if s.Agent == agent {
+			return s, true
+		}
+	}
+	return SkillState{}, false
+}
+
 // InstallSkill writes the current skill for agent and returns the path it
 // wrote. Its directories are created with mode 0755 and the file gets
 // 0644; a SKILL.md that is a symbolic link stays one, and its target gets

@@ -80,9 +80,10 @@ func TestGUIHooksPrefs(t *testing.T) {
 	}
 }
 
-// TestGUIHooksHint: an agent whose hooks are missing brings the hooks
-// banner once, for its first tab only, and Set up installs them. With the
-// hooks installed, or with hooks_hint = false, no banner comes. The hint
+// TestGUIHooksHint: an agent whose hooks and skill are missing brings the
+// setup banner once, for its first tab only, and Set up installs both.
+// With them installed, or with hooks_hint = false, no banner comes; with
+// only the skill missing, the banner offers the skill alone. The hint
 // runs when the tab first shows the agent, so the snapshot right after
 // that wait has the banner.
 func TestGUIHooksHint(t *testing.T) {
@@ -97,6 +98,7 @@ func TestGUIHooksHint(t *testing.T) {
 		banner bool
 	}{
 		{name: "missing", home: t.TempDir(), banner: true},
+		{name: "skill missing", home: hooksOnlyHome(t), banner: true},
 		{name: "installed"},
 		{name: "turned off", config: "hooks_hint = false\n", home: t.TempDir()},
 	} {
@@ -123,10 +125,15 @@ func TestGUIHooksHint(t *testing.T) {
 			g := runGUI(t, scenario{cost: 2, config: tc.config, args: args, env: []string{path}, script: append(script, "quit")})
 			for _, snap := range []string{"first", "second"} {
 				h := g.snap(snap).Hooks
+				want := "Set up bunk for claude (hooks not set up, skill missing)?"
+				files := "This changes ~/.claude/settings.json, keeping a copy; ~/.claude/skills/bunk-present/SKILL.md."
+				if tc.name == "skill missing" {
+					want, files = "Set up bunk for claude (skill missing)?", "This changes ~/.claude/skills/bunk-present/SKILL.md."
+				}
 				if h.Banner != tc.banner || tc.banner && (!slices.Equal(h.Agents, []string{"claude"}) ||
-					!strings.HasPrefix(h.Text, "Set up bunk's hooks for claude (not set up)?") ||
-					!strings.Contains(h.Text, "~/.claude/settings.json, keeping a copy")) {
-					t.Errorf("%s: hooks banner %+v", snap, h)
+					!slices.Equal(h.Skills, []string{"claude"}) || !strings.HasPrefix(h.Text, want) ||
+					!strings.HasSuffix(h.Text, files) || !strings.Contains(h.Text, "bunk-present skill")) {
+					t.Errorf("%s: setup banner %+v", snap, h)
 				}
 			}
 			if len(g.Toasts) != 0 && !tc.banner {
@@ -136,7 +143,10 @@ func TestGUIHooksHint(t *testing.T) {
 				if h, _ := notify.CheckHook(notify.Dirs{Home: tc.home}, "claude"); h.State != notify.HooksInstalled {
 					t.Errorf("after Set up: %+v", h)
 				}
-				if !slices.Equal(g.Toasts, []string{"Hooks installed"}) {
+				if s, _ := notify.CheckSkill(notify.Dirs{Home: tc.home}, "claude"); s.State != notify.HooksInstalled {
+					t.Errorf("skill after Set up: %+v", s)
+				}
+				if !slices.Equal(g.Toasts, []string{"Installed. New agent sessions use it."}) {
 					t.Errorf("toasts %q", g.Toasts)
 				}
 			}
@@ -173,7 +183,7 @@ func TestGUIHooksOutdatedAtStart(t *testing.T) {
 				args:   []string{"--size", "100x30", "--agent-home", home},
 				script: []string{"wait focused.line=$ hooks.banner=true", "snap offered", step, "wait hooks.banner=false", "quit"},
 			})
-			if h := g.snap("offered").Hooks; !slices.Equal(h.Agents, []string{"claude"}) || !strings.HasPrefix(h.Text, "Update bunk's hooks for claude (outdated)?") {
+			if h := g.snap("offered").Hooks; !slices.Equal(h.Agents, []string{"claude"}) || !strings.HasPrefix(h.Text, "Set up bunk for claude (hooks outdated, skill missing)?") {
 				t.Errorf("banner %+v", h)
 			}
 			got := readFile(t, settings)
@@ -198,5 +208,41 @@ func TestGUIHooksOutdatedAtStart(t *testing.T) {
 				t.Errorf("mode %v, %v; want the file's own 0600", fi.Mode(), err)
 			}
 		})
+	}
+}
+
+// hooksOnlyHome is an agent home with every agent's hooks and no skill.
+func hooksOnlyHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	must(t, installAllHooks(home))
+	for _, s := range notify.CheckSkills(notify.Dirs{Home: home}) {
+		must(t, os.Remove(s.Path))
+	}
+	return home
+}
+
+// TestGUISkillOutdatedAtStart: a bunk-present skill older than bunk's
+// brings the setup banner at start, which updates it alone.
+func TestGUISkillOutdatedAtStart(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	must(t, installAllHooks(home))
+	d := notify.Dirs{Home: home}
+	old, _ := notify.CheckSkill(d, "codex")
+	must(t, os.WriteFile(old.Path, []byte("---\nname: bunk-present\n---\nolder\n"), 0o644))
+	g := runGUI(t, scenario{
+		args:   []string{"--size", "100x30", "--agent-home", home},
+		script: []string{"wait focused.line=$ hooks.banner=true", "snap offered", "hooks-banner accept", "wait hooks.banner=false hooks.result~Installed", "quit"},
+	})
+	if h := g.snap("offered").Hooks; !slices.Equal(h.Agents, []string{"codex"}) || !slices.Equal(h.Skills, []string{"codex"}) ||
+		h.Text != "Update bunk for codex (skill outdated)? The bunk-present skill tells agents how to show you documents in the side panel. This changes ~/.codex/skills/bunk-present/SKILL.md." {
+		t.Errorf("banner %+v", h)
+	}
+	if s, _ := notify.CheckSkill(d, "codex"); s.State != notify.HooksInstalled {
+		t.Errorf("after Update: %+v", s)
+	}
+	if h, _ := notify.CheckHook(d, "claude"); h.State != notify.HooksInstalled {
+		t.Errorf("claude's hooks changed: %+v", h)
 	}
 }

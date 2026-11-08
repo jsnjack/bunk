@@ -111,10 +111,10 @@ func guiBinary(t *testing.T) string {
 	return guiBin
 }
 
-// installAllHooks writes every agent's hook snippet under home, the
-// --agent-home of scenarios that pass none of their own: their agents
-// have hooks, so no hooks banner comes between a scenario and its
-// waits.
+// installAllHooks writes every agent's hook snippet and bunk-present
+// skill under home, the --agent-home of scenarios that pass none of their
+// own: their agents have both, so no setup banner comes between a
+// scenario and its waits.
 func installAllHooks(home string) error {
 	d := notify.Dirs{Home: home}
 	for _, h := range notify.CheckHooks(d) {
@@ -123,6 +123,11 @@ func installAllHooks(home string) error {
 			return err
 		}
 		if err := os.WriteFile(h.Path, []byte(snippet), 0o644); err != nil {
+			return err
+		}
+	}
+	for _, s := range notify.CheckSkills(d) {
+		if _, err := notify.InstallSkill(d, s.Agent); err != nil {
 			return err
 		}
 	}

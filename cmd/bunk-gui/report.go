@@ -297,7 +297,7 @@ type uiSnapshot struct {
 	SplitRatio    *ratioReport        `json:"split_ratio"` // the label on a held divider; null when none
 	TabDrag       *tabDragReport      `json:"tab_drag"`    // a tab being dragged; null when none
 	MenuOpen      bool                `json:"menu_open"`
-	PreviewDialog bool                `json:"preview_dialog"` // the file dialog of preview_file is open
+	OpenDialog    bool                `json:"open_dialog"` // the file dialog of open_in_panel is open
 	AboutOpen     bool                `json:"about_open"`
 	AboutVersion  string              `json:"about_version"` // as the About dialog shows it
 	LastToast     string              `json:"last_toast"`
@@ -537,7 +537,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	if a.optionsBtn != nil {
 		s.Options = a.widgetRect(g, a.optionsBtn)
 		s.MenuOpen = a.optionsBtn.Active()
-		s.PreviewDialog = a.previewDialog
+		s.OpenDialog = a.openDialog
 	}
 	s.AboutOpen = a.about != nil
 	if a.about != nil {

@@ -25,11 +25,11 @@ stays while the window resizes.
   remove it from the list and hide the panel.
 - "Show documents" in the tab's menu and in the main menu shows and hides
   the panel; in a tab without documents it asks for a file to preview.
-- "Preview a file…" in the header, the tab's menu and the main menu opens
-  a file dialog in the focused pane's directory. Dropping files on a tab,
+- The header's folder button and "Open in panel…" in the tab's menu and
+  the main menu open a file dialog in the focused pane's directory. Dropping files on a tab,
   from a file manager, previews them too. Questions about a file you
   opened go to the tab's agent.
-- The `documents` and `preview_file` actions have no default keys; bind
+- The `documents` and `open_in_panel` actions have no default keys; bind
   them in `[keys]`.
 - The line at the bottom says when the document last reloaded, how many
   sections changed and where the file is, or why it could not be shown.
@@ -232,12 +232,18 @@ bunk installs into each agent's skills directory:
   `SKILL.md` that is a symbolic link stays one, and its target gets the
   skill.
 - `bunk present skill` prints it.
+- bunk-gui offers it in the same banner as the hooks
+  ([agent-hooks.md](agent-hooks.md#set-up)): when a tab first shows an
+  agent whose skill is missing or outdated, and at start for an outdated
+  one. Set up (Update) installs everything the banner names. Preferences →
+  Documents has an Install button per agent too.
 
 The skill tells the agent to present plans, specs, designs, reports and
-explanations the user should read, not every file it touches and never code;
-to keep lasting documents in the repository's `docs/` and throwaway ones in
-a scratch directory; which formats work; and how the user's questions from
-the panel arrive.
+explanations the user should read as interactive HTML pages, Markdown for
+plain prose; not to present every file it touches, nor code on its own; to
+keep lasting documents in the repository's `docs/` and throwaway ones in a
+scratch directory; which formats work and which of bunk's assets HTML can
+use; and how the user's questions from the panel arrive.
 
 ## Protocol
 

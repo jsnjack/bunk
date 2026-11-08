@@ -98,7 +98,7 @@ func TestGUITabMenu(t *testing.T) {
 			"quit",
 		},
 	})
-	want := []string{"Rename…", "Copy directory", "Mark as seen (off)", "Mute notifications", "Show documents (off)", "Preview a file…", "Close tab", "Close other tabs"}
+	want := []string{"Rename…", "Copy directory", "Mark as seen (off)", "Mute notifications", "Show documents (off)", "Open in panel…", "Close tab", "Close other tabs"}
 	if got := ctxLabels(g.snap("menu").CtxMenu); !slices.Equal(got, want) {
 		t.Errorf("tab menu %q, want %q", got, want)
 	}
