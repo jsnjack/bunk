@@ -143,7 +143,7 @@ func (a *App) newPanel(t *Tab) *panel {
 	head.Append(pn.pick)
 	pn.askBtn = panelButton("chat-bubble-text-symbolic", "Ask the agent about the selected text", pn.ask)
 	head.Append(pn.askBtn)
-	head.Append(panelButton("document-open-symbolic", "Preview a file…", func() { a.pickPreview(t) }))
+	head.Append(panelButton("document-open-symbolic", "Open a file in the panel…", func() { a.pickPreview(t) }))
 	head.Append(panelButton("web-browser-symbolic", "Open in the browser", pn.openExternal))
 	head.Append(panelButton("list-remove-symbolic", "Remove this document from the panel", pn.removeCurrent))
 	head.Append(panelButton("window-close-symbolic", "Hide the panel", pn.hide))
@@ -298,23 +298,23 @@ func (a *App) toggleDocuments(t *Tab) {
 	t.panel.toggle()
 }
 
-// pickPreview is the preview_file action: a file dialog, which starts in
+// pickPreview is the open_in_panel action: a file dialog, which starts in
 // the directory of t's focused pane, picks a file to preview in t's panel.
 func (a *App) pickPreview(t *Tab) {
 	if t == nil || a.finished {
 		return
 	}
 	d := gtk.NewFileDialog()
-	d.SetTitle("Preview a file")
-	d.SetAcceptLabel("Preview")
+	d.SetTitle("Open a file in the panel")
+	d.SetAcceptLabel("Open")
 	if p := t.focus; p != nil {
 		if cwd := p.s.Cwd(); cwd != "" {
 			d.SetInitialFolder(gio.NewFileForPath(cwd))
 		}
 	}
-	a.previewDialog = true
+	a.openDialog = true
 	d.Open(context.Background(), &a.win.Window, func(res gio.AsyncResulter) {
-		a.previewDialog = false
+		a.openDialog = false
 		f, err := d.OpenFinish(res)
 		if err != nil || f == nil || f.Object == nil {
 			slog.Debug("present: file dialog", "err", err) // dismissed
@@ -1080,7 +1080,7 @@ const presentSelectScript = `(function(t){
 //	present-ask             Ask the agent, as its button does
 //	present-toggle          the documents action of the selected tab
 //	present-kill            end the shown page's web process, as a crash would
-//	preview PATH            what the file dialog of preview_file does with PATH
+//	preview PATH            what the file dialog of open_in_panel does with PATH
 func (a *App) presentStep(verb, arg string) error {
 	t := a.active
 	if t == nil {

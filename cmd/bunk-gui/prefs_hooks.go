@@ -12,9 +12,10 @@ package main
 // It never writes a file without a click.
 //
 // The reminder is a banner over the panes: at start for agents whose bunk
-// hooks are outdated, and when a tab first shows an agent whose hooks are
-// missing or outdated. Update installs them for every agent it names; Not
-// now leaves them until the next start. hooks_hint = false turns it off.
+// hooks or bunk-present skill are outdated, and when a tab first shows an
+// agent whose hooks or skill are missing or outdated. It names what each
+// agent lacks; Set up (or Update) installs all of it, Not now leaves it
+// until the next start. hooks_hint = false turns it off.
 
 import (
 	"fmt"
@@ -199,119 +200,189 @@ func (a *App) installHooks(agent string) (string, bool) {
 	return text, true
 }
 
-// hookOffer is the banner that offers to set up agents' hooks.
+// hookOffer is the banner that offers to set up agents' hooks and skills.
 type hookOffer struct {
 	banner *banner
-	agents []notify.Hooks // the agents it names, in the order they came
+	agents []agentSetup // the agents it names, in the order they came
 	seen   map[string]bool
 	// result is what the last Update said, for --report.
 	result string
+}
+
+// agentSetup is what the banner offers for one agent: its hooks, its
+// bunk-present skill, or both.
+type agentSetup struct {
+	hooks notify.Hooks
+	skill notify.SkillState // Agent is "" for an agent without a skill
+	// fixHooks and fixSkill: the banner installs them.
+	fixHooks, fixSkill bool
+}
+
+// setupOf is what agent lacks of bunk's setup: hooks that are not
+// installed and a skill that is not current.
+func (a *App) setupOf(agent string) (agentSetup, bool) {
+	d := a.hookDirs()
+	h, ok := notify.CheckHook(d, agent)
+	if !ok {
+		return agentSetup{}, false
+	}
+	s := agentSetup{hooks: h, fixHooks: h.State != notify.HooksInstalled}
+	if sk, ok := notify.CheckSkill(d, agent); ok {
+		s.skill, s.fixSkill = sk, sk.State != notify.HooksInstalled
+	}
+	return s, true
 }
 
 type hookOfferReport struct {
 	Banner bool     `json:"banner"`
 	Text   string   `json:"text"`
 	Agents []string `json:"agents"`
+	Skills []string `json:"skills"` // the agents whose skill it installs
 	Result string   `json:"result"`
 }
 
 func (a *App) hookOfferReport() hookOfferReport {
 	o := &a.hookOffer
-	r := hookOfferReport{Banner: o.banner.shown(), Agents: []string{}, Result: o.result}
+	r := hookOfferReport{Banner: o.banner.shown(), Agents: []string{}, Skills: []string{}, Result: o.result}
 	if r.Banner {
 		r.Text = o.banner.label.Text()
 	}
-	for _, h := range o.agents {
-		r.Agents = append(r.Agents, h.Agent)
+	for _, s := range o.agents {
+		r.Agents = append(r.Agents, s.hooks.Agent)
+		if s.fixSkill {
+			r.Skills = append(r.Skills, s.hooks.Agent)
+		}
 	}
 	return r
 }
 
 // offerOutdatedHooks offers, at start, to update the agents whose bunk
-// hooks are older than the current snippets: an update of bunk's added
-// hooks they lack.
+// hooks or skill are older than the current ones, an update of bunk's,
+// together with the rest of their setup.
 func (a *App) offerOutdatedHooks() {
 	if !a.settings.hooksHint {
 		return
 	}
 	for _, h := range notify.CheckHooks(a.hookDirs()) {
-		if h.State == notify.HooksOutdated {
-			a.offerHooks(h)
+		s, ok := a.setupOf(h.Agent)
+		if ok && (s.hooks.State == notify.HooksOutdated || s.fixSkill && s.skill.State == notify.HooksOutdated) {
+			a.offerSetup(s)
 		}
 	}
 }
 
 // hooksHint offers, once per agent and window process, to set up the hooks
-// of an agent a tab shows whose hooks are missing or outdated, so its state
-// is guessed and restore cannot resume its conversation. A remote agent's
-// hooks are on its host, and an agent that reports through hooks has
-// them, unless they are outdated. st is a pane's status from its session.
+// and skill of an agent a tab shows when either is missing or outdated:
+// without hooks its state is guessed and restore cannot resume its
+// conversation, and without the skill it does not know the document
+// panel. A remote agent's hooks and skills are on its host, and an agent
+// that reports through hooks has them, unless they are outdated. st is a
+// pane's status from its session.
 func (a *App) hooksHint(st session.Status) {
 	if !a.settings.hooksHint || st.Agent == "" || st.Host != "" || st.SSHHost != "" || a.hookOffer.seen[st.Agent] {
 		return
 	}
-	h, ok := notify.CheckHook(a.hookDirs(), st.Agent)
-	if !ok || h.State == notify.HooksInstalled || st.Reported && h.State == notify.HooksMissing {
+	s, ok := a.setupOf(st.Agent)
+	if !ok {
 		return
 	}
-	a.offerHooks(h)
+	if st.Reported && s.hooks.State == notify.HooksMissing {
+		s.fixHooks = false
+	}
+	if s.fixHooks || s.fixSkill {
+		a.offerSetup(s)
+	}
 }
 
-// offerHooks adds h's agent to the banner and shows it.
-func (a *App) offerHooks(h notify.Hooks) {
+// offerSetup adds s's agent to the banner and shows it.
+func (a *App) offerSetup(s agentSetup) {
 	o := &a.hookOffer
 	if o.seen == nil {
 		o.seen = map[string]bool{}
 	}
-	if o.seen[h.Agent] {
+	agent := s.hooks.Agent
+	if o.seen[agent] {
 		return
 	}
-	o.seen[h.Agent] = true
-	o.agents = append(o.agents, h)
+	o.seen[agent] = true
+	o.agents = append(o.agents, s)
 	d := a.hookDirs()
 	var names, files []string
-	outdated := true
-	for _, h := range o.agents {
-		state := "outdated"
-		if h.State == notify.HooksMissing {
-			state, outdated = "not set up", false
+	outdated, hooks, skills := true, false, false
+	state := func(st notify.HookState, missing string) string {
+		if st == notify.HooksMissing {
+			outdated = false
+			return missing
 		}
-		names = append(names, fmt.Sprintf("%s (%s)", h.Agent, state))
-		file := d.Short(h.Path)
-		if h.Merges {
-			file += ", keeping a copy"
+		return "outdated"
+	}
+	for _, s := range o.agents {
+		var lacks []string
+		if s.fixHooks {
+			hooks = true
+			lacks = append(lacks, "hooks "+state(s.hooks.State, "not set up"))
+			file := d.Short(s.hooks.Path)
+			if s.hooks.Merges {
+				file += ", keeping a copy"
+			}
+			files = append(files, file)
 		}
-		files = append(files, file)
+		if s.fixSkill {
+			skills = true
+			lacks = append(lacks, "skill "+state(s.skill.State, "missing"))
+			files = append(files, d.Short(s.skill.Path))
+		}
+		names = append(names, fmt.Sprintf("%s (%s)", s.hooks.Agent, strings.Join(lacks, ", ")))
 	}
 	verb := "Set up"
 	if outdated {
 		verb = "Update"
 	}
+	var why []string
+	if hooks {
+		why = append(why, "Without current hooks, states are guessed and restored agents can't resume their conversations.")
+	}
+	if skills {
+		why = append(why, "The bunk-present skill tells agents how to show you documents in the side panel.")
+	}
 	o.banner.accept.SetLabel(verb)
-	o.banner.show(fmt.Sprintf("%s bunk's hooks for %s? Without current hooks, states are guessed and restored agents can't resume their conversations. This changes %s.",
-		verb, strings.Join(names, ", "), strings.Join(files, "; ")))
+	o.banner.show(fmt.Sprintf("%s bunk for %s? %s This changes %s.",
+		verb, strings.Join(names, ", "), strings.Join(why, " "), strings.Join(files, "; ")))
 }
 
-// acceptHooks installs the hooks of every agent the banner names.
+// acceptHooks installs what the banner offers for every agent it names.
 func (a *App) acceptHooks() {
 	o := &a.hookOffer
 	o.banner.hide()
 	var notes []string
 	failed := false
-	for _, h := range o.agents {
-		text, ok := a.installHooks(h.Agent)
-		notes = append(notes, h.Agent+": "+text)
-		failed = failed || !ok
+	for _, s := range o.agents {
+		agent := s.hooks.Agent
+		if s.fixHooks {
+			text, ok := a.installHooks(agent)
+			notes = append(notes, agent+": "+text)
+			failed = failed || !ok
+		}
+		if s.fixSkill {
+			path, err := notify.InstallSkill(a.hookDirs(), agent)
+			if err != nil {
+				notes = append(notes, agent+" skill: Not installed: "+err.Error())
+				failed = true
+			} else {
+				notes = append(notes, agent+" skill: Installed "+a.hookDirs().Short(path)+".")
+			}
+		}
 	}
 	o.agents = nil
 	o.result = strings.Join(notes, " ")
 	if failed {
-		a.toastAction("Some hooks were not installed", "Details", func() { a.showPreferencesAt("hooks") })
+		a.toastAction("Some of the setup was not installed", "Details", func() { a.showPreferencesAt("hooks") })
 	} else {
-		a.toast("Hooks installed")
+		a.toast("Installed. New agent sessions use it.")
 	}
 	if a.prefsWin != nil {
 		a.prefsWin.refreshHooks()
+		a.prefsWin.refreshSkills()
 	}
 	if p := a.activePane(); p != nil {
 		p.widget.GrabFocus()

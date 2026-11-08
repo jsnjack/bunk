@@ -68,8 +68,8 @@ Agents can show you what they wrote in a panel beside the tab's panes
   them, because they can be interactive. Markdown shows as a formatted page
   with tables, highlighted code, Mermaid diagrams and math.
 - Any other file previews there too: images, PDFs, video, audio, and code
-  or text highlighted by its name. "Preview a file…" (the panel's header,
-  the tab's menu, the main menu, the `preview_file` action) opens a file
+  or text highlighted by its name. "Open in panel…" (the panel's folder
+  button, the tab's menu, the main menu, the `open_in_panel` action) opens a file
   dialog in the focused pane's directory, and files dropped on a tab
   preview as well.
 - The page reloads when the file changes and keeps your place. Sections that
@@ -79,7 +79,7 @@ Agents can show you what they wrote in a panel beside the tab's panes
   section and the quoted text. Press Enter in the pane to send it.
 - "Show documents" in the tab's menu or the main menu shows and hides the
   panel, or asks for a file in a tab without documents; the `documents`
-  and `preview_file` actions have no default keys. The header lists the
+  and `open_in_panel` actions have no default keys. The header lists the
   tab's documents and opens the shown one in the browser.
 - Agent hooks list the Markdown and HTML files an agent writes; with
   `[present] auto = true` they open the panel too. When Claude Code or
