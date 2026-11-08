@@ -60,7 +60,7 @@ readelf -d "$bin" | grep -q 'BIND_NOW' && pass "BIND_NOW" || fail "binary lacks 
 readelf -lW "$bin" | grep -q 'GNU_RELRO' && pass "RELRO" || fail "binary lacks RELRO"
 
 requires=$(rpm -qp --requires "$rpm")
-for r in 'libgtk-4.so.1()(64bit)' 'libadwaita-1.so.0()(64bit)' libglvnd-egl libglvnd-opengl; do
+for r in 'libgtk-4.so.1()(64bit)' 'libadwaita-1.so.0()(64bit)' 'libwebkitgtk-6.0.so.4()(64bit)' libglvnd-egl libglvnd-opengl; do
 	grep -qxF "$r" <<<"$requires" && pass "Requires $r" || fail "missing Requires $r"
 done
 recommends=$(rpm -qp --recommends "$rpm")
