@@ -106,8 +106,14 @@ func newStatusApp(t *testing.T, w, h int) (*App, tcell.SimulationScreen) {
 // does, and closes it when the test ends.
 func spawn(t *testing.T, app *App, x, y, w, h int, args ...string) *Pane {
 	t.Helper()
+	return spawnIn(t, app, "", x, y, w, h, args...)
+}
+
+// spawnIn is spawn in the directory dir; "" is the test's own.
+func spawnIn(t *testing.T, app *App, dir string, x, y, w, h int, args ...string) *Pane {
+	t.Helper()
 	app.mu.Lock()
-	p, err := app.newPane(x, y, w, h, "", args)
+	p, err := app.newPane(x, y, w, h, dir, args)
 	app.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -216,13 +222,24 @@ sleep 30
 		t.Fatal(err)
 	}
 
+	// The panes work in a repository of their own, so the where badge
+	// ("r ⎇ m") leaves the notice the same room whatever branch and
+	// directory the test runs in.
+	repo := filepath.Join(t.TempDir(), "r")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/m\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	const w, h = 100, 20
 	app, scr := newStatusApp(t, w, h)
 	app.notify = srv
 	app.timing = fastTiming // the first poll detects claude
 	// claude on top (0,0,100,10), a shell below (0,11,100,9); separator row 10.
-	claude := spawn(t, app, 0, 0, w, h/2, claudePath)
-	shell := spawn(t, app, 0, h/2+1, w, h-h/2-1, "/bin/sh", "-c", "sleep 30")
+	claude := spawnIn(t, app, repo, 0, 0, w, h/2, claudePath)
+	shell := spawnIn(t, app, repo, 0, h/2+1, w, h-h/2-1, "/bin/sh", "-c", "sleep 30")
 	app.root = newLeaf(claude, 0, 0, w, h)
 	app.root.split(shell, splitHorizontal)
 	app.active = shell
