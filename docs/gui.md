@@ -150,6 +150,9 @@ the code.
     branch and places, as the expanded rail does. Another key first,
     such as Alt+A or a shell's Alt+B, shows none. The labels float in
     `App.overlay`, so the panes keep their size, and take no clicks.
+    Under them a scrim, the switcher's backdrop, dims everything right
+    of the rail, so pane text does not crowd the labels; it starts at
+    the rail's edge, so the rings stay bright beside their labels.
     Alt+N under them switches tabs. Releasing Alt, an inactive window,
     a dialog, the switcher and leaving the collapsed rail hide them.
     after-paint places them beside their items, because GTK knows the

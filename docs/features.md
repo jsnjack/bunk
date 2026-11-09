@@ -18,7 +18,7 @@ switch tabs.
 | Move tab | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn, or drag | Moves the selected tab in the rail or the bar; any tab can be dragged to a new place |
 | Rename tab | | Double-click a tab, or choose "Rename tab…" in the menu; `rename_tab` in `[keys]` binds a key. The name replaces the agent or program name, and an empty name brings it back |
 | Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
-| Tab labels | Hold Alt | In the collapsed rail, holding Alt alone for 0.4 s labels each tab's ring with its Alt+N key, agent or name, repo ⎇ branch and hosts; Alt+N switches while they show, and releasing Alt hides them |
+| Tab labels | Hold Alt | In the collapsed rail, holding Alt alone for 0.4 s labels each tab's ring with its Alt+N key, agent or name, repo ⎇ branch and hosts, and dims the panes behind the labels; Alt+N switches while they show, and releasing Alt hides them |
 | Agent status | | Dot, state, repo ⎇ branch, the containers and SSH hosts of all the tab's panes as their badges name them, and the agent's notice; see [agent-status.md](agent-status.md) |
 | Switcher | Ctrl+Shift+O | Lists the tabs in their order and marks the current one; the cursor starts on the first other tab. Type to filter, Up and Down pick a row, Enter opens it. A row's × closes its tab, and the switcher stays open |
 | Tab menu | Right-click a tab | Rename, Copy directory, Mark as seen (clears done marks and notifications), Mute notifications, Show documents, Open in panel…, Close tab, Close other tabs; closing asks first while something runs |

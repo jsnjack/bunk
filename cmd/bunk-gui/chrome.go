@@ -69,12 +69,14 @@ button.raildot { background: none; box-shadow: none; border: none; padding: 0; m
 button.raildot.active { background: #26292f; }
 button.raildot.needs { background: #2a2216; }
 .railmap { min-width: 30px; min-height: 30px; }
-.railpeek { background: #1b1c20; border: 1px solid #2f3238; border-radius: 8px; padding: 0 12px 0 6px;
-	box-shadow: 0 2px 8px alpha(black, 0.45); color: #d8dade; }
-.railpeek.active { background: #26292f; border-color: #4a4f57; }
+.railpeek { background: #2e3138; border: 1px solid #5a5f68; border-radius: 8px; padding: 0 12px 0 6px;
+	box-shadow: 0 4px 16px alpha(black, 0.65); color: #f2f4f6; }
+.railpeek.active { background: #383c44; border-color: #7a808a; }
 .railpeek.needs { border-color: #ffb454; }
-.peekkey { font-family: "Noto Sans Mono", monospace; font-size: 12px; font-weight: 700; color: #e6e8eb;
-	background: #2f3238; border-radius: 4px; padding: 1px 6px; }
+.railpeek .repo { color: #c4c8ce; }
+.railpeek .loc { color: #d6caff; }
+.peekkey { font-family: "Noto Sans Mono", monospace; font-size: 12px; font-weight: 700; color: #ffffff;
+	background: #4a4f58; border-radius: 4px; padding: 1px 6px; }
 progressbar.tabprogress > trough { min-height: 3px; min-width: 24px; background: alpha(#ffffff, 0.10); border-radius: 2px; }
 progressbar.tabprogress > trough > progress { min-height: 3px; background: #5aa9ff; border-radius: 2px; }
 progressbar.tabprogress.error > trough > progress { background: #ff8a8a; }
@@ -103,7 +105,7 @@ button.menuitem:hover { background: #2a2c31; }
 checkbutton.menucheck { min-height: 34px; padding: 0 10px 0 6px; border-radius: 6px; color: #e6e8eb; font-size: 14px; }
 checkbutton.menucheck:hover { background: #2a2c31; }
 .keys { font-family: "Noto Sans Mono", monospace; font-size: 12px; color: #9aa0a8; }
-.switcher-bg { background: rgba(8, 9, 11, 0.62); }
+.switcher-bg, .railpeek-scrim { background: rgba(8, 9, 11, 0.62); }
 .switcher { background: #1b1c20; border: 1px solid #2f3238; border-radius: 10px; padding: 10px; }
 .switcher-title { font-size: 12px; color: #9aa0a8; padding: 4px 6px 0 6px; }
 entry.switcher-entry { background: #131416; border: 1px solid #34373e; border-radius: 6px; color: #e6e8eb;

@@ -14,8 +14,9 @@ import (
 // web on dev, in the collapsed rail. Claude's pane shows " api ⎇ main "
 // left of its agent badge. Alt+B, a shell's key, shows no labels after
 // the peek's delay. Alt held alone labels both rings, level with them
-// right of the rail; Alt+2 selects tab 2 and the labels stay; releasing
-// Alt hides them, and so does another window taking the focus.
+// right of the rail, and a scrim dims the window right of the rail but
+// not the rail; Alt+2 selects tab 2 and the labels stay; releasing Alt
+// hides them, and so does another window taking the focus.
 func TestGUIRailPeek(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
@@ -64,8 +65,8 @@ func TestGUIRailPeek(t *testing.T) {
 	}
 
 	for _, label := range []string{"combo", "released", "inactive"} {
-		if p := g.snap(label).RailPeek; p != nil {
-			t.Errorf("%s: rail peek %+v, want none", label, p)
+		if s := g.snap(label); s.RailPeek != nil || s.RailPeekScrim != nil {
+			t.Errorf("%s: rail peek %+v, scrim %+v, want none", label, s.RailPeek, s.RailPeekScrim)
 		}
 	}
 
@@ -76,6 +77,11 @@ func TestGUIRailPeek(t *testing.T) {
 			t.Fatalf("%s: rail peek %+v, chrome %+v", label, s.RailPeek, s.Chrome)
 		}
 		railRight := s.Chrome.X + s.Chrome.W
+		if sc := s.RailPeekScrim; sc == nil || math.Abs(sc.X-railRight) > 1 || sc.Y > 0.5 ||
+			sc.X+sc.W < float64(s.Window.W)-0.5 || sc.Y+sc.H < float64(s.Window.H)-0.5 {
+			t.Errorf("%s: scrim %+v, want it from the rail (%.0f) to the window's edges (%dx%d)",
+				label, sc, railRight, s.Window.W, s.Window.H)
+		}
 		for i, r := range s.RailPeek {
 			if r.Tab != i+1 || r.Text != want[i] || r.Cut {
 				t.Errorf("%s: label %d is tab %d %q (cut %v), want tab %d %q in full", label, i, r.Tab, r.Text, r.Cut, i+1, want[i])
@@ -95,13 +101,36 @@ func TestGUIRailPeek(t *testing.T) {
 		t.Errorf("Alt+2 under the labels: tab %d selected, want 2", s.SelectedTab)
 	}
 
-	// The selected tab's label is lighter than the others.
-	img = loadPNG(t, g.file("peek.png"))
-	for i, c := range []rgb{hex(0x26292f), colMenu} {
+	// The selected tab's label is lighter than the others, and both are
+	// lighter than the panes.
+	before, img := img, loadPNG(t, g.file("peek.png"))
+	for i, c := range []rgb{hex(0x383c44), hex(0x2e3138)} {
 		r := g.snap("peek").RailPeek[i].Rect
 		x, y, w, h := inner(r, 3)
 		if n := count(img, x, y, w, h, c, 3); n < w*h/3 {
 			t.Errorf("peek: label %d: %d of %d pixels %v", i, n, w*h, c)
 		}
 	}
+
+	// The scrim darkens the empty pane at the window's lower right as the
+	// switcher's backdrop does, and leaves the rail below its rings.
+	peek := g.snap("peek")
+	sc := peek.RailPeekScrim
+	x, y := sc.DX+sc.DW-60, sc.DY+sc.DH-60
+	dim := dimmed(at(before, x, y))
+	if n := count(img, x, y, 40, 40, dim, 3); n < 40*40*9/10 {
+		t.Errorf("peek: pane at %d,%d: %d of %d pixels %v, dimmed from %v", x, y, n, 40*40, dim, at(before, x, y))
+	}
+	item := peek.RailPeek[len(peek.RailPeek)-1].Item
+	x, y = peek.Chrome.DX+4, item.DY+item.DH+8
+	if n := count(img, x, y, peek.Chrome.DW-10, 30, colChrome, 3); n < (peek.Chrome.DW-10)*30*9/10 {
+		t.Errorf("peek: rail below the rings at %d,%d: %d of %d pixels %v", x, y, n, (peek.Chrome.DW-10)*30, colChrome)
+	}
+}
+
+// dimmed is c under the switcher's backdrop, rgba(8, 9, 11, 0.62), which
+// the rail peek's scrim shares.
+func dimmed(c rgb) rgb {
+	mix := func(v, s int) int { return int(math.Round(float64(v)*0.38 + float64(s)*0.62)) }
+	return rgb{mix(c.r, 8), mix(c.g, 9), mix(c.b, 11)}
 }

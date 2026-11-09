@@ -293,9 +293,10 @@ type uiSnapshot struct {
 	FontSize      float64             `json:"font_size"`
 	TextPercent   int                 `json:"text_percent"`
 	Switcher      switchReport        `json:"switcher"`
-	RailPeek      []railPeekReport    `json:"rail_peek"`   // labels beside the collapsed rail while Alt is held; null when hidden
-	SplitRatio    *ratioReport        `json:"split_ratio"` // the label on a held divider; null when none
-	TabDrag       *tabDragReport      `json:"tab_drag"`    // a tab being dragged; null when none
+	RailPeek      []railPeekReport    `json:"rail_peek"`       // labels beside the collapsed rail while Alt is held; null when hidden
+	RailPeekScrim *rectReport         `json:"rail_peek_scrim"` // what the scrim under the rail peek dims; null when hidden
+	SplitRatio    *ratioReport        `json:"split_ratio"`     // the label on a held divider; null when none
+	TabDrag       *tabDragReport      `json:"tab_drag"`        // a tab being dragged; null when none
 	MenuOpen      bool                `json:"menu_open"`
 	OpenDialog    bool                `json:"open_dialog"` // the file dialog of open_in_panel is open
 	AboutOpen     bool                `json:"about_open"`
@@ -624,6 +625,7 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			s.RailPeek = append(s.RailPeek, railPeekReport{Tab: a.tabIndex(r.t) + 1, Text: r.text, Cut: cut,
 				Rect: a.widgetRect(g, r.box), Item: a.widgetRect(g, r.item)})
 		}
+		s.RailPeekScrim = a.widgetRect(g, a.peek.scrim)
 	}
 	s.KeyboardFocus = a.keyboardFocus()
 	s.CtxMenu = a.ctxMenuReport()

@@ -5,7 +5,9 @@ package main
 // the tab (Alt+N, without the Alt), its state dot, its name or agent, and
 // repo ⎇ branch and the places it runs, as the expanded rail shows them.
 // The labels float over the panes, which keep their size, and take no
-// clicks.
+// clicks. While they show, a scrim dims everything right of the rail, as
+// the switcher's backdrop does, so busy pane text behind the labels
+// recedes; the rail's rings stay bright beside their labels.
 //
 //   - They show once Alt has been held for railPeekDelay with no other
 //     key, so Alt+A, Alt+1 and a shell's Alt+B never flash them.
@@ -19,6 +21,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
@@ -43,6 +46,7 @@ type railPeek struct {
 	pending bool // Alt is held alone and the timer runs
 
 	layer *gtk.Fixed // the labels while shown; nil when hidden
+	scrim *gtk.Box   // dims the panes under the labels; nil when hidden
 	rows  []railPeekRow
 	gen   uint64 // a.chromeGen the rows show; another means rebuild
 }
@@ -104,6 +108,12 @@ func (a *App) showRailPeek() {
 	if pk.layer != nil || !a.railPeekFits() {
 		return
 	}
+	// Overlays draw in the order they are added: the scrim, then the
+	// labels over it. placeRailPeek starts the scrim at the rail's edge.
+	pk.scrim = gtk.NewBox(gtk.OrientationHorizontal, 0)
+	pk.scrim.SetCanTarget(false)
+	pk.scrim.AddCSSClass("railpeek-scrim")
+	a.overlay.AddOverlay(pk.scrim)
 	pk.layer = gtk.NewFixed()
 	pk.layer.SetCanTarget(false) // clicks reach the panes below
 	pk.layer.AddCSSClass("railpeek-layer")
@@ -119,7 +129,8 @@ func (a *App) hideRailPeek() {
 		return
 	}
 	a.overlay.RemoveOverlay(pk.layer)
-	pk.layer, pk.rows = nil, nil
+	a.overlay.RemoveOverlay(pk.scrim)
+	pk.layer, pk.scrim, pk.rows = nil, nil, nil
 }
 
 // buildRailPeek makes a label for each rail item, from the tab infos the
@@ -205,7 +216,11 @@ func (a *App) placeRailPeek() {
 	if !ok {
 		return
 	}
-	x := float64(rail.X()+rail.Width()) + 6
+	edge := rail.X() + rail.Width()
+	if m := int(math.Ceil(float64(edge))); pk.scrim.MarginStart() != m {
+		pk.scrim.SetMarginStart(m)
+	}
+	x := float64(edge) + 6
 	for i := range pk.rows {
 		r := &pk.rows[i]
 		b, ok := gtk.BaseWidget(r.item).ComputeBounds(a.overlay)
