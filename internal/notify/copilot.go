@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -23,8 +24,13 @@ import (
 // request's permission.requested, then the notification's hook.start,
 // then permission.completed once the request is decided (Copilot CLI
 // 1.0.107).
+//
+// The hook's input is not the input the event log shows: the hook gets
+// notification_type and hook_event_name, while the log's hook.start
+// holds notificationType (Copilot CLI 1.0.107). Both carry the same
+// sessionId and timestamp.
 const (
-	// copilotPrompt is the notificationType of a permission prompt.
+	// copilotPrompt is the notification type of a permission prompt.
 	copilotPrompt = "permission_prompt"
 	// copilotEventLog is the name of a session's event log.
 	copilotEventLog = "events.jsonl"
@@ -55,13 +61,14 @@ var (
 // with a request still open after wait, counts as asking the user.
 func copilotDecided(text string, d Dirs, wait time.Duration) bool {
 	var in struct {
-		Type      string `json:"notificationType"`
+		Type      string `json:"notification_type"`
+		TypeC     string `json:"notificationType"` // as the event log shows the input
 		Session   string `json:"sessionId"`
 		Timestamp int64  `json:"timestamp"`
 	}
 	trimmed := strings.TrimSpace(text)
 	if !strings.HasPrefix(trimmed, "{") || json.Unmarshal([]byte(trimmed), &in) != nil ||
-		in.Type != copilotPrompt || in.Timestamp == 0 || !wire.ValidAgentSession(in.Session) {
+		cmp.Or(in.Type, in.TypeC) != copilotPrompt || in.Timestamp == 0 || !wire.ValidAgentSession(in.Session) {
 		return false
 	}
 	r, _ := recipe("copilot")

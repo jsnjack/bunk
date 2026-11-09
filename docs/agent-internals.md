@@ -80,7 +80,9 @@ the code.
     for up to `copilotWait`. When the log shows the notification's
     `hook.start` and no `permission.requested` without a
     `permission.completed`, it reports working; an open request or no
-    log asks the user.
+    log asks the user. The hook gets `notification_type` on stdin, not
+    the `notificationType` its `hook.start` shows in the log, so tests
+    take the hook's input from stdin, not from the log.
 
 ## Setting up agent hooks
 

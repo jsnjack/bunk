@@ -647,6 +647,9 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
   this notification's `hook.start` and every `permission.requested` in
   its last MiB has a `permission.completed`, it reports `working`.
   Otherwise, or without the log, the request counts as asking the user.
+  The hook's input names the notification's type `notification_type`,
+  while the log's copy of that input says `notificationType` (Copilot
+  CLI 1.0.107); `notify needs-you -` reads either.
 - The snippet leaves out `errorOccurred`. Its input marks some errors as
   recoverable, and a retried error would show the pane as failed.
 - Copilot CLI also runs the hooks of a repository's

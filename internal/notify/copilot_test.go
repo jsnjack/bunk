@@ -13,10 +13,11 @@ import (
 const copilotSession = "b6301a8b-3987-431a-9db0-70f87a4e62c9"
 
 // copilotNotification is the input of Copilot CLI's notification hook for
-// a permission prompt sent at ts.
+// a permission prompt sent at ts, as a hook reads it from stdin (Copilot
+// CLI 1.0.107). The event log shows it with notificationType instead.
 func copilotNotification(ts int64) string {
-	return fmt.Sprintf(`{"message":"Run command: ls -la","notificationType":"permission_prompt","title":"Permission needed",`+
-		`"sessionId":%q,"timestamp":%d,"cwd":"/w"}`, copilotSession, ts)
+	return fmt.Sprintf(`{"sessionId":%q,"timestamp":%d,"cwd":"/w","message":"Run command: ls -la","title":"Permission needed",`+
+		`"hook_event_name":"Notification","notification_type":"permission_prompt"}`, copilotSession, ts)
 }
 
 // Lines of a Copilot CLI event log, as Copilot CLI 1.0.107 writes them.
@@ -81,6 +82,8 @@ func TestCopilotDecided(t *testing.T) {
 		want  bool
 	}{
 		{"decided by Assisted Permissions", in, []string{copilotRequest("r1"), copilotPromptHook(ts), copilotCompletion("r1")}, true},
+		{"input as the event log shows it", strings.Replace(in, `"hook_event_name":"Notification","notification_type"`, `"notificationType"`, 1),
+			[]string{copilotRequest("r1"), copilotPromptHook(ts), copilotCompletion("r1")}, true},
 		{"decided before an earlier request", in,
 			[]string{copilotRequest("r0"), copilotPromptHook(ts - 9000), copilotCompletion("r0"), copilotRequest("r1"), copilotPromptHook(ts), copilotCompletion("r1")}, true},
 		{"asks the user", in, []string{copilotRequest("r1"), copilotPromptHook(ts)}, false},
