@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"bunk/internal/present"
 )
 
 // presentPlan is a Markdown document long enough to scroll, with a
@@ -277,10 +279,13 @@ const designPage = `<!doctype html><html><head><title>Design</title>
 // does: code highlighted by its name and reloaded when it changes, an
 // image, a PDF in WebKit's viewer, text without an extension, and an
 // agent's HTML page that draws a diagram and math with bunk's runtime in
-// the theme's colours. A binary file is refused with a toast, and the
-// action opens the file dialog.
+// the theme's colours. The browser opens the image as it is, and a copy
+// of the HTML page that loads bunk's runtime from disk in the theme's
+// colours. A binary file is refused with a toast, and the action opens the
+// file dialog.
 func TestGUIPresentPreview(t *testing.T) {
 	t.Parallel()
+	cache := t.TempDir()
 	var shot bytes.Buffer
 	if err := png.Encode(&shot, image.NewRGBA(image.Rect(0, 0, 3, 2))); err != nil {
 		t.Fatal(err)
@@ -288,6 +293,7 @@ func TestGUIPresentPreview(t *testing.T) {
 	g := runGUI(t, scenario{
 		cost: 2,
 		args: []string{"--size", "100x30"},
+		env:  []string{"XDG_CACHE_HOME=" + cache},
 		files: map[string]string{
 			"main.go": "package main\n\nfunc main() {}\n", "shot.png": shot.String(), "doc.pdf": tinyPDF,
 			"design.html": designPage, "notes": "plain notes\n", "data.bin": "\x00\x01\x02",
@@ -304,6 +310,8 @@ func TestGUIPresentPreview(t *testing.T) {
 			"wait tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true",
 			"present-eval String(document.querySelector('img').naturalWidth)",
 			"wait tab.1.panel.eval=3",
+			"present-browser",
+			"wait run.opened.#=1",
 			"preview doc.pdf",
 			"wait tab.1.panel.current=2 tab.1.panel.docs.2.loaded=true",
 			"present-eval document.contentType",
@@ -316,6 +324,8 @@ func TestGUIPresentPreview(t *testing.T) {
 			"present-eval getComputedStyle(document.documentElement).getPropertyValue('--bunk-bg').trim() + ' ' + getComputedStyle(document.body).backgroundColor",
 			"wait tab.1.panel.eval~rgb",
 			"snap design",
+			"present-browser",
+			"wait run.opened.#=2",
 			"preview notes",
 			"wait tab.1.panel.current=4 tab.1.panel.docs.4.loaded=true",
 			"preview data.bin",
@@ -337,5 +347,19 @@ func TestGUIPresentPreview(t *testing.T) {
 	var r, gr, b int
 	if _, err := fmt.Sscanf(g.snap("design").Tabs[0].Panel.Eval, "%s rgb(%d, %d, %d)", &hex, &r, &gr, &b); err != nil || hex != fmt.Sprintf("#%02x%02x%02x", r, gr, b) {
 		t.Errorf("the page's background %q is not the theme's (%v)", g.snap("design").Tabs[0].Panel.Eval, err)
+	}
+	if len(g.Opened) != 2 || g.Opened[0] != present.FileURL(filepath.Join(g.dir, "shot.png")) {
+		t.Fatalf("opened %q, want the image, then the HTML page's copy", g.Opened)
+	}
+	page := strings.TrimPrefix(g.Opened[1], "file://")
+	if !strings.HasPrefix(page, filepath.Join(cache, present.CacheDir)+"/") {
+		t.Fatalf("the HTML page opened as %s, not as a copy in the cache", g.Opened[1])
+	}
+	src, err := os.ReadFile(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if html := string(src); strings.Contains(html, present.AssetsURL) || !strings.Contains(html, "--bunk-bg:") || !strings.Contains(html, "bunk-doc.js") {
+		t.Errorf("the page's copy does not load bunk's runtime from disk in the theme's colours:\n%s", html)
 	}
 }

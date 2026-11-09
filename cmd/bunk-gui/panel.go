@@ -746,14 +746,16 @@ func (pn *panel) close() {
 	pn.app.closeWebView(pn.view)
 }
 
-// openExternal opens the shown document in the default browser: HTML as
-// it is, Markdown rendered to a page on disk.
+// openExternal opens the shown document in the default browser. Markdown,
+// text, and an HTML page that loads bunk's assets or colours get a page on
+// disk (present.NeedsPage), since a browser cannot reach the panel's
+// bunk-present:// URLs; other files open as they are.
 func (pn *panel) openExternal() {
 	d := pn.cur
 	if d == nil {
 		return
 	}
-	if d.kind == present.KindHTML {
+	if !present.NeedsPage(d.path, d.kind) {
 		openURL(pn.app, present.FileURL(d.path))
 		return
 	}
@@ -1080,6 +1082,7 @@ const presentSelectScript = `(function(t){
 //	present-ask             Ask the agent, as its button does
 //	present-toggle          the documents action of the selected tab
 //	present-kill            end the shown page's web process, as a crash would
+//	present-browser         open the shown document in the browser, as its button does
 //	preview PATH            what the file dialog of open_in_panel does with PATH
 func (a *App) presentStep(verb, arg string) error {
 	t := a.active
@@ -1137,6 +1140,8 @@ func (a *App) presentStep(verb, arg string) error {
 		pn.ask()
 	case "present-kill":
 		pn.view.kill()
+	case "present-browser":
+		pn.openExternal()
 	}
 	return nil
 }
