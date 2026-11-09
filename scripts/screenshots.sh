@@ -104,7 +104,7 @@ if [[ -n $magick && -f $out/gui-hero.png ]]; then
 		\( -background none -density 384 "$root/packaging/io.github.jsnjack.BunkGui.svg" -resize 104x104 \) \
 		-geometry +72+64 -composite -density 72 \
 		-font Noto-Sans-Bold -pointsize 72 -fill '#f4f4f6' -annotate +200+128 'bunk' \
-		-font Noto-Sans-Regular -pointsize 30 -fill '#a9a9b4' -annotate +202+172 'A terminal for running coding agents side by side' \
+		-font Noto-Sans-Regular -pointsize 30 -fill '#a9a9b4' -annotate +202+172 'A terminal for coding agents' \
 		\( "$out/gui-hero.png" -resize 1136x \) -geometry +72+236 -composite \
 		-crop 1280x640+0+0 +repage -strip -dither None -colors 256 "PNG8:$social"
 	report "$social"

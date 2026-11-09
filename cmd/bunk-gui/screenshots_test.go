@@ -53,8 +53,8 @@ func TestGUIScreenshots(t *testing.T) {
 	}
 }
 
-// demoScreenshots: the hero, the switcher, the bar, an image, find and
-// the shortcuts window.
+// demoScreenshots: the hero, with claude's plan in the document panel, the
+// switcher, the bar, an image, find and the shortcuts window.
 func demoScreenshots(t *testing.T) {
 	demo := t.TempDir()
 	g := runGUI(t, scenario{
@@ -64,7 +64,9 @@ func demoScreenshots(t *testing.T) {
 		args: []string{"--size", "120x32",
 			"--command", `cd "$DEMO/src/api" && exec claude`,
 			"--tab", "", "--tab", "", "--tab", `exec sh "$DEMO/done.sh"`, "--tab", ""},
-		env: demoEnv(t, demo),
+		// HOME is the demo, so the panel names the plan ~/src/api/…, as
+		// the prompt names the folder.
+		env: append(demoEnv(t, demo), demoHome(t, demo)...),
 		// Shots wait until the panes have drawn their programs' output at
 		// their size (the fake agent redraws on SIGWINCH) and nothing moves.
 		// An entry's focus ring fades in (a 200 ms CSS transition) and its
@@ -73,12 +75,10 @@ func demoScreenshots(t *testing.T) {
 		// solid. The shortcuts shot waits for the scroll indicator to fade
 		// out.
 		script: []string{
-			"split",
-			"wait tab.1.panes.#=2 focused.line=❯",
-			"type ls\\r",
-			"wait focused.text~Makefile focused.line=❯",
-			"type git log --oneline --graph --all\\r",
-			"wait focused.text~\"Start the API server\" focused.line=❯",
+			"wait pane.0.text~\"Running the integration tests\"",
+			"present docs/rate-limit-plan.html",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"present-wait document.querySelector('.mermaid svg')",
 			"status pane=0 agent=claude state=working repo=api branch=feat/rate-limit cwd=~/src/api",
 			"status tab=2 agent=codex state=needs repo=web branch=fix-login cwd=~/src/web/frontend notice=Allow npm install?",
 			"status tab=3 agent=copilot state=idle repo=infra branch=main cwd=~/ops/infra container=toolbox:fedora-42",
@@ -86,9 +86,19 @@ func demoScreenshots(t *testing.T) {
 			// Tab 4 keeps the state of its notify report: done.
 			"wait tab.4.status.reported=true tab.4.state=done",
 			"status tab=4 agent=claude repo=docs branch=main cwd=~/src/docs",
-			"wait pane.0.text~\"Running the integration tests\" pane.0.settled=true pane.5.settled=true idle 300ms",
+			"wait pane.0.settled=true idle 300ms",
 			"snap hero",
 			"shot gui-hero.png",
+			"present-toggle",
+			"wait tab.1.panel.open=false",
+			"split",
+			"wait tab.1.panes.#=2 focused.line=❯",
+			"type ls\\r",
+			"wait focused.text~Makefile focused.line=❯",
+			"type git log --oneline --graph --all\\r",
+			"wait focused.text~\"Start the API server\" focused.line=❯",
+			"wait pane.0.settled=true pane.5.settled=true idle 300ms",
+			"snap split",
 			"switcher",
 			"wait switcher.open=true keyboard_focus=switcher",
 			"sleep 500ms",
@@ -159,10 +169,15 @@ func demoScreenshots(t *testing.T) {
 	if tb := hero.tab(t, 4); !tb.Status.Reported || tb.Notice != "Finished the docs refactor" {
 		t.Errorf("hero tab 4: the notify report did not arrive: %+v", tb.Status)
 	}
-	if len(hero.tab(t, 1).Panes) != 2 {
-		t.Errorf("hero tab 1: panes %v, want a split", hero.tab(t, 1).Panes)
+	if pn := hero.tab(t, 1).Panel; len(hero.tab(t, 1).Panes) != 1 || pn == nil || !pn.Open || pn.Rect == nil ||
+		len(pn.Docs) != 1 || pn.Docs[0].Kind != "html" || !pn.Docs[0].Loaded {
+		t.Errorf("hero tab 1: panes %v, panel %+v; want claude beside its plan", hero.tab(t, 1).Panes, pn)
 	}
-	agent, shell := hero.pane(t, 0).text(), hero.focused(t).text()
+	split := g.snap("split")
+	if len(split.tab(t, 1).Panes) != 2 || split.tab(t, 1).Panel.Open {
+		t.Errorf("split tab 1: panes %v, panel open %v; want a split without the panel", split.tab(t, 1).Panes, split.tab(t, 1).Panel.Open)
+	}
+	agent, shell := hero.pane(t, 0).text(), split.focused(t).text()
 	for _, s := range []string{"Edit internal/limit/bucket.go", "Running the integration tests"} {
 		if !strings.Contains(agent, s) {
 			t.Errorf("agent pane lacks %q:\n%s", s, agent)
@@ -236,6 +251,23 @@ func demoEnv(t *testing.T, demo string) []string {
 	}
 }
 
+// demoHome makes demo the home folder, with the XDG folders left where
+// they are, so fonts and settings stay those of the user.
+func demoHome(t *testing.T, demo string) []string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	must(t, err)
+	env := []string{"HOME=" + demo}
+	for _, d := range []struct{ name, def string }{
+		{"XDG_CONFIG_HOME", ".config"}, {"XDG_DATA_HOME", ".local/share"}, {"XDG_CACHE_HOME", ".cache"},
+	} {
+		if os.Getenv(d.name) == "" {
+			env = append(env, d.name+"="+filepath.Join(home, d.def))
+		}
+	}
+	return env
+}
+
 // saveShots copies the named files of g's directory to BUNK_SCREENSHOTS
 // when the test has passed so far. A name may hold a directory, such as
 // frames/states-1.png for the file states-1.png.
@@ -301,7 +333,53 @@ func writeDemo(t *testing.T, dir string) {
 		must(t, os.WriteFile(path, []byte(text), 0o755))
 	}
 	demoRepo(t, filepath.Join(dir, "src", "api"))
+	// The plan claude presents, written after the commits so their hashes
+	// stay the same.
+	must(t, os.WriteFile(filepath.Join(dir, "src", "api", "docs", "rate-limit-plan.html"), []byte(demoPlan), 0o644))
 }
+
+// demoPlan is the page the fake claude shows in the document panel: its
+// plan for the rate limit, with a Mermaid diagram and a table.
+const demoPlan = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rate limit per API key</title>
+<link rel="stylesheet" href="bunk-present://assets/bunk-doc.css">
+<script src="bunk-present://assets/bunk-doc.js" defer></script>
+</head>
+<body>
+<article id="bunk-doc">
+<h1 id="rate-limit-per-api-key">Rate limit per API key</h1>
+<p>Each API key gets a token bucket in memory. A request takes one token, and an empty bucket answers 429
+with a Retry-After header. Buckets refill when a request takes from them, so idle keys cost nothing.</p>
+<h2 id="request-flow">Request flow</h2>
+<pre class="mermaid">
+flowchart TD
+  R[Request] --> B[Bucket of the API key]
+  B -- token left --> H[Handler]
+  B -- empty --> L[429 + Retry-After]
+</pre>
+<h2 id="limits">Limits</h2>
+<table>
+<thead><tr><th>Plan</th><th>Requests per minute</th><th>Burst</th></tr></thead>
+<tbody>
+<tr><td>Free</td><td>60</td><td>10</td></tr>
+<tr><td>Team</td><td>600</td><td>100</td></tr>
+<tr><td>Enterprise</td><td>6000</td><td>1000</td></tr>
+</tbody>
+</table>
+<h2 id="steps">Steps</h2>
+<ol>
+<li>Refill the bucket on take, from the time since the last take.</li>
+<li>Wrap the /v1 router in the limiter.</li>
+<li>Send Retry-After in whole seconds, rounded up.</li>
+<li>Run the integration tests against two keys on the Free plan.</li>
+</ol>
+</article>
+</body>
+</html>
+`
 
 // demoRepo creates a git repository with fixed authors and dates, so
 // commit hashes are the same on every run: main and a feature branch that

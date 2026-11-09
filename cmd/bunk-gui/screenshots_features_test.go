@@ -1,7 +1,7 @@
 package main
 
 // README pictures of single features: the collapsed rail as rings and as
-// maps, a loop of agent states, a pane's badges, the hooks and restore
+// maps, its labels while Alt is held, a loop of agent states, a pane's badges, the hooks and restore
 // banners, the Agent hooks preferences and bunk's TUI in a pane. Crops
 // are cut from window shots with the geometry of the snapshot taken with
 // them, so they follow the layout.
@@ -32,8 +32,9 @@ const rings4 = "●@45 ○@135 ○@225 ✓@315"
 
 // railScreenshots: six tabs of one to four panes in the collapsed rail.
 // Tab 1 holds claude on the left and codex above a shell on the right;
-// the frames change their states, then the rail is shot as rings and as
-// maps, and codex's pane, zoomed, shows its badges.
+// the frames change their states, Alt held labels the rings, then the
+// rail is shot as rings and as maps, and codex's pane, zoomed, shows its
+// badges.
 func railScreenshots(t *testing.T) {
 	demo := t.TempDir()
 	g := runGUI(t, scenario{
@@ -71,9 +72,17 @@ func railScreenshots(t *testing.T) {
 			"status pane=3 agent=claude state=done repo=docs branch=main cwd=~/src/docs notice=Finished the docs refactor",
 			"status pane=9 agent=codex state=working repo=docs branch=main cwd=~/src/docs",
 			"status pane=5 agent=claude state=needs repo=web branch=fix-login cwd=~/src/web notice=Allow npm install?",
+			// Tab 5's shell would show the test's temporary folder in its peek label.
+			"status pane=4 cwd=~/notes",
 			"wait tab.6.state=needs pane.0.settled=true pane.6.settled=true pane.7.settled=true idle 300ms",
 			"snap rings",
 			"shot states-1.png",
+			"kbd-down alt",
+			"wait rail_peek.#=6 idle 300ms",
+			"snap peek",
+			"shot peek-window.png",
+			"kbd-up alt",
+			"wait rail_peek.#=0",
 			"status pane=6 state=needs notice=Allow npm install?",
 			"wait pane.6.status.state=needs idle 300ms",
 			"shot states-2.png",
@@ -119,6 +128,20 @@ func railScreenshots(t *testing.T) {
 		t.Errorf("tab 4 ring %q, want %q", got, rings4)
 	}
 	cropShot(t, g, "states-1.png", "gui-rail-ring.png", railStrip(t, rings))
+	peek := g.snap("peek")
+	if len(peek.RailPeek) != 6 || peek.RailPeekScrim == nil {
+		t.Errorf("peek: %d labels, scrim %+v; want one per tab over the dimmed panes", len(peek.RailPeek), peek.RailPeekScrim)
+	} else {
+		// The rail, its labels and a strip of the dimmed panes right of them.
+		r := railStrip(t, peek)
+		for _, l := range peek.RailPeek {
+			if l.Cut {
+				t.Errorf("peek: label %q is cut", l.Text)
+			}
+			r.Max.X = max(r.Max.X, l.Rect.DX+l.Rect.DW+peek.Chrome.DW)
+		}
+		cropShot(t, g, "peek-window.png", "gui-rail-peek.png", r)
+	}
 	if m := g.snap("map"); m.RailStyle != "map" {
 		t.Errorf("map: style %q", m.RailStyle)
 	} else {
@@ -135,7 +158,7 @@ func railScreenshots(t *testing.T) {
 	} else {
 		cropShot(t, g, "badges-window.png", "gui-badges.png", r)
 	}
-	saveShots(t, g, append([]string{"gui-rail-ring.png", "gui-rail-map.png", "gui-badges.png"}, statesFrames...)...)
+	saveShots(t, g, append([]string{"gui-rail-ring.png", "gui-rail-map.png", "gui-rail-peek.png", "gui-badges.png"}, statesFrames...)...)
 }
 
 // railStrip is the collapsed rail around its tabs in a window shot.

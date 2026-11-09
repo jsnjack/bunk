@@ -103,10 +103,10 @@ Every picture in the README comes from `TestGUIScreenshots`, which runs in
 every `make gui-test`, so the scenarios keep working. `make screenshots` runs
 it with `BUNK_SCREENSHOTS` set and writes the pictures to `assets/`.
 
-- `screenshots_test.go` shoots the hero, the switcher, the bar, an image,
-  find and the shortcuts window.
+- `screenshots_test.go` shoots the hero, with claude's plan in the document
+  panel, the switcher, the bar, an image, find and the shortcuts window.
 - `screenshots_features_test.go` shoots the collapsed rail as rings and as
-  maps, the frames of the states loop, a pane's badges, the hooks and restore
+  maps, its labels while Alt is held, the frames of the states loop, a pane's badges, the hooks and restore
   banners, the Agent hooks preferences and bunk's TUI running in a pane.
 - Crops are cut from window shots with the geometry the snapshot reports.
 - The script shrinks the PNGs with pngquant, oxipng, optipng or ImageMagick,
