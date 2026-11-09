@@ -74,6 +74,13 @@ the code.
     `turn_context` of the hook's `transcript_path` (`notify/codex.go`).
     Any reviewer but `user` (Codex's automatic reviewer) reports working;
     without a transcript or reviewer the request asks the user.
+  - Copilot CLI runs its `permission_prompt` notification hooks before
+    Assisted Permissions or a policy decides the request, so `notify
+    needs-you -` reads the session's `events.jsonl` (`notify/copilot.go`)
+    for up to `copilotWait`. When the log shows the notification's
+    `hook.start` and no `permission.requested` without a
+    `permission.completed`, it reports working; an open request or no
+    log asks the user.
 
 ## Setting up agent hooks
 

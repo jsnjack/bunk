@@ -48,9 +48,11 @@ A done whose Claude Code Stop input lists background_tasks reports
 working: the agent resumes when they end. A watch for comments on a
 published artifact does not count. A needs-you for a Codex
 PermissionRequest that Codex's automatic reviewer decides reports
-working: the user is not asked. A hook's "session_id" (or "sessionId")
-goes with the report, so bunk-gui can resume the agent's conversation
-when it restores the pane.
+working: the user is not asked. So does a Copilot CLI permission prompt
+whose request Copilot decides itself (Assisted Permissions, a policy),
+as its session's event log shows within half a second. A hook's
+"session_id" (or "sessionId") goes with the report, so bunk-gui can
+resume the agent's conversation when it restores the pane.
 Inside bunk it reports over BUNK_NOTIFY_SOCKET. Without a reachable
 socket, with BUNK_NOTIFY_SESSION set or on a host reached over ssh
 (SSH_CONNECTION set), it writes the report to its terminal for the bunk
@@ -123,6 +125,11 @@ func runCLI(prog string, args, env []string, stdin io.Reader, stdout, stderr io.
 	if ev == session.EventNeedsYou && codexAutoReview(text) {
 		// Codex's automatic reviewer decides the request without asking
 		// the user, and no hook reports work again until the turn ends.
+		ev = session.EventWorking
+	}
+	if ev == session.EventNeedsYou && copilotDecided(text, envDirs(env), copilotWait) {
+		// Assisted Permissions or a policy decided the Copilot CLI request
+		// just after the prompt notified, without asking the user.
 		ev = session.EventWorking
 	}
 	agentSession := hookSessionID(text)

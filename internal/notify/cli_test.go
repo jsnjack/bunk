@@ -72,6 +72,11 @@ func TestCLI(t *testing.T) {
 	userReview := codexPermissionIn(t, transcripts, "auto_review", "user")
 	noReviewer := codexPermissionIn(t, transcripts)
 	missing := strings.Replace(codexPermission, `{`, `{"transcript_path":"`+filepath.Join(transcripts, "missing.jsonl")+`",`, 1)
+	// A Copilot CLI session whose permission prompt Assisted Permissions
+	// decided; under HOME=/home/u no session has an event log.
+	const copilotTS = 1794221375793
+	decided, _ := copilotHome(t, copilotRequest("r1"), copilotPromptHook(copilotTS), copilotCompletion("r1"))
+	withDecided := append([]string{"COPILOT_HOME=" + decided.Getenv("COPILOT_HOME")}, inside...)
 
 	for _, tc := range []struct {
 		name       string
@@ -150,6 +155,10 @@ func TestCLI(t *testing.T) {
 			want: &report{session.EventNeedsYou, "Approval requested: rm -rf build"}},
 		{name: "Codex transcript missing", args: []string{"needs-you", "-"}, env: inside, stdin: missing,
 			want: &report{session.EventNeedsYou, "Approval requested: rm -rf build"}},
+		{name: "Copilot permission prompt for the user", args: []string{"needs-you", "-"}, env: inside, stdin: copilotNotification(copilotTS),
+			want: &report{session.EventNeedsYou, "Run command: ls -la"}},
+		{name: "Copilot permission prompt that Copilot decided", args: []string{"needs-you", "-"}, env: withDecided, stdin: copilotNotification(copilotTS),
+			want: &report{session.EventWorking, "Run command: ls -la"}},
 		{name: "Claude question on stdin", args: []string{"needs-you", "-"}, env: inside, stdin: claudeQuestion,
 			want: &report{session.EventNeedsYou, "Which framework?"}},
 		{name: "Claude plan on stdin", args: []string{"needs-you", "-"}, env: inside, stdin: claudePlan,

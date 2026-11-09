@@ -632,12 +632,21 @@ Save as `~/.copilot/hooks/bunk.json` (`$COPILOT_HOME/hooks/` when set):
 | :- | :- | :- |
 | sessionStart | none: `present --session-start copilot -` tells the agent about bunk-gui's side panel | none |
 | userPromptSubmitted | `working` | none |
-| notification (`permission_prompt`, `elicitation_dialog`) | `needs-you` | `message` from stdin |
+| notification (`permission_prompt`, `elicitation_dialog`) | `needs-you`, or `working` for a request Copilot decided itself | `message` from stdin |
 | preToolUse (exit_plan_mode) | none: `present --hook copilot -` shows the session's `plan.md` in bunk-gui's side panel | none |
 | postToolUse (create, apply_patch) | none: `present --hook copilot -` offers the Markdown and HTML files the tool created to bunk-gui's side panel | none |
 | agentStop | `done` | none; the input has no message text |
 | sessionEnd | `clear` | none |
 
+- Copilot CLI sends the `permission_prompt` notification as it raises
+  the request, before it applies what Assisted Permissions or a policy
+  decided; that decision lands within about 20 ms, and no hook reports
+  it. So `notify needs-you -` reads the session's event log,
+  `session-state/<sessionId>/events.jsonl` in `~/.copilot`
+  (`$COPILOT_HOME` when set), for up to half a second. Once the log shows
+  this notification's `hook.start` and every `permission.requested` in
+  its last MiB has a `permission.completed`, it reports `working`.
+  Otherwise, or without the log, the request counts as asking the user.
 - The snippet leaves out `errorOccurred`. Its input marks some errors as
   recoverable, and a retried error would show the pane as failed.
 - Copilot CLI also runs the hooks of a repository's
