@@ -1,6 +1,6 @@
 ---
 name: bunk-present
-description: Show the user a document you wrote - a plan, spec, design, report, comparison, diagram or explanation, best as an interactive HTML page - in a panel beside the terminal, where they read it, click through it, ask about passages and see your edits live. Use it whenever you write such a document for the user to read while you run inside bunk: bunk-gui says so at session start, and bunk sets BUNK_NOTIFY_SESSION.
+description: Show the user a document you wrote - a plan, spec, design, report, comparison, diagram or explanation, best as an interactive HTML page - in a panel beside the terminal, where they read it, click through it, ask about passages and see your edits live. Use it whenever you write such a document for the user to read while you run inside bunk; bunk-gui says so at session start, and bunk sets BUNK_NOTIFY_SESSION.
 ---
 
 # Presenting documents in bunk

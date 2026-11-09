@@ -873,6 +873,15 @@ func TestSkillText(t *testing.T) {
 	if !strings.Contains(head, "name: "+SkillName+"\n") || !strings.Contains(head, "description: ") || !strings.Contains(head, EnvSession) {
 		t.Errorf("frontmatter %q", head)
 	}
+	// Copilot CLI parses the frontmatter as strict YAML and skips a skill
+	// whose plain value holds ": " (a mapping) or " #" (a comment).
+	for line := range strings.Lines(head) {
+		key, value, ok := strings.Cut(strings.TrimSuffix(line, "\n"), ": ")
+		if !ok || strings.ContainsAny(key, " \"'") || strings.Contains(value, ": ") || strings.Contains(value, " #") ||
+			strings.ContainsAny(value[:1], "-?:,[]{}#&*!|>'\"%@`") {
+			t.Errorf("frontmatter line %q is not a key with a plain YAML value", line)
+		}
+	}
 	if n := strings.Count(skillText, "\n"); n >= 120 {
 		t.Errorf("%d lines, want under 120", n)
 	}
