@@ -2,7 +2,7 @@
 Type=Application
 Name=bunk-gui
 GenericName=Terminal
-Comment=Run coding agents side by side in tabs and splits
+Comment=Run coding agents in tabs and splits, with their documents beside them
 Exec=bunk-gui
 Icon=io.github.jsnjack.BunkGui
 Terminal=false

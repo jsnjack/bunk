@@ -15,7 +15,7 @@
 Name:           bunk-gui
 Version:        %{bunk_version}
 Release:        1%{?snapinfo:.%{snapinfo}}%{?dist}
-Summary:        Terminal for running coding agents side by side
+Summary:        Terminal for coding agents
 
 # bunk, vt10x, creack/pty, rivo/uniseg, goldmark, chroma, regexp2, Mermaid,
 # KaTeX: MIT; gotk4, gotk4-adwaita: MPL-2.0; gotk4/core: ISC;
@@ -53,7 +53,8 @@ Provides:       bundled(js-katex) = 0.16.11
 bunk-gui is a GPU-rendered terminal built on the emulator core of the bunk
 multiplexer. Each tab is a workspace for one coding agent. Tabs show which
 agent runs, its repository and branch, and whether it is working or waiting
-for you. It has splits, scrollback, mouse selection and clipboard support.
+for you. Agents show plans, reports and diagrams in a panel beside their
+pane. It has splits, scrollback, mouse selection and clipboard support.
 
 %install
 install -Dpm0755 %{stagedir}/%{name} %{buildroot}%{_bindir}/%{name}

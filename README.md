@@ -4,18 +4,18 @@
 
 # bunk
 
-bunk-gui is a terminal for running coding agents side by side. Each tab shows whether its agent is working, waits for you, has finished or has failed, and one key takes you to the agent that needs you.
+bunk is a terminal for coding agents. In bunk-gui, its GTK 4 app, you run Claude Code, Codex, Copilot CLI and other agents in tabs and splits. Each tab shows whether its agent is working, waits for you, has finished or has failed, and <kbd>Alt</kbd>+<kbd>A</kbd> takes you to the agent that needs you. When an agent writes a plan or a report for you, it opens in a panel beside the agent.
 
 [![Release](https://img.shields.io/github/v/release/jsnjack/bunk?color=4a8fe7&label=release)](https://github.com/jsnjack/bunk/releases)
 [![License: MIT](https://img.shields.io/github/license/jsnjack/bunk?color=6b6b76)](LICENSE)
 [![bunk-gui: Linux, GTK 4](https://img.shields.io/badge/bunk--gui-Linux%20%C2%B7%20GTK%204-3f9e6d)](#install)
 [![bunk: Linux, macOS](https://img.shields.io/badge/bunk-Linux%20%C2%B7%20macOS-c28a2f)](#bunk-in-any-terminal)
 
-[Features](#features) · [Agent hooks](#agent-hooks) · [Performance](#performance) · [Terminal protocols](#terminal-protocols) · [Install](#install) · [Documentation](#documentation)
+[Features](#features) · [Documents](#documents-beside-the-agent) · [Agent hooks](#agent-hooks) · [Performance](#performance) · [Terminal protocols](#terminal-protocols) · [Install](#install) · [Documentation](#documentation)
 
 <br>
 
-<img src="assets/gui-hero.png" alt="bunk-gui with five agent tabs in the rail: working, needs you, idle, done and failed; the selected tab splits an agent and a shell">
+<img src="assets/gui-hero.png" alt="bunk-gui with five agent tabs in the rail: working, needs you, idle, done and failed; claude works in the selected tab, and its plan for the change, with a diagram, is open in the panel beside it">
 
 <sub>Recognises Claude Code, Codex, Copilot CLI, Gemini CLI, opencode, Aider, Cursor, Amp, Goose, Qwen Code, Crush, Droid, Auggie, Cline and Kimi, and any CLI you add.</sub>
 
@@ -25,21 +25,28 @@ bunk-gui is a terminal for running coding agents side by side. Each tab shows wh
 
 <table>
 <tr>
-<td width="33%" valign="top">
+<td width="25%" valign="top">
 
 ### ● Agent status
 
 Every tab shows its agent, repo ⎇ branch, SSH host or container and the agent's last notice, in the colour of its state.
 
 </td>
-<td width="33%" valign="top">
+<td width="25%" valign="top">
+
+### ▤ Documents
+
+Agents show you plans, reports and diagrams in a panel beside their pane. Select a passage to ask the agent about it.
+
+</td>
+<td width="25%" valign="top">
 
 ### ◐ Alt+A
 
 A desktop notification tells you when an agent you are not watching needs you, and <kbd>Alt</kbd>+<kbd>A</kbd> takes you there.
 
 </td>
-<td width="33%" valign="top">
+<td width="25%" valign="top">
 
 ### ↻ Session restore
 
@@ -91,11 +98,23 @@ With `rail_style = "map"`, the rail draws a tab of two to four panes as a small 
 </tr>
 </table>
 
+Hold <kbd>Alt</kbd> on its own for a moment and each ring gets a label with its tab's key, agent, repo ⎇ branch and the host or container it runs in. The panes dim while the labels show, and <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> switches tabs before you let go.
+
+<img src="assets/gui-rail-peek.png" alt="Alt held over the collapsed rail: a label beside each of six rings, such as 1 claude api feat/rate-limit and 6 claude web fix-login, over dimmed panes">
+
+### Documents beside the agent
+
+An agent can show you what it wrote for you to read in a panel beside its pane: a plan before it starts, a report when it is done, or an explanation with a diagram. It runs `bunk-gui present docs/plan.html`, as claude did in the picture at the top. Agents prefer HTML pages, which can be interactive. The pages run without network access and can use bunk's theme colours, Mermaid diagrams and KaTeX math. Markdown renders with tables, highlighted code, diagrams and math too.
+
+The page reloads in place as the agent edits the file, and marks the sections that changed. Select a passage and choose "Ask the agent": your question is pasted into the agent's input with the file, the section and the quote, and waits there for you to send it. When Claude Code or Copilot CLI asks you to approve a plan, the plan opens in the panel too.
+
+The panel previews other files as well, from "Open in panel…" or a drop: images, PDFs, video, audio, and code highlighted by its file name. The agent hooks tell each agent about the panel when a session starts, and `bunk-gui present install claude` (or `codex`, `copilot`) adds a skill that says when and how to present. [docs/present.md](docs/present.md) covers the formats, the sandbox and the skill.
+
 ### Badges on every pane
 
 Each pane carries badges for its agent's state and notice, its SSH host or container, a zoomed view, keyboard passthrough and how far it is scrolled back. A command that runs longer than 10 s gets a badge too, and keeps "done" or "failed" until you look at it. bunk's terminal UI draws the same badges from the same code.
 
-<img src="assets/gui-badges.png" alt="A zoomed codex pane with its badges: zoomed, the web-dev container, and codex needs you, Allow npm install?">
+<img src="assets/gui-badges.png" alt="A zoomed codex pane with its badges: zoomed, api on feat/rate-limit, the web-dev container, and codex needs you, Allow npm install?">
 
 ### Notifications and Alt+A
 
@@ -109,15 +128,11 @@ When an agent in a pane you are not watching needs you, finishes or fails, bunk-
 
 <img src="assets/gui-switcher.png" alt="The switcher listing five tabs with their repo, branch, agent, folder and state">
 
-### Documents beside the agent
-
-An agent shows you its plan, report or explanation in a panel beside the tab's panes: `bunk-gui present docs/plan.html`. Agents prefer interactive HTML pages, which run without network access and can use bunk's theme colours, Mermaid diagrams and KaTeX math; Markdown renders with tables, highlighted code, diagrams and math too. Any other file previews there as well, from "Open in panel…" or a drop: images, PDFs, video, audio, and code highlighted by its name. The page reloads in place as the agent edits the file and marks the sections that changed. Select a passage and choose "Ask the agent": your question is pasted into the agent's input with the file, section and quote, ready to send. When Claude Code or Copilot CLI asks you to approve a plan, the plan opens there too. The agent hooks tell each agent about the panel when a session starts, and `bunk-gui present install claude` (or `codex`, `copilot`) adds a skill that says when and how to present.
-
 ### Session restore
 
 bunk-gui saves each window as it changes, so a crash or a logout loses at most a few seconds. The next start offers the windows back in a banner. Restore brings back the tabs, splits, folders and scrollback, and each agent pane runs the agent's resume command, such as `claude --resume` with the session ID its hooks reported. A pane that ran `ssh` gets the command typed at the prompt, ready to run.
 
-<img src="assets/gui-banners.png" alt="Two banners above the panes: one offers to restore two windows with five tabs, the other offers to update codex's hooks">
+<img src="assets/gui-banners.png" alt="Two banners above the panes: one offers to restore two windows with four tabs, the other offers to set up codex's hooks and the bunk-present skill">
 
 ### Works like your terminal
 
