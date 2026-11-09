@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
 
 	"bunk/internal/badges"
 	"bunk/internal/input"
@@ -89,7 +91,7 @@ func (a *App) copyPrimary(p *Pane) {
 // It reports false when the clipboard holds neither text nor an image.
 func (a *App) paste(p *Pane, primary bool) bool {
 	cb := clipboard(primary)
-	text, image := clipOffers(cb.Formats())
+	text, image, png := clipOffers(cb.Formats())
 	switch {
 	case text:
 		cb.ReadTextAsync(context.Background(), func(res gio.AsyncResulter) {
@@ -99,6 +101,32 @@ func (a *App) paste(p *Pane, primary bool) bool {
 			}
 			p.paste(text)
 		})
+	case png:
+		// A screenshot tool offers PNG, whose bytes go to the file as they
+		// are: decoding a large screenshot and encoding it again would
+		// hold up the window for a fifth of a second.
+		cb.ReadAsync(context.Background(), []string{pngMIME}, glib.PRIORITY_DEFAULT, func(res gio.AsyncResulter) {
+			_, in, err := cb.ReadFinish(res)
+			if err != nil || p.removeOnce {
+				slog.Debug("paste: read image", "err", err)
+				return
+			}
+			buf := gio.NewMemoryOutputStreamResizable()
+			flags := gio.OutputStreamSpliceCloseSource | gio.OutputStreamSpliceCloseTarget
+			buf.SpliceAsync(context.Background(), in, flags, glib.PRIORITY_DEFAULT, func(res gio.AsyncResulter) {
+				n, err := buf.SpliceFinish(res)
+				if err == nil && n == 0 {
+					err = errors.New("the clipboard's image is empty")
+				}
+				if err != nil || p.removeOnce {
+					slog.Debug("paste: read image", "err", err)
+					return
+				}
+				a.pasteImage(p, func(path string) error {
+					return os.WriteFile(path, buf.StealAsBytes().Data(), 0o600)
+				})
+			})
+		})
 	case image:
 		cb.ReadTextureAsync(context.Background(), func(res gio.AsyncResulter) {
 			tex, err := cb.ReadTextureFinish(res)
@@ -106,13 +134,12 @@ func (a *App) paste(p *Pane, primary bool) bool {
 				slog.Debug("paste: read image", "err", err)
 				return
 			}
-			path, err := savePastedImage(gdk.BaseTexture(tex))
-			if err != nil {
-				a.toast("Could not paste the image")
-				slog.Warn("paste: save image", "err", err)
-				return
-			}
-			p.paste(path)
+			a.pasteImage(p, func(path string) error {
+				if !gdk.BaseTexture(tex).SaveToPNG(path) {
+					return fmt.Errorf("write %s", path)
+				}
+				return nil
+			})
 		})
 	default:
 		return false
@@ -120,22 +147,38 @@ func (a *App) paste(p *Pane, primary bool) bool {
 	return true
 }
 
-// clipOffers reports whether formats offer text and an image. It reads the
-// MIME types itself: gotk4's binding of
+// pngMIME is the MIME type of a PNG image on the clipboard.
+const pngMIME = "image/png"
+
+// clipOffers reports whether formats offer text, an image, and the image
+// as PNG. It reads the MIME types itself: gotk4's binding of
 // gdk_content_formats_union_deserialize_gtypes frees formats twice.
-func clipOffers(formats *gdk.ContentFormats) (text, image bool) {
+func clipOffers(formats *gdk.ContentFormats) (text, image, png bool) {
 	text = formats.ContainGType(coreglib.TypeString)
 	image = formats.ContainGType(gdk.GTypeTexture)
 	for _, m := range formats.MIMETypes() {
 		text = text || strings.HasPrefix(m, "text/plain")
 		image = image || strings.HasPrefix(m, "image/")
+		png = png || m == pngMIME
 	}
-	return text, image
+	return text, image, png
 }
 
-// savePastedImage writes tex to a new PNG file in the temporary directory
-// and returns its path.
-func savePastedImage(tex *gdk.Texture) (string, error) {
+// pasteImage pastes the path of a new PNG file that write fills with the
+// clipboard's image.
+func (a *App) pasteImage(p *Pane, write func(path string) error) {
+	path, err := savePastedImage(write)
+	if err != nil {
+		a.toast("Could not paste the image")
+		slog.Warn("paste: save image", "err", err)
+		return
+	}
+	p.paste(path)
+}
+
+// savePastedImage creates a new PNG file in the temporary directory, has
+// write fill it and returns its path.
+func savePastedImage(write func(path string) error) (string, error) {
 	f, err := os.CreateTemp("", "bunk-paste-*.png")
 	if err != nil {
 		return "", err
@@ -144,11 +187,11 @@ func savePastedImage(tex *gdk.Texture) (string, error) {
 	if err := f.Close(); err != nil {
 		return "", err
 	}
-	if !tex.SaveToPNG(path) {
+	if err := write(path); err != nil {
 		if err := os.Remove(path); err != nil {
 			slog.Debug("paste: remove", "path", path, "err", err)
 		}
-		return "", fmt.Errorf("write %s", path)
+		return "", err
 	}
 	return path, nil
 }

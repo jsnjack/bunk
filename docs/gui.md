@@ -34,8 +34,9 @@ the code.
     key sent to the program ends the selection too, as in bunk's TUI.
   - Ctrl+V and Ctrl+Shift+V paste text. An image goes as the path of a PNG
     file in the temporary directory, as in bunk's TUI, and agents attach
-    it. With neither on the clipboard, Ctrl+V sends ^V; Ctrl+Shift+V sends
-    nothing.
+    it. PNG bytes on the clipboard, as screenshot tools offer them, go to
+    the file as they are; other images are decoded and saved as PNG. With
+    neither on the clipboard, Ctrl+V sends ^V; Ctrl+Shift+V sends nothing.
   - While the find bar has the keyboard, Ctrl+C and Ctrl+V edit its text,
     and Ctrl+N, Ctrl+P, Enter and Esc step through matches and close it.
     Elsewhere Ctrl+N, Ctrl+P, Enter and Esc reach the program.

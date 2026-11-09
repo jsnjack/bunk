@@ -48,6 +48,7 @@ import (
 //	wheel N                          wheel notches (N > 0: down)
 //	copy | paste | paste-primary | clip TEXT | print-clip | print-primary
 //	clip-image W H | clip-clear      a W×H image on the clipboard / nothing
+//	clip-png PATH                    PATH's bytes on the clipboard as image/png, as a screenshot tool offers them
 //	typing start DUR | typing stop   write 'x' to the focused pane every DUR (latency)
 //
 // Real input through the compositor (window maximized for ptr*); "wait
@@ -327,6 +328,13 @@ func (a *App) doAction(action string, done func()) {
 		w, h := num(0, 1), num(1, 1)
 		px := bytes.Repeat([]byte{0x20, 0x80, 0xe0, 0xff}, w*h)
 		clipboard(false).SetTexture(gdk.NewMemoryTexture(w, h, gdk.MemoryR8G8B8A8, glib.NewBytes(px), uint(4*w)))
+	case "clip-png":
+		b, err := os.ReadFile(arg)
+		if err != nil {
+			a.reportError("%s: %v", action, err)
+			return
+		}
+		clipboard(false).SetContent(gdk.NewContentProviderForBytes(pngMIME, glib.NewBytes(b)))
 	case "clip-clear":
 		clipboard(false).SetContent(nil)
 	case "print-clip", "print-primary":

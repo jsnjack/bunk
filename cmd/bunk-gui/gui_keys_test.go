@@ -4,8 +4,10 @@ package main
 // quitting and agent hook reports.
 
 import (
+	"bytes"
 	enchex "encoding/hex"
 	"fmt"
+	"image"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -491,6 +493,59 @@ func TestGUIPasteImage(t *testing.T) {
 	defer func() { _ = f.Close() }()
 	if c, err := png.DecodeConfig(f); err != nil || c.Width != 4 || c.Height != 3 {
 		t.Errorf("%s: %dx%d PNG, err %v; want 4x3", path, c.Width, c.Height, err)
+	}
+}
+
+// TestGUIPastePNG: Ctrl+V with PNG bytes on the clipboard, as a screenshot
+// tool offers them, pastes the path of a file that holds those bytes as
+// they are, without decoding and encoding the image again.
+func TestGUIPastePNG(t *testing.T) {
+	t.Parallel()
+	tmp, src := t.TempDir(), filepath.Join(t.TempDir(), "shot.png")
+	var shot bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 40, 30))
+	for i := range img.Pix {
+		img.Pix[i] = byte(i * 7)
+	}
+	// The least compression: GDK's encoder would write other bytes.
+	if err := (&png.Encoder{CompressionLevel: png.NoCompression}).Encode(&shot, img); err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.WriteFile(src, shot.Bytes(), 0o600))
+	g := runGUI(t, scenario{
+		args:  []string{"--size", "100x30", "--command", "python3 keylog.py"},
+		env:   []string{"TMPDIR=" + tmp},
+		files: map[string]string{"keylog.py": keylog},
+		script: []string{
+			"wait pane.0.text~\"keylog ready\"",
+			"clip-png " + src,
+			"kbd ctrl+v",
+			"wait pane.0.screen~\"keylog ready\\n2f\"",
+			"clip-clear",
+			"kbd ctrl+v",
+			"wait pane.0.screen~\"\\n16\"",
+			"snap pasted",
+			"quit",
+		},
+	})
+	lines := keylogLines(g.snap("pasted").pane(t, 0))
+	if len(lines) < 2 || lines[len(lines)-1] != "16" {
+		t.Fatalf("the pane read %q, want the image's path, then ^V alone", lines)
+	}
+	b, err := enchex.DecodeString(strings.Join(lines[:len(lines)-1], ""))
+	if err != nil {
+		t.Fatalf("pasted %q: %v", lines, err)
+	}
+	path := string(b)
+	if dir, name := filepath.Split(path); dir != tmp+"/" || !strings.HasPrefix(name, "bunk-paste-") || !strings.HasSuffix(name, ".png") {
+		t.Fatalf("pasted %q, want a bunk-paste-*.png in %s", path, tmp)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, shot.Bytes()) {
+		t.Errorf("%s holds %d bytes, not the clipboard's %d bytes of PNG", path, len(got), shot.Len())
 	}
 }
 
