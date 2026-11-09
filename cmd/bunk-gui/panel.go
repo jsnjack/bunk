@@ -141,7 +141,7 @@ func (a *App) newPanel(t *Tab) *panel {
 		}
 	})
 	head.Append(pn.pick)
-	pn.askBtn = panelButton("chat-bubble-text-symbolic", "Ask the agent about the selected text", pn.ask)
+	pn.askBtn = panelButton("chat-message-new-symbolic", "Ask the agent about the selected text", pn.ask)
 	head.Append(pn.askBtn)
 	head.Append(panelButton("document-open-symbolic", "Open a file in the panel…", func() { a.pickPreview(t) }))
 	head.Append(panelButton("web-browser-symbolic", "Open in the browser", pn.openExternal))
