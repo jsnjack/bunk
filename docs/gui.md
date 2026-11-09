@@ -330,9 +330,12 @@ panel gives the panes their width back.
   filtering otherwise. Textures of dropped placements are freed; textures
   not on screen are freed oldest first past `--image-gpu-bytes` (256 MiB per
   pane). Links are handled in `links.go`. Ctrl+hover underlines OSC 8 links
-  and plain URLs, and Ctrl+click opens them through `gtk.UriLauncher` behind
-  `openURL`; Ctrl+Shift+click does the same while the application reports
-  the mouse. `launchRefused` keeps the launcher off the test compositor;
+  and plain URLs, and Ctrl+click opens them in their default application
+  through `gio.AppInfoLaunchDefaultForURIAsync` behind `openURL`;
+  Ctrl+Shift+click does the same while the application reports the mouse.
+  `gtk.UriLauncher` would go through the desktop portal, which asks which
+  application to use until the user has picked one a few times, and fails
+  when that dialog is dismissed. `launchRefused` keeps the launcher off the test compositor;
   window tests read the links from `--report` (`opened`).
 
 ## Box drawing

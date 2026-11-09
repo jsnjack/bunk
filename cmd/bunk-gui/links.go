@@ -7,8 +7,9 @@ package main
 //     pointer becomes a hand. Ctrl+click opens it.
 //   - When the application reports the mouse, plain and Ctrl clicks go to
 //     it; Ctrl+Shift+click opens the link.
-//   - Links open through gtk.UriLauncher (the portal) behind openURL, which
-//     tests replace. The launcher never runs on the test compositor.
+//   - Links open in their default application, through GIO behind
+//     openURL, which tests replace. Nothing launches on the test
+//     compositor.
 //
 // Hit tests read the rows the pane last drew (termView.lines); only an
 // OSC 8 URL needs the session lock. New output clears the underline. A
@@ -27,7 +28,6 @@ import (
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
-	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
 	"bunk/internal/session"
 	"bunk/internal/vt10x"
@@ -57,11 +57,16 @@ var openURL = func(a *App, uri string) {
 		slog.Debug("link not launched", "url", uri, "err", err)
 		return
 	}
-	l := gtk.NewURILauncher(uri)
-	l.Launch(context.Background(), &a.win.Window, func(res gio.AsyncResulter) {
-		if err := l.LaunchFinish(res); err != nil {
+	// The default application opens it, as xdg-open would. GTK's
+	// UriLauncher goes through the desktop portal, which shows an "Open
+	// with" dialog until the user has picked the same application a few
+	// times, and fails when that dialog is dismissed. The launch context
+	// hands the application an activation token, so it takes the focus.
+	launch := gdk.DisplayGetDefault().AppLaunchContext()
+	gio.AppInfoLaunchDefaultForURIAsync(context.Background(), uri, &launch.AppLaunchContext, func(res gio.AsyncResulter) {
+		if err := gio.AppInfoLaunchDefaultForURIFinish(res); err != nil {
 			a.toast("Could not open " + uri)
-			slog.Debug("open link", "url", uri, "err", err)
+			slog.Warn("open link", "url", uri, "err", err)
 		}
 	})
 }
