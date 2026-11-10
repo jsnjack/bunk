@@ -18,11 +18,45 @@ body {
   background: var(--bunk-selection);
 }
 
+/* Text keeps a readable width, the measure: 80 characters with the
+   padding. The document is at least that wide and grows to fit a wider
+   table, up to the width of the page, so a table scrolls only when the
+   window is too narrow for it. A registered property computes the
+   measure once, in the document's font, for every element below. */
+@property --bunk-measure {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 #bunk-doc {
+  --bunk-measure: calc(80ch - 56px);
   box-sizing: border-box;
-  max-width: 80ch;
+  width: fit-content;
+  min-width: min(80ch, 100%);
+  max-width: 100%;
   margin: 0 auto;
   padding: 24px 28px 48px;
+}
+
+/* Each block keeps to the measure, except a table or a block that holds
+   one. Headings and rules span the document without widening it, and
+   text inside a block that holds a table keeps to the measure. */
+#bunk-doc:not(.bunk-file) > * {
+  max-width: var(--bunk-measure);
+}
+
+#bunk-doc:not(.bunk-file) > :is(table, :has(table), hr) {
+  max-width: 100%;
+}
+
+#bunk-doc:not(.bunk-file) > :is(h1, h2, h3, h4, h5, h6) {
+  max-width: 100%;
+  contain: inline-size;
+}
+
+#bunk-doc:not(.bunk-file) :is(p, ul, ol, dl, blockquote, pre:not(.mermaid)) {
+  max-width: var(--bunk-measure);
 }
 
 #bunk-doc > :first-child {
@@ -228,6 +262,7 @@ img {
    and audio, as wide as the panel. */
 
 #bunk-doc.bunk-file {
+  width: auto;
   max-width: none;
   padding: 12px 16px;
 }

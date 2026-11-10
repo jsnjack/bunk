@@ -14,13 +14,28 @@ import (
 )
 
 // presentPlan is a Markdown document long enough to scroll, with a
-// diagram, math, code and a table.
+// diagram, math, code, a table and a table wider than the panel.
 func presentPlan() string {
 	var b strings.Builder
 	b.WriteString("# Plan\n\nIntro with $a^2 + b^2 = c^2$ inline.\n\n")
 	b.WriteString("## Session storage\n\nSessions live in Redis, keyed by a random ID.\n\n")
 	b.WriteString("```mermaid\ngraph LR\n  Client --> API --> Redis\n```\n\n$$\\sum_{i=1}^n i = \\frac{n(n+1)}{2}$$\n\n")
 	b.WriteString("| Store | Revocation |\n|---|---|\n| Redis | instant |\n| JWT | at expiry |\n\n")
+	for row := range 3 {
+		b.WriteString("|")
+		for col := range 14 {
+			switch row {
+			case 0:
+				fmt.Fprintf(&b, " Column %d |", col+1)
+			case 1:
+				b.WriteString("---|")
+			default:
+				fmt.Fprintf(&b, " value %d cell |", col+1)
+			}
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	b.WriteString("```go\nfunc main() { println(\"hi\") }\n```\n\n")
 	for i := range 40 {
 		b.WriteString("Filler paragraph " + strings.Repeat("words ", 30) + string(rune('a'+i%26)) + ".\n\n")
@@ -31,6 +46,17 @@ func presentPlan() string {
 	}
 	return b.String()
 }
+
+// docLayoutProbe reports, for presentPlan, whether the first paragraph is
+// as wide as the measure (--bunk-measure), whether the wide table is wider
+// than it, and whether that table scrolls. A scenario step is one line.
+const docLayoutProbe = "(() => { " +
+	"const doc = document.getElementById('bunk-doc'); " +
+	"const measure = parseFloat(getComputedStyle(doc).getPropertyValue('--bunk-measure')); " +
+	"const width = el => el.getBoundingClientRect().width; " +
+	"const p = doc.querySelector(':scope > p'), table = doc.querySelectorAll(':scope > table')[1]; " +
+	"return [Math.abs(width(p) - measure) < 1, width(table) > measure + 50, table.scrollWidth > table.clientWidth].join(','); " +
+	"})()"
 
 // TestGUIPresentMarkdown shows a Markdown file in the tab's document panel
 // with "bunk-gui present" from the pane, as an agent runs it: the panel
@@ -54,7 +80,17 @@ func TestGUIPresentMarkdown(t *testing.T) {
 			"wait focused.text~\"Showing plan.md\"",
 			"present-wait document.querySelector('.mermaid svg') && document.querySelectorAll('.katex').length >= 2",
 			"present-eval [document.querySelectorAll('#bunk-doc h2').length, document.querySelectorAll('#bunk-doc table').length, document.querySelectorAll('pre code span[class]').length > 0].join(',')",
-			"wait tab.1.panel.eval=\"2,1,true\"",
+			"wait tab.1.panel.eval=\"2,2,true\"",
+			// Text keeps the measure, and the wide table takes the
+			// panel's width and scrolls in it.
+			"present-eval " + docLayoutProbe,
+			"wait tab.1.panel.eval=\"true,true,true\"",
+			// In a page wider than the table, as in a browser window,
+			// the table no longer scrolls and the text keeps the measure.
+			"present-eval document.body.style.width = '2400px'; " + docLayoutProbe,
+			"wait tab.1.panel.eval=\"true,true,false\"",
+			"present-eval document.body.style.width = ''; 'reset'",
+			"wait tab.1.panel.eval=reset",
 			"snap shown",
 			"shot shown.png",
 			"present-eval document.getElementById('rollout').scrollIntoView(); String(Math.round(document.getElementById('rollout').getBoundingClientRect().top))",
@@ -302,8 +338,9 @@ func TestGUIPresentPreview(t *testing.T) {
 			"wait focused.line=$",
 			"preview main.go",
 			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
-			"present-eval [document.querySelectorAll('pre.chroma .kn').length > 0, getComputedStyle(document.documentElement).getPropertyValue('--bunk-dark').trim()].join(',')",
-			"wait tab.1.panel.eval=\"true,1\"",
+			// A preview fills the page, however wide, unlike a document's text.
+			"present-eval [document.querySelectorAll('pre.chroma .kn').length > 0, getComputedStyle(document.documentElement).getPropertyValue('--bunk-dark').trim(), (document.body.style.width = '2400px', Math.round(document.getElementById('bunk-doc').getBoundingClientRect().width))].join(',')",
+			"wait tab.1.panel.eval=\"true,1,2400\"",
 			"type echo '// more' >> main.go\\r",
 			"wait tab.1.panel.docs.0.reloads=1",
 			"preview shot.png",

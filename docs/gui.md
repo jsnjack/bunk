@@ -223,6 +223,15 @@ panel gives the panes their width back.
   (`present.ThemeCSS`, `present.InsertHead`); the page runtime works on
   any page. A browser gets a copy of such a page that loads the assets
   from disk (`present.NeedsPage`, `WriteStandalone`).
+- `bunk-doc.css` keeps text at a readable width, the measure
+  (`--bunk-measure`, 80 characters with the padding), and makes
+  `#bunk-doc` at least that wide. The article grows to fit a table, or
+  a block that holds one, up to the width of the page, so a wide table
+  scrolls only when the panel or browser window is too narrow for it.
+  Other blocks keep to the measure; headings and rules span the article
+  without widening it (`contain: inline-size`). File previews
+  (`.bunk-file`) fill the page. `TestGUIPresentMarkdown` measures both
+  widths.
 - A document counts as loaded only once a load of its address committed
   (`panel.committed`): a load that a newer one cancelled still finishes.
 - `bunk present FILE` (or `bunk-gui present`) sends a present request

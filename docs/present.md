@@ -125,7 +125,7 @@ pages use too:
 
 | Asset | What it gives the page |
 | :- | :- |
-| `bunk-doc.css` | The look of bunk's documents in the panel's theme, for content in `<article id="bunk-doc">` |
+| `bunk-doc.css` | The look of bunk's documents in the panel's theme, for content in `<article id="bunk-doc">`. Text keeps a readable width of 80 characters, and the article widens to fit a table up to the width of the window, so a wide table scrolls only when the window is too narrow |
 | `bunk-doc.js` | Mermaid diagrams in `<pre class="mermaid">` and KaTeX math in `<span class="math">` and `<div class="math math-display">`, each library loaded only when the page needs it |
 | `mermaid.min.js`, `katex/katex.min.js`, `katex/katex.min.css` | The libraries themselves |
 
