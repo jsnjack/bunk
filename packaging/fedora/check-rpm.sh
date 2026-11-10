@@ -16,7 +16,12 @@ pass() { echo "ok:   $*"; }
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-(cd "$work" && rpm2cpio "$rpm" | cpio -idm --quiet)
+# Through a file, not a pipe: rpm2cpio writes padding after the archive's
+# trailer, which cpio stops before reading, and the SIGPIPE that ends
+# rpm2cpio then fails the pipeline under pipefail.
+rpm2cpio "$rpm" >"$work/payload.cpio"
+(cd "$work" && cpio -idm --quiet <payload.cpio)
+rm "$work/payload.cpio"
 
 license=$(rpm -qp --qf '%{LICENSE}' "$rpm")
 [[ $license == "MIT AND MPL-2.0 AND ISC AND BSD-3-Clause" ]] &&
