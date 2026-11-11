@@ -70,12 +70,15 @@ button.raildot.active { background: #26292f; }
 .railmap { min-width: 30px; min-height: 30px; }
 .railpeek { background: #2e3138; border: 1px solid #5a5f68; border-radius: 8px; padding: 0 12px 0 6px;
 	box-shadow: 0 4px 16px alpha(black, 0.65); color: #f2f4f6; }
-.railpeek.active { background: #383c44; border-color: #7a808a; }
+/* The selected tab's label in the accent's blue, its key too: the labels
+   are all filled, to read over the dimmed panes. */
+.railpeek.active { background: #2d4a6e; border-color: #5aa9ff; }
 .railpeek.needs { border-color: #ffb454; }
 .railpeek .repo { color: #c4c8ce; }
 .railpeek .loc { color: #d6caff; }
 .peekkey { font-family: "Noto Sans Mono", monospace; font-size: 12px; font-weight: 700; color: #ffffff;
 	background: #4a4f58; border-radius: 4px; padding: 1px 6px; }
+.railpeek.active .peekkey { background: #5aa9ff; color: #131416; }
 progressbar.tabprogress > trough { min-height: 3px; min-width: 24px; background: alpha(#ffffff, 0.10); border-radius: 2px; }
 progressbar.tabprogress > trough > progress { min-height: 3px; background: #5aa9ff; border-radius: 2px; }
 progressbar.tabprogress.error > trough > progress { background: #ff8a8a; }

@@ -114,10 +114,10 @@ func TestGUIRailPeek(t *testing.T) {
 		t.Errorf("Alt+2 under the labels: tab %d selected, want 2", s.SelectedTab)
 	}
 
-	// The selected tab's label is lighter than the others, and both are
-	// lighter than the panes.
+	// The selected tab's label is blue, the others grey, both lighter
+	// than the panes.
 	before, img := img, loadPNG(t, g.file("peek.png"))
-	for i, c := range []rgb{hex(0x383c44), hex(0x2e3138)} {
+	for i, c := range []rgb{hex(0x2d4a6e), hex(0x2e3138)} {
 		r := g.snap("peek").RailPeek[i].Rect
 		x, y, w, h := inner(r, 3)
 		if n := count(img, x, y, w, h, c, 3); n < w*h/3 {
