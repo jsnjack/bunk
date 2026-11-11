@@ -58,8 +58,21 @@ type Server struct {
 	targets map[string]Target
 	issued  map[string]bool // every token registered since Listen
 	cur     *net.UnixConn   // connection being read; Close closes it
-	present func(token, path string, auto bool) bool
+	present Presenter
+
+	// closing ends the wait of checks (deferReply) when the server closes;
+	// replies counts the checks waiting.
+	closing   chan struct{}
+	replies   sync.WaitGroup
+	checkWait time.Duration // under mu; tests shorten it
 }
+
+// A Presenter shows the document at path, an absolute path, for the pane
+// whose token sent the request; auto marks a request from a hook. It
+// returns false when it cannot show it. check is nil unless the request
+// asked for a check: the presenter then calls it once, from any goroutine,
+// with the problems the document's page had once it loaded.
+type Presenter func(token, path string, auto bool, check func(problems []string)) bool
 
 // Listen creates the socket $XDG_RUNTIME_DIR/bunk/notify-<pid>.sock
 // (directory 0700, socket 0600) and starts serving it. The front end logs
@@ -98,7 +111,8 @@ func listen(uid int) (*Server, error) {
 		}
 		return nil, fmt.Errorf("notify: chmod socket: %w", err)
 	}
-	s := &Server{path: path, ln: ln, uid: uid, done: make(chan struct{}), targets: map[string]Target{}, issued: map[string]bool{}}
+	s := &Server{path: path, ln: ln, uid: uid, done: make(chan struct{}), targets: map[string]Target{}, issued: map[string]bool{},
+		closing: make(chan struct{}), checkWait: checkWait}
 	go s.serve()
 	return s, nil
 }
@@ -148,13 +162,13 @@ func (s *Server) Issued(token string) bool {
 	return s.issued[token]
 }
 
-// SetPresenter makes f show the documents of present requests (RunPresent):
-// path is absolute, auto marks a request from a hook, and true means f
-// shows it. f runs on the server's goroutine while the client waits for
-// the reply, so it must return quickly. Requests for tokens that are not
-// registered never reach f. Without a presenter, as in bunk's TUI, every
-// request gets PresentUnsupported.
-func (s *Server) SetPresenter(f func(token, path string, auto bool) bool) {
+// SetPresenter makes f show the documents of present requests (RunPresent).
+// f runs on the server's goroutine while the client waits for the reply,
+// so it must return quickly; a check's reply waits for its problems on a
+// goroutine of its own, at most checkWait. Requests for tokens that are
+// not registered never reach f. Without a presenter, as in bunk's TUI,
+// every request gets PresentUnsupported.
+func (s *Server) SetPresenter(f Presenter) {
 	s.mu.Lock()
 	s.present = f
 	s.mu.Unlock()
@@ -177,8 +191,10 @@ func (s *Server) Close() error {
 			slog.Debug("notify: close connection", "err", cerr)
 		}
 	}
+	close(s.closing)
 	s.mu.Unlock()
 	<-s.done
+	s.replies.Wait()
 	if err != nil {
 		return fmt.Errorf("notify: close: %w", err)
 	}
@@ -201,10 +217,13 @@ func (s *Server) serve() {
 		s.mu.Lock()
 		s.cur = c
 		s.mu.Unlock()
-		s.handle(c)
+		kept := s.handle(c)
 		s.mu.Lock()
 		s.cur = nil
 		s.mu.Unlock()
+		if kept {
+			continue // deferReply closes it
+		}
 		if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			slog.Debug("notify: close connection", "err", err)
 		}
@@ -212,34 +231,96 @@ func (s *Server) serve() {
 }
 
 // handle reads up to maxLinesPerConn messages from one client. A present
-// request gets its reply and ends the connection.
-func (s *Server) handle(c *net.UnixConn) {
+// request gets its reply and ends the connection. It returns true when a
+// check keeps the connection to reply later (deferReply).
+func (s *Server) handle(c *net.UnixConn) bool {
 	uid, err := peerUID(c)
 	if err != nil || uid != s.uid {
 		slog.Warn("notify: rejected peer", "uid", uid, "err", err)
-		return
+		return false
 	}
 	if err := c.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
 		slog.Debug("notify: set deadline", "err", err)
-		return
+		return false
 	}
 	r := bufio.NewReaderSize(c, MaxLine)
 	for range maxLinesPerConn {
 		line, err := r.ReadSlice('\n')
 		if errors.Is(err, bufio.ErrBufferFull) {
 			slog.Debug("notify: dropped oversized message")
-			return
+			return false
 		}
 		if len(bytes.TrimSpace(line)) > 0 {
-			if reply := s.dispatch(line); reply != "" {
+			if reply, wait := s.dispatch(line); reply != "" {
+				if wait != nil {
+					return s.deferReply(c, reply, wait)
+				}
 				s.reply(c, reply)
-				return
+				return false
 			}
 		}
 		if err != nil {
-			return
+			return false
 		}
 	}
+	return false
+}
+
+// deferReply answers a check once the presenter has the page's problems,
+// or after checkWait, on a goroutine of its own, so reports keep flowing
+// meanwhile, and then closes the connection. It returns false, and the
+// caller closes the connection, when the server is closing.
+func (s *Server) deferReply(c *net.UnixConn, reply string, wait <-chan []string) bool {
+	s.mu.Lock()
+	select {
+	case <-s.closing:
+		s.mu.Unlock()
+		return false
+	default:
+	}
+	s.replies.Add(1)
+	limit := s.checkWait
+	s.mu.Unlock()
+	go func() {
+		defer s.replies.Done()
+		var problems []string
+		t := time.NewTimer(limit)
+		defer t.Stop()
+		select {
+		case problems = <-wait:
+		case <-t.C:
+			problems = []string{fmt.Sprintf("the page had not finished loading after %v", limit)}
+		case <-s.closing:
+		}
+		s.reply(c, reply+problemLines(problems))
+		if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.Debug("notify: close connection", "err", err)
+		}
+	}()
+	return true
+}
+
+// problemLines are the lines of a check's reply after the first, each
+// "problem: TEXT" with control characters replaced, cut to
+// maxProblemBytes, at most maxProblems.
+func problemLines(problems []string) string {
+	var b strings.Builder
+	for i, p := range problems {
+		if i == maxProblems {
+			break
+		}
+		p = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return ' '
+			}
+			return r
+		}, strings.TrimSpace(p))
+		if len(p) > maxProblemBytes {
+			p = strings.ToValidUTF8(p[:maxProblemBytes], "") + "…"
+		}
+		b.WriteString("\n" + problemPrefix + p)
+	}
+	return b.String()
 }
 
 // reply writes a present request's reply line.
@@ -254,12 +335,13 @@ func (s *Server) reply(c *net.UnixConn, reply string) {
 }
 
 // dispatch passes a report to its target, or a present request to the
-// presenter. It returns the reply to a present request, else "".
-func (s *Server) dispatch(line []byte) string {
+// presenter. It returns the reply to a present request, else "", and for a
+// check the channel its problems arrive on.
+func (s *Server) dispatch(line []byte) (string, <-chan []string) {
 	r, err := wire.Decode(line)
 	if err != nil {
 		slog.Debug("notify: dropped message", "err", err)
-		return ""
+		return "", nil
 	}
 	if r.Event == wire.EventPresent {
 		return s.presentRequest(r)
@@ -267,43 +349,60 @@ func (s *Server) dispatch(line []byte) string {
 	m, err := message(r)
 	if err != nil {
 		slog.Debug("notify: dropped message", "err", err)
-		return ""
+		return "", nil
 	}
 	s.mu.Lock()
 	t := s.targets[m.Session]
 	s.mu.Unlock()
 	if t == nil {
 		slog.Debug("notify: dropped message for an unknown session", "event", m.Event.String())
-		return ""
+		return "", nil
 	}
 	if rt, ok := t.(reportTarget); ok {
 		rt.NotifyReport(session.Report{Event: m.Event, Message: m.Text, AgentSession: m.AgentSession, Held: m.Held})
-		return ""
+		return "", nil
 	}
 	t.Notify(m.Event, m.Text)
-	return ""
+	return "", nil
 }
 
 // presentRequest runs a present request and returns its reply. A request
 // without a token or with a path that is not absolute and clean of
-// control characters gets none.
-func (s *Server) presentRequest(r wire.Report) string {
+// control characters gets none. A check that the presenter shows also
+// returns the channel its problems arrive on; a hook's request is never
+// checked.
+func (s *Server) presentRequest(r wire.Report) (string, <-chan []string) {
 	if r.Session == "" || !validPresentPath(r.Path) {
 		slog.Debug("notify: dropped present request", "token", r.Session != "", "path_bytes", len(r.Path))
-		return ""
+		return "", nil
 	}
 	s.mu.Lock()
 	known, f := s.targets[r.Session] != nil, s.present
 	s.mu.Unlock()
 	switch {
 	case !known:
-		return PresentUnknown
+		return PresentUnknown, nil
 	case f == nil:
-		return PresentUnsupported
-	case f(r.Session, r.Path, r.Auto):
-		return PresentShown
+		return PresentUnsupported, nil
 	}
-	return PresentUnsupported
+	var wait chan []string
+	var check func([]string)
+	if r.Check && !r.Auto {
+		wait = make(chan []string, 1)
+		check = func(p []string) {
+			select {
+			case wait <- p:
+			default:
+			}
+		}
+	}
+	if !f(r.Session, r.Path, r.Auto, check) {
+		return PresentUnsupported, nil
+	}
+	if wait == nil {
+		return PresentShown, nil
+	}
+	return PresentShown, wait
 }
 
 // validPresentPath reports whether path may name a document to present:

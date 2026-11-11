@@ -79,6 +79,18 @@ type panelDoc struct {
 	// before it loaded again, given back once it has loaded.
 	state   string
 	updated time.Time
+
+	// served lists the files of its directory that its page asked for and
+	// did not get, since it last loaded; problems is what was wrong with
+	// the page when it last finished drawing (collect). checks wait for
+	// the next problems: "bunk present" asked.
+	served     []string
+	problems   []string
+	checks     []func([]string)
+	collectGen int
+	loadedMod  time.Time // the file's modification time when it last loaded
+	pending    bool      // a new version of its page is loading or being swapped in
+	inFlight   bool      // its page is loading whole (show, an HTML reload)
 }
 
 // panel is a tab's document panel.
@@ -120,8 +132,9 @@ type panel struct {
 
 	overlay *gtk.Overlay
 	compose *composeBox
-	sent    string // the last question pasted into a pane (report)
-	eval    string // the last test evaluation (report, --do present-eval)
+	sent    string    // the last question pasted into a pane (report)
+	eval    string    // the last test evaluation (report, --do present-eval)
+	checked *[]string // the problems the last --do "present PATH check" got; nil until then
 }
 
 // composeBox is the question popover of "Ask the agent".
@@ -217,8 +230,9 @@ func panelButton(icon, tip string, f func()) *gtk.Button {
 
 // presentFor shows path in the panel of the tab whose pane has token.
 // auto: a hook reported the file; it opens the panel only with
-// [present] auto, and is otherwise listed for later.
-func (a *App) presentFor(token, path string, auto bool) {
+// [present] auto, and is otherwise listed for later. check, when not nil,
+// gets the problems of the page once it has loaded (panel.addCheck).
+func (a *App) presentFor(token, path string, auto bool, check func([]string)) {
 	var from *Pane
 	for _, p := range a.panes {
 		if p != nil && !p.removeOnce && p.token == token {
@@ -227,9 +241,21 @@ func (a *App) presentFor(token, path string, auto bool) {
 		}
 	}
 	if from == nil || from.tab == nil {
+		if check != nil {
+			check(nil)
+		}
 		return
 	}
-	from.tab.docPanel().present(path, from, auto, "")
+	pn := from.tab.docPanel()
+	pn.present(path, from, auto, "")
+	if check == nil {
+		return
+	}
+	if d := pn.find(path); d != nil {
+		pn.addCheck(d, check)
+	} else {
+		check([]string{"the panel cannot show this file"})
+	}
 }
 
 // present adds path to the panel, or finds it there, and shows it unless
@@ -447,6 +473,8 @@ func (pn *panel) show(d *panelDoc) {
 	d.crashed = false
 	d.broken = ""
 	d.scrollY = d.lastY
+	d.loading()
+	d.inFlight = true
 	pn.load(d.page())
 	pn.syncPick()
 	pn.updateStatus()
@@ -591,9 +619,19 @@ func (pn *panel) updateStatus() {
 	if z := pn.zoomPercent(); z != 100 && d != nil && d.broken == "" {
 		pn.status.SetText(pn.status.Text() + " · " + strconv.Itoa(z) + "%")
 	}
+	if d != nil && d.broken == "" && len(d.problems) > 0 {
+		n := "1 problem"
+		if len(d.problems) > 1 {
+			n = strconv.Itoa(len(d.problems)) + " problems"
+		}
+		pn.status.SetText(n + " · " + pn.status.Text())
+	}
 	pn.status.SetTooltipText(func() string {
 		if d == nil {
 			return ""
+		}
+		if len(d.problems) > 0 {
+			return d.path + "\n" + strings.Join(d.problems, "\n")
 		}
 		return d.path
 	}())
@@ -719,6 +757,16 @@ func (pn *panel) reload(d *panelDoc) {
 	if d != pn.cur || !d.loaded {
 		return // it loads whole when shown
 	}
+	if d.inFlight {
+		// The page loading has the old text, or may: load it again rather
+		// than swap the new text into a page that is still on its way.
+		d.gen++
+		d.loading()
+		d.inFlight = true
+		pn.load(d.page())
+		return
+	}
+	d.loading()
 	if d.kind == present.KindMarkdown {
 		// Rendered off the main loop, like the page itself (serveScheme).
 		d.gen++
@@ -741,13 +789,16 @@ func (pn *panel) reload(d *panelDoc) {
 					d.broken = readErr.Error()
 				case err != nil:
 					slog.Debug("present: render", "path", d.path, "err", err)
+					d.pending = false
+					pn.settle(d, []string{"the panel could not render it: " + err.Error()})
 					return
 				default:
 					d.broken = ""
 					pn.replace(d, body)
 					return
 				}
-				pn.updateStatus()
+				d.pending = false
+				pn.settle(d, nil)
 			})
 		}()
 		return
@@ -760,6 +811,7 @@ func (pn *panel) reload(d *panelDoc) {
 		d.reloads++
 		d.updated = time.Now()
 		d.broken = "" // load-failed sets it again
+		d.inFlight = true
 		pn.load(d.page())
 		pn.updateStatus()
 	})
@@ -768,6 +820,7 @@ func (pn *panel) reload(d *panelDoc) {
 // replace swaps the article of d's page for body, marking what changed.
 func (pn *panel) replace(d *panelDoc, body []byte) {
 	arg, _ := json.Marshal(string(body))
+	pn.view.eval(present.ResetProblemsScript, true, func(string, error) {})
 	pn.view.eval("bunkDoc.replace("+string(arg)+")", false, func(v string, err error) {
 		if err != nil {
 			pn.show(d) // the page runtime is not there: load it whole
@@ -776,8 +829,135 @@ func (pn *panel) replace(d *panelDoc, body []byte) {
 		d.changed, _ = strconv.Atoi(strings.TrimSpace(v))
 		d.reloads++
 		d.updated = time.Now()
+		d.pending = false
 		pn.updateStatus()
+		pn.collect(d)
 	})
+}
+
+// loading forgets what d's last page did wrong, as a new one loads, and
+// notes which version of the file it is.
+func (d *panelDoc) loading() {
+	d.pending = true
+	d.served = nil
+	d.collectGen++ // a collection under way is for the old page
+	if fi, err := os.Stat(d.path); err == nil {
+		d.loadedMod = fi.ModTime()
+	}
+}
+
+// addCheck hands check the problems of d's page once it has finished
+// drawing. A page shown already is read now, unless its file changed
+// since it loaded: then it loads again first, as its reload would.
+func (pn *panel) addCheck(d *panelDoc, check func([]string)) {
+	d.checks = append(d.checks, check)
+	if d != pn.cur || !d.loaded || d.pending {
+		return // loaded() or replace collects
+	}
+	if fi, err := os.Stat(d.path); err == nil && !fi.ModTime().Equal(d.loadedMod) {
+		if d.timer != 0 {
+			coreglib.SourceRemove(d.timer)
+			d.timer = 0
+		}
+		pn.reload(d)
+		return
+	}
+	pn.collect(d)
+}
+
+// collectWait bounds the wait for a page to finish drawing before its
+// problems are read.
+const collectWait = 3 * time.Second
+
+// collect reads the problems of d's page once it has finished drawing,
+// or after collectWait, shows how many in the status line and hands them
+// to the checks waiting.
+func (pn *panel) collect(d *panelDoc) {
+	d.collectGen++
+	gen := d.collectGen
+	deadline := time.Now().Add(collectWait)
+	var try func()
+	try = func() {
+		if gen != d.collectGen || pn.find(d.path) != d {
+			return // a newer page, or gone
+		}
+		if d != pn.cur {
+			pn.settle(d, d.served)
+			return
+		}
+		pn.view.eval(present.ProblemsScript, true, func(v string, err error) {
+			if gen != d.collectGen {
+				return
+			}
+			if err == nil && v == "wait" && time.Now().Before(deadline) {
+				coreglib.TimeoutAdd(100, func() bool {
+					try()
+					return false
+				})
+				return
+			}
+			probs := slices.Clone(d.served)
+			var page []string
+			switch {
+			case err != nil:
+				slog.Debug("present: problems", "path", d.path, "err", err)
+			case v == "wait":
+				probs = append(probs, fmt.Sprintf("the page had not finished drawing after %v", collectWait))
+			case json.Unmarshal([]byte(v), &page) == nil:
+				probs = append(probs, page...)
+			}
+			pn.settle(d, probs)
+		})
+	}
+	try()
+}
+
+// settle records d's problems and hands them to the checks waiting.
+func (pn *panel) settle(d *panelDoc, probs []string) {
+	if d.broken != "" {
+		probs = append([]string{"the panel could not show it: " + d.broken}, probs...)
+	}
+	d.problems = probs
+	checks := d.checks
+	d.checks = nil
+	for _, c := range checks {
+		c(probs)
+	}
+	if d == pn.cur {
+		pn.updateStatus()
+	}
+}
+
+// notServed records that the page of a document of v's panel asked for a
+// file of its directory and did not get it, as one of its problems.
+func (v *webView) notServed(raw string, err error) {
+	if v == nil || v.panel == nil {
+		return
+	}
+	u, perr := url.Parse(raw)
+	if perr != nil {
+		return
+	}
+	id, ok := strings.CutPrefix(u.Host, "doc-")
+	if !ok {
+		return
+	}
+	for _, d := range v.panel.docs {
+		if strconv.Itoa(d.id) != id {
+			continue
+		}
+		rel := strings.TrimPrefix(path.Clean("/"+u.Path), "/")
+		if rel == filepath.Base(d.path) || rel == "" {
+			return // the document itself: d.broken says why
+		}
+		why := "not found"
+		if errors.Is(err, errRefused) {
+			why = "not served: a hidden file, outside the document's directory, or beside a document in ~ or /"
+		}
+		if p := "cannot load " + rel + ": " + why; !slices.Contains(d.served, p) && len(d.served) < 20 {
+			d.served = append(d.served, p)
+		}
+	}
 }
 
 // load starts loading uri in the view.
@@ -795,6 +975,8 @@ func (pn *panel) loaded() {
 		return
 	}
 	d.loaded = true
+	d.pending, d.inFlight = false, false
+	defer pn.collect(d)
 	if d.state != "" {
 		// Before the scroll: open sections change the page's height.
 		pn.view.eval(fmt.Sprintf(present.RestoreStateScript, d.state), true, func(string, error) {})
@@ -820,8 +1002,9 @@ func (pn *panel) failed(uri, msg string) {
 		return
 	}
 	d.broken = msg
+	d.pending, d.inFlight = false, false
 	slog.Debug("present: load failed", "uri", uri, "err", msg)
-	pn.updateStatus()
+	pn.settle(d, nil)
 }
 
 // crashed loads the document again after its web process ended, once: a
@@ -835,7 +1018,7 @@ func (pn *panel) crashed() {
 	}
 	if d.crashed {
 		d.broken = "its page stopped twice; it loads again when the file changes"
-		pn.updateStatus()
+		pn.settle(d, nil)
 		return
 	}
 	pn.show(d)
@@ -1189,6 +1372,7 @@ type panelReport struct {
 	Eval    string           `json:"eval"`           // the result of the last --do present-eval
 	Back    bool             `json:"back"`           // the Back button is enabled
 	Unseen  int              `json:"unseen"`         // documents hooks listed while the panel was hidden
+	Checked *[]string        `json:"checked"`        // the problems of the last --do "present PATH check"; null until it answers
 	Zoom    int              `json:"zoom"`           // the pages' scale in percent
 	Find    *panelFindReport `json:"find,omitempty"` // the find bar while it is open
 }
@@ -1207,6 +1391,8 @@ type docReport struct {
 	Auto    bool   `json:"auto"`
 	Pane    int    `json:"pane"`    // the pane that presented it, -1 when none
 	Crashed bool   `json:"crashed"` // its page ended the web process since the file changed
+
+	Problems []string `json:"problems"` // what was wrong with its page when it last drew
 }
 
 type askReport struct {
@@ -1221,7 +1407,7 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 	if pn == nil {
 		return nil
 	}
-	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent(), Unseen: pn.unseen}
+	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent(), Unseen: pn.unseen, Checked: pn.checked}
 	if f := pn.finder; f != nil {
 		r.Find = &panelFindReport{Query: f.query, Count: f.count.Text()}
 	}
@@ -1230,7 +1416,7 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 		r.AskBtn = a.widgetRect(g, pn.askBtn)
 	}
 	for i, d := range pn.docs {
-		dr := docReport{Path: d.path, Kind: d.kind.String(), Loaded: d.loaded, Reloads: d.reloads, Changed: d.changed, Auto: d.auto, Pane: -1, Crashed: d.crashed}
+		dr := docReport{Path: d.path, Kind: d.kind.String(), Loaded: d.loaded, Reloads: d.reloads, Changed: d.changed, Auto: d.auto, Pane: -1, Crashed: d.crashed, Problems: d.problems}
 		if d.pane != nil {
 			dr.Pane = d.pane.id
 		}
@@ -1263,7 +1449,9 @@ const presentSelectScript = `(function(t){
 
 // presentStep runs the --do steps of the document panel:
 //
-//	present PATH [auto]     what "bunk present PATH" from the focused pane does
+//	present PATH [auto|check]
+//	                        what "bunk present PATH" from the focused pane does; a hook's
+//	                        request with auto, the CLI's check with check (panel.checked)
 //	present-eval JS         evaluate JS in the shown page; the result goes to panel.eval
 //	present-select TEXT     select TEXT in the shown page
 //	present-ask             Ask the agent, as its button does
@@ -1289,7 +1477,18 @@ func (a *App) presentStep(verb, arg string) error {
 		if _, err := os.Stat(path); err != nil {
 			return err // "bunk present" refuses it too
 		}
-		a.presentFor(p.token, path, mode == "auto")
+		var check func([]string)
+		if mode == "check" {
+			tab := p.tab
+			tab.docPanel().checked = nil
+			check = func(problems []string) {
+				if tab.panel != nil {
+					got := append([]string{}, problems...)
+					tab.panel.checked = &got
+				}
+			}
+		}
+		a.presentFor(p.token, path, mode == "auto", check)
 		return nil
 	}
 	if verb == "present-toggle" {

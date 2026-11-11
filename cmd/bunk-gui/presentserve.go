@@ -55,6 +55,7 @@ var (
 func (a *App) serveScheme(req uintptr, v *webView, raw string) {
 	job, err := a.schemeJob(v, raw)
 	if err != nil {
+		v.notServed(raw, err)
 		failScheme(req, fmt.Errorf("%s: %w", raw, err))
 		return
 	}
@@ -62,6 +63,7 @@ func (a *App) serveScheme(req uintptr, v *webView, raw string) {
 		r, err := job()
 		coreglib.IdleAdd(func() {
 			if err != nil {
+				v.notServed(raw, err)
 				failScheme(req, fmt.Errorf("%s: %w", raw, err))
 				return
 			}

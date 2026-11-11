@@ -103,6 +103,27 @@ The path in the output is relative to the working directory when the file
 lies inside it. An agent never sees a failure only because nothing can show
 the file.
 
+In bunk-gui the command waits for the page to load and draw, at most about
+5 seconds, and lists after its line what was wrong with it, so the agent
+can fix its own page:
+
+```
+Showing docs/plan.md in bunk-gui's side panel.
+The page has 2 problems:
+- Mermaid diagram 1: Parse error on line 2: Expecting 'SEMI', 'NEWLINE', got 'EOF'
+- cannot load img/flow.png: not found
+Fix them in the file: the panel reloads it. Run this command again to check the page again.
+```
+
+It reports diagrams and formulas that do not parse (and, from the page
+runtime, its other libraries), script errors and unhandled promise
+rejections, files of the document's directory the page asked for and did
+not get, and content the page's policy blocked, such as a script from the
+network. The exit status stays 0. Run the command again after a fix: when
+the file changed since the panel loaded it, the panel loads it again before
+it checks. The panel's status line counts the problems too, and its tooltip
+lists them.
+
 The browser gets a Markdown or text file as a page that bunk renders into
 `$XDG_CACHE_HOME/bunk/present/<hash>/index.html` (`~/.cache/…` when
 `XDG_CACHE_HOME` is unset), one directory per file, and an HTML page that
@@ -284,6 +305,7 @@ A present request travels over the notify socket like a report
 | `event` | string | `present` |
 | `path` | string | The document's absolute path, at most 2048 bytes, without control characters |
 | `auto` | boolean | Optional: the request comes from a hook, not from the agent or the user |
+| `check` | boolean | Optional: reply once the page has loaded, with its problems; `bunk present FILE` sets it, hooks do not |
 
 Unlike a report, a request gets a one-line reply on the same connection,
 and the server then closes it:
@@ -295,7 +317,14 @@ and the server then closes it:
 | `unknown` | No pane has the request's token |
 
 A front end that predates present requests drops the line and closes the
-connection without a reply, which the CLI reads as `unsupported`. A request
+connection without a reply, which the CLI reads as `unsupported`.
+
+A request with `check` (and without `auto`) gets its `shown` once the page
+has loaded and drawn, or after 5 seconds, followed by a line
+`problem: TEXT` for each problem, at most 12 of at most 300 bytes. The
+server waits on a goroutine of its own, so reports keep flowing meanwhile.
+A front end that does not check replies at once with `shown` alone, so a
+client from before checks and a server from after them still agree. A request
 with a missing token or an invalid path gets no reply either. Requests never
 travel in-band: on a host reached over ssh, the pane's session ignores a
 `present` line in its output, as it ignores any event it does not know.

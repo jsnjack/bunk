@@ -57,6 +57,38 @@
     console.warn('bunk-doc:', err);
   }
 
+  // problem records what went wrong drawing the page in the
+  // data-bunk-problems attribute of <html>, which bunk-gui reads and
+  // reports to the agent that presented it.
+  function problem(msg) {
+    var html = document.documentElement;
+    var list = [];
+    try {
+      list = JSON.parse(html.getAttribute('data-bunk-problems') || '[]');
+    } catch (err) {
+      list = [];
+    }
+    msg = String(msg).replace(/\s+/g, ' ').trim();
+    if (list.length < 20 && list.indexOf(msg) < 0) list.push(msg);
+    html.setAttribute('data-bunk-problems', JSON.stringify(list));
+  }
+
+  // brief is an error's message cut to its first and last lines, which
+  // for a parser name the place and what it expected.
+  function brief(err) {
+    var lines = String(err && err.message ? err.message : err).split('\n').filter(function (l) {
+      return l.trim() !== '';
+    });
+    if (lines.length <= 1) return lines.join('');
+    return lines[0] + ' ' + lines[lines.length - 1];
+  }
+
+  // nth is the place of el among the page's elements that match sel,
+  // counted from 1, to name it in a problem.
+  function nth(el, sel) {
+    return Array.prototype.indexOf.call(doc().querySelectorAll(sel), el) + 1;
+  }
+
   function typeset(root) {
     var nodes = root.querySelectorAll('.math:not([data-bunk-tex])');
     if (!nodes.length) return Promise.resolve();
@@ -65,14 +97,18 @@
       nodes.forEach(function (el) {
         var tex = el.textContent;
         el.setAttribute('data-bunk-tex', '');
+        var display = el.classList.contains('math-display');
         try {
-          katex.render(tex, el, {
-            displayMode: el.classList.contains('math-display'),
-            throwOnError: false
-          });
+          katex.render(tex, el, {displayMode: display, throwOnError: true});
         } catch (err) {
-          el.textContent = tex;
-          warn(err);
+          problem('math ' + nth(el, '.math') + ': ' + brief(err));
+          try {
+            // Shows the source in red where it fails.
+            katex.render(tex, el, {displayMode: display, throwOnError: false});
+          } catch (err2) {
+            el.textContent = tex;
+            warn(err2);
+          }
         }
       });
     });
@@ -94,7 +130,15 @@
         });
         mermaidReady = true;
       }
-      return mermaid.run({nodes: nodes, suppressErrors: true});
+      // Parse first: run draws a broken diagram as an error picture and
+      // says nothing.
+      return Promise.all(Array.prototype.map.call(nodes, function (el) {
+        return Promise.resolve(mermaid.parse(el.getAttribute('data-bunk-src'))).catch(function (err) {
+          problem('Mermaid diagram ' + nth(el, 'pre.mermaid') + ': ' + brief(err));
+        });
+      })).then(function () {
+        return mermaid.run({nodes: nodes, suppressErrors: true});
+      });
     });
   }
 
@@ -115,9 +159,12 @@
 
   // render typesets every math element and draws every diagram not done
   // yet. The promise settles when both are done.
+  // <html> gets data-bunk-rendered once they are, for bunk-gui.
   function render() {
     var root = doc();
-    return Promise.all([typeset(root).catch(warn), diagrams(root).catch(warn)]);
+    return Promise.all([typeset(root).catch(warn), diagrams(root).catch(warn)]).then(function () {
+      document.documentElement.setAttribute('data-bunk-rendered', '');
+    });
   }
 
   // place returns the topmost heading at or above the top of the viewport
@@ -174,6 +221,8 @@
       before[hash] = true;
       if (h.classList.contains('bunk-changed')) marked[hash] = true;
     });
+    document.documentElement.removeAttribute('data-bunk-problems');
+    document.documentElement.removeAttribute('data-bunk-rendered');
     root.innerHTML = html;
     var changed = 0;
     root.querySelectorAll('[data-bunk-hash]').forEach(function (h) {

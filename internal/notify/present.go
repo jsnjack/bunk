@@ -35,6 +35,10 @@ terminal UI and outside bunk it opens in the web browser, or in its
 default application. On a host reached over ssh, or without a graphical
 display, it says that it cannot show the file. It prints one line saying
 which happened and exits 0; a missing file or one it cannot show exits 1.
+In bunk-gui it waits for the page to load, at most a few seconds, and
+then lists the problems it had: diagrams or math that do not parse,
+script errors, files it could not load, content its policy blocked. Fix
+them and run it again to check again.
 Agents run it only inside bunk, where BUNK_NOTIFY_SESSION is set, and
 never open a browser on their own.
 
@@ -165,12 +169,12 @@ func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
 	}
 	socket, token := lookupEnv(env, EnvSocket), lookupEnv(env, EnvSession)
 	if socket != "" && token != "" {
-		reply, err := Present(socket, token, path, false)
+		reply, problems, err := PresentCheck(socket, token, path)
 		if err != nil {
 			slog.Debug("present: request", "err", err)
 		}
 		if reply == PresentShown {
-			write(stdout, "Showing "+name+" in bunk-gui's side panel.\n")
+			write(stdout, "Showing "+name+" in bunk-gui's side panel.\n"+problemReport(problems))
 			return 0
 		}
 	}
@@ -198,6 +202,25 @@ func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
 	}
 	write(stdout, "Opened "+name+" in "+where+".\n")
 	return 0
+}
+
+// problemReport tells the agent what was wrong with the page bunk-gui
+// showed, or is "" when nothing was.
+func problemReport(problems []string) string {
+	if len(problems) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if len(problems) == 1 {
+		b.WriteString("The page has a problem:\n")
+	} else {
+		fmt.Fprintf(&b, "The page has %d problems:\n", len(problems))
+	}
+	for _, p := range problems {
+		b.WriteString("- " + p + "\n")
+	}
+	b.WriteString("Fix them in the file: the panel reloads it. Run this command again to check the page again.\n")
+	return b.String()
 }
 
 // displayPath writes path relative to the working directory when it lies

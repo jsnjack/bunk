@@ -191,6 +191,16 @@ static void bp_find(uintptr_t v, const char* text, int op) {
 	}
 }
 
+// bp_add_script runs src in bunk's isolated script world of every page
+// the view loads, before the page's own scripts.
+static void bp_add_script(uintptr_t v, const char* src) {
+	WebKitUserContentManager* m = webkit_web_view_get_user_content_manager(WEBKIT_WEB_VIEW((gpointer)v));
+	WebKitUserScript* s = webkit_user_script_new_for_world(src, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
+		WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, "bunk", NULL, NULL);
+	webkit_user_content_manager_add_script(m, s);
+	webkit_user_script_unref(s);
+}
+
 static void bp_set_zoom(uintptr_t v, double level) { webkit_web_view_set_zoom_level(WEBKIT_WEB_VIEW((gpointer)v), level); }
 
 static void bp_set_bg(uintptr_t v, double r, double g, double b) {
@@ -229,6 +239,8 @@ import (
 	"unsafe"
 
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+
+	"bunk/internal/present"
 )
 
 // presentScheme is the URI scheme that serves documents and their assets
@@ -253,6 +265,9 @@ func (a *App) newWebView(pn *panel) *webView {
 	ptr := C.bp_view_new(C.int(v.id))
 	v.ptr = uintptr(unsafe.Pointer(ptr))
 	v.widget = wrapWidget(unsafe.Pointer(ptr))
+	catcher := C.CString(present.ProblemCatcherScript)
+	defer C.free(unsafe.Pointer(catcher))
+	C.bp_add_script(C.uintptr_t(v.ptr), catcher)
 	return v
 }
 

@@ -33,6 +33,21 @@ const (
 // maxReply caps the reply a client reads.
 const maxReply = 64
 
+// checkWait is how long a front end waits for a checked document's page to
+// load before it replies; a client of a check waits checkSlack longer.
+const (
+	checkWait  = 5 * time.Second
+	checkSlack = 2 * time.Second
+)
+
+// The lines of a check's reply after the first: one per problem, at most
+// maxProblems of at most maxProblemBytes.
+const (
+	problemPrefix   = "problem: "
+	maxProblems     = 12
+	maxProblemBytes = 300
+)
+
 // Send delivers m to the server listening on socket. It checks that the
 // server runs as this user and does not wait for a reply.
 func Send(socket string, m Message) error {
@@ -69,16 +84,30 @@ func Present(socket, token, path string, auto bool) (string, error) {
 }
 
 func presentAs(socket, token, path string, auto bool, uid int) (reply string, err error) {
-	if token == "" {
-		return "", fmt.Errorf("present: %w", errToken)
+	reply, _, err = presentRequest(socket, wire.Report{Session: token, Event: wire.EventPresent, Path: path, Auto: auto}, uid)
+	return reply, err
+}
+
+// PresentCheck is Present for the agent or the user asking: the front end
+// replies once the document's page has loaded, or after a few seconds,
+// with the problems it had, such as a diagram that does not parse, a
+// script error or a file the page could not load. A front end that does
+// not check replies at once, without problems.
+func PresentCheck(socket, token, path string) (reply string, problems []string, err error) {
+	return presentRequest(socket, wire.Report{Session: token, Event: wire.EventPresent, Path: path, Check: true}, os.Getuid())
+}
+
+func presentRequest(socket string, r wire.Report, uid int) (reply string, problems []string, err error) {
+	if r.Session == "" {
+		return "", nil, fmt.Errorf("present: %w", errToken)
 	}
-	line, err := wire.Report{Session: token, Event: wire.EventPresent, Path: path, Auto: auto}.Encode()
+	line, err := r.Encode()
 	if err != nil {
-		return "", fmt.Errorf("present: %w", err)
+		return "", nil, fmt.Errorf("present: %w", err)
 	}
 	c, err := connect(socket, uid)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer func() {
 		if cerr := c.Close(); cerr != nil && err == nil {
@@ -86,23 +115,35 @@ func presentAs(socket, token, path string, auto bool, uid int) (reply string, er
 		}
 	}()
 	if _, err := c.Write(line); err != nil {
-		return "", fmt.Errorf("present: send: %w", err)
+		return "", nil, fmt.Errorf("present: send: %w", err)
 	}
 	// An older server reads on until the end of input or its deadline.
 	if err := c.CloseWrite(); err != nil {
-		return "", fmt.Errorf("present: send: %w", err)
+		return "", nil, fmt.Errorf("present: send: %w", err)
 	}
-	if err := c.SetReadDeadline(time.Now().Add(clientTimeout)); err != nil {
-		return "", fmt.Errorf("present: set deadline: %w", err)
+	timeout, limit := clientTimeout, int64(maxReply)
+	if r.Check {
+		timeout, limit = checkWait+checkSlack, int64(maxReply+maxProblems*(len(problemPrefix)+maxProblemBytes+len("…")+1))
 	}
-	got, err := bufio.NewReaderSize(io.LimitReader(c, maxReply), maxReply).ReadString('\n')
+	if err := c.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return "", nil, fmt.Errorf("present: set deadline: %w", err)
+	}
+	in := bufio.NewReader(io.LimitReader(c, limit))
+	got, err := in.ReadString('\n')
 	switch {
 	case errors.Is(err, io.EOF) && got == "":
-		return PresentUnsupported, nil
+		return PresentUnsupported, nil, nil
 	case err != nil && !errors.Is(err, io.EOF):
-		return "", fmt.Errorf("present: read reply: %w", err)
+		return "", nil, fmt.Errorf("present: read reply: %w", err)
 	}
-	return strings.TrimSpace(got), nil
+	for err == nil {
+		var l string
+		l, err = in.ReadString('\n')
+		if p, ok := strings.CutPrefix(strings.TrimRight(l, "\n"), problemPrefix); ok {
+			problems = append(problems, p)
+		}
+	}
+	return strings.TrimSpace(got), problems, nil
 }
 
 // connect dials the server on socket and checks that it runs as uid. The

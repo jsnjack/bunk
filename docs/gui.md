@@ -285,6 +285,20 @@ panel gives the panes their width back.
   keeps the reader at the same heading and marks the sections whose
   `data-bunk-hash` changed; HTML loads again and scrolls back. A page
   whose web process ends loads again once until its file changes.
+- Page problems (`present/problems.go`): every view runs
+  `ProblemCatcherScript` in bunk's isolated world before the page's own
+  scripts; DOM events reach every world, so it records the page's script
+  errors, unhandled rejections and policy violations. The page runtime
+  records diagrams and formulas that do not parse in `<html
+  data-bunk-problems>` and sets `data-bunk-rendered` once it has drawn.
+  Files of the document's origin that were not served come from
+  `serveScheme` (`webView.notServed`). `panel.collect` reads them all once
+  the page has drawn (`ProblemsScript`, at most `collectWait`), shows the
+  count in the status line and answers the checks of `bunk present`
+  (`notify.Presenter`'s check, `addCheck`); `panelDoc.pending` keeps a
+  check from reading a page while its new version loads. A change of the
+  file while its page is still loading whole (`inFlight`) loads it again,
+  rather than swap the new text into the page on its way.
 - Before an HTML page loads again, or another document takes the view,
   `present.SaveStateScript` reads in bunk's isolated world which
   `<details>` are open, what form controls hold and which tabs

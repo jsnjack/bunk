@@ -208,8 +208,8 @@ func runApp(cfg config, debug, trace bool) error {
 		a.notify = srv
 		// "bunk present FILE" shows FILE in the panel of the tab whose
 		// pane asked (panel.go); the work happens on the main thread.
-		srv.SetPresenter(func(token, path string, auto bool) bool {
-			coreglib.IdleAdd(func() { a.presentFor(token, path, auto) })
+		srv.SetPresenter(func(token, path string, auto bool, check func([]string)) bool {
+			coreglib.IdleAdd(func() { a.presentFor(token, path, auto, check) })
 			return true
 		})
 		logs.always("Listening on " + srv.Path())

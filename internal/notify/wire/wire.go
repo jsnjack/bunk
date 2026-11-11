@@ -72,6 +72,10 @@ type Report struct {
 	// or the user asking.
 	Path string `json:"path,omitempty"`
 	Auto bool   `json:"auto,omitempty"`
+	// Check asks for the problems the document's page had once it loaded,
+	// in lines after the reply. A front end that does not check replies at
+	// once, as before.
+	Check bool `json:"check,omitempty"`
 }
 
 var (

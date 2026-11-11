@@ -580,3 +580,61 @@ func TestGUIPresentKeepsState(t *testing.T) {
 		},
 	})
 }
+
+// TestGUIPresentProblems checks documents as "bunk present" does: the
+// check gets the page's problems once it has drawn, and the status line
+// counts them. A Markdown document reports a diagram and a formula that
+// do not parse and an image that is not there; an HTML page reports a
+// script error, a remote image its policy blocked and a missing file. A
+// fixed file loads again before the next check, which finds nothing.
+func TestGUIPresentProblems(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost: 2,
+		args: []string{"--size", "100x30"},
+		files: map[string]string{
+			"broken.md": "# Broken\n\n```mermaid\ngraph LR\n  A -->\n```\n\n$\\frac{1}{$\n\n![shot](missing.png)\n",
+			"page.html": `<!doctype html><html><head><title>P</title><script src="bunk-present://assets/bunk-doc.js" defer></script></head>` +
+				`<body><h1>P</h1><script>undefinedFunction();</script><img src="https://example.com/x.png"><img src="gone.png">` +
+				`<pre class="mermaid">graph LR; A-->B</pre></body></html>`,
+		},
+		script: []string{
+			"wait focused.line=$",
+			"present broken.md check",
+			"wait tab.1.panel.checked.#=3",
+			"snap broken",
+			"present page.html check",
+			"wait tab.1.panel.checked.#=3",
+			"snap page",
+			"type printf '# Fixed\\\\n' > broken.md && echo fixed-$((40+2))\\r",
+			"wait focused.text~fixed-42",
+			"present broken.md check",
+			"wait tab.1.panel.checked!=null tab.1.panel.current=0",
+			"snap fixed",
+			"present-eval document.querySelector('h1').textContent",
+			"wait tab.1.panel.eval=Fixed",
+			"quit",
+		},
+	})
+	has := func(label string, want ...string) {
+		t.Helper()
+		pn := g.snap(label).Tabs[0].Panel
+		if pn.Checked == nil {
+			t.Fatalf("%s: no check answered", label)
+		}
+		all := strings.Join(*pn.Checked, "\n")
+		for _, w := range want {
+			if !strings.Contains(all, w) {
+				t.Errorf("%s: problems lack %q:\n%s", label, w, all)
+			}
+		}
+		if !strings.HasPrefix(pn.Status, "3 problems · ") {
+			t.Errorf("%s: status %q", label, pn.Status)
+		}
+	}
+	has("broken", "Mermaid diagram 1: Parse error", "math 1: KaTeX parse error", "cannot load missing.png: not found")
+	if pn := g.snap("fixed").Tabs[0].Panel; pn.Checked == nil || len(*pn.Checked) != 0 || strings.Contains(pn.Status, "problem") {
+		t.Errorf("the fixed document: problems %v, status %q", pn.Checked, pn.Status)
+	}
+	has("page", "script error: ", "undefinedFunction", "blocked https://example.com/x.png", "cannot load gone.png: not found")
+}

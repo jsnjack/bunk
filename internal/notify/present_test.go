@@ -31,8 +31,11 @@ func startPresenter(t *testing.T, show bool) (*Server, string, fakeTarget, chan 
 	t.Helper()
 	srv, token, target := startServer(t)
 	got := make(chan presented, 16)
-	srv.SetPresenter(func(token, path string, auto bool) bool {
+	srv.SetPresenter(func(token, path string, auto bool, check func([]string)) bool {
 		got <- presented{token, path, auto}
+		if check != nil {
+			check(nil)
+		}
 		return show
 	})
 	return srv, token, target, got
@@ -889,5 +892,89 @@ func TestSkillText(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("the skill lacks %q", want)
 		}
+	}
+}
+
+// TestPresentCheck: a check's reply waits for the page's problems, which
+// follow it, while reports keep reaching their targets; a page that never
+// finishes counts as a problem after checkWait; a hook's request is never
+// checked, and an old server's one-line reply has no problems. The CLI
+// prints the problems after its line.
+func TestPresentCheck(t *testing.T) {
+	srv, token, target := startServer(t)
+	checks := make(chan func([]string), 4)
+	srv.SetPresenter(func(token, path string, auto bool, check func([]string)) bool {
+		checks <- check
+		return true
+	})
+	type result struct {
+		reply    string
+		problems []string
+		err      error
+	}
+	ask := func() chan result {
+		ch := make(chan result, 1)
+		go func() {
+			reply, problems, err := PresentCheck(srv.Path(), token, "/home/u/docs/plan.md")
+			ch <- result{reply, problems, err}
+		}()
+		return ch
+	}
+	res := ask()
+	check := <-checks
+	if check == nil {
+		t.Fatal("a check reached the presenter without a check function")
+	}
+	// The server keeps serving while the check waits.
+	if err := Send(srv.Path(), Message{Session: token, Event: session.EventClear, Text: "meanwhile"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-target:
+		if r.text != "meanwhile" {
+			t.Fatalf("report %+v", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a waiting check held up a report")
+	}
+	long := strings.Repeat("x", 2*maxProblemBytes)
+	check([]string{"Mermaid diagram 1: Parse error\non line 2", long})
+	r := <-res
+	if r.err != nil || r.reply != PresentShown || len(r.problems) != 2 || r.problems[0] != "Mermaid diagram 1: Parse error on line 2" {
+		t.Fatalf("PresentCheck = %+v", r)
+	}
+	if !strings.HasSuffix(r.problems[1], "…") || len(r.problems[1]) > maxProblemBytes+len("…") {
+		t.Errorf("a long problem came back %d bytes long", len(r.problems[1]))
+	}
+
+	srv.mu.Lock()
+	srv.checkWait = 50 * time.Millisecond
+	srv.mu.Unlock()
+	res = ask()
+	<-checks // never called
+	if r := <-res; r.reply != PresentShown || len(r.problems) != 1 || !strings.Contains(r.problems[0], "had not finished loading") {
+		t.Fatalf("a check without an answer: %+v", r)
+	}
+
+	if reply, err := Present(srv.Path(), token, "/home/u/docs/plan.md", true); err != nil || reply != PresentShown {
+		t.Fatalf("hook: %q, %v", reply, err)
+	}
+	if check := <-checks; check != nil {
+		t.Error("a hook's request was checked")
+	}
+
+	// The CLI prints the problems after its line.
+	srv.SetPresenter(func(token, path string, auto bool, check func([]string)) bool {
+		check([]string{"cannot load img/flow.png: not found"})
+		return true
+	})
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "plan.md"), "# Plan\n")
+	t.Chdir(dir)
+	var stdout bytes.Buffer
+	code := runPresent("bunk-gui", []string{"plan.md"}, []string{EnvSocket + "=" + srv.Path(), EnvSession + "=" + token}, nil, &stdout, io.Discard)
+	want := "Showing plan.md in bunk-gui's side panel.\nThe page has a problem:\n- cannot load img/flow.png: not found\n"
+	if code != 0 || !strings.HasPrefix(stdout.String(), want) {
+		t.Fatalf("exit %d:\n%s\nwant it to start:\n%s", code, stdout.String(), want)
 	}
 }
