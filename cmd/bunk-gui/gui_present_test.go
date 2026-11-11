@@ -470,3 +470,60 @@ func TestGUIPresentLinks(t *testing.T) {
 		t.Errorf("documents after the hidden link: %+v", end.Docs)
 	}
 }
+
+// TestGUIPresentFindZoom finds and zooms in the panel with the keys of
+// the search and text size actions, which do so while the panel has the
+// keyboard. The find bar counts the matches and steps through them; Esc
+// closes it. Zoom scales the pages, not the terminal's text, and shows in
+// the status line. In the pane the same keys act on the terminal.
+func TestGUIPresentFindZoom(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost: 2,
+		args: []string{"--size", "100x30"},
+		files: map[string]string{
+			"plan.md": "# Plan\n\nA needle here.\n\n" + filler(30) + "Another needle.\n\n" + filler(30) + "The last needle.\n",
+		},
+		script: []string{
+			"maximize",
+			"wait window.maximized=true focused.line=$",
+			"present plan.md",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"ptr-at doc h1",
+			"ptr-click",
+			"wait keyboard_focus=panel",
+			"kbd ctrl+f",
+			"wait keyboard_focus=\"panel find\"",
+			"kbd-type needle",
+			"wait tab.1.panel.find.count=1/3",
+			"kbd Return",
+			"wait tab.1.panel.find.count=2/3",
+			"kbd ctrl+p",
+			"wait tab.1.panel.find.count=1/3",
+			"kbd ctrl+p",
+			"wait tab.1.panel.find.count=3/3",
+			"present-wait window.scrollY > 0",
+			"snap found",
+			"kbd Escape",
+			"wait tab.1.panel.find=null keyboard_focus=panel",
+			"kbd ctrl+equal",
+			"wait tab.1.panel.zoom=110 text_percent=100",
+			"kbd ctrl+minus",
+			"kbd ctrl+minus",
+			"wait tab.1.panel.zoom=90",
+			"kbd ctrl+0",
+			"wait tab.1.panel.zoom=100",
+			"kbd ctrl+equal",
+			"wait tab.1.panel.zoom=110 tab.1.panel.status~110%",
+			"ptr-at pane 0",
+			"ptr-click",
+			"wait keyboard_focus=\"pane 0\"",
+			"kbd ctrl+equal",
+			"wait text_percent>100 tab.1.panel.zoom=110",
+			"quit",
+		},
+	})
+	if f := g.snap("found").Tabs[0].Panel.Find; f == nil || f.Query != "needle" {
+		t.Errorf("find bar: %+v", f)
+	}
+}

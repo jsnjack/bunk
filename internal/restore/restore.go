@@ -58,6 +58,8 @@ type Panel struct {
 	Current int      `json:"current"`
 	Open    bool     `json:"open,omitempty"`
 	Width   int      `json:"width,omitempty"`
+	// Zoom scales the panel's pages; 0 is their own size.
+	Zoom float64 `json:"zoom,omitempty"`
 }
 
 // Node is a pane (Pane set) or a split of two nodes. Ratio is the share of

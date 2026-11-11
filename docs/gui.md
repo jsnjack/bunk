@@ -252,6 +252,13 @@ panel gives the panes their width back.
   page content in its sandboxed web process. Permission requests are
   denied, and a navigation leaves the document only when the user
   clicks a link, which opens in the browser.
+- While the keyboard is in the panel (`App.focusedPanel`), the search
+  action opens a find bar over the page (`panelFind`, WebKit's find
+  controller: case-insensitive, wrapping, counted through
+  `counted-matches`), and the text size actions zoom the panel's pages
+  through `zoomSteps` (`panel.zoom`, kept by session restore). Passthrough
+  of the focused pane does not hold keys there. The keys stay the user's:
+  no action got a new default key.
 - A link the user clicks to another file of the document's origin is
   presented as a document of its own (`panel.follow`), under the panel's
   limits (`docFile`), and scrolls to the link's fragment (`anchor`). Had
@@ -310,7 +317,8 @@ panel gives the panes their width back.
   `present-back`, and point at an element of the page with
   `ptr-at doc SELECTOR`
   (`TestGUIPresentMarkdown`, `TestGUIPresentHTML`, `TestGUIPresentListed`,
-  `TestGUIPresentLinks`).
+  `TestGUIPresentLinks`, `TestGUIPresentFindZoom`). `keyboard_focus` is
+  `panel` or `panel find` there.
 
 ## Session restore
 

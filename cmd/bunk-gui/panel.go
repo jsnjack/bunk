@@ -97,6 +97,9 @@ type panel struct {
 	// ptrRects holds, for window tests (ptr-at doc SELECTOR), the
 	// rectangle each selector's element had in the page, as JSON.
 	ptrRects map[string]string
+	// zoom scales the panel's pages; 0 or 1 is their own size.
+	zoom   float64
+	finder *panelFind
 	// placing: the panel waits for GTK to lay the tab out before it takes
 	// its width (reveal); until then GTK's own position is not the user's.
 	placing bool
@@ -107,6 +110,7 @@ type panel struct {
 	// picking: the drop-down is being rebuilt; its selection signal is ours.
 	picking bool
 
+	overlay *gtk.Overlay
 	compose *composeBox
 	sent    string // the last question pasted into a pane (report)
 	eval    string // the last test evaluation (report, --do present-eval)
@@ -170,7 +174,9 @@ func (a *App) newPanel(t *Tab) *panel {
 	pn.view.widget.SetHExpand(true)
 	pn.view.widget.SetVExpand(true)
 	pn.view.setBackground(a.theme.Background.Hex())
-	pn.box.Append(pn.view.widget)
+	pn.overlay = gtk.NewOverlay()
+	pn.overlay.SetChild(pn.view.widget)
+	pn.box.Append(pn.overlay)
 
 	pn.status = gtk.NewLabel("")
 	pn.status.AddCSSClass("bunk-panel-status")
@@ -553,6 +559,9 @@ func (pn *panel) updateStatus() {
 		}
 		pn.status.SetText(text + " · " + tildePath(d.path))
 	}
+	if z := pn.zoomPercent(); z != 100 && d != nil && d.broken == "" {
+		pn.status.SetText(pn.status.Text() + " · " + strconv.Itoa(z) + "%")
+	}
 	pn.status.SetTooltipText(func() string {
 		if d == nil {
 			return ""
@@ -729,6 +738,9 @@ func (pn *panel) loaded() {
 		return
 	}
 	d.loaded = true
+	if f := pn.finder; f != nil && f.query != "" {
+		pn.view.find(f.query, 0) // the new page's matches
+	}
 	if d.anchor != "" {
 		pn.scrollToAnchor(d)
 	} else if y, err := strconv.Atoi(d.scrollY); err == nil && y > 0 {
@@ -1104,16 +1116,23 @@ func (pn *panel) themeChanged() {
 
 // panelReport is a tab's document panel in --report.
 type panelReport struct {
-	Open    bool        `json:"open"`
-	Rect    *rectReport `json:"rect,omitempty"` // nil while hidden
-	Docs    []docReport `json:"docs"`
-	Current int         `json:"current"` // index into docs, -1 when none
-	Status  string      `json:"status"`
-	Ask     *askReport  `json:"ask,omitempty"` // the question popover while it is open
-	AskBtn  *rectReport `json:"ask_button,omitempty"`
-	Sent    string      `json:"sent"` // the last question pasted into a pane
-	Eval    string      `json:"eval"` // the result of the last --do present-eval
-	Back    bool        `json:"back"` // the Back button is enabled
+	Open    bool             `json:"open"`
+	Rect    *rectReport      `json:"rect,omitempty"` // nil while hidden
+	Docs    []docReport      `json:"docs"`
+	Current int              `json:"current"` // index into docs, -1 when none
+	Status  string           `json:"status"`
+	Ask     *askReport       `json:"ask,omitempty"` // the question popover while it is open
+	AskBtn  *rectReport      `json:"ask_button,omitempty"`
+	Sent    string           `json:"sent"`           // the last question pasted into a pane
+	Eval    string           `json:"eval"`           // the result of the last --do present-eval
+	Back    bool             `json:"back"`           // the Back button is enabled
+	Zoom    int              `json:"zoom"`           // the pages' scale in percent
+	Find    *panelFindReport `json:"find,omitempty"` // the find bar while it is open
+}
+
+type panelFindReport struct {
+	Query string `json:"query"`
+	Count string `json:"count"` // as the bar shows it: "2/5"
 }
 
 type docReport struct {
@@ -1139,7 +1158,10 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 	if pn == nil {
 		return nil
 	}
-	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive()}
+	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent()}
+	if f := pn.finder; f != nil {
+		r.Find = &panelFindReport{Query: f.query, Count: f.count.Text()}
+	}
 	if pn.open && a.active == t {
 		r.Rect = a.widgetRect(g, pn.box)
 		r.AskBtn = a.widgetRect(g, pn.askBtn)
@@ -1278,7 +1300,8 @@ func (a *App) docTarget(selector string) (float64, float64, error) {
 	if !ok {
 		return 0, 0, errors.New("the document view is not shown")
 	}
-	return x + c[0], y + c[1], nil
+	z := float64(pn.zoomPercent()) / 100 // CSS pixels to the view's
+	return x + c[0]*z, y + c[1]*z, nil
 }
 
 // docRectScript returns the centre of the element a selector picks, in the
@@ -1297,7 +1320,7 @@ func (t *Tab) panelSnapshot() *restore.Panel {
 	if pn == nil || len(pn.docs) == 0 {
 		return nil
 	}
-	rp := &restore.Panel{Open: pn.open, Width: pn.width}
+	rp := &restore.Panel{Open: pn.open, Width: pn.width, Zoom: pn.zoom}
 	for i, d := range pn.docs {
 		rp.Docs = append(rp.Docs, d.path)
 		if d == pn.cur {
@@ -1333,6 +1356,7 @@ func (t *Tab) restorePanel(rp restore.Panel) {
 		return
 	}
 	pn.width = rp.Width
+	pn.setZoom(rp.Zoom)
 	if !rp.Open {
 		// Listed: it loads when the panel opens (toggle), so hidden
 		// panels start no web process.
@@ -1374,4 +1398,184 @@ func (a *App) presentWait(expr string, next func()) {
 		})
 	}
 	try()
+}
+
+// panelFind is the find bar of a panel: WebKit finds the text in the
+// shown page, highlights every match and scrolls to the current one.
+type panelFind struct {
+	bar   *gtk.Box
+	entry *gtk.Entry
+	count *gtk.Label
+	query string
+	total int // matches WebKit counted
+	idx   int // the current match, from 1; 0 when none
+}
+
+// focusedPanel is the selected tab's panel while it has the keyboard
+// focus: the search and text size actions then find and zoom in its page.
+func (a *App) focusedPanel() *panel {
+	t := a.active
+	if t == nil || t.panel == nil || !t.panel.open || t.panel.cur == nil {
+		return nil
+	}
+	fw := a.win.Focus()
+	if fw == nil || !gtk.BaseWidget(fw).IsAncestor(t.panel.box) {
+		return nil
+	}
+	return t.panel
+}
+
+// openFind shows the find bar over the page, or focuses it again.
+func (pn *panel) openFind() {
+	if f := pn.finder; f != nil {
+		f.entry.GrabFocus()
+		return
+	}
+	a := pn.app
+	f := &panelFind{}
+	f.bar = gtk.NewBox(gtk.OrientationHorizontal, 6)
+	f.bar.AddCSSClass("findbar")
+	f.bar.SetHAlign(gtk.AlignEnd)
+	f.bar.SetVAlign(gtk.AlignStart)
+	f.entry = gtk.NewEntry()
+	f.entry.AddCSSClass("findentry")
+	f.entry.SetPlaceholderText("Find in the document")
+	f.entry.SetWidthChars(22)
+	f.count = label("", "findcount")
+	cl := iconButton("window-close-symbolic", 14, a.withKeys("Close", "search_exit"), "tabclose")
+	cl.SetVAlign(gtk.AlignCenter)
+	cl.ConnectClicked(pn.closeFind)
+	f.bar.Append(f.entry)
+	f.bar.Append(f.count)
+	f.bar.Append(cl)
+	f.entry.ConnectChanged(func() {
+		if pn.finder == f {
+			f.query = f.entry.Text()
+			f.idx, f.total = 0, 0
+			pn.view.find(f.query, 0)
+			pn.showFind()
+		}
+	})
+	pn.overlay.AddOverlay(f.bar)
+	pn.finder = f
+	f.entry.GrabFocus()
+}
+
+// closeFind removes the bar and the highlights, and gives the page the
+// keyboard back.
+func (pn *panel) closeFind() {
+	f := pn.finder
+	if f == nil {
+		return
+	}
+	pn.finder = nil
+	pn.overlay.RemoveOverlay(f.bar)
+	pn.view.find("", 3)
+	if pn.open {
+		pn.view.widget.GrabFocus()
+	}
+}
+
+// findFocused reports the keyboard in the panel's find bar.
+func (pn *panel) findFocused() bool {
+	if pn.finder == nil {
+		return false
+	}
+	fw := pn.app.win.Focus()
+	return fw != nil && gtk.BaseWidget(fw).IsAncestor(pn.finder.entry)
+}
+
+// findAction runs search_next, search_prev and search_exit in the bar.
+func (pn *panel) findAction(name string) bool {
+	f := pn.finder
+	if f == nil {
+		return false
+	}
+	switch name {
+	case "search_next", "search_prev":
+		if f.total == 0 {
+			return true
+		}
+		if name == "search_next" {
+			pn.view.find("", 1)
+			f.idx = f.idx%f.total + 1
+		} else {
+			pn.view.find("", 2)
+			f.idx = (f.idx+f.total-2)%f.total + 1
+		}
+		pn.showFind()
+	case "search_exit":
+		pn.closeFind()
+	}
+	return true
+}
+
+// foundMatches takes WebKit's count of the query's matches; the search
+// has gone to the first.
+func (pn *panel) foundMatches(n int) {
+	f := pn.finder
+	if f == nil {
+		return
+	}
+	f.total = n
+	f.idx = min(1, n)
+	pn.showFind()
+}
+
+func (pn *panel) showFind() {
+	f := pn.finder
+	if f.query == "" {
+		f.count.SetText("")
+		return
+	}
+	f.count.SetText(fmt.Sprintf("%d/%d", f.idx, f.total))
+}
+
+// zoomSteps are the scales the text size actions step through in the
+// panel, as browsers do.
+var zoomSteps = []float64{0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3}
+
+// zoomBy makes the panel's pages larger (dir > 0) or smaller (dir < 0),
+// or their own size (dir 0).
+func (pn *panel) zoomBy(dir int) {
+	if dir == 0 {
+		pn.setZoom(1)
+		return
+	}
+	cur := pn.zoom
+	if cur <= 0 {
+		cur = 1
+	}
+	i := 0
+	for i < len(zoomSteps)-1 && zoomSteps[i] < cur-0.001 {
+		i++
+	}
+	switch {
+	case dir > 0 && zoomSteps[i] > cur+0.001:
+		// between steps: the next one up is this one
+	case dir > 0:
+		i = min(i+1, len(zoomSteps)-1)
+	default:
+		i = max(i-1, 0)
+	}
+	pn.setZoom(zoomSteps[i])
+}
+
+// setZoom scales the panel's pages; z outside the steps' range is taken
+// as their own size.
+func (pn *panel) setZoom(z float64) {
+	if z < zoomSteps[0] || z > zoomSteps[len(zoomSteps)-1] {
+		z = 1
+	}
+	pn.zoom = z
+	pn.view.setZoom(z)
+	pn.updateStatus()
+}
+
+// zoomPercent is the pages' scale in percent.
+func (pn *panel) zoomPercent() int {
+	if pn.zoom <= 0 {
+		return 100
+	}
+	return int(pn.zoom*100 + 0.5)
 }

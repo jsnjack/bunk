@@ -24,6 +24,11 @@ stays while the window resizes.
   previous document, ask the agent about the selected text, preview a
   file, open the document in the web browser, remove it from the list and
   hide the panel.
+- While the panel has the keyboard (click into the document), the keys of
+  Find (Ctrl+F) find in the document, Enter and Ctrl+P step through the
+  matches and Esc closes the bar; the text size keys (Ctrl+=, Ctrl+-,
+  Ctrl+0) zoom the panel's pages, from 50% to 300%. The status line shows a
+  zoom other than 100%, and session restore keeps it.
 - A link to another file beside the document, such as `[the spec](spec.md#api)`,
   opens that file in the panel as a document of its own, at the heading the
   link names. Back returns to the document you came from, and each

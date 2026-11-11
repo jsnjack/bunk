@@ -67,7 +67,7 @@ var keyActions = []keyAction{
 	{"nav_right", "Focus the pane on the right", []string{"alt+right"}},
 	{"scroll_up", "Scroll back", []string{"shift+pgup"}},
 	{"scroll_down", "Scroll forward", []string{"shift+pgdn"}},
-	{"search", "Find in the pane", []string{"ctrl+f", "ctrl+shift+f"}},
+	{"search", "Find in the pane or the document", []string{"ctrl+f", "ctrl+shift+f"}},
 	{"search_next", "Next match (while finding)", []string{"ctrl+n", "enter"}},
 	{"search_prev", "Previous match (while finding)", []string{"ctrl+p"}},
 	{"search_exit", "Close the find bar", []string{"escape"}},

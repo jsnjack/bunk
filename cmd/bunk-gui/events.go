@@ -156,7 +156,7 @@ func (a *App) onShortcut(keyval, keycode uint, state gdk.ModifierType) bool {
 	if !ok {
 		return false
 	}
-	if p := a.activePane(); p != nil && p.passthrough && name != "passthrough" && a.switcher == nil {
+	if p := a.activePane(); p != nil && p.passthrough && name != "passthrough" && a.switcher == nil && a.focusedPanel() == nil {
 		return false
 	}
 	return a.runAction(name, combo.collides())
@@ -197,9 +197,18 @@ func (a *App) runAction(name string, termKey bool) bool {
 	}
 	switch name {
 	case "search_next", "search_prev", "search_exit":
-		// Only while the find bar has the keyboard: Enter and Esc go to the
-		// terminal otherwise.
+		// Only while a find bar has the keyboard: Enter and Esc go to the
+		// terminal, or the document, otherwise.
+		if pn := a.focusedPanel(); pn != nil {
+			return pn.findFocused() && pn.findAction(name)
+		}
 		return a.findFocused() && a.findAction(name)
+	case "search":
+		// In the document panel while it has the keyboard; else below,
+		// in the focused pane.
+		if pn := a.focusedPanel(); pn != nil {
+			return global(pn.openFind)
+		}
 	case "switcher":
 		a.openSwitcher() // toggles
 		return true
@@ -232,12 +241,13 @@ func (a *App) runAction(name string, termKey bool) bool {
 			return false
 		}
 		return global(func() { a.setLayout("rail", !a.railOpen) })
-	case "font_bigger":
-		return global(func() { a.zoom(+1) })
-	case "font_smaller":
-		return global(func() { a.zoom(-1) })
-	case "font_reset":
-		return global(func() { a.zoom(0) })
+	case "font_bigger", "font_smaller", "font_reset":
+		dir := map[string]int{"font_bigger": +1, "font_smaller": -1, "font_reset": 0}[name]
+		// The document panel zooms its pages while it has the keyboard.
+		if pn := a.focusedPanel(); pn != nil {
+			return global(func() { pn.zoomBy(dir) })
+		}
+		return global(func() { a.zoom(dir) })
 	case "menu":
 		return global(func() { a.optionsBtn.Popup() })
 	case "preferences":

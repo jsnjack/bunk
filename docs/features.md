@@ -81,6 +81,8 @@ Agents can show you what they wrote in a panel beside the tab's panes
   panel, or asks for a file in a tab without documents; the `documents`
   and `open_in_panel` actions have no default keys. The header lists the
   tab's documents and opens the shown one in the browser.
+- Click into the document, and Ctrl+F finds in it while the text size keys
+  zoom it, without changing the terminal's text.
 - A link to another file beside the document opens that file as a document
   of its own, at the heading the link names. Back returns to the previous
   document, and each document keeps your place while you read another.

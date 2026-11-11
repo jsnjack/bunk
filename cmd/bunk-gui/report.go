@@ -759,6 +759,12 @@ func (a *App) keyboardFocus() string {
 			return fmt.Sprintf("pane %d", p.id)
 		}
 	}
+	if pn := a.focusedPanel(); pn != nil {
+		if pn.findFocused() {
+			return "panel find"
+		}
+		return "panel"
+	}
 	return "other"
 }
 

@@ -13,6 +13,7 @@ extern void goPresentFailed(int view, char* uri, char* err);
 extern void goPresentAsk(int view);
 extern void goPresentEval(int view, int call, char* value, char* err);
 extern void goPresentCrashed(int view);
+extern void goPresentFindCount(int view, int n);
 
 // One web context, network session and settings serve every document
 // view: the session is ephemeral, so nothing a page stores outlives the
@@ -121,6 +122,10 @@ static gboolean bp_deny(WebKitWebView* v, WebKitPermissionRequest* req, gpointer
 
 static void bp_crashed(WebKitWebView* v, WebKitWebProcessTerminationReason reason, gpointer u) { goPresentCrashed(bp_id(v)); }
 
+static void bp_find_counted(WebKitFindController* fc, guint n, gpointer u) {
+	goPresentFindCount(bp_id(webkit_find_controller_get_web_view(fc)), (int)n);
+}
+
 static void bp_ask(GSimpleAction* act, GVariant* param, gpointer data) { goPresentAsk(GPOINTER_TO_INT(data) - 1); }
 
 // A right-click on selected text offers to ask the agent about it.
@@ -146,6 +151,7 @@ static GtkWidget* bp_view_new(int id) {
 	g_signal_connect(v, "permission-request", G_CALLBACK(bp_deny), NULL);
 	g_signal_connect(v, "context-menu", G_CALLBACK(bp_menu), NULL);
 	g_signal_connect(v, "web-process-terminated", G_CALLBACK(bp_crashed), NULL);
+	g_signal_connect(webkit_web_view_get_find_controller(v), "counted-matches", G_CALLBACK(bp_find_counted), NULL);
 	return GTK_WIDGET(v);
 }
 
@@ -161,6 +167,31 @@ static void bp_view_close(uintptr_t v) {
 static void bp_view_kill(uintptr_t v) { webkit_web_view_terminate_web_process(WEBKIT_WEB_VIEW((gpointer)v)); }
 
 static void bp_load_uri(uintptr_t v, const char* uri) { webkit_web_view_load_uri(WEBKIT_WEB_VIEW((gpointer)v), uri); }
+
+// bp_find finds text in the page, case-insensitively and wrapping
+// around: op 0 starts a search for text (an empty one ends it), 1 and 2
+// go to the next and the previous match, 3 ends the search. A search
+// counts its matches too (counted-matches).
+static void bp_find(uintptr_t v, const char* text, int op) {
+	WebKitFindController* fc = webkit_web_view_get_find_controller(WEBKIT_WEB_VIEW((gpointer)v));
+	guint32 opts = WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE | WEBKIT_FIND_OPTIONS_WRAP_AROUND;
+	switch (op) {
+	case 0:
+		if (!text || !*text) {
+			webkit_find_controller_search_finish(fc);
+			goPresentFindCount(bp_id(webkit_find_controller_get_web_view(fc)), 0);
+			return;
+		}
+		webkit_find_controller_count_matches(fc, text, opts, 10000);
+		webkit_find_controller_search(fc, text, opts, 10000);
+		break;
+	case 1: webkit_find_controller_search_next(fc); break;
+	case 2: webkit_find_controller_search_previous(fc); break;
+	default: webkit_find_controller_search_finish(fc);
+	}
+}
+
+static void bp_set_zoom(uintptr_t v, double level) { webkit_web_view_set_zoom_level(WEBKIT_WEB_VIEW((gpointer)v), level); }
 
 static void bp_set_bg(uintptr_t v, double r, double g, double b) {
 	GdkRGBA c = {r, g, b, 1};
@@ -265,6 +296,24 @@ func (v *webView) setBackground(rgb uint32) {
 		return
 	}
 	C.bp_set_bg(C.uintptr_t(v.ptr), C.double(float64(rgb>>16&0xff)/255), C.double(float64(rgb>>8&0xff)/255), C.double(float64(rgb&0xff)/255))
+}
+
+// find drives WebKit's find controller (bp_find): op 0 searches for
+// text, 1 and 2 go to the next and previous match, 3 ends the search.
+func (v *webView) find(text string, op int) {
+	if v.ptr == 0 {
+		return
+	}
+	cs := C.CString(text)
+	defer C.free(unsafe.Pointer(cs))
+	C.bp_find(C.uintptr_t(v.ptr), cs, C.int(op))
+}
+
+// setZoom scales the page; 1 is its own size.
+func (v *webView) setZoom(level float64) {
+	if v.ptr != 0 {
+		C.bp_set_zoom(C.uintptr_t(v.ptr), C.double(level))
+	}
 }
 
 // eval runs script in the page and calls done with its value: a string as
@@ -375,6 +424,13 @@ func goPresentEval(view, call C.int, value, errText *C.char) {
 		return
 	}
 	done(C.GoString(value), nil)
+}
+
+//export goPresentFindCount
+func goPresentFindCount(view, n C.int) {
+	if v := webViewByID(view); v != nil && v.panel != nil {
+		v.panel.foundMatches(int(n))
+	}
 }
 
 //export goPresentCrashed
