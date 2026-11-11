@@ -638,3 +638,81 @@ func TestGUIPresentProblems(t *testing.T) {
 	}
 	has("page", "script error: ", "undefinedFunction", "blocked https://example.com/x.png", "cannot load gone.png: not found")
 }
+
+// kitPage uses every component of the page runtime's kit.
+const kitPage = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Kit</title>
+<link rel="stylesheet" href="bunk-present://assets/bunk-doc.css">
+<script src="bunk-present://assets/bunk-doc.js" defer></script>
+</head><body><article id="bunk-doc">
+<h1 id="kit">Kit demo</h1>
+<nav class="bunk-toc"></nav>
+<h2 id="status">Status</h2>
+<p>Build <span class="bunk-badge good">passing</span> <span class="bunk-badge warn">2 flaky</span> <span class="bunk-badge bad">1 failing</span> <span class="bunk-badge info">v1.19</span></p>
+<div class="bunk-callout warning"><p class="bunk-callout-title">Warning</p><p>Revocation takes up to five minutes.</p></div>
+<h2 id="options">Options</h2>
+<div class="bunk-tabs">
+<section data-title="Redis"><p>Sessions in Redis, revoked at once.</p></section>
+<section data-title="JWT"><p>Signed tokens, revoked at expiry.</p></section>
+</div>
+<h2 id="data">Data</h2>
+<table class="bunk-sort bunk-filter"><thead><tr><th>Store</th><th>Latency</th><th>Cost</th></tr></thead>
+<tbody><tr><td>Redis</td><td>1.2 ms</td><td>$40</td></tr><tr><td>Postgres</td><td>4 ms</td><td>$25</td></tr><tr><td>JWT</td><td>0 ms</td><td>$0</td></tr></tbody></table>
+<h2 id="flow">Flow</h2>
+<div class="bunk-steps">
+<section data-title="Client sends the token"><p>The browser sends its cookie.</p></section>
+<section data-title="API checks Redis"><p>The API looks the session up.</p></section>
+<section data-title="API answers"><p>200 or 401.</p></section>
+</div>
+<h3 id="change">Change</h3>
+<pre class="bunk-diff">--- a/session.go
++++ b/session.go
+@@ -1,3 +1,3 @@
+ func check(id string) bool {
+-	return cache[id]
++	return redis.Exists(id)
+ }</pre>
+<pre><code>make check-all</code></pre>
+</article></body></html>
+`
+
+// TestGUIPresentKit runs the kit in the panel: an outline, tabs the user
+// clicks (the choice holds when the page reloads), steps, a table that
+// sorts and filters, a coloured diff and a copy button that puts the code
+// on the clipboard. A Markdown table sorts without markup of its own.
+func TestGUIPresentKit(t *testing.T) {
+	t.Parallel()
+	runGUI(t, scenario{
+		cost: 2,
+		args: []string{"--size", "100x30"},
+		files: map[string]string{
+			"kit.html": kitPage,
+			"table.md": "# T\n\n| Name | Size |\n|---|---|\n| b | 10 |\n| a | 9 |\n| c | 100 |\n",
+		},
+		script: []string{
+			"maximize",
+			"wait window.maximized=true focused.line=$",
+			"present kit.html",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"present-wait document.querySelectorAll('[role=tab]').length === 5 && document.querySelectorAll('nav.bunk-toc li').length === 5",
+			"ptr-at doc .bunk-tabs [role=tab]:nth-child(2)",
+			"ptr-click",
+			"present-wait !document.querySelectorAll('.bunk-tabs section')[1].hidden",
+			"present-eval document.querySelector('.bunk-code:last-of-type').scrollIntoView(); 'ok'",
+			"wait tab.1.panel.eval=ok",
+			"ptr-at doc .bunk-code:last-of-type .bunk-copy",
+			"ptr-click",
+			"wait clipboard \"make check-all\"",
+			"type sed -i 's/Kit demo/Kit demo, edited/' kit.html\\r",
+			"wait tab.1.panel.docs.0.reloads=1",
+			"present-wait document.querySelector('h1').textContent === 'Kit demo, edited' && !document.querySelectorAll('.bunk-tabs section')[1].hidden",
+			"present-eval [document.querySelectorAll('pre.bunk-diff .d-add').length, document.querySelectorAll('pre.bunk-diff .d-del').length].join(',')",
+			"wait tab.1.panel.eval=1,1",
+			"present table.md",
+			"wait tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true",
+			"present-eval document.querySelectorAll('th')[1].click(); Array.from(document.querySelectorAll('tbody tr')).map(function (r) { return r.cells[0].textContent; }).join('')",
+			"wait tab.1.panel.eval=abc",
+			"quit",
+		},
+	})
+}

@@ -72,6 +72,9 @@ Agents can show you what they wrote in a panel beside the tab's panes
   button, the tab's menu, the main menu, the `open_in_panel` action) opens a file
   dialog in the focused pane's directory, and files dropped on a tab
   preview as well.
+- Pages get a small kit by markup: sortable and filterable tables, tabs,
+  steps, callouts, badges, an outline, coloured diffs and copy buttons on
+  code. Markdown tables sort on their own, and `[TOC]` adds an outline.
 - Markdown shows GitHub's alerts (`> [!WARNING]`) as callouts, and
   `<details>` sections, `<kbd>` keys and a few other tags.
 - The page reloads when the file changes and keeps your place, the

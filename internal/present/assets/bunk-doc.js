@@ -147,6 +147,7 @@
   function redraw() {
     if (isDark() === dark) return;
     dark = isDark();
+    themeChanged();
     if (!mermaidReady) return;
     mermaidReady = false;
     var root = doc();
@@ -162,6 +163,11 @@
   // <html> gets data-bunk-rendered once they are, for bunk-gui.
   function render() {
     var root = doc();
+    try {
+      kit(root);
+    } catch (err) {
+      warn(err);
+    }
     return Promise.all([typeset(root).catch(warn), diagrams(root).catch(warn)]).then(function () {
       document.documentElement.setAttribute('data-bunk-rendered', '');
     });
@@ -263,7 +269,271 @@
 
   if (scheme.addEventListener) scheme.addEventListener('change', redraw);
 
-  window.bunkDoc = {render: render, anchor: anchor, restore: restore, replace: replace};
+  // ---- The kit: components a page switches on with markup ----
+  //
+  //   table.bunk-sort          headers sort the rows (every Markdown table)
+  //   table.bunk-filter        a box above filters the rows (Markdown
+  //                            tables of more than 10 rows)
+  //   div.bunk-tabs > section[data-title]     tabs
+  //   div.bunk-steps > section[data-title]    one step at a time
+  //   nav.bunk-toc             an outline of the h2 and h3 headings
+  //                            ([TOC] alone in a Markdown paragraph)
+  //   pre.bunk-diff            a unified diff, its lines coloured
+  //                            (```diff in Markdown)
+  //   pre > code               a copy button
+  //
+  // Tabs and steps are role="tab" buttons, so bunk-gui's panel keeps the
+  // one chosen when the page reloads. Each element is set up once.
+
+  var markdown = !!document.querySelector('#bunk-doc.bunk-md');
+
+  function once(el, what) {
+    var done = (el.getAttribute('data-bunk-kit') || '').split(' ');
+    if (done.indexOf(what) >= 0) return false;
+    done.push(what);
+    el.setAttribute('data-bunk-kit', done.join(' ').trim());
+    return true;
+  }
+
+  function make(tag, cls, text) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text !== undefined) el.textContent = text;
+    return el;
+  }
+
+  function slugify(s) {
+    return String(s).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'item';
+  }
+
+  function kit(root) {
+    root.querySelectorAll('table').forEach(function (t) {
+      var rows = t.tBodies.length ? t.tBodies[0].rows.length : 0;
+      if (t.classList.contains('bunk-sort') || (markdown && rows > 1)) sortable(t);
+      if (t.classList.contains('bunk-filter') || (markdown && rows > 10)) filterable(t);
+    });
+    root.querySelectorAll('.bunk-tabs').forEach(function (el) { tabs(el, false); });
+    root.querySelectorAll('.bunk-steps').forEach(function (el) { tabs(el, true); });
+    root.querySelectorAll('nav.bunk-toc').forEach(outline);
+    root.querySelectorAll('pre.bunk-diff').forEach(diffLines);
+    root.querySelectorAll('pre').forEach(copyButton);
+  }
+
+  // cellValue is a cell's sort key: a number when the text is one (with
+  // thousands separators, a sign, a unit or % after it), else the text.
+  function cellValue(cell) {
+    var text = (cell ? cell.textContent : '').trim();
+    var m = text.replace(/[,\u00a0\u202f ]/g, '').match(/^([-+−]?\d*\.?\d+(?:e[-+]?\d+)?)\s*[%a-zA-Zµ]*$/);
+    return m ? {n: parseFloat(m[1].replace('−', '-')), t: text} : {n: NaN, t: text};
+  }
+
+  function sortable(t) {
+    if (!t.tHead || !t.tBodies.length || !once(t, 'sort')) return;
+    t.classList.add('bunk-sort');
+    var heads = t.tHead.rows[0] ? t.tHead.rows[0].cells : [];
+    Array.prototype.forEach.call(heads, function (th, col) {
+      th.tabIndex = 0;
+      th.title = 'Sort by this column';
+      var go = function () {
+        var dir = th.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending';
+        Array.prototype.forEach.call(heads, function (h) { h.removeAttribute('aria-sort'); });
+        th.setAttribute('aria-sort', dir);
+        var body = t.tBodies[0];
+        var rows = Array.prototype.slice.call(body.rows);
+        var keys = rows.map(function (r) { return cellValue(r.cells[col]); });
+        var numeric = keys.every(function (k) { return !isNaN(k.n) || k.t === ''; });
+        var order = rows.map(function (r, i) { return i; });
+        order.sort(function (a, b) {
+          var x = keys[a], y = keys[b];
+          var c = numeric ? (isNaN(x.n) ? -Infinity : x.n) - (isNaN(y.n) ? -Infinity : y.n) :
+            x.t.localeCompare(y.t, undefined, {numeric: true, sensitivity: 'base'});
+          return (dir === 'ascending' ? c : -c) || a - b;
+        });
+        order.forEach(function (i) { body.appendChild(rows[i]); });
+      };
+      th.addEventListener('click', go);
+      th.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          go();
+        }
+      });
+    });
+  }
+
+  function filterable(t) {
+    if (!t.tBodies.length || !once(t, 'filter')) return;
+    var box = make('input', 'bunk-filter-box');
+    box.type = 'search';
+    box.placeholder = 'Filter rows';
+    box.setAttribute('aria-label', 'Filter the rows of the table below');
+    var count = make('span', 'bunk-filter-count');
+    var bar = make('div', 'bunk-filter-bar');
+    bar.appendChild(box);
+    bar.appendChild(count);
+    t.parentNode.insertBefore(bar, t);
+    var apply = function () {
+      var q = box.value.trim().toLowerCase();
+      var rows = t.tBodies[0].rows;
+      var shown = 0;
+      Array.prototype.forEach.call(rows, function (r) {
+        var hit = !q || r.textContent.toLowerCase().indexOf(q) >= 0;
+        r.hidden = !hit;
+        if (hit) shown++;
+      });
+      count.textContent = q ? shown + ' of ' + rows.length : '';
+    };
+    box.addEventListener('input', apply);
+  }
+
+  // tabs makes the sections of el tabs, or with steps a step-through:
+  // numbered buttons, Back and Next, one section shown.
+  function tabs(el, steps) {
+    if (!once(el, steps ? 'steps' : 'tabs')) return;
+    var panes = Array.prototype.filter.call(el.children, function (c) { return c.tagName === 'SECTION'; });
+    if (!panes.length) return;
+    var list = make('div', 'bunk-tablist');
+    list.setAttribute('role', 'tablist');
+    var base = el.id || slugify((panes[0].getAttribute('data-title') || 'tabs')) + '-' + nth(el, steps ? '.bunk-steps' : '.bunk-tabs');
+    var buttons = panes.map(function (p, i) {
+      var head = p.querySelector('h2, h3, h4');
+      var title = p.getAttribute('data-title') || (head ? head.textContent.trim() : (steps ? 'Step ' : 'Tab ') + (i + 1));
+      var b = make('button', 'bunk-tab', steps ? String(i + 1) : title);
+      b.type = 'button';
+      b.id = base + '-tab-' + (i + 1);
+      b.title = title;
+      b.setAttribute('role', 'tab');
+      p.id = p.id || base + '-panel-' + (i + 1);
+      p.setAttribute('role', 'tabpanel');
+      p.setAttribute('aria-labelledby', b.id);
+      b.setAttribute('aria-controls', p.id);
+      list.appendChild(b);
+      return b;
+    });
+    var caption = steps ? make('span', 'bunk-step-title') : null;
+    var prev = steps ? make('button', 'bunk-step-move', '‹ Back') : null;
+    var next = steps ? make('button', 'bunk-step-move', 'Next ›') : null;
+    var cur = 0;
+    var show = function (i) {
+      cur = Math.max(0, Math.min(panes.length - 1, i));
+      panes.forEach(function (p, j) { p.hidden = j !== cur; });
+      buttons.forEach(function (b, j) {
+        b.setAttribute('aria-selected', j === cur ? 'true' : 'false');
+        b.tabIndex = j === cur ? 0 : -1;
+      });
+      if (steps) {
+        caption.textContent = 'Step ' + (cur + 1) + ' of ' + panes.length + ': ' + buttons[cur].title;
+        prev.disabled = cur === 0;
+        next.disabled = cur === panes.length - 1;
+      }
+    };
+    buttons.forEach(function (b, i) {
+      b.addEventListener('click', function () { show(i); });
+      b.addEventListener('keydown', function (e) {
+        var to = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : -1;
+        if (to >= 0 && to < buttons.length) {
+          e.preventDefault();
+          buttons[to].click();
+          buttons[to].focus();
+        }
+      });
+    });
+    var bar = make('div', steps ? 'bunk-step-bar' : 'bunk-tab-bar');
+    if (steps) {
+      prev.type = next.type = 'button';
+      prev.addEventListener('click', function () { buttons[Math.max(0, cur - 1)].click(); });
+      next.addEventListener('click', function () { buttons[Math.min(buttons.length - 1, cur + 1)].click(); });
+      bar.appendChild(prev);
+      bar.appendChild(list);
+      bar.appendChild(next);
+      el.insertBefore(caption, el.firstChild);
+    } else {
+      bar.appendChild(list);
+    }
+    el.insertBefore(bar, el.firstChild);
+    var first = panes.findIndex(function (p) { return p.hasAttribute('data-selected'); });
+    show(first < 0 ? 0 : first);
+  }
+
+  function outline(nav) {
+    if (!once(nav, 'toc')) return;
+    var heads = doc().querySelectorAll('h2[id], h3[id]');
+    if (!heads.length) return;
+    nav.appendChild(make('p', 'bunk-toc-title', nav.getAttribute('data-title') || 'Contents'));
+    var list = make('ul');
+    heads.forEach(function (h) {
+      if (nav.contains(h)) return;
+      var li = make('li', h.tagName === 'H3' ? 'bunk-toc-sub' : '');
+      var a = make('a', '', h.textContent.trim());
+      a.href = '#' + h.id;
+      li.appendChild(a);
+      list.appendChild(li);
+    });
+    nav.appendChild(list);
+  }
+
+  // diffLines colours each line of a unified diff that the page wrote as
+  // plain text; Markdown's diff fences come coloured.
+  function diffLines(pre) {
+    if (!once(pre, 'diff') || pre.querySelector('.d-add, .d-del, .d-ctx')) return;
+    var text = pre.textContent;
+    pre.textContent = '';
+    var code = make('code');
+    text.replace(/\n$/, '').split('\n').forEach(function (line) {
+      code.appendChild(make('span', diffClass(line), line + '\n'));
+    });
+    pre.appendChild(code);
+  }
+
+  function diffClass(line) {
+    if (/^(diff |index |--- |\+\+\+ )/.test(line)) return 'd-file';
+    if (/^@@/.test(line)) return 'd-hunk';
+    if (line[0] === '+') return 'd-add';
+    if (line[0] === '-') return 'd-del';
+    return 'd-ctx';
+  }
+
+  function copyButton(pre) {
+    if (pre.classList.contains('mermaid') || !pre.querySelector('code') || !once(pre, 'copy')) return;
+    var wrap = make('div', 'bunk-code');
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    var b = make('button', 'bunk-copy', 'Copy');
+    b.type = 'button';
+    b.title = 'Copy the code';
+    var said = function (text) {
+      b.textContent = text;
+      setTimeout(function () { b.textContent = 'Copy'; }, 1500);
+    };
+    b.addEventListener('click', function () {
+      var text = pre.querySelector('code').innerText.replace(/\n$/, '');
+      var select = function () {
+        var r = document.createRange();
+        r.selectNodeContents(pre.querySelector('code'));
+        var s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        said('Press Ctrl+C');
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { said('Copied'); }, select);
+      } else {
+        select();
+      }
+    });
+    wrap.appendChild(b);
+  }
+
+  // A page that follows the system's colour scheme tells its own scripts
+  // when it changes: bunk:theme on the document, detail.dark.
+  function themeChanged() {
+    document.dispatchEvent(new CustomEvent('bunk:theme', {detail: {dark: dark}}));
+  }
+
+  window.bunkDoc = {
+    render: render, anchor: anchor, restore: restore, replace: replace,
+    dark: function () { return dark; }
+  };
   // An HTML page may load the runtime in its <head>, before the body.
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () { render(); });

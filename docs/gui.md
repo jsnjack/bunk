@@ -287,6 +287,14 @@ panel gives the panes their width back.
   keeps the reader at the same heading and marks the sections whose
   `data-bunk-hash` changed; HTML loads again and scrolls back. A page
   whose web process ends loads again once until its file changes.
+- The page runtime's kit (`bunk-doc.js`, `kit`): components switched on
+  by markup (sortable and filterable tables, tabs, steps, an outline,
+  diffs, copy buttons) and set up once per element (`data-bunk-kit`), so
+  `bunkDoc.replace` and repeated renders leave them be. Markdown pages
+  carry `class="bunk-md"` on the article, which makes every table
+  sortable and long ones filterable. Copy uses the async clipboard API
+  from the click, which needs no clipboard access setting; where it fails,
+  the code is selected for Ctrl+C.
 - Page problems (`present/problems.go`): every view runs
   `ProblemCatcherScript` in bunk's isolated world before the page's own
   scripts; DOM events reach every world, so it records the page's script

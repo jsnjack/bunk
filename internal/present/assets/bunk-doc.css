@@ -353,3 +353,201 @@ img {
   display: block;
   width: 100%;
 }
+
+/* ---- The kit (bunk-doc.js): components a page switches on with markup ---- */
+
+/* Sortable tables: a header shows the order it sorts in. */
+table.bunk-sort th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+table.bunk-sort th::after {
+  content: " ↕";
+  font-size: 0.75em;
+  color: var(--bunk-muted);
+}
+
+table.bunk-sort th[aria-sort="ascending"]::after { content: " ▲"; color: var(--bunk-accent); }
+table.bunk-sort th[aria-sort="descending"]::after { content: " ▼"; color: var(--bunk-accent); }
+
+.bunk-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+
+.bunk-filter-box,
+.bunk-tab,
+.bunk-step-move,
+.bunk-copy {
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--bunk-fg);
+  background: var(--bunk-code-bg);
+  border: 1px solid var(--bunk-border);
+  border-radius: 6px;
+}
+
+.bunk-filter-box {
+  padding: 3px 8px;
+  min-width: 14em;
+}
+
+.bunk-filter-count {
+  font-size: 0.85em;
+  color: var(--bunk-muted);
+}
+
+/* Tabs and steps. */
+.bunk-tabs, .bunk-steps {
+  margin: 0 0 1em;
+}
+
+.bunk-tab-bar, .bunk-step-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  flex-wrap: wrap;
+}
+
+.bunk-tablist {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.bunk-tab-bar .bunk-tablist {
+  border-bottom: 1px solid var(--bunk-border);
+  width: 100%;
+}
+
+.bunk-tab-bar .bunk-tab {
+  padding: 5px 12px;
+  margin-bottom: -1px;
+  border-radius: 6px 6px 0 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--bunk-muted);
+  cursor: pointer;
+}
+
+.bunk-tab-bar .bunk-tab[aria-selected="true"] {
+  color: var(--bunk-fg);
+  background: var(--bunk-bg);
+  border-color: var(--bunk-border);
+  border-bottom-color: var(--bunk-bg);
+  font-weight: 600;
+}
+
+.bunk-step-bar .bunk-tab {
+  min-width: 2em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.bunk-step-bar .bunk-tab[aria-selected="true"] {
+  color: var(--bunk-bg);
+  background: var(--bunk-accent);
+  border-color: var(--bunk-accent);
+}
+
+.bunk-step-move {
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.bunk-step-move:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.bunk-step-title {
+  display: block;
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+/* The outline of [TOC] and nav.bunk-toc. */
+nav.bunk-toc {
+  margin: 0 0 1.2em;
+  padding: 8px 14px;
+  border: 1px solid var(--bunk-border);
+  border-radius: 6px;
+}
+
+.bunk-toc-title {
+  margin: 0 0 0.3em;
+  font-weight: 600;
+}
+
+nav.bunk-toc ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+nav.bunk-toc li.bunk-toc-sub {
+  margin-left: 1.2em;
+  font-size: 0.95em;
+}
+
+/* Diffs: a line's background says what happened to it. */
+pre.bunk-diff code > span {
+  display: block;
+  margin: 0 -14px;
+  padding: 0 14px;
+}
+
+pre.bunk-diff .d-add { background: color-mix(in srgb, #2da44e 18%, transparent); }
+pre.bunk-diff .d-del { background: color-mix(in srgb, #e5534b 18%, transparent); }
+pre.bunk-diff .d-hunk { color: var(--bunk-accent); }
+pre.bunk-diff .d-file { font-weight: 600; color: var(--bunk-muted); }
+
+/* Code with a copy button in its corner. */
+.bunk-code {
+  position: relative;
+}
+
+.bunk-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 1px 8px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.bunk-code:hover .bunk-copy,
+.bunk-copy:focus {
+  opacity: 1;
+}
+
+/* Badges: <span class="bunk-badge good|warn|bad|info">…</span>. */
+.bunk-badge {
+  --bunk-badge: var(--bunk-muted);
+  display: inline-block;
+  padding: 0 8px;
+  font-size: 0.8em;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--bunk-badge) 80%, var(--bunk-fg));
+  background: color-mix(in srgb, var(--bunk-badge) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bunk-badge) 45%, transparent);
+}
+
+.bunk-badge.good { --bunk-badge: #2da44e; }
+.bunk-badge.warn { --bunk-badge: #d4a72c; }
+.bunk-badge.bad { --bunk-badge: #e5534b; }
+.bunk-badge.info { --bunk-badge: var(--bunk-accent); }
+
+@media print {
+  .bunk-copy, .bunk-filter-bar { display: none; }
+  .bunk-tabs > section[hidden], .bunk-steps > section[hidden] { display: block; }
+}

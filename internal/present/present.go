@@ -174,8 +174,10 @@ const (
 	assetKatexCSS = "katex/katex.min.css"
 )
 
-// articleOpen starts the element whose content RenderBody returns.
-const articleOpen = `<article id="bunk-doc">`
+// articleOpen starts the element whose content RenderBody returns. Its
+// class tells the page runtime that the page is Markdown, whose tables
+// sort without markup of their own.
+const articleOpen = `<article id="bunk-doc" class="bunk-md">`
 
 // RenderMarkdown returns a complete HTML document for the Markdown src.
 func RenderMarkdown(src []byte, opts Options) ([]byte, error) {

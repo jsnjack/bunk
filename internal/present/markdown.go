@@ -93,14 +93,21 @@ func (docTransformer) Transform(doc *ast.Document, reader text.Reader, pc parser
 			return
 		case *ast.Blockquote:
 			callout(n, src)
+		case *ast.Paragraph:
+			if isTOC(n, src) {
+				n.Parent().ReplaceChild(n.Parent(), n, &tocNode{})
+				return
+			}
 		case *extast.TaskCheckBox:
 			if item, ok := n.Parent().Parent().(*ast.ListItem); ok {
 				item.SetAttributeString("class", []byte("task-list-item"))
 				item.Parent().SetAttributeString("class", []byte("contains-task-list"))
 			}
 		}
-		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		for c := n.FirstChild(); c != nil; {
+			next := c.NextSibling() // visit may replace c
 			visit(c)
+			c = next
 		}
 	}
 	visit(doc)
@@ -257,6 +264,7 @@ type docRenderer struct{}
 func (docRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(ast.KindFencedCodeBlock, renderFencedCode)
 	reg.Register(ast.KindRawHTML, renderRawHTML)
+	reg.Register(kindTOC, renderTOC)
 	reg.Register(ast.KindHTMLBlock, renderHTMLBlock)
 	reg.Register(kindMathInline, renderMathInline)
 	reg.Register(kindMathBlock, renderMathBlock)
@@ -279,12 +287,65 @@ func renderFencedCode(w util.BufWriter, src []byte, node ast.Node, entering bool
 		writeEscaped(&out, `<pre class="mermaid">`, code.Bytes(), "</pre>\n")
 	case "math":
 		writeEscaped(&out, `<div class="math math-display">`, code.Bytes(), "</div>\n")
+	case "diff", "patch":
+		writeDiff(&out, code.Bytes())
 	default:
 		if err := highlight(&out, lang, code.String()); err != nil {
 			return ast.WalkStop, err
 		}
 	}
 	return writeOut(w, &out)
+}
+
+// isTOC reports whether p is "[TOC]" alone.
+func isTOC(p *ast.Paragraph, src []byte) bool {
+	if p.Lines().Len() != 1 {
+		return false
+	}
+	line := p.Lines().At(0)
+	return strings.TrimSpace(string(line.Value(src))) == "[TOC]"
+}
+
+// tocNode is "[TOC]" alone in a paragraph: the page runtime fills it with
+// an outline of the document's h2 and h3 headings.
+type tocNode struct{ ast.BaseBlock }
+
+var kindTOC = ast.NewNodeKind("BunkTOC")
+
+func (*tocNode) Kind() ast.NodeKind { return kindTOC }
+
+func (n *tocNode) Dump(src []byte, level int) { ast.DumpHelper(n, src, level, nil, nil) }
+
+func renderTOC(w util.BufWriter, _ []byte, _ ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkSkipChildren, nil
+	}
+	return writeOut(w, bytes.NewBufferString(`<nav class="bunk-toc"></nav>`+"\n"))
+}
+
+// writeDiff writes a unified diff with each line in a span of its kind:
+// d-file (diff, index, ---, +++), d-hunk (@@), d-add, d-del or d-ctx.
+func writeDiff(b *bytes.Buffer, code []byte) {
+	b.WriteString(`<pre class="bunk-diff"><code>`)
+	for _, line := range strings.SplitAfter(strings.TrimSuffix(string(code), "\n"), "\n") {
+		cls := "d-ctx"
+		switch {
+		case strings.HasPrefix(line, "diff "), strings.HasPrefix(line, "index "),
+			strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
+			cls = "d-file"
+		case strings.HasPrefix(line, "@@"):
+			cls = "d-hunk"
+		case strings.HasPrefix(line, "+"):
+			cls = "d-add"
+		case strings.HasPrefix(line, "-"):
+			cls = "d-del"
+		}
+		if !strings.HasSuffix(line, "\n") {
+			line += "\n"
+		}
+		writeEscaped(b, `<span class="`+cls+`">`, []byte(line), "</span>")
+	}
+	b.WriteString("</code></pre>\n")
 }
 
 // writeOut writes out to w and skips the node's children, which the caller

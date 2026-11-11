@@ -176,6 +176,28 @@ pages use too:
 | `bunk-doc.js` | Mermaid diagrams in `<pre class="mermaid">` and KaTeX math in `<span class="math">` and `<div class="math math-display">`, each library loaded only when the page needs it |
 | `mermaid.min.js`, `katex/katex.min.js`, `katex/katex.min.css` | The libraries themselves |
 
+### The kit
+
+`bunk-doc.js` and `bunk-doc.css` also give pages a few components, switched
+on by markup, so an agent writes the content rather than the widgets:
+
+| Markup | What the reader gets |
+| :- | :- |
+| `<table class="bunk-sort">` | Headers that sort the rows, numbers as numbers. Every Markdown table sorts |
+| `<table class="bunk-filter">` | A box above the table that filters its rows. Markdown tables of more than 10 rows get one |
+| `<div class="bunk-tabs"><section data-title="A">…</section>…</div>` | Tabs, one section shown; `data-selected` picks the first |
+| `<div class="bunk-steps"><section data-title="…">…</section>…</div>` | A step-through: one step at a time, numbered, with Back and Next |
+| `<div class="bunk-callout note">` (`tip`, `important`, `warning`, `caution`) with `<p class="bunk-callout-title">` | A callout; in Markdown, `> [!NOTE]` and the like |
+| `<span class="bunk-badge good">` (`warn`, `bad`, `info`) | A small coloured label |
+| `<nav class="bunk-toc"></nav>`, or `[TOC]` alone in Markdown | An outline of the h2 and h3 headings |
+| `<pre class="bunk-diff">`, or a ` ```diff ` fence | A unified diff with added and removed lines coloured |
+| `<pre><code>` | A copy button in the corner |
+
+Tabs and steps are `role="tab"` buttons, so the panel keeps the one chosen
+when the page reloads. A page whose colours follow the system, as in a
+browser, gets a `bunk:theme` event on `document` when the scheme changes
+(`detail.dark`), and `bunkDoc.dark()` says which it is now.
+
 bunk-gui also puts the theme's colours first in every HTML page's head, as
 `:root` custom properties: `--bunk-bg`, `--bunk-fg`, `--bunk-muted`,
 `--bunk-accent`, `--bunk-border`, `--bunk-code-bg`, `--bunk-selection`, and

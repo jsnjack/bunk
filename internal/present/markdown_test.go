@@ -335,3 +335,26 @@ func TestRawHTMLAllowed(t *testing.T) {
 		}
 	}
 }
+
+// TestKitMarkup: [TOC] alone becomes the outline's placeholder and the
+// headings after it keep their IDs; a diff fence colours its lines; the
+// article says the page is Markdown.
+func TestKitMarkup(t *testing.T) {
+	t.Parallel()
+	body := renderBody(t, "# Doc\n\n[TOC]\n\n## One\n\n## Two\n\n```diff\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old <b>\n+new\n ctx\n```\n")
+	for _, want := range []string{
+		`<nav class="bunk-toc"></nav>`, `<h2 id="one"`, `<h2 id="two"`,
+		`<pre class="bunk-diff"><code><span class="d-file">--- a/x` + "\n</span>",
+		`<span class="d-hunk">@@ -1 +1 @@` + "\n</span>",
+		`<span class="d-del">-old &lt;b&gt;` + "\n</span>",
+		`<span class="d-add">+new` + "\n</span>",
+		`<span class="d-ctx"> ctx` + "\n</span></code></pre>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if page := renderPageString(t, "# Doc\n", Options{}); !strings.Contains(page, `<article id="bunk-doc" class="bunk-md">`) {
+		t.Error("the article does not say the page is Markdown")
+	}
+}
