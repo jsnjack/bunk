@@ -13,10 +13,12 @@ package main
 // agent's pane, without Enter, so the user reviews and sends it.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -629,14 +631,41 @@ func (pn *panel) watch(d *panelDoc) {
 		}
 		ours := false
 		for _, n := range names {
-			if n == base || d.kind.Document() && imageFile(n) || d.kind == present.KindHTML && pageFile(n) {
+			switch {
+			case n == base:
 				ours = true
+			case d.kind == present.KindHTML:
+				ours = ours || imageFile(n) || pageFile(n)
+			case d.kind == present.KindMarkdown && imageFile(n):
+				ours = ours || mentions(d.path, n)
 			}
 		}
 		if ours {
 			pn.changedLater(d)
 		}
 	})
+}
+
+// mentions reports whether the Markdown document at path names the file
+// name, so its page may show it. Other images beside it, such as
+// screenshots saved there, change without changing the page. A document
+// too large to read quickly counts as naming every file.
+func mentions(path, name string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			slog.Debug("present: close", "path", path, "err", err)
+		}
+	}()
+	const limit = 4 << 20
+	src, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || len(src) > limit {
+		return true
+	}
+	return bytes.Contains(src, []byte(name)) || bytes.Contains(src, []byte(url.PathEscape(name)))
 }
 
 // imageFile reports whether name is an image a Markdown document can show.

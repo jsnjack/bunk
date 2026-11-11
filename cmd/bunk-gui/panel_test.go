@@ -134,3 +134,21 @@ func TestEscapePath(t *testing.T) {
 		t.Errorf("escapePath = %q", got)
 	}
 }
+
+// TestMentions: a Markdown document reloads for the images it names,
+// escaped or not, and not for other images saved beside it.
+func TestMentions(t *testing.T) {
+	t.Parallel()
+	doc := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(doc, []byte("# Plan\n\n![flow](flow.png) ![two](my%20chart.svg)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{"flow.png": true, "my chart.svg": true, "shot.png": false} {
+		if got := mentions(doc, name); got != want {
+			t.Errorf("mentions(%q) = %v, want %v", name, got, want)
+		}
+	}
+	if mentions(filepath.Join(t.TempDir(), "gone.md"), "flow.png") {
+		t.Error("a missing document names files")
+	}
+}

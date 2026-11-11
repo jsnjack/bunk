@@ -50,8 +50,10 @@ stays while the window resizes.
   back, and keeps the sections you opened (`<details>`), the tabs you
   chose (`role="tab"`) and what you typed or set in its form controls.
 - A document reloads when its file changes, and when an image beside it
-  does. An HTML page also reloads for the scripts, styles, fonts and media
-  beside it, not for other files, which change all the time in a
+  that it shows does: a Markdown document reloads for the images it names,
+  not for others saved beside it, such as screenshots. An HTML page
+  reloads for any image beside it and for the scripts, styles, fonts and
+  media there, not for other files, which change all the time in a
   directory such as `/tmp`. A preview reloads when its file changes.
 - A page whose web process ends, as when it uses up its memory, loads
   again once. If it ends it again, the status line says so, and it stays

@@ -278,8 +278,9 @@ panel gives the panes their width back.
   in its head, that blocks the network, `file://` and form submission.
   Markdown is rendered without raw HTML. Files are read and rendered
   off the main loop: a 2 MiB Markdown file with code takes 1.5 s.
-- The directory is watched (GFileMonitor). A change of the file, an
-  image or, for HTML, a page's code, style, font or media reloads after
+- The directory is watched (GFileMonitor). A change of the file, of an
+  image the Markdown names (`mentions`) or, for HTML, of an image or a
+  page's code, style, font or media reloads after
   250 ms: Markdown swaps the article in place (`bunkDoc.replace`),
   keeps the reader at the same heading and marks the sections whose
   `data-bunk-hash` changed; HTML loads again and scrolls back. A page
