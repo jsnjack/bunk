@@ -325,6 +325,13 @@ panel gives the panes their width back.
   question is pasted into the pane that presented the document, else the
   tab's agent, as one bracketed paste without Enter; the pane takes the
   focus, and the user sends it. Without bracketed paste it is one line.
+- The question box is a GtkTextView: Enter pastes, Shift+Enter starts a
+  line. "Add to review" keeps the question as a `reviewItem`; the Review
+  button lists them and pastes `reviewMessage` to the first comment's
+  pane. Passages are highlighted with the CSS Custom Highlight API
+  (`present.MarkQuotesScript`, isolated world), which leaves the page's
+  DOM alone, and marked again after each load and swap. A review lives as
+  long as the window: session restore does not keep it.
 - Hook snippets run `present --hook AGENT -` after the agents'
   file-writing tools. A reported Markdown or HTML file is listed in the
   panel; `[present] auto` opens the panel for it. Without it, a document

@@ -132,9 +132,14 @@ type panel struct {
 
 	overlay *gtk.Overlay
 	compose *composeBox
-	sent    string    // the last question pasted into a pane (report)
-	eval    string    // the last test evaluation (report, --do present-eval)
-	checked *[]string // the problems the last --do "present PATH check" got; nil until then
+	// review holds the comments the user collects to paste as one message
+	// (Add to review), in the order added.
+	review    []reviewItem
+	reviewBtn *gtk.Button
+	reviewPop *gtk.Popover
+	sent      string    // the last question pasted into a pane (report)
+	eval      string    // the last test evaluation (report, --do present-eval)
+	checked   *[]string // the problems the last --do "present PATH check" got; nil until then
 }
 
 // composeBox is the question popover of "Ask the agent".
@@ -142,8 +147,9 @@ type composeBox struct {
 	pop     *gtk.Popover
 	title   *gtk.Label
 	quote   *gtk.Label
-	entry   *gtk.Entry
+	view    *gtk.TextView // the question: Enter pastes it, Shift+Enter starts a line
 	send    *gtk.Button
+	add     *gtk.Button // Add to review
 	doc     *panelDoc
 	section string
 	text    string
@@ -185,6 +191,12 @@ func (a *App) newPanel(t *Tab) *panel {
 	head.Append(pn.pick)
 	pn.askBtn = panelButton("chat-message-new-symbolic", "Ask the agent about the selected text", pn.ask)
 	head.Append(pn.askBtn)
+	pn.reviewBtn = gtk.NewButtonWithLabel("Review")
+	pn.reviewBtn.AddCSSClass("flat")
+	pn.reviewBtn.SetTooltipText("The comments of your review, to paste into the agent's input together")
+	pn.reviewBtn.SetVisible(false)
+	pn.reviewBtn.ConnectClicked(pn.openReview)
+	head.Append(pn.reviewBtn)
 	head.Append(panelButton("document-open-symbolic", "Open a file in the panel…", func() { a.pickPreview(t) }))
 	head.Append(panelButton("web-browser-symbolic", "Open in the browser", pn.openExternal))
 	head.Append(panelButton("list-remove-symbolic", "Remove this document from the panel", pn.removeCurrent))
@@ -832,6 +844,7 @@ func (pn *panel) replace(d *panelDoc, body []byte) {
 		d.updated = time.Now()
 		d.pending = false
 		pn.updateStatus()
+		pn.markReview(d)
 		pn.collect(d)
 	})
 }
@@ -986,6 +999,7 @@ func (pn *panel) loaded() {
 	if f := pn.finder; f != nil && f.query != "" {
 		pn.view.find(f.query, 0) // the new page's matches
 	}
+	pn.markReview(d)
 	if d.anchor != "" {
 		pn.scrollToAnchor(d)
 	} else if y, err := strconv.Atoi(d.scrollY); err == nil && y > 0 {
@@ -1087,6 +1101,12 @@ func (pn *panel) drop(d *panelDoc) {
 		}
 	}
 	pn.history = slices.DeleteFunc(pn.history, func(o *panelDoc) bool { return o == d })
+	if n := len(pn.review); n > 0 {
+		pn.review = slices.DeleteFunc(pn.review, func(r reviewItem) bool { return r.doc == d })
+		if len(pn.review) != n {
+			pn.syncReview()
+		}
+	}
 	if d.timer != 0 {
 		coreglib.SourceRemove(d.timer)
 		d.timer = 0
@@ -1190,19 +1210,45 @@ func (pn *panel) openCompose(d *panelDoc, sel selection) {
 		c.quote.SetEllipsize(pango.EllipsizeEnd)
 		c.quote.SetMaxWidthChars(48)
 		c.quote.AddCSSClass("bunk-ask-quote")
-		c.entry = gtk.NewEntry()
-		c.entry.SetPlaceholderText("Your question")
-		c.entry.ConnectActivate(func() { pn.sendQuestion() })
+		c.view = gtk.NewTextView()
+		c.view.SetWrapMode(gtk.WrapWordChar)
+		c.view.SetAcceptsTab(false)
+		c.view.AddCSSClass("bunk-ask-text")
+		keys := gtk.NewEventControllerKey()
+		keys.ConnectKeyPressed(func(keyval, _ uint, state gdk.ModifierType) bool {
+			if (keyval == gdk.KEY_Return || keyval == gdk.KEY_KP_Enter) && state&gdk.ShiftMask == 0 {
+				pn.sendQuestion()
+				return true
+			}
+			return false
+		})
+		c.view.AddController(keys)
+		scroll := gtk.NewScrolledWindow()
+		scroll.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
+		scroll.SetMinContentHeight(56)
+		scroll.SetMaxContentHeight(200)
+		scroll.SetPropagateNaturalHeight(true)
+		scroll.AddCSSClass("bunk-ask-box")
+		scroll.SetChild(c.view)
+		c.add = gtk.NewButtonWithLabel("Add to review")
+		c.add.SetTooltipText("Keep this comment and paste the review's comments together later")
+		c.add.ConnectClicked(pn.addToReview)
 		c.send = gtk.NewButtonWithLabel("Paste into the agent's input")
 		c.send.AddCSSClass("suggested-action")
+		c.send.SetHExpand(true)
 		c.send.ConnectClicked(func() { pn.sendQuestion() })
-		hint := gtk.NewLabel("You press Enter in the pane to send it.")
+		buttons := gtk.NewBox(gtk.OrientationHorizontal, 6)
+		buttons.Append(c.add)
+		buttons.Append(c.send)
+		hint := gtk.NewLabel("Enter pastes it, Shift+Enter starts a new line. You press Enter in the pane to send it.")
 		hint.SetXAlign(0)
+		hint.SetWrap(true)
+		hint.SetMaxWidthChars(48)
 		hint.AddCSSClass("dim-label")
 		box.Append(c.title)
 		box.Append(c.quote)
-		box.Append(c.entry)
-		box.Append(c.send)
+		box.Append(scroll)
+		box.Append(buttons)
 		box.Append(hint)
 		c.pop.SetChild(box)
 		c.pop.ConnectClosed(func() { c.doc = nil })
@@ -1215,9 +1261,16 @@ func (pn *panel) openCompose(d *panelDoc, sel selection) {
 	}
 	c.title.SetText("Ask " + paneAgentName(target) + " about " + about)
 	c.quote.SetText(strings.TrimSpace(sel.Text))
-	c.entry.SetText("")
+	c.view.Buffer().SetText("")
 	c.pop.Popup()
-	c.entry.GrabFocus()
+	c.view.GrabFocus()
+}
+
+// composed is the text of the question box.
+func (c *composeBox) composed() string {
+	buf := c.view.Buffer()
+	start, end := buf.Bounds()
+	return buf.Text(start, end, false)
 }
 
 func paneAgentName(p *Pane) string {
@@ -1240,7 +1293,7 @@ func (pn *panel) sendQuestion() {
 		c.pop.Popdown()
 		return
 	}
-	msg := questionText(displayPath(c.doc.path, target.s.Cwd()), c.section, c.text, c.entry.Text())
+	msg := questionText(displayPath(c.doc.path, target.s.Cwd()), c.section, c.text, c.composed())
 	c.pop.Popdown()
 	target.paste(pasteSafe(target, msg))
 	pn.sent = msg
@@ -1373,6 +1426,7 @@ type panelReport struct {
 	Eval    string           `json:"eval"`           // the result of the last --do present-eval
 	Back    bool             `json:"back"`           // the Back button is enabled
 	Unseen  int              `json:"unseen"`         // documents hooks listed while the panel was hidden
+	Review  []reviewReport   `json:"review"`         // the comments of the review being collected
 	Checked *[]string        `json:"checked"`        // the problems of the last --do "present PATH check"; null until it answers
 	Zoom    int              `json:"zoom"`           // the pages' scale in percent
 	Find    *panelFindReport `json:"find,omitempty"` // the find bar while it is open
@@ -1408,7 +1462,11 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 	if pn == nil {
 		return nil
 	}
-	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent(), Unseen: pn.unseen, Checked: pn.checked}
+	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent(), Unseen: pn.unseen, Checked: pn.checked,
+		Review: []reviewReport{}}
+	for _, it := range pn.review {
+		r.Review = append(r.Review, reviewReport{Doc: it.doc.path, Section: it.section, Quote: it.quote, Comment: it.comment})
+	}
 	if f := pn.finder; f != nil {
 		r.Find = &panelFindReport{Query: f.query, Count: f.count.Text()}
 	}
@@ -1460,6 +1518,9 @@ const presentSelectScript = `(function(t){
 //	present-kill            end the shown page's web process, as a crash would
 //	present-browser         open the shown document in the browser, as its button does
 //	present-back            show the previous document, as the Back button does
+//	present-review-add TEXT add the open question, with TEXT, to the review, as its button does
+//	present-review-send     paste the review into the agent's input, as Send review does
+//	present-review-discard  drop the review
 //	preview PATH            what the file dialog of open_in_panel does with PATH
 func (a *App) presentStep(verb, arg string) error {
 	t := a.active
@@ -1538,6 +1599,15 @@ func (a *App) presentStep(verb, arg string) error {
 		pn.openExternal()
 	case "present-back":
 		pn.back()
+	case "present-review-add":
+		if c := pn.compose; c != nil && c.doc != nil {
+			c.view.Buffer().SetText(arg)
+			pn.addToReview()
+		}
+	case "present-review-send":
+		pn.sendReview()
+	case "present-review-discard":
+		pn.discardReview()
 	}
 	return nil
 }
@@ -1899,4 +1969,226 @@ func (pn *panel) zoomPercent() int {
 		return 100
 	}
 	return int(pn.zoom*100 + 0.5)
+}
+
+// reviewItem is one comment of a review: a passage of a document and what
+// the user says about it.
+type reviewItem struct {
+	doc     *panelDoc
+	section string
+	quote   string
+	comment string
+}
+
+type reviewReport struct {
+	Doc     string `json:"doc"`
+	Section string `json:"section"`
+	Quote   string `json:"quote"`
+	Comment string `json:"comment"`
+}
+
+// addToReview keeps the open question as a comment of the review and
+// highlights its passage, for the user to paste with the others later.
+func (pn *panel) addToReview() {
+	c := pn.compose
+	if c == nil || c.doc == nil {
+		return
+	}
+	pn.review = append(pn.review, reviewItem{doc: c.doc, section: c.section, quote: c.text, comment: strings.TrimSpace(c.composed())})
+	d := c.doc
+	c.pop.Popdown()
+	pn.syncReview()
+	if d == pn.cur {
+		pn.markReview(d)
+	}
+	pn.app.toast(fmt.Sprintf("Added to the review (%d). Paste it from the Review button.", len(pn.review)))
+}
+
+// syncReview shows the Review button with the number of comments, or
+// hides it without any.
+func (pn *panel) syncReview() {
+	pn.reviewBtn.SetVisible(len(pn.review) > 0)
+	pn.reviewBtn.SetLabel(fmt.Sprintf("Review (%d)", len(pn.review)))
+	if pn.reviewPop != nil && len(pn.review) == 0 {
+		pn.reviewPop.Popdown()
+	}
+}
+
+// markReview highlights the passages of the review's comments in d's
+// page, which is shown.
+func (pn *panel) markReview(d *panelDoc) {
+	quotes := []string{}
+	for _, it := range pn.review {
+		if it.doc == d {
+			quotes = append(quotes, it.quote)
+		}
+	}
+	arg, _ := json.Marshal(quotes)
+	pn.view.eval(fmt.Sprintf(present.MarkQuotesScript, arg), true, func(string, error) {})
+}
+
+// openReview lists the review's comments in a popover, each with a button
+// that drops it, above Send and Discard.
+func (pn *panel) openReview() {
+	if len(pn.review) == 0 {
+		return
+	}
+	if pn.reviewPop == nil {
+		pn.reviewPop = gtk.NewPopover()
+		pn.reviewPop.SetParent(pn.reviewBtn)
+		pn.reviewPop.AddCSSClass("bunk-ask")
+	}
+	box := gtk.NewBox(gtk.OrientationVertical, 8)
+	box.SetSizeRequest(360, -1)
+	title := gtk.NewLabel("Review for " + pn.reviewTargetName())
+	title.SetXAlign(0)
+	title.AddCSSClass("heading")
+	box.Append(title)
+	for i, it := range pn.review {
+		row := gtk.NewBox(gtk.OrientationHorizontal, 6)
+		text := fmt.Sprintf("%d. %s", i+1, filepath.Base(it.doc.path))
+		if it.section != "" {
+			text += " › " + it.section
+		}
+		text += "\n“" + strings.Join(strings.Fields(it.quote), " ") + "”"
+		if it.comment != "" {
+			text += "\n" + it.comment
+		}
+		l := gtk.NewLabel(text)
+		l.SetXAlign(0)
+		l.SetWrap(true)
+		l.SetLines(5)
+		l.SetEllipsize(pango.EllipsizeEnd)
+		l.SetMaxWidthChars(44)
+		l.SetHExpand(true)
+		row.Append(l)
+		drop := iconButton("list-remove-symbolic", 14, "Drop this comment", "flat")
+		drop.SetVAlign(gtk.AlignStart)
+		item := it
+		drop.ConnectClicked(func() {
+			pn.review = slices.DeleteFunc(pn.review, func(r reviewItem) bool { return r == item })
+			pn.syncReview()
+			if pn.cur != nil {
+				pn.markReview(pn.cur)
+			}
+			if len(pn.review) > 0 {
+				pn.openReview()
+			}
+		})
+		row.Append(drop)
+		box.Append(row)
+	}
+	buttons := gtk.NewBox(gtk.OrientationHorizontal, 6)
+	discard := gtk.NewButtonWithLabel("Discard")
+	discard.ConnectClicked(pn.discardReview)
+	send := gtk.NewButtonWithLabel("Paste the review into the agent's input")
+	send.AddCSSClass("suggested-action")
+	send.SetHExpand(true)
+	send.ConnectClicked(pn.sendReview)
+	buttons.Append(discard)
+	buttons.Append(send)
+	box.Append(buttons)
+	pn.reviewPop.SetChild(box)
+	pn.reviewPop.Popup()
+}
+
+// reviewTarget is the pane the review goes to: the one its first comment's
+// document would ask.
+func (pn *panel) reviewTarget() *Pane {
+	if len(pn.review) == 0 {
+		return nil
+	}
+	return pn.target(pn.review[0].doc)
+}
+
+func (pn *panel) reviewTargetName() string {
+	if p := pn.reviewTarget(); p != nil {
+		return paneAgentName(p)
+	}
+	return "the agent"
+}
+
+// sendReview pastes the review's comments into the agent's input as one
+// message, focuses that pane and leaves sending to the user, as a question
+// does; the review is then done.
+func (pn *panel) sendReview() {
+	target := pn.reviewTarget()
+	if target == nil || pn.app.paneByID(target.id) != target {
+		pn.app.toast("No pane to paste the review into")
+		return
+	}
+	cwd := target.s.Cwd()
+	items := make([]reviewText, len(pn.review))
+	for i, it := range pn.review {
+		items[i] = reviewText{path: displayPath(it.doc.path, cwd), section: it.section, quote: it.quote, comment: it.comment}
+	}
+	msg := reviewMessage(items)
+	if pn.reviewPop != nil {
+		pn.reviewPop.Popdown()
+	}
+	pn.discardReview()
+	target.paste(pasteSafe(target, msg))
+	pn.sent = msg
+	pn.app.showPane(target.id)
+	pn.app.toast("Pasted the review into " + paneAgentName(target) + "'s input. Press Enter to send it.")
+}
+
+// discardReview drops the review's comments and their highlights.
+func (pn *panel) discardReview() {
+	pn.review = nil
+	pn.syncReview()
+	if pn.cur != nil {
+		pn.markReview(pn.cur)
+	}
+}
+
+// reviewText is a review comment as the agent reads it.
+type reviewText struct {
+	path, section, quote, comment string
+}
+
+// reviewMessage is a review as the agent reads it:
+//
+//	Review of docs/plan.md:
+//
+//	1. Session storage
+//	> keyed by a random ID
+//	Why not Postgres?
+//
+//	2. Rollout
+//	> Roll out slowly.
+//
+// Comments on another document name it before their section.
+func reviewMessage(items []reviewText) string {
+	if len(items) == 0 {
+		return ""
+	}
+	paths := []string{}
+	for _, it := range items {
+		if !slices.Contains(paths, it.path) {
+			paths = append(paths, it.path)
+		}
+	}
+	var b strings.Builder
+	b.WriteString("Review of " + strings.Join(paths, " and ") + ":\n")
+	for i, it := range items {
+		head := it.section
+		if len(paths) > 1 {
+			head = it.path
+			if it.section != "" {
+				head += " › " + it.section
+			}
+		}
+		fmt.Fprintf(&b, "\n%d.", i+1)
+		if head != "" {
+			b.WriteString(" " + head)
+		}
+		b.WriteString("\n")
+		// questionText quotes and trims as a question does; its first line
+		// is the "About" line, which the heading replaces.
+		q := questionText("", "", it.quote, it.comment)
+		_, rest, _ := strings.Cut(q, "\n")
+		b.WriteString(rest + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

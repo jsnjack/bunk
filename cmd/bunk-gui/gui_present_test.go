@@ -806,3 +806,56 @@ func TestGUIPresentAnchor(t *testing.T) {
 		},
 	})
 }
+
+// TestGUIPresentReview collects a review: two comments, their passages
+// highlighted in the page, again after the document reloads; then pastes
+// them as one message into the agent's input and clears the highlights. A
+// question takes several lines with Shift+Enter.
+func TestGUIPresentReview(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost:  2,
+		args:  []string{"--size", "100x30"},
+		files: map[string]string{"plan.md": presentPlan()},
+		script: []string{
+			"wait focused.line=$",
+			"present plan.md",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"present-select keyed by a random ID",
+			"present-ask",
+			"wait tab.1.panel.ask.section=\"Session storage\"",
+			"present-review-add Why Redis?",
+			"wait tab.1.panel.review.#=1 tab.1.panel.ask=null",
+			"present-select instant",
+			"present-ask",
+			"wait tab.1.panel.ask!=null",
+			"present-review-add Really instant?",
+			"wait tab.1.panel.review.#=2",
+			"present-wait CSS.highlights.get('bunk-review') && CSS.highlights.get('bunk-review').size === 2",
+			"type sed -i 's/Intro with/Introduction with/' plan.md\\r",
+			"wait tab.1.panel.docs.0.reloads=1",
+			"present-wait CSS.highlights.get('bunk-review') && CSS.highlights.get('bunk-review').size === 2",
+			"present-review-send",
+			"wait tab.1.panel.review.#=0 tab.1.panel.sent~\"Review of plan.md:\"",
+			"snap sent",
+			"present-wait !CSS.highlights.get('bunk-review')",
+			"present-select keyed by a random ID",
+			"present-ask",
+			"wait tab.1.panel.ask!=null",
+			"kbd-type line one",
+			"kbd shift+Return",
+			"kbd-type line two",
+			"kbd Return",
+			"wait tab.1.panel.ask=null tab.1.panel.sent~\"line two\"",
+			"snap multi",
+			"quit",
+		},
+	})
+	want := "Review of plan.md:\n\n1. Session storage\n> keyed by a random ID\nWhy Redis?\n\n2. Session storage\n> instant\nReally instant?"
+	if got := g.snap("sent").Tabs[0].Panel.Sent; got != want {
+		t.Errorf("review:\n%s\nwant:\n%s", got, want)
+	}
+	if got := g.snap("multi").Tabs[0].Panel.Sent; !strings.HasSuffix(got, "\nline one\nline two") {
+		t.Errorf("multi-line question:\n%s", got)
+	}
+}

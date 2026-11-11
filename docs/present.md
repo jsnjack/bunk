@@ -64,9 +64,28 @@ stays while the window resizes.
 
 To ask about a passage, select it and choose "Ask the agent about this…"
 from the context menu, or the header's button. A popover shows the quote
-and takes your question. The question is pasted into the input of the pane
-that presented the document, else the tab's agent, without pressing Enter.
-That pane takes the keyboard, and you send the question with Enter.
+and takes your question; Shift+Enter starts a new line. Enter, or the
+Paste button, pastes it into the input of the pane that presented the
+document, else the tab's agent, without pressing Enter there. That pane
+takes the keyboard, and you send the question with Enter.
+
+To review a document, choose "Add to review" instead: the comment is kept
+and its passage highlighted, and a Review button in the header counts the
+comments. Add as many as you like, from this document or others in the tab;
+the highlights come back when a document reloads. Review lists them, drops
+any you no longer want, and pastes them all as one message:
+
+```
+Review of docs/plan.md:
+
+1. Session storage
+> keyed by a random ID
+Why not Postgres?
+
+2. Rollout
+> Roll out to 10% first.
+Which 10%?
+```
 
 Pages run in WebKit's sandboxed web process with a private, in-memory
 session. bunk-gui serves each document from a `bunk-present://` address of

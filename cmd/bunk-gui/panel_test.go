@@ -152,3 +152,29 @@ func TestMentions(t *testing.T) {
 		t.Error("a missing document names files")
 	}
 }
+
+// TestReviewMessage: a review lists its comments under the document's
+// name, each with its section, quote and comment; comments on several
+// documents name their document.
+func TestReviewMessage(t *testing.T) {
+	t.Parallel()
+	one := reviewMessage([]reviewText{
+		{path: "docs/plan.md", section: "Session storage", quote: "keyed by a random ID", comment: "Why not Postgres?"},
+		{path: "docs/plan.md", section: "Rollout", quote: "Roll out\n\nslowly.", comment: ""},
+	})
+	want := "Review of docs/plan.md:\n\n1. Session storage\n> keyed by a random ID\nWhy not Postgres?\n\n2. Rollout\n> Roll out\n>\n> slowly."
+	if one != want {
+		t.Errorf("one document:\n%s\nwant:\n%s", one, want)
+	}
+	two := reviewMessage([]reviewText{
+		{path: "plan.md", section: "A", quote: "x", comment: "c1"},
+		{path: "spec.md", section: "", quote: "y", comment: "multi\nline"},
+	})
+	want = "Review of plan.md and spec.md:\n\n1. plan.md › A\n> x\nc1\n\n2. spec.md\n> y\nmulti\nline"
+	if two != want {
+		t.Errorf("two documents:\n%s\nwant:\n%s", two, want)
+	}
+	if reviewMessage(nil) != "" {
+		t.Error("an empty review has a message")
+	}
+}

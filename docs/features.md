@@ -84,6 +84,8 @@ Agents can show you what they wrote in a panel beside the tab's panes
 - Select text and choose "Ask the agent" (the header button or the context
   menu). Your question is pasted into the agent's input with the file, the
   section and the quoted text. Press Enter in the pane to send it.
+- Or add it to a review: comments collect, their passages highlighted, and
+  the Review button pastes them all as one message.
 - "Show documents" in the tab's menu or the main menu shows and hides the
   panel, or asks for a file in a tab without documents; the `documents`
   and `open_in_panel` actions have no default keys. The header lists the
