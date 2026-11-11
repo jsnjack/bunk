@@ -358,3 +358,18 @@ func TestKitMarkup(t *testing.T) {
 		t.Error("the article does not say the page is Markdown")
 	}
 }
+
+// TestLibraryFences: chart and dot fences become the elements the page
+// runtime draws with ECharts and Graphviz, their text escaped.
+func TestLibraryFences(t *testing.T) {
+	t.Parallel()
+	body := renderBody(t, "```chart\n{\"series\": [{\"type\": \"bar\", \"data\": [1, 2]}]}\n```\n\n```dot\ndigraph { a -> \"<b>\" }\n```\n")
+	for _, want := range []string{
+		`<pre class="bunk-chart">{&#34;series&#34;: [{&#34;type&#34;: &#34;bar&#34;, &#34;data&#34;: [1, 2]}]}`,
+		`<pre class="bunk-graphviz">digraph { a -&gt; &#34;&lt;b&gt;&#34; }`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}

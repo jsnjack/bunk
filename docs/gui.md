@@ -269,7 +269,8 @@ panel gives the panes their width back.
   shown before; each document keeps its scroll position (`lastY`), read
   just before another document loads.
 - Pages load through `bunk-present://` (`presentserve.go`): `assets/`
-  serves the page runtime, Mermaid and KaTeX embedded in
+  serves the page runtime, Mermaid, KaTeX, ECharts, Graphviz (Viz.js),
+  D3 and highlight.js embedded in
   `internal/present`; `doc-N/` serves document N's directory, each
   document its own origin. Hidden files, symbolic links out of the
   directory and, for a document in the home directory or `/` (compared

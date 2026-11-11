@@ -95,14 +95,15 @@ func TestPageCSP(t *testing.T) {
 				}
 			}
 			check("connect-src", "'none'")
-			check("script-src", tc.scripts)
+			// Graphviz compiles WebAssembly; nothing may eval JavaScript.
+			check("script-src", tc.scripts+" 'wasm-unsafe-eval'")
 			check("img-src", tc.images)
 			check("default-src", tc.def)
 			check("font-src", tc.scripts)
 			check("style-src", tc.scripts+" 'unsafe-inline'")
 			check("object-src", "'none'")
 			check("base-uri", "'none'")
-			if strings.Contains(policy, "unsafe-eval") {
+			if strings.Contains(policy, "'unsafe-eval'") {
 				t.Errorf("policy allows eval: %q", policy)
 			}
 		})

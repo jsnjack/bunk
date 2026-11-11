@@ -142,12 +142,166 @@
     });
   }
 
-  // redraw draws the diagrams again in the page's colours, after the
-  // system's colour scheme changed the colours of a page that follows it.
+  // ---- Libraries: charts (ECharts), graphs (Graphviz), code (highlight.js) ----
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // source keeps what an element held before the runtime drew into it, so
+  // it can draw it again in other colours.
+  function source(el) {
+    var src = el.getAttribute('data-bunk-src');
+    if (src === null) {
+      src = el.textContent;
+      el.setAttribute('data-bunk-src', src);
+    }
+    return src;
+  }
+
+  var charts = [];
+  var sizer = window.ResizeObserver ? new ResizeObserver(function (entries) {
+    entries.forEach(function (e) {
+      var c = window.echarts && echarts.getInstanceByDom(e.target);
+      if (c) c.resize();
+    });
+  }) : null;
+
+  // chartsDraw draws each pre.bunk-chart: an ECharts option as JSON, in
+  // the theme's colours, data-height pixels high (360 by default).
+  function chartsDraw(root) {
+    charts = charts.filter(function (c) {
+      if (c.isDisposed() || c.getDom().isConnected) return !c.isDisposed();
+      c.dispose();
+      return false;
+    });
+    var nodes = root.querySelectorAll('pre.bunk-chart:not([data-bunk-drawn])');
+    if (!nodes.length) return Promise.resolve();
+    nodes.forEach(source);
+    return load('echarts.min.js').then(function () {
+      nodes.forEach(function (pre) {
+        var n = nth(pre, 'pre.bunk-chart');
+        pre.setAttribute('data-bunk-drawn', '');
+        var option;
+        try {
+          option = JSON.parse(source(pre));
+        } catch (err) {
+          problem('chart ' + n + ': the option is not JSON: ' + brief(err));
+          return;
+        }
+        var box = make('div', 'bunk-chart-box');
+        box.style.height = (parseInt(pre.getAttribute('data-height'), 10) || 360) + 'px';
+        pre.textContent = '';
+        pre.appendChild(box);
+        try {
+          var c = echarts.init(box, dark ? 'dark' : null, {renderer: 'svg'});
+          if (option.backgroundColor === undefined) option.backgroundColor = 'transparent';
+          if (option.animation === undefined) option.animation = false;
+          c.setOption(option);
+          charts.push(c);
+          if (sizer) sizer.observe(box);
+        } catch (err) {
+          problem('chart ' + n + ': ' + brief(err));
+        }
+      });
+    });
+  }
+
+  // graphs draws each pre.bunk-graphviz: a graph in Graphviz's DOT, its
+  // lines and labels in the theme's colours unless the graph sets them.
+  function graphs(root) {
+    var nodes = root.querySelectorAll('pre.bunk-graphviz:not([data-bunk-drawn])');
+    if (!nodes.length) return Promise.resolve();
+    nodes.forEach(source);
+    return load('viz-global.js').then(function () {
+      return Viz.instance();
+    }).then(function (viz) {
+      var fg = cssVar('--bunk-fg') || (dark ? '#e6e8eb' : '#1f2328');
+      var font = 'Helvetica,Arial,sans-serif';
+      nodes.forEach(function (pre) {
+        var n = nth(pre, 'pre.bunk-graphviz');
+        pre.setAttribute('data-bunk-drawn', '');
+        try {
+          var svg = viz.renderSVGElement(source(pre), {
+            graphAttributes: {bgcolor: 'transparent', fontname: font, fontcolor: fg},
+            nodeAttributes: {fontname: font, color: fg, fontcolor: fg},
+            edgeAttributes: {fontname: font, color: fg, fontcolor: fg}
+          });
+          pre.textContent = '';
+          pre.appendChild(svg);
+        } catch (err) {
+          problem('Graphviz graph ' + n + ': ' + brief(err));
+        }
+      });
+    });
+  }
+
+  // highlightCode colours the code of an HTML page that names its language
+  // (<code class="language-go">); Markdown comes highlighted.
+  function highlightCode(root) {
+    if (markdown) return Promise.resolve();
+    var nodes = Array.prototype.filter.call(
+      root.querySelectorAll('pre > code[class*="language-"], pre > code[class*="lang-"]'),
+      function (c) { return !c.classList.contains('hljs') && !c.closest('pre.chroma, pre.bunk-diff'); });
+    if (!nodes.length) return Promise.resolve();
+    codeStyle();
+    return load('highlight/highlight.min.js').then(function () {
+      nodes.forEach(function (c) {
+        try {
+          hljs.highlightElement(c);
+        } catch (err) {
+          warn(err);
+        }
+      });
+    });
+  }
+
+  // codeStyle links highlight.js's GitHub style of the page's darkness.
+  function codeStyle() {
+    var l = document.getElementById('bunk-hljs-style');
+    if (!l) {
+      l = make('link');
+      l.id = 'bunk-hljs-style';
+      l.rel = 'stylesheet';
+      document.head.appendChild(l);
+    }
+    l.href = base + (dark ? 'highlight/github-dark.min.css' : 'highlight/github.min.css');
+  }
+
+  // libraries the page's own scripts can load: bunkDoc.use('d3').then(...)
+  var libraries = {
+    d3: ['d3.min.js', function () { return window.d3; }],
+    echarts: ['echarts.min.js', function () { return window.echarts; }],
+    graphviz: ['viz-global.js', function () { return Viz.instance(); }],
+    highlight: ['highlight/highlight.min.js', function () { return window.hljs; }],
+    katex: ['katex/katex.min.js', function () { style(); return window.katex; }],
+    mermaid: ['mermaid.min.js', function () { return window.mermaid; }]
+  };
+
+  function use(name) {
+    var lib = libraries[name];
+    if (!lib) return Promise.reject(new Error('bunk-doc: no library ' + name));
+    return load(lib[0]).then(lib[1]);
+  }
+
+  // redraw draws the diagrams, charts and graphs again in the page's
+  // colours, after the system's colour scheme changed the colours of a
+  // page that follows it.
   function redraw() {
     if (isDark() === dark) return;
     dark = isDark();
     themeChanged();
+    var root = doc();
+    if (document.getElementById('bunk-hljs-style')) codeStyle();
+    root.querySelectorAll('pre.bunk-chart[data-bunk-drawn], pre.bunk-graphviz[data-bunk-drawn]').forEach(function (pre) {
+      var box = pre.querySelector('.bunk-chart-box');
+      var c = box && window.echarts && echarts.getInstanceByDom(box);
+      if (c) c.dispose();
+      pre.textContent = pre.getAttribute('data-bunk-src');
+      pre.removeAttribute('data-bunk-drawn');
+    });
+    chartsDraw(root).catch(warn);
+    graphs(root).catch(warn);
     if (!mermaidReady) return;
     mermaidReady = false;
     var root = doc();
@@ -168,7 +322,10 @@
     } catch (err) {
       warn(err);
     }
-    return Promise.all([typeset(root).catch(warn), diagrams(root).catch(warn)]).then(function () {
+    return Promise.all([
+      typeset(root).catch(warn), diagrams(root).catch(warn), chartsDraw(root).catch(warn),
+      graphs(root).catch(warn), highlightCode(root).catch(warn)
+    ]).then(function () {
       document.documentElement.setAttribute('data-bunk-rendered', '');
     });
   }
@@ -531,7 +688,7 @@
   }
 
   window.bunkDoc = {
-    render: render, anchor: anchor, restore: restore, replace: replace,
+    render: render, anchor: anchor, restore: restore, replace: replace, use: use,
     dark: function () { return dark; }
   };
   // An HTML page may load the runtime in its <head>, before the body.

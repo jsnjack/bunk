@@ -64,7 +64,8 @@ Agents can show you what they wrote in a panel beside the tab's panes
 (`docs/present.md`). An agent, or you, runs `bunk present FILE` in a pane.
 
 - HTML pages run as they are, with no network access, and can use bunk's
-  stylesheet, theme colours, Mermaid and KaTeX. Agents are told to prefer
+  stylesheet, theme colours, Mermaid, KaTeX, ECharts charts, Graphviz
+  graphs, D3 and highlight.js. Agents are told to prefer
   them, because they can be interactive. Markdown shows as a formatted page
   with tables, highlighted code, Mermaid diagrams and math.
 - Any other file previews there too: images, PDFs, video, audio, and code

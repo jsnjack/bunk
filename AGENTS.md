@@ -60,7 +60,8 @@ internal/notify/     agent hook reports: socket server, `notify`, `ssh` and `pre
                      snippets, the bunk-present skill and installing them; wire/ is the report
                      line and its OSC 1337 form
 internal/present/    documents and previews for bunk-gui's panel: Markdown and preview pages,
-                     the page runtime, Mermaid and KaTeX embedded, standalone browser pages
+                     the page runtime and its kit, Mermaid, KaTeX, ECharts, Graphviz, D3 and
+                     highlight.js embedded, standalone browser pages
 internal/alert/      when an agent state or a long command notifies, for both front ends
 internal/desktop/    bunk's TUI desktop notifications through gdbus; desktoptest is a fake gdbus
 internal/leakcheck/  test helper: fds, goroutines, children and heap against a baseline

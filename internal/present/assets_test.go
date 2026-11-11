@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,10 +21,11 @@ func must(t *testing.T, err error) {
 }
 
 var (
-	urlAttr  = regexp.MustCompile(`(?:src|href)="([^"]*)"`)
-	jsLoad   = regexp.MustCompile(`load\('([^']+)'\)`)
-	cssURL   = regexp.MustCompile(`url\(([^)]*)\)`)
-	baseElem = regexp.MustCompile(`<base href="([^"]*)">`)
+	urlAttr = regexp.MustCompile(`(?:src|href)="([^"]*)"`)
+	// runtimeFile is a script or stylesheet named in bunk-doc.js.
+	runtimeFile = regexp.MustCompile(`'([^'\s"]+\.(?:js|css))'`)
+	cssURL      = regexp.MustCompile(`url\(([^)]*)\)`)
+	baseElem    = regexp.MustCompile(`<base href="([^"]*)">`)
 )
 
 func TestAssetsReferenced(t *testing.T) {
@@ -45,12 +47,19 @@ func TestAssetsReferenced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the runtime: %v", err)
 	}
-	loads := jsLoad.FindAllStringSubmatch(string(script), -1)
-	if len(loads) != 2 {
-		t.Errorf("the runtime loads %d scripts, want KaTeX and Mermaid", len(loads))
-	}
-	for _, m := range loads {
+	// Every script and stylesheet the runtime names: those it loads and
+	// those of bunkDoc.use.
+	files := runtimeFile.FindAllStringSubmatch(string(script), -1)
+	var loaded []string
+	for _, m := range files {
 		names = append(names, m[1])
+		loaded = append(loaded, m[1])
+	}
+	for _, want := range []string{"katex/katex.min.js", "mermaid.min.js", "echarts.min.js", "viz-global.js", "d3.min.js",
+		"highlight/highlight.min.js", "highlight/github.min.css", "highlight/github-dark.min.css"} {
+		if !slices.Contains(loaded, want) {
+			t.Errorf("the runtime does not name %s: %q", want, loaded)
+		}
 	}
 	css, err := fs.ReadFile(assets, assetKatexCSS)
 	if err != nil {
@@ -66,7 +75,8 @@ func TestAssetsReferenced(t *testing.T) {
 		}
 		names = append(names, path.Join(path.Dir(assetKatexCSS), m[1]))
 	}
-	names = append(names, "mermaid.LICENSE", "katex/LICENSE")
+	names = append(names, "mermaid.LICENSE", "katex/LICENSE", "echarts.LICENSE", "echarts.NOTICE", "d3.LICENSE",
+		"viz.LICENSE", "graphviz.LICENSE", "expat.LICENSE", "highlight/LICENSE")
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			info, err := fs.Stat(assets, name)
@@ -121,8 +131,8 @@ func TestWriteStandalone(t *testing.T) {
 		}
 	}
 	policy := pageCSP(t, page)
-	if got := strings.Join(directive(policy, "script-src"), " "); got != "file:" {
-		t.Errorf("script-src = %q, want file:", got)
+	if got := strings.Join(directive(policy, "script-src"), " "); got != "file: 'wasm-unsafe-eval'" {
+		t.Errorf("script-src = %q, want file: 'wasm-unsafe-eval'", got)
 	}
 	if got := strings.Join(directive(policy, "base-uri"), " "); got != "'self' file:" {
 		t.Errorf("base-uri = %q, want 'self' file:", got)

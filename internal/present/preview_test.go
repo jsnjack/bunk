@@ -92,7 +92,7 @@ func TestRenderPreview(t *testing.T) {
 					t.Errorf("page has %q", not)
 				}
 			}
-			if got := strings.Join(directive(pageCSP(t, s), "script-src"), " "); got != "bunk-present://assets" {
+			if got := strings.Join(directive(pageCSP(t, s), "script-src"), " "); got != "bunk-present://assets 'wasm-unsafe-eval'" {
 				t.Errorf("script-src = %q", got)
 			}
 		})

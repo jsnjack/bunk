@@ -173,8 +173,22 @@ pages use too:
 | Asset | What it gives the page |
 | :- | :- |
 | `bunk-doc.css` | The look of bunk's documents in the panel's theme, for content in `<article id="bunk-doc">`. Text keeps a readable width of 80 characters, and the article widens to fit a table up to the width of the window, so a wide table scrolls only when the window is too narrow |
-| `bunk-doc.js` | Mermaid diagrams in `<pre class="mermaid">` and KaTeX math in `<span class="math">` and `<div class="math math-display">`, each library loaded only when the page needs it |
-| `mermaid.min.js`, `katex/katex.min.js`, `katex/katex.min.css` | The libraries themselves |
+| `bunk-doc.js` | Mermaid diagrams in `<pre class="mermaid">`, KaTeX math in `<span class="math">` and `<div class="math math-display">`, ECharts charts in `<pre class="bunk-chart">`, Graphviz graphs in `<pre class="bunk-graphviz">`, highlight.js for `<code class="language-…">`, and the kit below; each library loaded only when the page needs it |
+| `mermaid.min.js`, `katex/katex.min.js`, `katex/katex.min.css`, `echarts.min.js`, `viz-global.js`, `d3.min.js`, `highlight/highlight.min.js` | The libraries themselves, for a page that loads one directly |
+
+### Charts, graphs, code and D3
+
+| Markup | What it draws |
+| :- | :- |
+| `<pre class="bunk-chart" data-height="300">{ECharts option as JSON}</pre>`, or a ` ```chart ` fence | An interactive chart with Apache ECharts: tooltips, legends that toggle series, zoom where the option asks for it. The JSON is an [ECharts option](https://echarts.apache.org/en/option.html); the background stays the page's, and animation is off unless the option turns it on |
+| `<pre class="bunk-graphviz">digraph { a -> b }</pre>`, or a ` ```dot ` fence | A graph laid out by Graphviz, in the page's text colour unless the graph sets its own |
+| `<pre><code class="language-go">` in an HTML page | Code highlighted by highlight.js, in GitHub's light or dark style; Markdown's code is highlighted by bunk |
+| `bunkDoc.use('d3')` in a page's script | A promise of D3, or of `echarts`, `graphviz` (a Viz.js instance), `highlight`, `katex` or `mermaid`, loaded from bunk's assets; a page can also load `bunk-present://assets/d3.min.js` itself |
+
+Charts and graphs follow the colours: drawn again when a page in a browser
+switches between light and dark. A chart option that is not JSON, or a
+graph that does not parse, counts as one of the page's problems, which
+`bunk present` reports.
 
 ### The kit
 

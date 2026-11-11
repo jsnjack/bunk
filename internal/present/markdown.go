@@ -289,6 +289,10 @@ func renderFencedCode(w util.BufWriter, src []byte, node ast.Node, entering bool
 		writeEscaped(&out, `<div class="math math-display">`, code.Bytes(), "</div>\n")
 	case "diff", "patch":
 		writeDiff(&out, code.Bytes())
+	case "chart", "echarts":
+		writeEscaped(&out, `<pre class="bunk-chart">`, code.Bytes(), "</pre>\n")
+	case "dot", "graphviz":
+		writeEscaped(&out, `<pre class="bunk-graphviz">`, code.Bytes(), "</pre>\n")
 	default:
 		if err := highlight(&out, lang, code.String()); err != nil {
 			return ast.WalkStop, err

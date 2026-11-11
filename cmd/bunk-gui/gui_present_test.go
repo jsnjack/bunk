@@ -716,3 +716,68 @@ func TestGUIPresentKit(t *testing.T) {
 		},
 	})
 }
+
+// libsPage draws with every library a page can use: a chart, a graph,
+// highlighted code and D3.
+const libsPage = `<!doctype html><html><head><title>Libs</title>
+<link rel="stylesheet" href="bunk-present://assets/bunk-doc.css">
+<script src="bunk-present://assets/bunk-doc.js" defer></script></head>
+<body><article id="bunk-doc"><h1>Libs</h1>
+<pre class="bunk-chart" data-height="240">{"xAxis": {"type": "category", "data": ["a", "b"]}, "yAxis": {}, "series": [{"type": "bar", "data": [1, 2]}]}</pre>
+<pre class="bunk-graphviz">digraph { a -> b }</pre>
+<pre><code class="language-go">func main() { fmt.Println("hi") }</code></pre>
+<div id="d3"></div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  bunkDoc.use('d3').then(function (d3) { d3.select('#d3').append('p').attr('id', 'd3-made').text('made by d3'); });
+});
+</script>
+</article></body></html>`
+
+// TestGUIPresentLibraries draws a chart with ECharts, a graph with
+// Graphviz (WebAssembly, in an HTML page and in Markdown, whose policy
+// allows it), code with highlight.js and an element with D3, and reports a
+// chart that is not JSON and a graph that does not parse as problems.
+func TestGUIPresentLibraries(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost: 2,
+		args: []string{"--size", "100x30"},
+		files: map[string]string{
+			"libs.html": libsPage,
+			"libs.md": "# Libs\n\n```chart\n{\"series\": [{\"type\": \"pie\", \"data\": [1, 2]}]}\n```\n\n```dot\ndigraph { x -> y }\n```\n\n" +
+				"```chart\n{not json\n```\n\n```dot\ndigraph { -> }\n```\n",
+		},
+		script: []string{
+			"wait focused.line=$",
+			"present libs.html check",
+			"wait tab.1.panel.checked!=null",
+			"present-eval [document.querySelectorAll('.bunk-chart-box svg').length, document.querySelectorAll('pre.bunk-graphviz svg').length, " +
+				"document.querySelectorAll('code.hljs span[class^=hljs-]').length > 0, !!document.getElementById('d3-made')].join(',')",
+			"wait tab.1.panel.eval=1,1,true,true",
+			"snap html",
+			"present libs.md check",
+			"wait tab.1.panel.checked!=null tab.1.panel.current=1",
+			"present-eval [document.querySelectorAll('.bunk-chart-box svg').length, document.querySelectorAll('pre.bunk-graphviz svg').length].join(',')",
+			"wait tab.1.panel.eval=1,1",
+			"snap md",
+			"quit",
+		},
+	})
+	if c := g.snap("html").Tabs[0].Panel.Checked; c == nil || len(*c) != 0 {
+		t.Errorf("the HTML page had problems: %v", c)
+	}
+	c := g.snap("md").Tabs[0].Panel.Checked
+	if c == nil {
+		t.Fatal("no check of the Markdown page")
+	}
+	all := strings.Join(*c, "\n")
+	for _, want := range []string{"chart 2: the option is not JSON", "Graphviz graph 2: "} {
+		if !strings.Contains(all, want) {
+			t.Errorf("problems lack %q:\n%s", want, all)
+		}
+	}
+	if len(*c) != 2 {
+		t.Errorf("problems: %q, want two", *c)
+	}
+}

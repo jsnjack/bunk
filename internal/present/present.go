@@ -331,7 +331,9 @@ func InsertHead(page []byte, markup string) []byte {
 
 // contentSecurityPolicy allows the page its assets and the document's own
 // images, and nothing else: no inline script, no requests from scripts, no
-// network. Mermaid adds inline styles, so styles may be inline.
+// network. Mermaid adds inline styles, so styles may be inline, and
+// Graphviz compiles WebAssembly ('wasm-unsafe-eval', which allows no
+// eval of JavaScript).
 func contentSecurityPolicy(assetBase string, withBase bool) string {
 	assets, scheme := "'self'", ""
 	if u, err := url.Parse(assetBase); err == nil && u.Scheme != "" {
@@ -364,7 +366,7 @@ func contentSecurityPolicy(assetBase string, withBase bool) string {
 	}
 	return strings.Join([]string{
 		"default-src " + defaults,
-		"script-src " + assets,
+		"script-src " + assets + " 'wasm-unsafe-eval'",
 		"style-src " + assets + " 'unsafe-inline'",
 		"img-src " + images,
 		"font-src " + assets,

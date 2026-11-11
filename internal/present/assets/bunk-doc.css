@@ -55,7 +55,7 @@ body {
   contain: inline-size;
 }
 
-#bunk-doc:not(.bunk-file) :is(p, ul, ol, dl, blockquote, pre:not(.mermaid)) {
+#bunk-doc:not(.bunk-file) :is(p, ul, ol, dl, blockquote, pre:not(.mermaid, .bunk-graphviz)) {
   max-width: var(--bunk-measure);
 }
 
@@ -256,6 +256,31 @@ pre.mermaid {
 pre.mermaid svg {
   max-width: 100%;
   height: auto;
+}
+
+/* Charts (ECharts) and graphs (Graphviz), drawn by bunk-doc.js. */
+pre.bunk-chart, pre.bunk-graphviz {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: normal;
+  text-align: center;
+}
+
+pre.bunk-graphviz svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.bunk-chart-box {
+  width: 100%;
+  text-align: left;
+}
+
+/* highlight.js in HTML pages: the page's code block, the style's colours. */
+pre > code.hljs.hljs {
+  padding: 0;
+  background: transparent;
 }
 
 table {
