@@ -96,7 +96,8 @@
     return load('katex/katex.min.js').then(function () {
       nodes.forEach(function (el) {
         var tex = el.textContent;
-        el.setAttribute('data-bunk-tex', '');
+        // Keeps the source, for what bunk-gui compares across an edit.
+        el.setAttribute('data-bunk-tex', tex);
         var display = el.classList.contains('math-display');
         try {
           katex.render(tex, el, {displayMode: display, throwOnError: true});

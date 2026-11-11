@@ -91,7 +91,13 @@ type panelDoc struct {
 	loadedMod  time.Time // the file's modification time when it last loaded
 	pending    bool      // a new version of its page is loading or being swapped in
 	browser    bool      // the user opened its copy in the browser, which follows its changes
-	inFlight   bool      // its page is loading whole (show, an HTML reload)
+	// prevSections are its page's sections before it loads again or swaps
+	// its content (present.SectionsScript), to compare with after; changes
+	// is what its last reload changed.
+	prevSections []docSection
+	havePrev     bool
+	changes      []sectionChange
+	inFlight     bool // its page is loading whole (show, an HTML reload)
 }
 
 // panel is a tab's document panel.
@@ -140,9 +146,12 @@ type panel struct {
 	review    []reviewItem
 	reviewBtn *gtk.Button
 	reviewPop *gtk.Popover
-	sent      string    // the last question pasted into a pane (report)
-	eval      string    // the last test evaluation (report, --do present-eval)
-	checked   *[]string // the problems the last --do "present PATH check" got; nil until then
+	// changesBtn lists what the shown document's last reload changed.
+	changesBtn *gtk.Button
+	changesPop *gtk.Popover
+	sent       string    // the last question pasted into a pane (report)
+	eval       string    // the last test evaluation (report, --do present-eval)
+	checked    *[]string // the problems the last --do "present PATH check" got; nil until then
 }
 
 // composeBox is the question popover of "Ask the agent".
@@ -200,6 +209,12 @@ func (a *App) newPanel(t *Tab) *panel {
 	pn.reviewBtn.SetVisible(false)
 	pn.reviewBtn.ConnectClicked(pn.openReview)
 	head.Append(pn.reviewBtn)
+	pn.changesBtn = gtk.NewButtonWithLabel("Changed")
+	pn.changesBtn.AddCSSClass("flat")
+	pn.changesBtn.SetTooltipText("What the agent's last edit changed")
+	pn.changesBtn.SetVisible(false)
+	pn.changesBtn.ConnectClicked(pn.openChanges)
+	head.Append(pn.changesBtn)
 	head.Append(panelButton("document-open-symbolic", "Open a file in the panel…", func() { a.pickPreview(t) }))
 	head.Append(panelButton("web-browser-symbolic", "Open in the browser", pn.openExternal))
 	head.Append(panelButton("list-remove-symbolic", "Remove this document from the panel", pn.removeCurrent))
@@ -493,6 +508,7 @@ func (pn *panel) show(d *panelDoc) {
 	d.loading()
 	d.inFlight = true
 	pn.load(d.page())
+	pn.syncChanges()
 	pn.syncPick()
 	pn.updateStatus()
 }
@@ -824,6 +840,7 @@ func (pn *panel) reload(d *panelDoc) {
 		return
 	}
 	pn.saveState(d)
+	pn.saveSections(d)
 	pn.view.eval("String(window.scrollY)", true, func(v string, err error) {
 		if err == nil {
 			d.scrollY = v
@@ -840,6 +857,7 @@ func (pn *panel) reload(d *panelDoc) {
 // replace swaps the article of d's page for body, marking what changed.
 func (pn *panel) replace(d *panelDoc, body []byte) {
 	arg, _ := json.Marshal(string(body))
+	pn.saveSections(d)
 	pn.view.eval(present.ResetProblemsScript, true, func(string, error) {})
 	pn.view.eval("bunkDoc.replace("+string(arg)+")", false, func(v string, err error) {
 		if err != nil {
@@ -852,6 +870,7 @@ func (pn *panel) replace(d *panelDoc, body []byte) {
 		d.pending = false
 		pn.updateStatus()
 		pn.markReview(d)
+		pn.compareChanges(d)
 		pn.collect(d)
 	})
 }
@@ -1007,6 +1026,9 @@ func (pn *panel) loaded() {
 		pn.view.find(f.query, 0) // the new page's matches
 	}
 	pn.markReview(d)
+	if d.havePrev {
+		pn.compareChanges(d)
+	}
 	if d.anchor != "" {
 		pn.scrollToAnchor(d)
 	} else if y, err := strconv.Atoi(d.scrollY); err == nil && y > 0 {
@@ -1532,6 +1554,7 @@ type docReport struct {
 	Crashed bool   `json:"crashed"` // its page ended the web process since the file changed
 
 	Problems []string `json:"problems"` // what was wrong with its page when it last drew
+	Changes  []string `json:"changes"`  // what its last reload changed: "changed Title", "new Title", "removed Title"
 }
 
 type askReport struct {
@@ -1559,7 +1582,10 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 		r.AskBtn = a.widgetRect(g, pn.askBtn)
 	}
 	for i, d := range pn.docs {
-		dr := docReport{Path: d.path, Kind: d.kind.String(), Loaded: d.loaded, Reloads: d.reloads, Changed: d.changed, Auto: d.auto, Pane: -1, Crashed: d.crashed, Problems: d.problems}
+		dr := docReport{Path: d.path, Kind: d.kind.String(), Loaded: d.loaded, Reloads: d.reloads, Changed: d.changed, Auto: d.auto, Pane: -1, Crashed: d.crashed, Problems: d.problems, Changes: []string{}}
+		for _, c := range d.changes {
+			dr.Changes = append(dr.Changes, c.kind+" "+c.title)
+		}
 		if d.pane != nil {
 			dr.Pane = d.pane.id
 		}
@@ -2278,4 +2304,135 @@ func reviewMessage(items []reviewText) string {
 		b.WriteString(rest + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// saveSections reads the sections of d's page, which is shown, before it
+// loads again or swaps its content (compareChanges).
+func (pn *panel) saveSections(d *panelDoc) {
+	d.havePrev = false
+	pn.view.eval(present.SectionsScript, true, func(v string, err error) {
+		var secs []docSection
+		if err == nil && json.Unmarshal([]byte(v), &secs) == nil {
+			d.prevSections, d.havePrev = secs, true
+		}
+	})
+}
+
+// compareChanges reads the sections of d's new page and keeps what
+// changed since saveSections. An HTML page gets the marks beside the
+// headings of changed and new sections, which Markdown's runtime draws
+// itself, and the count in the status line.
+func (pn *panel) compareChanges(d *panelDoc) {
+	prev := d.prevSections
+	d.prevSections, d.havePrev = nil, false
+	pn.view.eval(present.SectionsScript, true, func(v string, err error) {
+		var secs []docSection
+		if err != nil || json.Unmarshal([]byte(v), &secs) != nil || pn.cur != d {
+			return
+		}
+		d.changes = compareSections(prev, secs)
+		if d.kind == present.KindHTML {
+			keys := []string{}
+			for _, c := range d.changes {
+				if c.kind != "removed" && c.key != "" {
+					keys = append(keys, c.key)
+				}
+			}
+			arg, _ := json.Marshal(keys)
+			pn.view.eval(fmt.Sprintf(present.MarkChangesScript, arg), true, func(string, error) {})
+			d.changed = len(keys)
+		}
+		pn.syncChanges()
+		pn.updateStatus()
+	})
+}
+
+// syncChanges shows the Changed button while the shown document's last
+// reload changed something.
+func (pn *panel) syncChanges() {
+	d := pn.cur
+	n := 0
+	if d != nil {
+		n = len(d.changes)
+	}
+	pn.changesBtn.SetVisible(n > 0)
+	pn.changesBtn.SetLabel(fmt.Sprintf("%d changed", n))
+	if n == 0 && pn.changesPop != nil {
+		pn.changesPop.Popdown()
+	}
+}
+
+// openChanges lists what the shown document's last reload changed: each
+// section with a word diff of its text, and a button that scrolls to it.
+func (pn *panel) openChanges() {
+	d := pn.cur
+	if d == nil || len(d.changes) == 0 {
+		return
+	}
+	if pn.changesPop == nil {
+		pn.changesPop = gtk.NewPopover()
+		pn.changesPop.SetParent(pn.changesBtn)
+		pn.changesPop.AddCSSClass("bunk-ask")
+	}
+	box := gtk.NewBox(gtk.OrientationVertical, 10)
+	box.SetSizeRequest(400, -1)
+	title := gtk.NewLabel("What the last edit of " + filepath.Base(d.path) + " changed")
+	title.SetXAlign(0)
+	title.AddCSSClass("heading")
+	box.Append(title)
+	for _, c := range d.changes {
+		name := c.title
+		if name == "" {
+			name = "Before the first heading"
+		}
+		switch c.kind {
+		case "new":
+			name += " (new)"
+		case "removed":
+			name += " (removed)"
+		}
+		head := gtk.NewButtonWithLabel(name)
+		head.AddCSSClass("flat")
+		head.SetHAlign(gtk.AlignStart)
+		if c.kind == "removed" {
+			head.SetSensitive(false)
+		} else {
+			key := c.key
+			head.SetTooltipText("Go to this section")
+			head.ConnectClicked(func() {
+				pn.changesPop.Popdown()
+				pn.scrollToSection(key)
+			})
+		}
+		box.Append(head)
+		diff := gtk.NewLabel("")
+		diff.SetMarkup(changeMarkup(c))
+		diff.SetXAlign(0)
+		diff.SetWrap(true)
+		diff.SetMaxWidthChars(56)
+		diff.SetSelectable(true)
+		diff.SetMarginStart(10)
+		box.Append(diff)
+	}
+	scroll := gtk.NewScrolledWindow()
+	scroll.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
+	scroll.SetMaxContentHeight(480)
+	scroll.SetPropagateNaturalHeight(true)
+	scroll.SetChild(box)
+	pn.changesPop.SetChild(scroll)
+	pn.changesPop.Popup()
+}
+
+// scrollToSection scrolls the shown page to the heading whose id, or else
+// whose text, is key; "" is the top.
+func (pn *panel) scrollToSection(key string) {
+	arg, _ := json.Marshal(key)
+	pn.view.eval(`(function (k) {
+  if (!k) { window.scrollTo(0, 0); return 1; }
+  var hs = document.querySelectorAll('h1, h2, h3, h4');
+  for (var i = 0; i < hs.length; i++) {
+    if (hs[i].id === k || hs[i].textContent.replace(/\s+/g, ' ').trim() === k) { hs[i].scrollIntoView(); return 1; }
+  }
+  return 0;
+})(`+string(arg)+`)`, true, func(string, error) {})
 }

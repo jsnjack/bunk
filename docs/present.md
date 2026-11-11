@@ -48,7 +48,13 @@ stays while the window resizes.
   were reading at the top and marks the headings whose sections changed.
   The marks fade at the next change. An HTML page loads again and scrolls
   back, and keeps the sections you opened (`<details>`), the tabs you
-  chose (`role="tab"`) and what you typed or set in its form controls.
+  chose (`role="tab"`) and what you typed or set in its form controls; the
+  headings of its sections that changed get the same marks.
+- After an edit, a "N changed" button in the header lists the sections
+  the edit changed, added or removed, each with its words: removed ones
+  struck through in red, added ones underlined in green, long unchanged
+  stretches cut to "…". A section's name scrolls the page to it.
+  Diagrams, charts, graphs and math count by their source.
 - A document reloads when its file changes, and when an image beside it
   that it shows does: a Markdown document reloads for the images it names,
   not for others saved beside it, such as screenshots. An HTML page

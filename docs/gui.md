@@ -316,6 +316,15 @@ panel gives the panes their width back.
   check from reading a page while its new version loads. A change of the
   file while its page is still loading whole (`inFlight`) loads it again,
   rather than swap the new text into the page on its way.
+- What an edit changed (`changes.go`): `present.SectionsScript` reads
+  the page's sections (text from one h1-h4 heading to the next, diagrams,
+  charts, graphs and math as their source, the kit's controls left out)
+  before an HTML page loads again or Markdown swaps its content
+  (`saveSections`) and after (`compareChanges`). `compareSections` keys
+  sections by heading id, else title; `wordDiff` is an LCS over words,
+  bounded by `maxDiffCells`, and the "N changed" popover shows it as Pango
+  markup. HTML headings get `data-bunk-changed` (`MarkChangesScript`);
+  Markdown keeps the runtime's own marks.
 - Before an HTML page loads again, or another document takes the view,
   `present.SaveStateScript` reads in bunk's isolated world which
   `<details>` are open, what form controls hold and which tabs

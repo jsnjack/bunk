@@ -80,7 +80,8 @@ Agents can show you what they wrote in a panel beside the tab's panes
   `<details>` sections, `<kbd>` keys and a few other tags.
 - The page reloads when the file changes and keeps your place, the
   sections you opened, the tab you chose and what you typed. Sections that
-  changed are marked.
+  changed are marked, and "N changed" in the header shows what changed,
+  word by word.
 - Select text and choose "Ask the agent" (the header button or the context
   menu). Your question is pasted into the agent's input with the file, the
   section and the quoted text. Press Enter in the pane to send it.

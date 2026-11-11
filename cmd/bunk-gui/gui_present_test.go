@@ -930,3 +930,44 @@ func TestGUIPresentLiveCopy(t *testing.T) {
 		t.Errorf("version.js: %q", v)
 	}
 }
+
+// TestGUIPresentChanges: an edit of an HTML page marks the heading of the
+// section it changed, counts it, and lists what changed; the drawn chart
+// and the kit's controls do not count. A Markdown edit lists its changed
+// section too.
+func TestGUIPresentChanges(t *testing.T) {
+	t.Parallel()
+	page := `<!doctype html><html><head><title>C</title><link rel="stylesheet" href="bunk-present://assets/bunk-doc.css">` +
+		`<script src="bunk-present://assets/bunk-doc.js" defer></script></head><body><article id="bunk-doc">` +
+		`<h1 id="c">C</h1><h2 id="one">One</h2><p>Sessions live in Redis.</p>` +
+		`<pre class="bunk-chart">{"xAxis": {"data": ["a"]}, "yAxis": {}, "series": [{"type": "bar", "data": [1]}]}</pre>` +
+		`<h2 id="two">Two</h2><p>Tokens expire in an hour.</p><pre><code>make</code></pre></article></body></html>`
+	g := runGUI(t, scenario{
+		cost:  2,
+		args:  []string{"--size", "100x30"},
+		files: map[string]string{"c.html": page, "m.md": "# M\n\n## Alpha\n\nFirst.\n\n## Beta\n\nSecond.\n"},
+		script: []string{
+			"wait focused.line=$",
+			"present c.html",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"present-wait document.querySelector('.bunk-chart-box svg')",
+			"type sed -i 's/an hour/a day/' c.html\\r",
+			"wait tab.1.panel.docs.0.reloads=1 tab.1.panel.docs.0.changes.#=1",
+			"present-wait document.querySelectorAll('[data-bunk-changed]').length === 1 && document.getElementById('two').hasAttribute('data-bunk-changed')",
+			"snap html",
+			"present m.md",
+			"wait tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true",
+			"type sed -i 's/Second./Second, edited./' m.md\\r",
+			"wait tab.1.panel.docs.1.reloads=1 tab.1.panel.docs.1.changes.#=1",
+			"snap md",
+			"quit",
+		},
+	})
+	html := g.snap("html").Tabs[0].Panel
+	if d := html.Docs[0]; len(d.Changes) != 1 || d.Changes[0] != "changed Two" || d.Changed != 1 || !strings.Contains(html.Status, "1 section changed") {
+		t.Errorf("HTML: changes %q, changed %d, status %q", d.Changes, d.Changed, html.Status)
+	}
+	if d := g.snap("md").Tabs[0].Panel.Docs[1]; len(d.Changes) != 1 || d.Changes[0] != "changed Beta" {
+		t.Errorf("Markdown: changes %q", d.Changes)
+	}
+}
