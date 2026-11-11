@@ -345,8 +345,8 @@ func TestGUIPresentPreview(t *testing.T) {
 			"wait tab.1.panel.docs.0.reloads=1",
 			"preview shot.png",
 			"wait tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true",
-			"present-eval String(document.querySelector('img').naturalWidth)",
-			"wait tab.1.panel.eval=3",
+			// The page can finish loading before the image is decoded.
+			"present-wait document.querySelector('img').naturalWidth === 3",
 			"present-browser",
 			"wait run.opened.#=1",
 			"preview doc.pdf",
