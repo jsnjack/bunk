@@ -18,11 +18,13 @@ Release:        1%{?snapinfo:.%{snapinfo}}%{?dist}
 Summary:        Terminal for coding agents
 
 # bunk, vt10x, creack/pty, rivo/uniseg, goldmark, chroma, regexp2, Mermaid,
-# KaTeX: MIT; gotk4, gotk4-adwaita: MPL-2.0; gotk4/core: ISC;
-# gotk4/cairo/swizzle, x/sync: BSD-3-Clause. Inside the Mermaid bundle:
-# DOMPurify (MPL-2.0 OR Apache-2.0, taken as MPL-2.0), d3 (ISC) and MIT
-# libraries (internal/present/assets/README.md).
-License:        MIT AND MPL-2.0 AND ISC AND BSD-3-Clause
+# KaTeX, Viz.js, Expat: MIT; gotk4, gotk4-adwaita: MPL-2.0; gotk4/core, D3:
+# ISC; gotk4/cairo/swizzle, x/sync, highlight.js: BSD-3-Clause; Apache
+# ECharts: Apache-2.0 (with zrender and parts of d3, BSD-3-Clause); Graphviz,
+# compiled into Viz.js: EPL-2.0. Inside the Mermaid bundle: DOMPurify
+# (MPL-2.0 OR Apache-2.0, taken as MPL-2.0), d3 (ISC) and MIT libraries
+# (internal/present/assets/README.md).
+License:        MIT AND MPL-2.0 AND ISC AND BSD-3-Clause AND Apache-2.0 AND EPL-2.0
 URL:            https://github.com/jsnjack/bunk
 
 BuildRequires:  desktop-file-utils

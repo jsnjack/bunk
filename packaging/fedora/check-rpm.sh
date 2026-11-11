@@ -24,7 +24,7 @@ rpm2cpio "$rpm" >"$work/payload.cpio"
 rm "$work/payload.cpio"
 
 license=$(rpm -qp --qf '%{LICENSE}' "$rpm")
-[[ $license == "MIT AND MPL-2.0 AND ISC AND BSD-3-Clause" ]] &&
+[[ $license == "MIT AND MPL-2.0 AND ISC AND BSD-3-Clause AND Apache-2.0 AND EPL-2.0" ]] &&
 	pass "License: $license" || fail "License tag is '$license'"
 
 lic=$work/usr/share/licenses/bunk-gui
