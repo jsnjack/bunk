@@ -232,6 +232,16 @@ on by markup, so an agent writes the content rather than the widgets:
 | `<pre class="bunk-diff">`, or a ` ```diff ` fence | A unified diff with added and removed lines coloured |
 | `<pre><code>` | A copy button in the corner |
 
+A page can also answer the agent. A click on an element with
+`data-bunk-reply="Go with option B"` (its own text when the attribute is
+empty), or `bunkDoc.reply(text)` from the page's script, opens the question
+popover with the text and the section it came from; Enter pastes it into
+the agent's input as `About FILE › Section:` and the text, and you send it
+in the pane. bunk-gui takes a reply only just after you clicked or typed in
+the page, so a page cannot open the popover by itself. In a browser the
+reply goes to the clipboard. Agents use it for decisions: a button per
+option, a checklist that replies with what is ticked.
+
 Tabs and steps are `role="tab"` buttons, so the panel keeps the one chosen
 when the page reloads. A page whose colours follow the system, as in a
 browser, gets a `bunk:theme` event on `document` when the scheme changes

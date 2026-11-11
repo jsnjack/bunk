@@ -332,6 +332,14 @@ panel gives the panes their width back.
   (`present.MarkQuotesScript`, isolated world), which leaves the page's
   DOM alone, and marked again after each load and swap. A review lives as
   long as the window: session restore does not keep it.
+- Page replies: each view registers the script message handler
+  `bunkReply` in the page's world; `bunkDoc.reply` and `[data-bunk-reply]`
+  post `{text, section}`, and `panel.pageReply` opens the question
+  popover with it, without a quote. A legacy event controller written in C
+  (`bp_input`, as gotk4 cannot pass a GdkEvent to Go) stamps the user's
+  clicks and keys in the page, and a reply more than `replyGrace` (2 s)
+  after the last is dropped, so a page cannot open the popover by itself;
+  the user still pastes it, and sends it in the pane.
 - Hook snippets run `present --hook AGENT -` after the agents'
   file-writing tools. A reported Markdown or HTML file is listed in the
   panel; `[present] auto` opens the panel for it. Without it, a document

@@ -681,6 +681,62 @@
     wrap.appendChild(b);
   }
 
+  // ---- Replies: the page asks bunk-gui to paste a reply into the agent's input ----
+  //
+  // A click on an element with data-bunk-reply="TEXT" (its text when the
+  // attribute is empty), or bunkDoc.reply(TEXT) from the page's script,
+  // opens bunk-gui's question popover with TEXT and the section it came
+  // from; the user pastes it with Enter, and sends it in the pane. bunk-gui
+  // takes a reply only just after the user clicked or typed in the page. In
+  // a browser the reply goes to the clipboard.
+
+  function sectionOf(el) {
+    var heads = doc().querySelectorAll('h1, h2, h3, h4, h5, h6');
+    var found = '';
+    for (var i = 0; i < heads.length; i++) {
+      if (el && heads[i].compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING) break;
+      found = heads[i].textContent.replace(/\s+/g, ' ').trim();
+    }
+    return found;
+  }
+
+  function reply(text, from) {
+    text = String(text === undefined ? '' : text).trim();
+    if (!text) return false;
+    var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bunkReply;
+    if (h) {
+      h.postMessage(JSON.stringify({text: text, section: sectionOf(from || document.activeElement)}));
+      return true;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        note('Copied the reply. Paste it into the agent.');
+      }, function () {
+        note('Reply: ' + text);
+      });
+    } else {
+      note('Reply: ' + text);
+    }
+    return false;
+  }
+
+  // note shows a short message at the bottom of the page.
+  function note(text) {
+    var n = document.getElementById('bunk-note') || make('div', 'bunk-note');
+    n.id = 'bunk-note';
+    n.textContent = text;
+    document.body.appendChild(n);
+    clearTimeout(note.timer);
+    note.timer = setTimeout(function () { n.remove(); }, 3000);
+  }
+
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest ? e.target.closest('[data-bunk-reply]') : null;
+    if (!el) return;
+    e.preventDefault();
+    reply(el.getAttribute('data-bunk-reply') || el.textContent, el);
+  });
+
   // A page that follows the system's colour scheme tells its own scripts
   // when it changes: bunk:theme on the document, detail.dark.
   function themeChanged() {
@@ -688,7 +744,7 @@
   }
 
   window.bunkDoc = {
-    render: render, anchor: anchor, restore: restore, replace: replace, use: use,
+    render: render, anchor: anchor, restore: restore, replace: replace, use: use, reply: reply,
     dark: function () { return dark; }
   };
   // An HTML page may load the runtime in its <head>, before the body.

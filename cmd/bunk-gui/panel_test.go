@@ -21,6 +21,8 @@ func TestQuestionText(t *testing.T) {
 			"About plan.md:\n> Intro"},
 		{"lines trimmed, blank runs collapsed", "a.md", "S", "one  \n\n\n\ntwo\t\n", "  q  ",
 			"About a.md › S:\n> one\n>\n> two\nq"},
+		{"a reply: no quote", "a.md", "Options", "", "Go with B",
+			"About a.md › Options:\nGo with B"},
 	}
 	for _, c := range cases {
 		if got := questionText(c.path, c.section, c.quote, c.question); got != c.want {

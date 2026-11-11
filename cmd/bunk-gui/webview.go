@@ -14,6 +14,8 @@ extern void goPresentAsk(int view);
 extern void goPresentEval(int view, int call, char* value, char* err);
 extern void goPresentCrashed(int view);
 extern void goPresentFindCount(int view, int n);
+extern void goPresentReply(int view, char* json);
+extern void goPresentInput(int view);
 
 // One web context, network session and settings serve every document
 // view: the session is ephemeral, so nothing a page stores outlives the
@@ -122,6 +124,32 @@ static gboolean bp_deny(WebKitWebView* v, WebKitPermissionRequest* req, gpointer
 
 static void bp_crashed(WebKitWebView* v, WebKitWebProcessTerminationReason reason, gpointer u) { goPresentCrashed(bp_id(v)); }
 
+// bp_input tells the panel that the user clicked or typed in the page
+// (pageReply). A legacy controller in the capture phase sees each event
+// before WebKit and lets it through; it is written in C because gotk4
+// v0.4.1 cannot pass a GdkEvent to Go.
+static gboolean bp_input(GtkEventControllerLegacy* c, GdkEvent* ev, gpointer data) {
+	switch (gdk_event_get_event_type(ev)) {
+	case GDK_BUTTON_PRESS:
+	case GDK_BUTTON_RELEASE:
+	case GDK_KEY_PRESS:
+	case GDK_TOUCH_BEGIN:
+		goPresentInput(GPOINTER_TO_INT(data) - 1);
+		break;
+	default:
+		break;
+	}
+	return FALSE;
+}
+
+// bp_reply passes what a page posted to window.webkit.messageHandlers.bunkReply.
+static void bp_reply(WebKitUserContentManager* m, JSCValue* v, gpointer data) {
+	if (!jsc_value_is_string(v)) return;
+	char* s = jsc_value_to_string(v);
+	goPresentReply(GPOINTER_TO_INT(data) - 1, s);
+	g_free(s);
+}
+
 static void bp_find_counted(WebKitFindController* fc, guint n, gpointer u) {
 	goPresentFindCount(bp_id(webkit_find_controller_get_web_view(fc)), (int)n);
 }
@@ -152,6 +180,13 @@ static GtkWidget* bp_view_new(int id) {
 	g_signal_connect(v, "context-menu", G_CALLBACK(bp_menu), NULL);
 	g_signal_connect(v, "web-process-terminated", G_CALLBACK(bp_crashed), NULL);
 	g_signal_connect(webkit_web_view_get_find_controller(v), "counted-matches", G_CALLBACK(bp_find_counted), NULL);
+	GtkEventController* input = gtk_event_controller_legacy_new();
+	gtk_event_controller_set_propagation_phase(input, GTK_PHASE_CAPTURE);
+	g_signal_connect(input, "event", G_CALLBACK(bp_input), GINT_TO_POINTER(id + 1));
+	gtk_widget_add_controller(GTK_WIDGET(v), input);
+	WebKitUserContentManager* ucm = webkit_web_view_get_user_content_manager(v);
+	webkit_user_content_manager_register_script_message_handler(ucm, "bunkReply", NULL);
+	g_signal_connect(ucm, "script-message-received::bunkReply", G_CALLBACK(bp_reply), GINT_TO_POINTER(id + 1));
 	return GTK_WIDGET(v);
 }
 
@@ -236,6 +271,7 @@ import "C"
 
 import (
 	"errors"
+	"time"
 	"unsafe"
 
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -445,6 +481,20 @@ func goPresentEval(view, call C.int, value, errText *C.char) {
 func goPresentFindCount(view, n C.int) {
 	if v := webViewByID(view); v != nil && v.panel != nil {
 		v.panel.foundMatches(int(n))
+	}
+}
+
+//export goPresentInput
+func goPresentInput(view C.int) {
+	if v := webViewByID(view); v != nil && v.panel != nil {
+		v.panel.lastInput = time.Now()
+	}
+}
+
+//export goPresentReply
+func goPresentReply(view C.int, raw *C.char) {
+	if v := webViewByID(view); v != nil && v.panel != nil {
+		v.panel.pageReply(C.GoString(raw))
 	}
 }
 

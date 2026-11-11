@@ -859,3 +859,38 @@ func TestGUIPresentReview(t *testing.T) {
 		t.Errorf("multi-line question:\n%s", got)
 	}
 }
+
+// TestGUIPresentReply: a page's reply button opens the question popover
+// with its text and section, and Enter pastes it into the agent's input;
+// a reply the page's script sends without the user's click is dropped.
+func TestGUIPresentReply(t *testing.T) {
+	t.Parallel()
+	page := `<!doctype html><html><head><title>Choice</title><script src="bunk-present://assets/bunk-doc.js" defer></script></head>` +
+		`<body><h1>Choice</h1><h2 id="options">Options</h2><p>Pick one.</p>` +
+		`<button id="b" data-bunk-reply="Go with option B">Choose B</button></body></html>`
+	g := runGUI(t, scenario{
+		cost:  2,
+		args:  []string{"--size", "100x30"},
+		files: map[string]string{"choice.html": page},
+		script: []string{
+			"maximize",
+			"wait window.maximized=true focused.line=$",
+			"present choice.html",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"present-eval bunkDoc.reply('sneaky') ? 'posted' : 'not'",
+			"wait tab.1.panel.eval=posted",
+			"sleep 300ms",
+			"wait tab.1.panel.ask=null",
+			"ptr-at doc #b",
+			"ptr-click",
+			"wait tab.1.panel.ask.section=Options tab.1.panel.ask.title~\"Reply to\" tab.1.panel.ask.quote=\"\"",
+			"kbd Return",
+			"wait tab.1.panel.ask=null tab.1.panel.sent~\"Go with option B\"",
+			"snap sent",
+			"quit",
+		},
+	})
+	if got, want := g.snap("sent").Tabs[0].Panel.Sent, "About choice.html › Options:\nGo with option B"; got != want {
+		t.Errorf("reply:\n%s\nwant:\n%s", got, want)
+	}
+}

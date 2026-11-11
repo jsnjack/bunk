@@ -117,6 +117,8 @@ type panel struct {
 	ptrRects map[string]string
 	// unseen counts the documents hooks listed while the panel was hidden.
 	unseen int
+	// lastInput is when the user last clicked or typed in the page.
+	lastInput time.Time
 	// zoom scales the panel's pages; 0 or 1 is their own size.
 	zoom   float64
 	finder *panelFind
@@ -209,6 +211,7 @@ func (a *App) newPanel(t *Tab) *panel {
 	pn.view.setBackground(a.theme.Background.Hex())
 	pn.overlay = gtk.NewOverlay()
 	pn.overlay.SetChild(pn.view.widget)
+
 	pn.box.Append(pn.overlay)
 
 	pn.status = gtk.NewLabel("")
@@ -1260,10 +1263,63 @@ func (pn *panel) openCompose(d *panelDoc, sel selection) {
 		about += " › " + sel.Section
 	}
 	c.title.SetText("Ask " + paneAgentName(target) + " about " + about)
+	if sel.Text == "" {
+		c.title.SetText("Reply to " + paneAgentName(target) + " from " + about)
+	}
 	c.quote.SetText(strings.TrimSpace(sel.Text))
+	c.quote.SetVisible(sel.Text != "")
 	c.view.Buffer().SetText("")
 	c.pop.Popup()
 	c.view.GrabFocus()
+}
+
+// replyGrace is how soon after the user's last click or key in the page
+// a reply from the page is taken: the page cannot open the popover by
+// itself.
+const replyGrace = 2 * time.Second
+
+// maxReply caps the text of a reply from the page, in bytes.
+const maxReplyText = 2000
+
+// pageReply opens the question popover with a reply the shown page asks
+// to paste into the agent's input ({"text", "section"} from bunkDoc.reply
+// or a data-bunk-reply button), as a question without a quote. The user
+// pastes it with Enter or drops it. A reply that does not follow a click
+// or key of the user's in the page is dropped.
+func (pn *panel) pageReply(raw string) {
+	d := pn.cur
+	if d == nil || !pn.open {
+		return
+	}
+	if time.Since(pn.lastInput) > replyGrace {
+		slog.Debug("present: a reply without the user's click", "path", d.path)
+		return
+	}
+	var r struct {
+		Text    string `json:"text"`
+		Section string `json:"section"`
+	}
+	if err := json.Unmarshal([]byte(raw), &r); err != nil {
+		slog.Debug("present: reply", "err", err)
+		return
+	}
+	text := strings.TrimSpace(r.Text)
+	if text == "" {
+		return
+	}
+	if len(text) > maxReplyText {
+		text = cutUTF8(text, maxReplyText) + "…"
+	}
+	section := strings.Join(strings.Fields(r.Section), " ")
+	if len(section) > 200 {
+		section = cutUTF8(section, 200) + "…"
+	}
+	pn.openCompose(d, selection{Section: section})
+	c := pn.compose
+	if c == nil || c.doc != d {
+		return
+	}
+	c.view.Buffer().SetText(text)
 }
 
 // composed is the text of the question box.
@@ -1330,7 +1386,11 @@ func questionText(path, section, quote, question string) string {
 		quote = cutUTF8(quote, maxQuote) + "…"
 	}
 	blank := 0
-	for _, line := range strings.Split(quote, "\n") {
+	lines := strings.Split(quote, "\n")
+	if quote == "" {
+		lines = nil // a reply from the page quotes nothing
+	}
+	for _, line := range lines {
 		line = strings.TrimRight(line, " \t\r")
 		if line == "" {
 			if blank++; blank > 1 {

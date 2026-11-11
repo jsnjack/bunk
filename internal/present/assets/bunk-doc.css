@@ -572,7 +572,30 @@ pre.bunk-diff .d-file { font-weight: 600; color: var(--bunk-muted); }
 .bunk-badge.bad { --bunk-badge: #e5534b; }
 .bunk-badge.info { --bunk-badge: var(--bunk-accent); }
 
+/* Buttons that reply to the agent ([data-bunk-reply]), and the note a
+   browser shows after one. */
+button[data-bunk-reply] {
+  font: inherit;
+  padding: 4px 12px;
+  color: var(--bunk-bg);
+  background: var(--bunk-accent);
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.bunk-note {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  color: var(--bunk-bg);
+  background: var(--bunk-fg);
+  border-radius: 6px;
+}
+
 @media print {
-  .bunk-copy, .bunk-filter-bar { display: none; }
+  .bunk-copy, .bunk-filter-bar, .bunk-note { display: none; }
   .bunk-tabs > section[hidden], .bunk-steps > section[hidden] { display: block; }
 }
