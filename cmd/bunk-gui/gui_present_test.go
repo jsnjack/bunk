@@ -894,3 +894,39 @@ func TestGUIPresentReply(t *testing.T) {
 		t.Errorf("reply:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// TestGUIPresentLiveCopy: once the user opened a document in the browser,
+// its copy is written again with a new version when the file changes, so
+// the open copy reloads.
+func TestGUIPresentLiveCopy(t *testing.T) {
+	t.Parallel()
+	cache := t.TempDir()
+	g := runGUI(t, scenario{
+		cost:  2,
+		args:  []string{"--size", "100x30"},
+		env:   []string{"XDG_CACHE_HOME=" + cache},
+		files: map[string]string{"plan.md": "# Plan\n\nFirst version.\n"},
+		script: []string{
+			"wait focused.line=$",
+			"present plan.md",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"present-browser",
+			"wait run.opened.#=1",
+			"snap opened",
+			"type printf '# Plan\\\\n\\\\nSecond version.\\\\n' > plan.md\\r",
+			"wait tab.1.panel.docs.0.reloads=1",
+			"sleep 500ms",
+			"quit",
+		},
+	})
+	page := strings.TrimPrefix(g.Opened[0], "file://")
+	if !strings.HasPrefix(page, filepath.Join(cache, present.CacheDir)+"/") {
+		t.Fatalf("opened %s, not a copy in the cache", g.Opened[0])
+	}
+	if s := readFile(t, page); !strings.Contains(s, "Second version.") || !strings.Contains(s, "bunk-live.js") {
+		t.Errorf("the copy was not written again:\n%s", s)
+	}
+	if v := readFile(t, filepath.Join(filepath.Dir(page), "version.js")); !strings.HasPrefix(v, "bunkVersion(") {
+		t.Errorf("version.js: %q", v)
+	}
+}

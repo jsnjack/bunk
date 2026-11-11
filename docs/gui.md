@@ -224,6 +224,12 @@ panel gives the panes their width back.
   any page. A browser gets a copy of such a page that loads the assets
   from disk (`present.NeedsPage`, `WriteStandalone`), with a policy first
   in its head that keeps it off the network (`standaloneHTMLCSP`).
+- Browser copies follow their file: `openExternal` marks the document
+  (`panelDoc.browser`), and each change of its file writes the copy again
+  off the main loop (`refreshCopy`). `WriteStandalone` writes a new
+  `version.js` (`bunkVersion("…")`) with every page, and the copy's
+  `bunk-live.js` loads it as a script every 1.5 s, since a file: page
+  cannot fetch, and reloads when the version changes.
 - Pages for a browser follow the system's colour scheme
   (`present.Options.System`): the panel's theme for its own darkness and
   bunk's default theme for the other, the dark one under

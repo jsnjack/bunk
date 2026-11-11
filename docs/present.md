@@ -160,7 +160,11 @@ the same pages. They follow the light or dark style that the system sets
 (`prefers-color-scheme`), and switch, diagrams included, when it changes:
 in the style of the panel's theme a page has the panel's colours, and in
 the other style bunk's default light or dark colours. They print in the
-light colours. Other HTML pages and
+light colours. A copy that bunk-gui's "Open in the browser" opened stays
+current: while the panel lists the document, each change of its file
+writes the copy again, and the open page reloads within about 2 seconds
+(`bunk-live.js` watches a `version.js` beside the copy). A copy that `bunk
+present` opened outside bunk-gui shows the file as it was. Other HTML pages and
 other files open as they are. bunk
 starts `gio open`, else `xdg-open` (`open` on macOS), in a session of its
 own and discards its output.

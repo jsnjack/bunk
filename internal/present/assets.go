@@ -11,7 +11,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
+	"time"
 )
 
 //go:embed assets
@@ -80,7 +82,9 @@ const standaloneHTMLCSP = "default-src file:; script-src file: 'unsafe-inline' '
 // URLs into root/assets. The page follows the browser's light or dark
 // colour scheme (Options.System), with theme for its own darkness, and
 // has a Content-Security-Policy that keeps it off the network, as in the
-// panel. It returns the page's path.
+// panel. Each write also writes version.js beside the page, which the
+// page's bunk-live.js watches: writing the page again reloads it in the
+// browser. It returns the page's path.
 func WriteStandalone(path, root string, theme Theme) (string, error) {
 	kind, err := Preview(path)
 	if err != nil {
@@ -107,6 +111,7 @@ func WriteStandalone(path, root string, theme Theme) (string, error) {
 		AssetBase: FileURL(assetDir) + "/",
 		Theme:     theme,
 		System:    true,
+		Live:      true,
 	}
 	base := FileURL(filepath.Dir(absDoc)) + "/"
 	var page []byte
@@ -118,7 +123,8 @@ func WriteStandalone(path, root string, theme Theme) (string, error) {
 	case KindHTML:
 		page = bytes.ReplaceAll(src, []byte(AssetsURL), []byte(opts.AssetBase))
 		page = InsertHead(page, `<meta http-equiv="Content-Security-Policy" content="`+html.EscapeString(standaloneHTMLCSP)+`">`+
-			`<base href="`+html.EscapeString(base)+`"><style>`+pageCSS(theme, true, false)+`</style>`)
+			`<base href="`+html.EscapeString(base)+`"><style>`+pageCSS(theme, true, false)+`</style>`+
+			`<script src="`+html.EscapeString(opts.AssetBase+assetLive)+`" defer></script>`)
 	default:
 		err = fmt.Errorf("a browser opens %s files as they are", kind)
 	}
@@ -134,8 +140,17 @@ func WriteStandalone(path, root string, theme Theme) (string, error) {
 	if err := writeAtomic(out, page); err != nil {
 		return "", fmt.Errorf("write page: %w", err)
 	}
+	// A new version on every write: bunk-live.js in an open copy reloads it.
+	version := fmt.Sprintf("bunkVersion(%q);\n", strconv.FormatInt(time.Now().UnixNano(), 36))
+	if err := writeAtomic(filepath.Join(dir, versionFile), []byte(version)); err != nil {
+		return "", fmt.Errorf("write version: %w", err)
+	}
 	return out, nil
 }
+
+// versionFile is the script beside a page that WriteStandalone wrote,
+// whose version bunk-live.js watches.
+const versionFile = "version.js"
 
 // FileURL returns the file:// URL of an absolute path, escaped.
 func FileURL(p string) string {

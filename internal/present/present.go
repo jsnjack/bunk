@@ -164,6 +164,10 @@ type Options struct {
 	// Theme for its own darkness, bunk's default theme for the other
 	// (systemThemes). Without it the page keeps Theme, as in the panel.
 	System bool
+
+	// Live loads bunk-live.js, which reloads a browser copy when bunk-gui
+	// writes it again (WriteStandalone).
+	Live bool
 }
 
 // The page's own assets. The runtime loads KaTeX's and Mermaid's scripts
@@ -172,6 +176,7 @@ const (
 	assetScript   = "bunk-doc.js"
 	assetStyle    = "bunk-doc.css"
 	assetKatexCSS = "katex/katex.min.css"
+	assetLive     = "bunk-live.js"
 )
 
 // articleOpen starts the element whose content RenderBody returns. Its
@@ -232,6 +237,9 @@ func renderPage(src []byte, opts Options, baseHref string) ([]byte, error) {
 	fmt.Fprintf(&b, "<title>%s</title>\n", html.EscapeString(title))
 	fmt.Fprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", asset(assetStyle))
 	fmt.Fprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", asset(assetKatexCSS))
+	if opts.Live {
+		fmt.Fprintf(&b, "<script src=\"%s\" defer></script>\n", asset(assetLive))
+	}
 	b.WriteString("<style>\n")
 	b.WriteString(pageCSS(theme, opts.System, true))
 	b.WriteString("</style>\n</head>\n<body>\n")

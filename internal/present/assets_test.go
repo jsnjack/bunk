@@ -218,3 +218,40 @@ func TestWriteStandalone(t *testing.T) {
 		}
 	})
 }
+
+// TestStandaloneLive: every kind of browser copy loads bunk-live.js, and
+// each write leaves a new version.js beside the page, which the open copy
+// watches to reload.
+func TestStandaloneLive(t *testing.T) {
+	t.Parallel()
+	dir, root := t.TempDir(), t.TempDir()
+	for _, name := range []string{"plan.md", "page.html", "notes.txt"} {
+		src := "# Doc\n"
+		if name == "page.html" {
+			src = `<html><head><link rel="stylesheet" href="bunk-present://assets/bunk-doc.css"></head><body>x</body></html>`
+		}
+		writeTestFile(t, filepath.Join(dir, name), src)
+		page, err := WriteStandalone(filepath.Join(dir, name), root, DefaultTheme())
+		if err != nil {
+			t.Fatal(err)
+		}
+		live := FileURL(filepath.Join(root, "assets", "bunk-live.js"))
+		if s := readTestFile(t, page); !strings.Contains(s, `<script src="`+live+`" defer></script>`) {
+			t.Errorf("%s: the copy does not load bunk-live.js:\n%s", name, s)
+		}
+		first := readTestFile(t, filepath.Join(filepath.Dir(page), versionFile))
+		if !strings.HasPrefix(first, "bunkVersion(\"") {
+			t.Errorf("%s: version.js is %q", name, first)
+		}
+		time.Sleep(time.Millisecond)
+		if _, err := WriteStandalone(filepath.Join(dir, name), root, DefaultTheme()); err != nil {
+			t.Fatal(err)
+		}
+		if again := readTestFile(t, filepath.Join(filepath.Dir(page), versionFile)); again == first {
+			t.Errorf("%s: a second write kept version %q", name, first)
+		}
+	}
+	if _, err := fs.Stat(Assets(), assetLive); err != nil {
+		t.Errorf("Assets lacks %s: %v", assetLive, err)
+	}
+}

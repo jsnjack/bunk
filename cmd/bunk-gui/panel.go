@@ -90,6 +90,7 @@ type panelDoc struct {
 	collectGen int
 	loadedMod  time.Time // the file's modification time when it last loaded
 	pending    bool      // a new version of its page is loading or being swapped in
+	browser    bool      // the user opened its copy in the browser, which follows its changes
 	inFlight   bool      // its page is loading whole (show, an HTML reload)
 }
 
@@ -758,6 +759,9 @@ func (pn *panel) changedLater(d *panelDoc) {
 	}
 	d.timer = coreglib.TimeoutAdd(uint(reloadDelay/time.Millisecond), func() bool {
 		d.timer = 0
+		if pn.find(d.path) == d {
+			pn.refreshCopy(d)
+		}
 		pn.reload(d)
 		return false
 	})
@@ -1151,7 +1155,27 @@ func (pn *panel) openExternal() {
 		pn.app.toast("Could not open the document: " + err.Error())
 		return
 	}
+	d.browser = true
 	openURL(pn.app, present.FileURL(index))
+}
+
+// refreshCopy writes d's browser copy again after its file changed, off
+// the main loop, so an open copy reloads (bunk-live.js) while the panel
+// lists d.
+func (pn *panel) refreshCopy(d *panelDoc) {
+	if !d.browser || !present.NeedsPage(d.path, d.kind) {
+		return
+	}
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return
+	}
+	path, theme := d.path, pn.app.presentTheme()
+	go func() {
+		if _, err := present.WriteStandalone(path, filepath.Join(dir, present.CacheDir), theme); err != nil {
+			slog.Debug("present: refresh the browser copy", "path", path, "err", err)
+		}
+	}()
 }
 
 // target is the pane a question about d goes to: the pane that presented
