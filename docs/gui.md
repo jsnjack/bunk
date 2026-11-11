@@ -284,6 +284,13 @@ panel gives the panes their width back.
   keeps the reader at the same heading and marks the sections whose
   `data-bunk-hash` changed; HTML loads again and scrolls back. A page
   whose web process ends loads again once until its file changes.
+- Before an HTML page loads again, or another document takes the view,
+  `present.SaveStateScript` reads in bunk's isolated world which
+  `<details>` are open, what form controls hold and which tabs
+  (`role="tab"`) are selected; `RestoreStateScript` gives it back once the
+  page has loaded, before the scroll: it sets the controls with input and
+  change events and clicks the tabs, so the page's scripts follow. Elements
+  match by id, a control by name and value, else by place.
 - Closing a tab ends its view's web process (`closeWebView`); `--report`
   counts the live views (`run.web_views`).
 - "Ask the agent" (the header button, or the context menu on selected

@@ -72,6 +72,9 @@ type panelDoc struct {
 	scrollY string
 	lastY   string // where the reader was when another document took the view
 	anchor  string // the id of the heading to scroll to once it loads
+	// state is what the reader did in an HTML page (present.SaveStateScript)
+	// before it loaded again, given back once it has loaded.
+	state   string
 	updated time.Time
 }
 
@@ -414,7 +417,8 @@ func (pn *panel) toggle() {
 func (pn *panel) show(d *panelDoc) {
 	if old := pn.cur; old != nil && old != d {
 		if old.loaded {
-			// Sent before the load, so it reads the old page.
+			// Sent before the load, so they read the old page.
+			pn.saveState(old)
 			pn.view.eval("String(window.scrollY)", true, func(v string, err error) {
 				if err == nil {
 					old.lastY = v
@@ -435,6 +439,20 @@ func (pn *panel) show(d *panelDoc) {
 	pn.load(d.page())
 	pn.syncPick()
 	pn.updateStatus()
+}
+
+// saveState keeps what the reader did in d's HTML page, which is shown, for
+// the next time it loads: the sections they opened, the tab they chose,
+// what they typed. Markdown reloads in place and keeps all of it.
+func (pn *panel) saveState(d *panelDoc) {
+	if d.kind != present.KindHTML {
+		return
+	}
+	pn.view.eval(present.SaveStateScript, true, func(v string, err error) {
+		if err == nil && strings.HasPrefix(v, "{") {
+			d.state = v
+		}
+	})
 }
 
 // back shows the document shown before the current one that is still in
@@ -696,6 +714,7 @@ func (pn *panel) reload(d *panelDoc) {
 		}()
 		return
 	}
+	pn.saveState(d)
 	pn.view.eval("String(window.scrollY)", true, func(v string, err error) {
 		if err == nil {
 			d.scrollY = v
@@ -738,6 +757,11 @@ func (pn *panel) loaded() {
 		return
 	}
 	d.loaded = true
+	if d.state != "" {
+		// Before the scroll: open sections change the page's height.
+		pn.view.eval(fmt.Sprintf(present.RestoreStateScript, d.state), true, func(string, error) {})
+		d.state = ""
+	}
 	if f := pn.finder; f != nil && f.query != "" {
 		pn.view.find(f.query, 0) // the new page's matches
 	}

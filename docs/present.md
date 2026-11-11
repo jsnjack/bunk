@@ -47,7 +47,8 @@ stays while the window resizes.
 - A Markdown document reloads in place: the panel keeps the heading you
   were reading at the top and marks the headings whose sections changed.
   The marks fade at the next change. An HTML page loads again and scrolls
-  back.
+  back, and keeps the sections you opened (`<details>`), the tabs you
+  chose (`role="tab"`) and what you typed or set in its form controls.
 - A document reloads when its file changes, and when an image beside it
   does. An HTML page also reloads for the scripts, styles, fonts and media
   beside it, not for other files, which change all the time in a

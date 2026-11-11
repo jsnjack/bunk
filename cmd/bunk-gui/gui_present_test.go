@@ -527,3 +527,52 @@ func TestGUIPresentFindZoom(t *testing.T) {
 		t.Errorf("find bar: %+v", f)
 	}
 }
+
+// statePage is an agent's HTML page with state a reload would lose: two
+// sections, a checkbox, a slider whose value a script shows, and tabs.
+const statePage = `<!doctype html><html><head><title>State</title></head><body>
+<h1>State</h1>
+<details id="more"><summary>More</summary><p>Hidden text</p></details>
+<details><summary>Second</summary><p>Also hidden</p></details>
+<label><input type="checkbox" name="done" value="a"> Done</label>
+<input type="range" id="level" min="0" max="10" value="2"><output id="out">2</output>
+<div role="tablist"><button role="tab" id="t1" aria-selected="true">One</button><button role="tab" id="t2" aria-selected="false">Two</button></div>
+<div id="p1">Panel one</div><div id="p2" hidden>Panel two</div>
+<script>
+document.getElementById('level').addEventListener('input', function (e) { document.getElementById('out').textContent = e.target.value; });
+document.querySelectorAll('[role=tab]').forEach(function (t) {
+  t.addEventListener('click', function () {
+    document.querySelectorAll('[role=tab]').forEach(function (o) { o.setAttribute('aria-selected', o === t ? 'true' : 'false'); });
+    document.getElementById('p1').hidden = t.id !== 't1';
+    document.getElementById('p2').hidden = t.id !== 't2';
+  });
+});
+</script>
+<!-- v1 -->
+</body></html>`
+
+// TestGUIPresentKeepsState reloads an HTML page whose file changed and
+// gives it back what the reader did: the section they opened, the box
+// they ticked, the slider they moved (its script sees the input) and the
+// tab they chose.
+func TestGUIPresentKeepsState(t *testing.T) {
+	t.Parallel()
+	runGUI(t, scenario{
+		cost:  2,
+		args:  []string{"--size", "100x30"},
+		files: map[string]string{"state.html": statePage},
+		script: []string{
+			"wait focused.line=$",
+			"present state.html",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"present-eval document.querySelectorAll('details')[1].open = true; document.querySelector('[name=done]').checked = true; " +
+				"var l = document.getElementById('level'); l.value = '7'; l.dispatchEvent(new Event('input')); document.getElementById('t2').click(); 'set'",
+			"wait tab.1.panel.eval=set",
+			"type sed -i 's/v1/v2/' state.html\\r",
+			"wait tab.1.panel.docs.0.reloads=1",
+			"present-wait document.body.innerHTML.indexOf('v2') >= 0 && document.querySelectorAll('details')[1].open && !document.getElementById('more').open && " +
+				"document.querySelector('[name=done]').checked && document.getElementById('out').textContent === '7' && !document.getElementById('p2').hidden",
+			"quit",
+		},
+	})
+}
