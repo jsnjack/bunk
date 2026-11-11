@@ -325,8 +325,11 @@ runs in bunk-gui and that the panel is there. Three things tell it:
 1. At session start, the hook snippets run `present --session-start AGENT -`.
    In a bunk-gui pane (`TERM_PROGRAM=bunk-gui` and the notify socket set) it
    prints a few sentences that the agent adds to its context: that the
-   panel exists, which documents to show there and how, how the user's
-   questions arrive, and that the bunk-present skill has the rest. It
+   panel exists, which documents to show there and how, that the command
+   reports the page's problems and opens `FILE#heading-id` at a heading,
+   to colour pages with the theme's variables so they follow the user's
+   light or dark theme, how the user's questions, reviews and replies
+   arrive, and that the bunk-present skill has the rest. It
    prints them in the form each agent reads: Claude Code's and Codex's
    `hookSpecificOutput.additionalContext`, Copilot CLI's
    `additionalContext`. In bunk's terminal UI, outside bunk and on hosts
@@ -366,8 +369,13 @@ The skill tells the agent to present plans, specs, designs, reports and
 explanations the user should read as interactive HTML pages, Markdown for
 plain prose; not to present every file it touches, nor code on its own; to
 keep lasting documents in the repository's `docs/` and throwaway ones in a
-scratch directory; which formats work and which of bunk's assets HTML can
-use; and how the user's questions from the panel arrive.
+scratch directory; to fix the problems the command reports and point the
+user to a heading with `FILE#heading-id`; to colour pages with the theme's
+variables; which formats work, and the components and libraries of bunk's
+assets (the kit, Mermaid, KaTeX, ECharts, Graphviz, D3, highlight.js,
+reply buttons) with their markup; and how the user's questions, reviews
+and replies arrive. A new version of bunk with a changed skill shows the
+installed copies as outdated, and bunk-gui's banner offers to update them.
 
 ## Protocol
 

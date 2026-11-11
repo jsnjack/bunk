@@ -679,7 +679,8 @@ func TestSessionStart(t *testing.T) {
 				return
 			}
 			hint := sessionHintOf(t, tc.args[1], stdout.String())
-			for _, want := range []string{"bunk-gui", "`bunk-gui present FILE`", "self-contained HTML page", "Markdown", "About FILE › Section:", "bunk-present skill"} {
+			for _, want := range []string{"bunk-gui", "`bunk-gui present FILE`", "self-contained HTML page", "Markdown", "About FILE › Section:",
+				"Review of FILE:", "var(--bunk-bg)", "FILE#heading-id", "bunk-present skill"} {
 				if !strings.Contains(hint, want) {
 					t.Errorf("hint lacks %q: %s", want, hint)
 				}
@@ -886,10 +887,13 @@ func TestSkillText(t *testing.T) {
 			t.Errorf("frontmatter line %q is not a key with a plain YAML value", line)
 		}
 	}
-	if n := strings.Count(skillText, "\n"); n >= 120 {
-		t.Errorf("%d lines, want under 120", n)
+	// Agents load it whole when a task matches: it lists the components and
+	// libraries a page can use, and still fits a glance.
+	if n := strings.Count(skillText, "\n"); n >= 180 {
+		t.Errorf("%d lines, want under 180", n)
 	}
-	for _, want := range []string{"bunk-gui present PATH", "```mermaid", "$$display$$", "About docs/plan.md › Session storage:"} {
+	for _, want := range []string{"bunk-gui present PATH", "PATH#heading-id", "```mermaid", "$$display$$", "About docs/plan.md › Session storage:",
+		"Review of docs/plan.md:", "var(--bunk-bg)", "bunk-chart", "bunk-graphviz", "data-bunk-reply", "bunkDoc.use('d3')", "[!NOTE]"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the skill lacks %q", want)
 		}

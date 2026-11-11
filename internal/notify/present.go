@@ -52,20 +52,26 @@ files it loads must be relative files there; files whose names start
 with "." and anything outside the directory are not served, and nothing
 loads from the network or from file:// URLs. bunk serves its own assets
 at ` + present.AssetsURL + `: bunk-doc.css styles a page as bunk's
-documents, and bunk-doc.js draws <pre class="mermaid"> diagrams and
-typesets <span class="math"> and <div class="math math-display"> TeX.
-The panel's theme colours are var(--bunk-bg), var(--bunk-fg),
+documents, and bunk-doc.js draws <pre class="mermaid"> diagrams,
+<pre class="bunk-chart"> ECharts options and <pre class="bunk-graphviz">
+graphs, typesets <span class="math"> and <div class="math math-display">
+TeX, highlights <code class="language-x">, and gives sortable tables,
+tabs, steps, callouts, badges and data-bunk-reply buttons that answer
+you; bunkDoc.use('d3') loads D3. Colour with the theme's variables, so
+the page follows the user's theme: var(--bunk-bg), var(--bunk-fg),
 var(--bunk-muted), var(--bunk-accent), var(--bunk-border) and
 var(--bunk-code-bg).
 Markdown (.md, .markdown, .mdown, .mkd): GitHub-flavoured Markdown with
-tables, task lists, highlighted code, ` + "```mermaid" + ` diagrams, $inline$ and
-$$display$$ math, and images by paths relative to the file. The panel
-reloads it in place and marks the sections that changed.
+tables, task lists, highlighted code, ` + "```mermaid, ```chart, ```dot and ```diff" + `
+fences, $inline$ and $$display$$ math, > [!NOTE] callouts, [TOC],
+<details>, and images by paths relative to the file. The panel reloads
+it in place and marks the sections that changed.
 Other files show as previews: images, PDF, video, audio, and text with
 syntax highlighting.
 
-The user can select text in the panel and send a question about it. It
-arrives as the agent's next input:
+The user can select text in the panel and send a question about it, or
+a review of several comments ("Review of docs/plan.md:"), or press a
+reply button. It arrives as the agent's next input:
   About docs/plan.md › Session storage:
   > the selected text
   the user's question
@@ -405,11 +411,15 @@ func presentHook(args, env []string, stdin io.Reader) {
 const sessionHint = "This terminal is bunk-gui, which shows documents in a panel beside you. " +
 	"When you write a plan, spec, design, report, comparison or explanation for the user to read " +
 	"(not code or logs), make it one self-contained HTML page, interactive where that helps " +
-	"(tabs, collapsible sections, sortable tables, SVG diagrams), or Markdown for plain prose, " +
-	"and run `%[1]s present FILE` to show it there. " +
+	"(tabs, sortable tables, charts, diagrams, buttons that reply to you), or Markdown for plain prose, " +
+	"and run `%[1]s present FILE` to show it there; it lists the page's problems for you to fix, " +
+	"and FILE#heading-id opens it at a heading. " +
+	"Colour pages with var(--bunk-bg), var(--bunk-fg) and the other --bunk- variables, not fixed colours, " +
+	"so they follow the user's theme. " +
 	"The panel reloads the file whenever you save it. " +
-	"The user's questions about it arrive as your input, starting \"About FILE › Section:\". " +
-	"The bunk-present skill has the details, with bunk's stylesheet, theme colours, Mermaid and KaTeX for HTML pages."
+	"The user's questions, reviews and replies arrive as your input, starting \"About FILE › Section:\" or \"Review of FILE:\". " +
+	"The bunk-present skill has the details: bunk's stylesheet and components, Mermaid, KaTeX, ECharts, Graphviz and D3, " +
+	"all without the network."
 
 // sessionStart runs "--session-start AGENT -", a SessionStart hook: in a
 // bunk-gui pane, which has the panel, it prints sessionHint as the context
