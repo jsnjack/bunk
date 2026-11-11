@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -47,6 +48,8 @@ const (
 	reloadDelay = 250 * time.Millisecond
 	// maxQuote caps the selected text quoted into a question, in bytes.
 	maxQuote = 1500
+	// maxHistory caps the documents Back remembers.
+	maxHistory = 50
 )
 
 // panelDoc is one document in a tab's panel.
@@ -67,6 +70,8 @@ type panelDoc struct {
 	reloads int // reloads since it was added
 	changed int // sections the last Markdown reload marked
 	scrollY string
+	lastY   string // where the reader was when another document took the view
+	anchor  string // the id of the heading to scroll to once it loads
 	updated time.Time
 }
 
@@ -83,6 +88,15 @@ type panel struct {
 	cur    *panelDoc
 	open   bool
 	width  int
+	// history holds the documents shown before the current one, the last
+	// most recent, for the Back button.
+	history []*panelDoc
+	backBtn *gtk.Button
+	// goingBack: show runs for Back, which must not add to the history.
+	goingBack bool
+	// ptrRects holds, for window tests (ptr-at doc SELECTOR), the
+	// rectangle each selector's element had in the page, as JSON.
+	ptrRects map[string]string
 	// placing: the panel waits for GTK to lay the tab out before it takes
 	// its width (reveal); until then GTK's own position is not the user's.
 	placing bool
@@ -129,6 +143,9 @@ func (a *App) newPanel(t *Tab) *panel {
 
 	head := gtk.NewBox(gtk.OrientationHorizontal, 4)
 	head.AddCSSClass("bunk-panel-head")
+	pn.backBtn = panelButton("go-previous-symbolic", "Back to the previous document", pn.back)
+	pn.backBtn.SetSensitive(false)
+	head.Append(pn.backBtn)
 	pn.pick = gtk.NewDropDownFromStrings(nil)
 	pn.pick.SetHExpand(true)
 	pn.pick.SetTooltipText("Documents in this tab")
@@ -198,12 +215,13 @@ func (a *App) presentFor(token, path string, auto bool) {
 	if from == nil || from.tab == nil {
 		return
 	}
-	from.tab.docPanel().present(path, from, auto)
+	from.tab.docPanel().present(path, from, auto, "")
 }
 
 // present adds path to the panel, or finds it there, and shows it unless
-// a hook reported it and [present] auto is off.
-func (pn *panel) present(path string, from *Pane, auto bool) {
+// a hook reported it and [present] auto is off. anchor, when set, is the
+// id of the heading to scroll to.
+func (pn *panel) present(path string, from *Pane, auto bool, anchor string) {
 	if !filepath.IsAbs(path) {
 		return
 	}
@@ -221,6 +239,7 @@ func (pn *panel) present(path string, from *Pane, auto bool) {
 	} else if !auto {
 		d.pane, d.auto = from, false
 	}
+	d.anchor = anchor
 	pn.syncPick()
 	if auto && !pn.app.settings.presentAuto {
 		pn.updateStatus()
@@ -229,6 +248,8 @@ func (pn *panel) present(path string, from *Pane, auto bool) {
 	}
 	if d != pn.cur || !d.loaded {
 		pn.show(d)
+	} else if anchor != "" {
+		pn.scrollToAnchor(d)
 	}
 	pn.reveal()
 	pn.app.refreshChrome()
@@ -344,7 +365,7 @@ func (a *App) previewFile(t *Tab, path string) {
 		a.toast("Cannot preview " + filepath.Base(path) + ": " + err.Error())
 		return
 	}
-	t.docPanel().present(path, nil, false)
+	t.docPanel().present(path, nil, false, "")
 }
 
 // dropPreviews lets files dropped on the tab's page preview in its panel.
@@ -382,15 +403,78 @@ func (pn *panel) toggle() {
 	}
 }
 
-// show loads d into the view.
+// show loads d into the view, where the reader left it. The document it
+// replaces goes on the history, unless Back is showing d.
 func (pn *panel) show(d *panelDoc) {
+	if old := pn.cur; old != nil && old != d {
+		if old.loaded {
+			// Sent before the load, so it reads the old page.
+			pn.view.eval("String(window.scrollY)", true, func(v string, err error) {
+				if err == nil {
+					old.lastY = v
+				}
+			})
+		}
+		if !pn.goingBack {
+			pn.history = append(pn.history, old)
+			if len(pn.history) > maxHistory {
+				pn.history = pn.history[1:]
+			}
+		}
+	}
 	pn.cur = d
 	d.crashed = false
 	d.broken = ""
-	d.scrollY = ""
+	d.scrollY = d.lastY
 	pn.load(d.page())
 	pn.syncPick()
 	pn.updateStatus()
+}
+
+// back shows the document shown before the current one that is still in
+// the panel.
+func (pn *panel) back() {
+	for len(pn.history) > 0 {
+		d := pn.history[len(pn.history)-1]
+		pn.history = pn.history[:len(pn.history)-1]
+		if slices.Contains(pn.docs, d) && d != pn.cur {
+			pn.goingBack = true
+			pn.show(d)
+			pn.goingBack = false
+			return
+		}
+	}
+	pn.syncPick()
+}
+
+// follow shows the file at rel, which a link the user clicked in the shown
+// document from names in its directory, as a document of its own: it
+// reloads when it changes, and questions about it name it. The panel's
+// limits hold: no hidden files, nothing outside the directory, and nothing
+// beside a document in the home directory or /. frag is the id of the
+// heading to scroll to.
+func (pn *panel) follow(from *panelDoc, rel, frag string) {
+	file, err := docFile(from.path, rel)
+	if err != nil {
+		pn.app.toast("Cannot open " + path.Base(rel) + ": the panel shows only files beside the document")
+		return
+	}
+	if fi, err := os.Stat(file); err != nil || !fi.Mode().IsRegular() {
+		pn.app.toast("Cannot open " + path.Base(rel) + ": not a file")
+		return
+	}
+	if _, err := present.Preview(file); err != nil {
+		pn.app.toast("Cannot open " + path.Base(rel) + ": " + err.Error())
+		return
+	}
+	pn.present(file, from.pane, false, frag)
+}
+
+// scrollToAnchor scrolls the shown page to the heading d.anchor names.
+func (pn *panel) scrollToAnchor(d *panelDoc) {
+	id, _ := json.Marshal(d.anchor)
+	d.anchor = ""
+	pn.view.eval("(function(id){var e=document.getElementById(id);if(e)e.scrollIntoView();return String(!!e)})("+string(id)+")", true, func(string, error) {})
 }
 
 // uri is the address of the file rel (slash-separated, relative to the
@@ -417,8 +501,12 @@ func escapePath(rel string) string {
 	return strings.Join(parts, "/")
 }
 
-// syncPick rebuilds the drop-down from the document list.
+// syncPick rebuilds the drop-down from the document list, and enables
+// Back when there is a document to go back to.
 func (pn *panel) syncPick() {
+	pn.backBtn.SetSensitive(slices.ContainsFunc(pn.history, func(d *panelDoc) bool {
+		return d != pn.cur && slices.Contains(pn.docs, d)
+	}))
 	names := make([]string, len(pn.docs))
 	sel := -1
 	for i, d := range pn.docs {
@@ -641,7 +729,9 @@ func (pn *panel) loaded() {
 		return
 	}
 	d.loaded = true
-	if y, err := strconv.Atoi(d.scrollY); err == nil && y > 0 {
+	if d.anchor != "" {
+		pn.scrollToAnchor(d)
+	} else if y, err := strconv.Atoi(d.scrollY); err == nil && y > 0 {
 		pn.view.eval("window.scrollTo(0,"+strconv.Itoa(y)+")", true, func(string, error) {})
 	}
 	d.scrollY = ""
@@ -681,17 +771,27 @@ func (pn *panel) crashed() {
 // navigate decides a navigation in the view, of the page or of a frame in
 // it: the document's own origin and about: pages load, links elsewhere
 // open in the browser when the user clicked them, and nothing else loads.
-// data: and blob: documents never load: they would not carry the
-// document's Content-Security-Policy.
+// A link the user clicked to another file of the document's origin shows
+// that file as a document of its own (follow), so the panel never shows
+// one file while it reloads and asks about another. data: and blob:
+// documents never load: they would not carry the document's
+// Content-Security-Policy.
 func (pn *panel) navigate(uri string, user, window bool) bool {
-	scheme, rest, _ := strings.Cut(uri, ":")
+	scheme, _, _ := strings.Cut(uri, ":")
 	switch strings.ToLower(scheme) {
 	case presentScheme:
-		host, _, _ := strings.Cut(strings.TrimPrefix(rest, "//"), "/")
-		if d := pn.cur; d != nil && host == "doc-"+strconv.Itoa(d.id) && !window {
-			return true
+		d := pn.cur
+		u, err := url.Parse(uri)
+		if d == nil || err != nil || u.Host != "doc-"+strconv.Itoa(d.id) {
+			return false
 		}
-		return false
+		rel := strings.TrimPrefix(path.Clean("/"+u.Path), "/")
+		own := rel == filepath.Base(d.path)
+		if user && !own {
+			pn.follow(d, rel, u.Fragment)
+			return false
+		}
+		return !window
 	case "about":
 		return !window
 	case "http", "https", "mailto":
@@ -728,6 +828,7 @@ func (pn *panel) drop(d *panelDoc) {
 			break
 		}
 	}
+	pn.history = slices.DeleteFunc(pn.history, func(o *panelDoc) bool { return o == d })
 	if d.timer != 0 {
 		coreglib.SourceRemove(d.timer)
 		d.timer = 0
@@ -1012,6 +1113,7 @@ type panelReport struct {
 	AskBtn  *rectReport `json:"ask_button,omitempty"`
 	Sent    string      `json:"sent"` // the last question pasted into a pane
 	Eval    string      `json:"eval"` // the result of the last --do present-eval
+	Back    bool        `json:"back"` // the Back button is enabled
 }
 
 type docReport struct {
@@ -1037,7 +1139,7 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 	if pn == nil {
 		return nil
 	}
-	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}}
+	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive()}
 	if pn.open && a.active == t {
 		r.Rect = a.widgetRect(g, pn.box)
 		r.AskBtn = a.widgetRect(g, pn.askBtn)
@@ -1083,6 +1185,7 @@ const presentSelectScript = `(function(t){
 //	present-toggle          the documents action of the selected tab
 //	present-kill            end the shown page's web process, as a crash would
 //	present-browser         open the shown document in the browser, as its button does
+//	present-back            show the previous document, as the Back button does
 //	preview PATH            what the file dialog of open_in_panel does with PATH
 func (a *App) presentStep(verb, arg string) error {
 	t := a.active
@@ -1142,9 +1245,50 @@ func (a *App) presentStep(verb, arg string) error {
 		pn.view.kill()
 	case "present-browser":
 		pn.openExternal()
+	case "present-back":
+		pn.back()
 	}
 	return nil
 }
+
+// docTarget is the centre of the element that selector picks in the shown
+// document, in the window's coordinates (ptr-at doc SELECTOR). The page
+// measures it asynchronously: calls fail until it has answered, and
+// pointerAt asks again.
+func (a *App) docTarget(selector string) (float64, float64, error) {
+	t := a.active
+	if t == nil || t.panel == nil || t.panel.cur == nil || !t.panel.open {
+		return 0, 0, errors.New("no document shown")
+	}
+	pn := t.panel
+	if pn.ptrRects == nil {
+		pn.ptrRects = map[string]string{}
+	}
+	q, _ := json.Marshal(selector)
+	pn.view.eval(fmt.Sprintf(docRectScript, q), true, func(v string, err error) {
+		if err == nil {
+			pn.ptrRects[selector] = v
+		}
+	})
+	var c [2]float64
+	if raw := pn.ptrRects[selector]; raw == "" || json.Unmarshal([]byte(raw), &c) != nil {
+		return 0, 0, errors.New("no element " + selector + " in the document yet")
+	}
+	x, y, _, _, ok := a.boundsIn(pn.view.widget)
+	if !ok {
+		return 0, 0, errors.New("the document view is not shown")
+	}
+	return x + c[0], y + c[1], nil
+}
+
+// docRectScript returns the centre of the element a selector picks, in the
+// view's coordinates, as JSON, or "" when there is none.
+const docRectScript = `(function(s){
+  var e = document.querySelector(s);
+  if (!e) return "";
+  var r = e.getBoundingClientRect();
+  return JSON.stringify([r.x + r.width / 2, r.y + r.height / 2]);
+})(%s)`
 
 // panelSnapshot is the panel as session restore keeps it; nil without
 // documents.

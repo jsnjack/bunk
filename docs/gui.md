@@ -252,6 +252,15 @@ panel gives the panes their width back.
   page content in its sandboxed web process. Permission requests are
   denied, and a navigation leaves the document only when the user
   clicks a link, which opens in the browser.
+- A link the user clicks to another file of the document's origin is
+  presented as a document of its own (`panel.follow`), under the panel's
+  limits (`docFile`), and scrolls to the link's fragment (`anchor`). Had
+  it loaded in place, the panel would reload and ask about the first file
+  while showing the second. Navigations the user did not start, by
+  scripts or in frames, still load in place: WebKit does not say whether
+  one is the main frame's. Back (`panel.history`) shows the documents
+  shown before; each document keeps its scroll position (`lastY`), read
+  just before another document loads.
 - Pages load through `bunk-present://` (`presentserve.go`): `assets/`
   serves the page runtime, Mermaid and KaTeX embedded in
   `internal/present`; `doc-N/` serves document N's directory, each
@@ -297,8 +306,11 @@ panel gives the panes their width back.
   GTK first lays the tab out (`max-position`), as restored splits do; a
   hidden panel loads its document when it opens.
 - Window tests drive the panel with `present`, `present-eval`,
-  `present-wait`, `present-select`, `present-ask` and `present-toggle`
-  (`TestGUIPresentMarkdown`, `TestGUIPresentHTML`, `TestGUIPresentListed`).
+  `present-wait`, `present-select`, `present-ask`, `present-toggle` and
+  `present-back`, and point at an element of the page with
+  `ptr-at doc SELECTOR`
+  (`TestGUIPresentMarkdown`, `TestGUIPresentHTML`, `TestGUIPresentListed`,
+  `TestGUIPresentLinks`).
 
 ## Session restore
 

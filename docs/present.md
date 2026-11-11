@@ -20,9 +20,15 @@ The panel sits to the right of the tab's panes, which keep their splits
 and give up only the panel's width. Drag its edge to resize it; the width
 stays while the window resizes.
 
-- The header lists the tab's documents. Its buttons ask the agent about
-  the selected text, preview a file, open the document in the web browser,
-  remove it from the list and hide the panel.
+- The header lists the tab's documents. Its buttons go back to the
+  previous document, ask the agent about the selected text, preview a
+  file, open the document in the web browser, remove it from the list and
+  hide the panel.
+- A link to another file beside the document, such as `[the spec](spec.md#api)`,
+  opens that file in the panel as a document of its own, at the heading the
+  link names. Back returns to the document you came from, and each
+  document keeps your place while you read another. Links to hidden files
+  or to files outside the document's directory do not open.
 - "Show documents" in the tab's menu and in the main menu shows and hides
   the panel; in a tab without documents it asks for a file to preview.
 - The header's folder button and "Open in panel…" in the tab's menu and

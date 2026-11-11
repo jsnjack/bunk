@@ -81,6 +81,9 @@ Agents can show you what they wrote in a panel beside the tab's panes
   panel, or asks for a file in a tab without documents; the `documents`
   and `open_in_panel` actions have no default keys. The header lists the
   tab's documents and opens the shown one in the browser.
+- A link to another file beside the document opens that file as a document
+  of its own, at the heading the link names. Back returns to the previous
+  document, and each document keeps your place while you read another.
 - Agent hooks list the Markdown and HTML files an agent writes; with
   `[present] auto = true` they open the panel too. When Claude Code or
   Copilot CLI asks you to approve a plan, the plan opens in the panel.

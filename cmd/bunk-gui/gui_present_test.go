@@ -400,3 +400,73 @@ func TestGUIPresentPreview(t *testing.T) {
 		t.Errorf("the page's copy does not load bunk's runtime from disk in the theme's colours:\n%s", html)
 	}
 }
+
+// filler is n short paragraphs, so a document scrolls.
+func filler(n int) string {
+	var b strings.Builder
+	for i := range n {
+		fmt.Fprintf(&b, "Paragraph %d of filler text that makes the page scroll.\n\n", i+1)
+	}
+	return b.String()
+}
+
+// TestGUIPresentLinks follows links between documents in the panel. A
+// click on a link to another file beside the document shows that file as
+// a document of its own, at the heading the link names: questions about it
+// name it, and it reloads when it changes. Back returns to the first
+// document where the reader left it. A link to a hidden file is refused
+// with a toast.
+func TestGUIPresentLinks(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost: 2,
+		args: []string{"--size", "100x30"},
+		files: map[string]string{
+			"plan.md":    "# Plan\n\n" + filler(40) + "See [the spec](spec.md#second) and [a secret](.secret.md).\n",
+			"spec.md":    "# Spec\n\n" + filler(40) + "## Second\n\nThe second part.\n\n" + filler(80),
+			".secret.md": "# Secret\n",
+		},
+		script: []string{
+			"maximize",
+			"wait window.maximized=true focused.line=$",
+			"present plan.md",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true tab.1.panel.back=false",
+			"present-eval document.querySelector('a[href^=\"spec.md\"]').scrollIntoView(); 'ok'",
+			"wait tab.1.panel.eval=ok",
+			"ptr-at doc a[href^=\"spec.md\"]",
+			"ptr-click",
+			"wait tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true tab.1.panel.back=true",
+			"present-wait Math.abs(document.getElementById('second').getBoundingClientRect().top) < 2 && window.scrollY > 0",
+			"present-select The second part",
+			"present-ask",
+			"wait tab.1.panel.ask.section=Second",
+			"snap ask",
+			"kbd Escape",
+			"wait tab.1.panel.ask=null",
+			"type echo 'Spec, edited.' >> spec.md\\r",
+			"wait tab.1.panel.docs.1.reloads=1",
+			"present-wait document.body.textContent.indexOf('Spec, edited.') >= 0",
+			"present-back",
+			"wait tab.1.panel.current=0 tab.1.panel.docs.0.loaded=true tab.1.panel.back=false",
+			// Back at the link the reader clicked.
+			"present-wait window.scrollY > 0 && document.querySelector('h1').textContent === 'Plan'",
+			"present-eval document.querySelector('a[href=\".secret.md\"]').scrollIntoView(); 'secret'",
+			"wait tab.1.panel.eval=secret",
+			"ptr-at doc a[href=\".secret.md\"]",
+			"ptr-click",
+			"wait last_toast~\"Cannot open .secret.md\"",
+			"snap end",
+			"quit",
+		},
+	})
+	ask := g.snap("ask").Tabs[0].Panel
+	if ask.Ask == nil || !strings.Contains(ask.Ask.Title, "spec.md › Second") {
+		t.Errorf("the question about the linked document: %+v", ask.Ask)
+	}
+	if d := ask.Docs[1]; filepath.Base(d.Path) != "spec.md" || d.Kind != "markdown" || d.Pane != 0 {
+		t.Errorf("the linked document: %+v", d)
+	}
+	if end := g.snap("end").Tabs[0].Panel; len(end.Docs) != 2 || end.Current != 0 {
+		t.Errorf("documents after the hidden link: %+v", end.Docs)
+	}
+}

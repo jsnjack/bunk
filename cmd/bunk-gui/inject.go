@@ -519,6 +519,7 @@ func (a *App) menuTarget(label string) (float64, float64, error) {
 //
 //	tab N | tabclose N | newtab | options | closewin | swclose N (the switcher's row N)
 //	pane ID | cell ID COL ROW | thumb ID (the scrollbar thumb) | divider PATH (r, ra, rb, rab, … from the selected tab's root)
+//	doc SELECTOR (an element of the shown document)
 func (a *App) target(args []string) (float64, float64, error) {
 	var numErr error
 	num := func(i int) int {
@@ -628,6 +629,8 @@ func (a *App) target(args []string) (float64, float64, error) {
 			return centre(r.keys[i])
 		}
 		return centre(r.removes[i])
+	case "doc":
+		return a.docTarget(strings.Join(args[1:], " "))
 	case "pref":
 		if a.prefsWin == nil || len(args) < 2 {
 			return 0, 0, errors.New("the preferences window is not open")
