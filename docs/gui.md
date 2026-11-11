@@ -301,7 +301,10 @@ panel gives the panes their width back.
   focus, and the user sends it. Without bracketed paste it is one line.
 - Hook snippets run `present --hook AGENT -` after the agents'
   file-writing tools. A reported Markdown or HTML file is listed in the
-  panel; `[present] auto` opens the panel for it. Before a plan approval
+  panel; `[present] auto` opens the panel for it. Without it, a document
+  new to a hidden panel counts in `panel.unseen` (the menus' "Show
+  documents (N new)") and gets a toast with Show (`noticeListed`), which
+  later listings retitle while it is up rather than queue toasts. Before a plan approval
   (Claude Code's ExitPlanMode, with `planFilePath`; Copilot CLI's
   exit_plan_mode, with the session's `plan.md`) the same command shows
   the plan with the panel open.

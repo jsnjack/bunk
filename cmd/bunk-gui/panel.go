@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
@@ -100,6 +101,8 @@ type panel struct {
 	// ptrRects holds, for window tests (ptr-at doc SELECTOR), the
 	// rectangle each selector's element had in the page, as JSON.
 	ptrRects map[string]string
+	// unseen counts the documents hooks listed while the panel was hidden.
+	unseen int
 	// zoom scales the panel's pages; 0 or 1 is their own size.
 	zoom   float64
 	finder *panelFind
@@ -240,6 +243,7 @@ func (pn *panel) present(path string, from *Pane, auto bool, anchor string) {
 		return
 	}
 	d := pn.find(path)
+	added := d == nil
 	if d == nil {
 		nextDocID++
 		d = &panelDoc{id: nextDocID, path: path, kind: kind, pane: from, auto: auto}
@@ -251,6 +255,10 @@ func (pn *panel) present(path string, from *Pane, auto bool, anchor string) {
 	d.anchor = anchor
 	pn.syncPick()
 	if auto && !pn.app.settings.presentAuto {
+		if added && !pn.open {
+			pn.unseen++
+			pn.app.noticeListed(pn, d)
+		}
 		pn.updateStatus()
 		pn.app.refreshChrome()
 		return
@@ -280,6 +288,7 @@ func (pn *panel) reveal() {
 	}
 	pn.open = true
 	pn.placing = true
+	pn.unseen = 0
 	pn.box.SetVisible(true)
 	pn.place()
 	coreglib.IdleAdd(pn.place) // the first time, after GTK has laid the panel out
@@ -1150,6 +1159,7 @@ type panelReport struct {
 	Sent    string           `json:"sent"`           // the last question pasted into a pane
 	Eval    string           `json:"eval"`           // the result of the last --do present-eval
 	Back    bool             `json:"back"`           // the Back button is enabled
+	Unseen  int              `json:"unseen"`         // documents hooks listed while the panel was hidden
 	Zoom    int              `json:"zoom"`           // the pages' scale in percent
 	Find    *panelFindReport `json:"find,omitempty"` // the find bar while it is open
 }
@@ -1182,7 +1192,7 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 	if pn == nil {
 		return nil
 	}
-	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent()}
+	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent(), Unseen: pn.unseen}
 	if f := pn.finder; f != nil {
 		r.Find = &panelFindReport{Query: f.query, Count: f.count.Text()}
 	}
@@ -1433,6 +1443,58 @@ type panelFind struct {
 	query string
 	total int // matches WebKit counted
 	idx   int // the current match, from 1; 0 when none
+}
+
+// noticeListed tells the user that a hook listed d in pn while the panel
+// is hidden ([present] auto off), with a toast whose Show button selects
+// the tab and shows d. Documents listed while the toast is up share it.
+func (a *App) noticeListed(pn *panel, d *panelDoc) {
+	if l := a.listed; l != nil && l.toast != nil {
+		l.count++
+		l.pn, l.doc = pn, d
+		text := fmt.Sprintf("%d documents listed in the panel", l.count)
+		l.toast.SetTitle(text)
+		a.lastToast = text
+		return
+	}
+	l := &listedNotice{count: 1, pn: pn, doc: d}
+	a.listed = l
+	a.toastAction(filepath.Base(d.path)+" listed in the panel", "Show", func() {
+		if !slices.Contains(a.tabs, l.pn.tab) || !slices.Contains(l.pn.docs, l.doc) {
+			return
+		}
+		a.selectTab(l.pn.tab)
+		if l.pn.cur != l.doc || !l.doc.loaded {
+			l.pn.show(l.doc)
+		}
+		l.pn.reveal()
+		a.refreshChrome()
+	})
+	l.toast = a.lastAdwToast
+	if l.toast != nil {
+		l.toast.ConnectDismissed(func() {
+			if a.listed == l {
+				a.listed = nil
+			}
+		})
+	}
+}
+
+// listedNotice is the toast of documents hooks listed (noticeListed).
+type listedNotice struct {
+	toast *adw.Toast
+	count int
+	pn    *panel
+	doc   *panelDoc // the last one listed, which Show shows
+}
+
+// documentsLabel names the documents action in t's menus, with the number
+// of documents hooks listed while its panel was hidden.
+func documentsLabel(t *Tab) string {
+	if t != nil && t.panel != nil && t.panel.unseen > 0 {
+		return fmt.Sprintf("Show documents (%d new)", t.panel.unseen)
+	}
+	return "Show documents"
 }
 
 // focusedPanel is the selected tab's panel while it has the keyboard

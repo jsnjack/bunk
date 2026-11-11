@@ -88,7 +88,8 @@ Agents can show you what they wrote in a panel beside the tab's panes
   of its own, at the heading the link names. Back returns to the previous
   document, and each document keeps your place while you read another.
 - Agent hooks list the Markdown and HTML files an agent writes; with
-  `[present] auto = true` they open the panel too. When Claude Code or
+  `[present] auto = true` they open the panel too. Otherwise a toast with a
+  Show button names each new one, and "Show documents" counts them. When Claude Code or
   Copilot CLI asks you to approve a plan, the plan opens in the panel.
 - In a bunk-gui pane, the hooks tell each agent at session start that the
   panel is there and how to present to it.

@@ -214,22 +214,26 @@ Promise.all([
 }
 
 // TestGUIPresentListed: without [present] auto, a document a hook reports
-// is listed in the panel, which stays closed until the user opens it.
+// is listed in the panel, which stays closed until the user opens it. A
+// toast says so, and counts the documents listed while it is up; its Show
+// button shows the last one.
 func TestGUIPresentListed(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
 		args:  []string{"--size", "100x30"},
-		files: map[string]string{"notes.md": "# Notes\n\nHello.\n"},
+		files: map[string]string{"notes.md": "# Notes\n\nHello.\n", "todo.md": "# Todo\n"},
 		script: []string{
 			"wait focused.line=$",
 			"present notes.md auto",
-			"wait tab.1.panel.docs.#=1",
+			"wait tab.1.panel.docs.#=1 tab.1.panel.unseen=1 toast_button=Show last_toast=\"notes.md listed in the panel\"",
+			"present todo.md auto",
+			"wait tab.1.panel.docs.#=2 tab.1.panel.unseen=2 last_toast=\"2 documents listed in the panel\"",
 			"snap listed",
-			"present-toggle",
-			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"toast-action",
+			"wait tab.1.panel.open=true tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true tab.1.panel.unseen=0",
 			"present-eval document.querySelector('#bunk-doc h1').textContent",
-			"wait tab.1.panel.eval=\"Notes\"",
-			"type rm notes.md\\r",
+			"wait tab.1.panel.eval=\"Todo\"",
+			"type rm todo.md\\r",
 			"wait tab.1.panel.status~\"Could not show\"",
 			"present-toggle",
 			"wait tab.1.panel.open=false",
@@ -237,7 +241,7 @@ func TestGUIPresentListed(t *testing.T) {
 			"quit",
 		},
 	})
-	if pn := g.snap("listed").Tabs[0].Panel; pn == nil || pn.Open || len(pn.Docs) != 1 || !pn.Docs[0].Auto {
+	if pn := g.snap("listed").Tabs[0].Panel; pn == nil || pn.Open || len(pn.Docs) != 2 || !pn.Docs[0].Auto || !pn.Docs[1].Auto {
 		t.Errorf("listed: %+v", pn)
 	}
 	if s := g.snap("hidden"); s.KeyboardFocus != "pane 0" {

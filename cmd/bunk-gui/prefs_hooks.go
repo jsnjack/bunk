@@ -409,6 +409,7 @@ func (a *App) toastAction(text, button string, act func()) {
 	t.SetButtonLabel(button)
 	t.ConnectButtonClicked(act)
 	a.toasts.AddToast(t)
+	a.lastAdwToast = t
 	a.lastToast, a.toastButton, a.toastAct = text, button, act
 	a.toastLog = append(a.toastLog, text)
 }

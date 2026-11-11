@@ -122,7 +122,7 @@ func (a *App) openTabMenu(t *Tab, from gtk.Widgetter, x, y float64) {
 			{label: "Copy directory", run: func() { a.copyDir(t.menuPane()) }},
 			{label: "Mark as seen", disabled: !a.hasUnseen(t), run: func() { a.markSeen(t) }},
 			{label: "Mute notifications", check: true, checked: t.muted, run: func() { a.setMuted(t, !t.muted) }},
-			{label: "Show documents", action: "documents", check: true, checked: t.panel != nil && t.panel.open,
+			{label: documentsLabel(t), action: "documents", check: true, checked: t.panel != nil && t.panel.open,
 				disabled: t.panel == nil || len(t.panel.docs) == 0, run: func() { a.toggleDocuments(t) }},
 			{label: "Open in panel…", action: "open_in_panel", run: func() { a.pickPreview(t) }},
 		},

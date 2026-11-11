@@ -199,6 +199,10 @@ over ssh, it sends nothing and never opens a browser.
 bunk-gui's `[present]` table holds `auto`. With `auto = true`, a file that a
 hook reports opens the side panel. With `auto = false`, the default, it is
 only added to the tab's list of documents, where the user can open it. A
+toast names it, with a Show button that opens it, and "Show documents" in
+the tab's menu and the main menu counts the documents listed since the
+panel was last open, as in "Show documents (2 new)". Documents listed while
+the toast is up share it. A
 file the agent presents with `bunk present FILE` always opens the panel.
 
 When Claude Code or Copilot CLI asks the user to approve a plan, the same
