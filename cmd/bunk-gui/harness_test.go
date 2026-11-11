@@ -140,7 +140,7 @@ type scenario struct {
 	config string            // config.toml contents
 	script []string          // "TIME ACTION" lines
 	env    []string          // extra environment
-	files  map[string]string // more files in the scenario's directory (the panes' cwd)
+	files  map[string]string // more files in the scenario's directory (the panes' cwd); "docs/x" makes docs/
 	limit  time.Duration
 	// cost is the scenario's rough length in seconds, run and checks
 	// (default 1): costly scenarios get a slot first.
@@ -253,6 +253,7 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	must(t, os.WriteFile(cfg, []byte(sc.config), 0o600))
 	must(t, os.WriteFile(do, []byte(strings.Join(sc.script, "\n")+"\n"), 0o600))
 	for name, text := range sc.files {
+		must(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o700))
 		must(t, os.WriteFile(filepath.Join(dir, name), []byte(text), 0o700))
 	}
 	limit := sc.limit

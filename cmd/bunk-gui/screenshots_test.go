@@ -44,6 +44,7 @@ func TestGUIScreenshots(t *testing.T) {
 		{"demo", demoScreenshots},
 		{"rail", railScreenshots},
 		{"hooks", hooksScreenshots},
+		{"documents", documentsScreenshots},
 		{"tui", tuiScreenshots},
 	} {
 		t.Run(sc.name, func(t *testing.T) {

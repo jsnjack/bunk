@@ -108,6 +108,11 @@ it with `BUNK_SCREENSHOTS` set and writes the pictures to `assets/`.
 - `screenshots_features_test.go` shoots the collapsed rail as rings and as
   maps, its labels while Alt is held, the frames of the states loop, a pane's badges, the hooks and restore
   banners, the Agent hooks preferences and bunk's TUI running in a pane.
+- `screenshots_documents_test.go` shoots an agent's report in the document
+  panel, with a chart, a graph, tabs, reply buttons and a table, and a
+  review under way. The report sits in `docs/`, because the window shots
+  land in the scenario's directory and an HTML page reloads for the images
+  beside it.
 - Crops are cut from window shots with the geometry the snapshot reports.
 - The script shrinks the PNGs with pngquant, oxipng, optipng or ImageMagick,
   turns the frames into `gui-states.webp` with ffmpeg or ImageMagick, and
