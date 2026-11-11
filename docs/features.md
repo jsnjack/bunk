@@ -18,7 +18,7 @@ switch tabs.
 | Move tab | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn, or drag | Moves the selected tab in the rail or the bar; any tab can be dragged to a new place |
 | Rename tab | | Double-click a tab, or choose "Rename tab…" in the menu; `rename_tab` in `[keys]` binds a key. The name replaces the agent or program name, and an empty name brings it back |
 | Rail | Ctrl+Shift+B | Expands or collapses the side rail; the menu or `tabs` switches to the bar |
-| Tab labels | Hold Alt | In the collapsed rail, holding Alt alone for 0.4 s labels each tab's ring with its Alt+N key, agent or name, repo ⎇ branch and hosts, and dims the panes behind the labels; Alt+N switches while they show, and releasing Alt hides them |
+| Tab labels | Hold Alt | In the collapsed rail, holding Alt alone for 0.2 s (`rail_peek_delay`) labels each tab's ring with its Alt+N key, agent or name, repo ⎇ branch and hosts, and dims the panes behind the labels; Alt+N switches while they show, and releasing Alt hides them |
 | Agent status | | Dot, state, repo ⎇ branch, the containers and SSH hosts of all the tab's panes as their badges name them, and the agent's notice; see [agent-status.md](agent-status.md) |
 | Switcher | Ctrl+Shift+O | Lists the tabs in their order and marks the current one; the cursor starts on the first other tab. Type to filter, Up and Down pick a row, Enter opens it. A row's × closes its tab, and the switcher stays open |
 | Tab menu | Right-click a tab | Rename, Copy directory, Mark as seen (clears done marks and notifications), Mute notifications, Show documents, Open in panel…, Close tab, Close other tabs; closing asks first while something runs |
@@ -37,7 +37,7 @@ switch tabs.
 | Links | Ctrl+click | Opens OSC 8 links and plain http, https and file URLs; Ctrl+hover underlines them |
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
 | Shortcuts window | Ctrl+Shift+? / Ctrl+? | Rebind or turn off any action, and give it more than one key; ⚠ marks keys terminal programs may use |
-| Preferences | Ctrl+, | Layout, rail, font, text zoom, theme, notifications, agent hooks and extra agent CLIs |
+| Preferences | Ctrl+, | Layout, rail, the Alt labels' delay, where new tabs start, font, text zoom, theme, session restore, notifications, agent hooks, documents and extra agent CLIs; buttons open the shortcuts window and config.toml in your text editor |
 | Agent hooks | | Preferences shows which agents report their own state and installs their hooks; a banner offers to set them up when an agent runs without them or they are outdated |
 | Options menu | F10 | The ≡ button at the bottom of the rail, or at the right of the bar |
 | Fullscreen | F11 | |

@@ -2,8 +2,10 @@ package main
 
 // config.toml is watched: edits apply to the running window. Key bindings
 // and the theme always reload (--theme keeps its theme, whose colours a
-// [themes.NAME] table may change); the layout and the font apply when the
-// file changed them (and no command-line flag set them).
+// [themes.NAME] table may change), as do the agents, new_dir, the rail's
+// style and peek delay, hooks_hint, restore and [present]; the layout and
+// the font apply when the file changed them (and no command-line flag set
+// them). Turning restore on gives a window that started without it a slot.
 
 import (
 	"context"
@@ -50,6 +52,13 @@ func (a *App) reloadSettings() {
 	a.settings.NewDir = st.NewDir
 	a.settings.Present, a.settings.presentAuto = st.Present, st.presentAuto
 	a.settings.RailStyle = st.RailStyle // refreshChrome's key holds it, so the rail redraws
+	a.settings.RailPeekDelay = st.RailPeekDelay
+	a.settings.HooksHint, a.settings.hooksHint = st.HooksHint, st.hooksHint
+	a.settings.Restore, a.settings.restore = st.Restore, st.restore
+	a.settings.RestoreScrollback, a.settings.restoreSB = st.RestoreScrollback, st.restoreSB
+	if st.restore {
+		a.startSaving() // a window that started with restore off saves from now on
+	}
 	a.settings.Theme, a.settings.Themes, a.settings.themes = st.Theme, st.Themes, st.themes
 	if t, err := a.selectTheme(); err == nil {
 		a.applyTheme(t)

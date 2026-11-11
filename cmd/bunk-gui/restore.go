@@ -107,19 +107,10 @@ func (a *App) restoreReport() restoreReport {
 // otherwise it offers the snapshots no window holds.
 func (a *App) initRestore() bool {
 	r := &a.restorer
-	if !a.settings.restore {
+	if !a.settings.restore || !a.openRestoreStore() {
 		return false
 	}
-	dir := restore.DefaultDir(os.Getenv)
-	if dir == "" {
-		return false
-	}
-	st, err := restore.Open(dir)
-	if err != nil {
-		slog.Warn("restore: running without saving windows", "err", err)
-		return false
-	}
-	r.store = st
+	st := r.store
 	if id := a.cfg.restoreID; id != "" {
 		slot, err := st.Claim(id)
 		if err == nil {
@@ -135,15 +126,57 @@ func (a *App) initRestore() bool {
 		}
 		slog.Warn("restore: window not restored", "id", id, "err", err)
 	}
-	if r.slot, err = st.New(); err != nil {
-		slog.Warn("restore: running without saving windows", "err", err)
+	if !a.newRestoreSlot() {
 		return false
 	}
-	coreglib.TimeoutAdd(uint(saveEvery.Milliseconds()), a.saveTick)
 	if a.cfg.offerRestore {
 		r.offer = st.Offer()
 	}
 	return false
+}
+
+// openRestoreStore opens the store of saved windows, once.
+func (a *App) openRestoreStore() bool {
+	r := &a.restorer
+	if r.store != nil {
+		return true
+	}
+	dir := restore.DefaultDir(os.Getenv)
+	if dir == "" {
+		return false
+	}
+	st, err := restore.Open(dir)
+	if err != nil {
+		slog.Warn("restore: running without saving windows", "err", err)
+		return false
+	}
+	r.store = st
+	return true
+}
+
+// newRestoreSlot gives the window a slot of its own and starts saving.
+func (a *App) newRestoreSlot() bool {
+	r := &a.restorer
+	slot, err := r.store.New()
+	if err != nil {
+		slog.Warn("restore: running without saving windows", "err", err)
+		return false
+	}
+	r.slot = slot
+	coreglib.TimeoutAdd(uint(saveEvery.Milliseconds()), a.saveTick)
+	return true
+}
+
+// startSaving gives a window that started with restore = false a slot
+// once the setting turns on, so it saves from then on; it offers nothing.
+// Turned off, a window keeps its slot but writes nothing to it, and
+// closing removes it (finishRestore).
+func (a *App) startSaving() {
+	r := &a.restorer
+	if r.slot != nil || a.finished || !a.openRestoreStore() {
+		return
+	}
+	a.newRestoreSlot()
 }
 
 // showRestoreOffer reveals the banner when snapshots wait.

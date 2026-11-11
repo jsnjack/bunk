@@ -1,10 +1,15 @@
 package main
 
-// The preferences window (action "preferences"): layout, the rail, the
-// font and the default text zoom, the theme, desktop notifications
-// (alerts.go), and the [[agents]] list. Every change is written into
-// config.toml at once by the line editor (keysfile.go), so the user's
-// comments and order stay; the reload applies it.
+// The preferences window (action "preferences"): a control for each key
+// of config.toml: layout, the rail and its peek delay, where new tabs
+// start, the font and the default text zoom, the theme, session restore,
+// desktop notifications (alerts.go), agent hooks, documents and the
+// [[agents]] list. [keys] has a window of its own (shortcuts.go), which a
+// button opens, and [themes.NAME] tables are written by hand: Open in
+// editor opens config.toml in the default application for it. Every
+// change is written into config.toml at once by the line editor
+// (keysfile.go), so the user's comments and order stay; the reload
+// applies it.
 
 import (
 	"context"
@@ -12,6 +17,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,17 +40,22 @@ type prefsWindow struct {
 	message  *gtk.Label
 	syncing  bool
 
-	tabsRail, tabsBar *gtk.CheckButton
-	railOpen          *gtk.Switch
-	railRing, railMap *gtk.CheckButton // how the collapsed rail draws the tabs (rail_style)
-	font              *gtk.Entry
-	fontSize, zoom    *gtk.SpinButton
-	themes            []themeChoice // the Theme section (prefs_theme.go)
-	scroll            *gtk.ScrolledWindow
-	content           *gtk.Box // the scrolled content
-	notify            *notifyPrefs
-	hooks             *hooksPrefs   // the Agent hooks section (prefs_hooks.go)
-	present           *presentPrefs // the Documents section (prefs_present.go)
+	tabsRail, tabsBar  *gtk.CheckButton
+	railOpen           *gtk.Switch
+	railRing, railMap  *gtk.CheckButton // how the collapsed rail draws the tabs (rail_style)
+	peekDelay          *gtk.SpinButton  // rail_peek_delay, ms
+	dirHome, dirCur    *gtk.CheckButton // new_dir = "~" or "current"
+	dirOther           *gtk.CheckButton // new_dir is the folder in dir
+	dir                *gtk.Entry
+	restore, restoreSB *gtk.Switch // restore and restore_scrollback
+	font               *gtk.Entry
+	fontSize, zoom     *gtk.SpinButton
+	themes             []themeChoice // the Theme section (prefs_theme.go)
+	scroll             *gtk.ScrolledWindow
+	content            *gtk.Box // the scrolled content
+	notify             *notifyPrefs
+	hooks              *hooksPrefs   // the Agent hooks section (prefs_hooks.go)
+	present            *presentPrefs // the Documents section (prefs_present.go)
 }
 
 type agentRow struct {
@@ -72,6 +83,19 @@ func (a *App) showPreferences() {
 	w.message.SetWrap(true)
 	w.message.SetXAlign(0)
 	box.Append(w.message)
+	tools := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	edit := gtk.NewButtonWithLabel("Open in editor")
+	edit.SetTooltipText("Edit config.toml by hand, for [themes.NAME] tables and comments; saving applies it")
+	edit.ConnectClicked(w.openInEditor)
+	tools.Append(edit)
+	keys := gtk.NewButtonWithLabel("Keyboard shortcuts")
+	keys.ConnectClicked(func() {
+		w.dlg.Close()
+		a.showShortcuts()
+	})
+	tools.Append(keys)
+	box.Append(tools)
+	w.controls["open-editor"], w.controls["shortcuts"] = edit, keys
 
 	w.syncing = true
 	box.Append(heading("Tabs"))
@@ -113,6 +137,15 @@ func (a *App) showPreferences() {
 		})
 		box.Append(c)
 	}
+	w.peekDelay = gtk.NewSpinButtonWithRange(0, railPeekDelayMax, 50)
+	w.peekDelay.SetValue(float64(st.RailPeekDelay))
+	w.peekDelay.ConnectValueChanged(func() {
+		if !w.syncing {
+			w.saveTop(keysEdit{action: "rail_peek_delay", value: strconv.Itoa(w.peekDelay.ValueAsInt())})
+		}
+	})
+	box.Append(prefRow("Hold Alt alone this long to label the collapsed rail's tabs (ms)", w.peekDelay))
+	w.addNewDir(box, st)
 
 	box.Append(heading("Text"))
 	w.font = gtk.NewEntry()
@@ -143,6 +176,7 @@ func (a *App) showPreferences() {
 	box.Append(prefRow("Default text zoom (%)", w.zoom))
 
 	w.addThemeSection(box, st)
+	w.addRestore(box, st)
 	w.addNotifications(box)
 	w.addHooks(box)
 	w.addPresent(box)
@@ -163,6 +197,7 @@ func (a *App) showPreferences() {
 	w.controls["rail-open"], w.controls["font"] = w.railOpen, w.font
 	w.controls["rail-ring"], w.controls["rail-map"] = w.railRing, w.railMap
 	w.controls["font-size"], w.controls["text-zoom"] = w.fontSize, w.zoom
+	w.controls["peek-delay"] = w.peekDelay
 	w.loadAgents()
 	w.syncing = false
 
@@ -173,12 +208,151 @@ func (a *App) showPreferences() {
 	w.dlg.SetChild(view)
 	w.dlg.ConnectClosed(func() {
 		a.prefsWin = nil
-		if p := a.activePane(); p != nil {
+		// Keyboard shortcuts opens its window as this one closes.
+		if p := a.activePane(); p != nil && !a.modalOpen() {
 			p.widget.GrabFocus()
 		}
 	})
 	a.prefsWin = w
 	w.dlg.Present(a.win)
+}
+
+// addNewDir adds where new tabs and windows start (new_dir): the home
+// folder, the active pane's, or a folder typed in, saved on Enter.
+func (w *prefsWindow) addNewDir(box *gtk.Box, st Settings) {
+	box.Append(heading("New tabs and windows"))
+	hint := label("Start in this folder; a split starts in its pane's.", "statelabel")
+	hint.SetXAlign(0)
+	box.Append(hint)
+	w.dirHome = gtk.NewCheckButtonWithLabel("Your home folder")
+	w.dirCur = gtk.NewCheckButtonWithLabel("The active pane's folder")
+	w.dirOther = gtk.NewCheckButtonWithLabel("This folder:")
+	w.dirCur.SetGroup(w.dirHome)
+	w.dirOther.SetGroup(w.dirHome)
+	w.dir = gtk.NewEntry()
+	w.dir.SetPlaceholderText("~/projects or /srv/work")
+	w.dir.SetHExpand(true)
+	switch st.NewDir {
+	case "~", "":
+		w.dirHome.SetActive(true)
+	case "current":
+		w.dirCur.SetActive(true)
+	default:
+		w.dirOther.SetActive(true)
+		w.dir.SetText(st.NewDir)
+	}
+	w.dirHome.ConnectToggled(func() {
+		if !w.syncing && w.dirHome.Active() {
+			w.saveTop(keysEdit{action: "new_dir", value: tomlString("~")})
+		}
+	})
+	w.dirCur.ConnectToggled(func() {
+		if !w.syncing && w.dirCur.Active() {
+			w.saveTop(keysEdit{action: "new_dir", value: tomlString("current")})
+		}
+	})
+	w.dirOther.ConnectToggled(func() {
+		if !w.syncing && w.dirOther.Active() {
+			if strings.TrimSpace(w.dir.Text()) == "" {
+				w.message.SetText("Type a folder and press Enter.")
+				w.dir.GrabFocus()
+				return
+			}
+			w.saveNewDir()
+		}
+	})
+	w.dir.ConnectActivate(w.saveNewDir)
+	other := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	other.Append(w.dirOther)
+	other.Append(w.dir)
+	box.Append(w.dirHome)
+	box.Append(w.dirCur)
+	box.Append(other)
+	w.controls["dir-home"], w.controls["dir-current"] = w.dirHome, w.dirCur
+	w.controls["dir-other"], w.controls["dir"] = w.dirOther, w.dir
+}
+
+// saveNewDir saves the folder typed in as new_dir and chooses it.
+func (w *prefsWindow) saveNewDir() {
+	dir := strings.TrimSpace(w.dir.Text())
+	if dir == "" || dir == "current" || !validNewDir(dir) {
+		w.message.SetText("A folder is an absolute path, or starts with ~/.")
+		return
+	}
+	w.syncing = true
+	w.dirOther.SetActive(true)
+	w.syncing = false
+	w.saveTop(keysEdit{action: "new_dir", value: tomlString(dir)})
+	if got := newDir(dir, nil); dir != "~" && got != expandHome(dir) {
+		w.message.SetText("Saved new_dir. " + dir + " is not a folder, so new tabs start in your home folder until it is.")
+	}
+}
+
+// expandHome turns a leading ~ into the home directory.
+func expandHome(dir string) string {
+	home, _ := os.UserHomeDir()
+	if dir == "~" {
+		return home
+	}
+	if rest, ok := strings.CutPrefix(dir, "~/"); ok {
+		return filepath.Join(home, rest)
+	}
+	return dir
+}
+
+// addRestore adds session restore: whether windows are saved and offered
+// back at start (restore), and with them each pane's scrollback
+// (restore_scrollback), which needs the first.
+func (w *prefsWindow) addRestore(box *gtk.Box, st Settings) {
+	box.Append(heading("Session restore"))
+	w.restore, w.restoreSB = gtk.NewSwitch(), gtk.NewSwitch()
+	w.restore.SetActive(st.restore)
+	w.restoreSB.SetActive(st.restoreSB)
+	w.restoreSB.SetSensitive(st.restore)
+	w.restore.ConnectStateSet(func(on bool) bool {
+		w.restoreSB.SetSensitive(on)
+		if !w.syncing {
+			w.saveTop(keysEdit{action: "restore", value: strconv.FormatBool(on)})
+		}
+		return false
+	})
+	w.restoreSB.ConnectStateSet(func(on bool) bool {
+		if !w.syncing {
+			w.saveTop(keysEdit{action: "restore_scrollback", value: strconv.FormatBool(on)})
+		}
+		return false
+	})
+	box.Append(prefRow("Save the windows and offer them back at the next start", w.restore))
+	box.Append(prefRow("Save each pane's scrollback with them", w.restoreSB))
+	w.controls["restore"], w.controls["restore-scrollback"] = w.restore, w.restoreSB
+}
+
+// openInEditor closes the preferences and opens config.toml in the
+// default application for it, a text editor, creating the file if there
+// is none. The watcher applies what the user saves there.
+func (w *prefsWindow) openInEditor() {
+	path := w.a.cfg.configFile
+	if err := ensureFile(path); err != nil {
+		w.message.SetText("Could not open the settings: " + err.Error())
+		return
+	}
+	w.dlg.Close()
+	openURL(w.a, (&url.URL{Scheme: "file", Path: path}).String())
+}
+
+// ensureFile creates path, empty, unless it exists.
+func ensureFile(path string) error {
+	if path == "" {
+		return errors.New("no config file")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create settings directory: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("create settings: %w", err)
+	}
+	return f.Close()
 }
 
 // scrollTo brings a control into view (tests aim the pointer at it).

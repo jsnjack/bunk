@@ -25,7 +25,8 @@ type themeChoice struct {
 func (w *prefsWindow) addThemeSection(box *gtk.Box, st Settings) {
 	box.Append(heading("Theme"))
 	hint := label("Colours of the terminal, the badges and the dividers between panes. "+
-		"The terminal theme shows bunk-gui's own colours, those of default.", "statelabel")
+		"The terminal theme shows bunk-gui's own colours, those of default. "+
+		"Your own themes are [themes.NAME] tables in config.toml: Open in editor to add one.", "statelabel")
 	hint.SetWrap(true)
 	hint.SetXAlign(0)
 	box.Append(hint)

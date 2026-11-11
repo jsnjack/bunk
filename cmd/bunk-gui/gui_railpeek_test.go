@@ -16,13 +16,17 @@ import (
 // the peek's delay. Alt held alone labels both rings, level with them
 // right of the rail, and a scrim dims the window right of the rail but
 // not the rail; Alt+2 selects tab 2 and the labels stay; releasing Alt
-// hides them, and so does another window taking the focus.
+// hides them, and so does another window taking the focus. With
+// rail_peek_delay = 1500 written into config.toml, the labels are still
+// away 600 ms into a hold (a timer under load fires late, never early),
+// and come later.
 func TestGUIRailPeek(t *testing.T) {
 	t.Parallel()
 	g := runGUI(t, scenario{
 		cost:   2,
 		config: "tabs = \"rail\"\n",
 		args:   []string{"--size", "100x30", "--tab", ""},
+		files:  map[string]string{"slow.toml": "tabs = \"rail\"\nrail_peek_delay = 1500\n"},
 		script: []string{
 			"wait tabs.#=2 selected_tab=1 focused.line=$",
 			"status tab=1 agent=claude state=working repo=api branch=main",
@@ -30,7 +34,7 @@ func TestGUIRailPeek(t *testing.T) {
 			"wait tab.1.state=working tab.2.state=needs focused.badges.1.role=where idle 100ms",
 			"snap where", "shot where.png",
 			"kbd alt+b",
-			"sleep 700ms", // past railPeekDelay: the labels must not come
+			"sleep 700ms", // past rail_peek_delay: the labels must not come
 			"snap combo",
 			"kbd-down alt",
 			"wait rail_peek.#=2 idle 100ms",
@@ -49,6 +53,15 @@ func TestGUIRailPeek(t *testing.T) {
 			"kbd-up alt",
 			"decoy close",
 			"wait window.active=true",
+			"run cp slow.toml config.toml",
+			"wait run.reloads>=1 settings.rail_peek_delay=1500",
+			"kbd-down alt",
+			"wait input",
+			"sleep 600ms",
+			"snap slow",
+			"wait rail_peek.#=2",
+			"kbd-up alt",
+			"wait rail_peek.#=0",
 			"quit",
 		},
 	})
@@ -64,7 +77,7 @@ func TestGUIRailPeek(t *testing.T) {
 		checkBadgePixels(t, img, "where", x)
 	}
 
-	for _, label := range []string{"combo", "released", "inactive"} {
+	for _, label := range []string{"combo", "released", "inactive", "slow"} {
 		if s := g.snap(label); s.RailPeek != nil || s.RailPeekScrim != nil {
 			t.Errorf("%s: rail peek %+v, scrim %+v, want none", label, s.RailPeek, s.RailPeekScrim)
 		}

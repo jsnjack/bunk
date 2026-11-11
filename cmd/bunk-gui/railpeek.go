@@ -9,8 +9,9 @@ package main
 // the switcher's backdrop does, so busy pane text behind the labels
 // recedes; the rail's rings stay bright beside their labels.
 //
-//   - They show once Alt has been held for railPeekDelay with no other
-//     key, so Alt+A, Alt+1 and a shell's Alt+B never flash them.
+//   - They show once Alt has been held for rail_peek_delay (200 ms by
+//     default) with no other key, so Alt+A, Alt+1 and a shell's Alt+B
+//     never flash them.
 //   - Alt+N while they show selects a tab, and the labels follow.
 //   - Releasing Alt, the window going inactive, a dialog or the switcher
 //     opening, and leaving the collapsed rail hide them.
@@ -29,9 +30,6 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
 )
-
-// railPeekDelay is how long Alt is held alone before the labels show.
-const railPeekDelay = 400 // ms
 
 // railPeekRowH is a label's height in logical pixels, inside the 40 px
 // rail item it sits beside.
@@ -82,7 +80,7 @@ func (a *App) railPeekKey(keyval uint, state gdk.ModifierType, down bool) {
 		pk.seq++
 		pk.pending = true
 		seq := pk.seq
-		coreglib.TimeoutAdd(railPeekDelay, func() bool {
+		coreglib.TimeoutAdd(uint(a.settings.RailPeekDelay), func() bool {
 			if pk.seq == seq && pk.pending {
 				pk.pending = false
 				a.showRailPeek()

@@ -4,20 +4,27 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"bunk/internal/session"
 )
 
 // TestGUIPreferences drives the preferences window with real clicks and
-// keys: layout, rail, font family and size, default text zoom, and adding,
-// editing and removing [[agents]] entries. Every change applies live, and
-// config.toml keeps the user's comments and order byte for byte.
+// keys: layout, rail, font family and size, default text zoom, adding,
+// editing and removing [[agents]] entries, session restore, where new tabs
+// start and the rail peek's delay. Every change applies live: turning
+// restore on gives the window, started without it, a slot. A relative
+// folder is refused, and a folder that does not exist is saved with a
+// warning. config.toml keeps the user's comments and order byte for byte.
+// Open in editor closes the window and opens config.toml; Keyboard
+// shortcuts swaps it for the shortcuts window.
 func TestGUIPreferences(t *testing.T) {
 	t.Parallel()
 	const cfg = `# bunk-gui test settings
 tabs = "rail"   # side
 font_size = 11
+restore = false
 
 [keys]
 new_tab = "ctrl+alt+n"   # mine
@@ -67,8 +74,36 @@ scripts = ["goose/cli.py"]
 			"ptr-at pref agent-1-processes", "ptr-click", "kbd-type crush\\r",
 			"wait agents.#=2 agents.1.name=crush",
 			"snap agents",
+			"pref-scroll restore",
+			"ptr-at pref restore", "ptr-click",
+			"wait settings.restore=true restore.slot!=\"\" prefs.restore_scrollback=true",
+			"ptr-at pref restore-scrollback", "ptr-click",
+			"wait settings.restore_scrollback=false",
+			"pref-scroll dir-current",
+			"ptr-at pref dir-current", "ptr-click",
+			"wait settings.new_dir=current prefs.new_dir=current",
+			"ptr-at pref dir", "ptr-click", "kbd-type work\\r",
+			"wait prefs.message=\"A folder is an absolute path, or starts with ~/.\"",
+			"snap relative",
+			"kbd ctrl+a", "kbd-type ~/no-such-bunk-folder\\r",
+			"wait settings.new_dir=\"~/no-such-bunk-folder\" prefs.new_dir=\"~/no-such-bunk-folder\"",
+			"snap missing",
+			"kbd ctrl+a", "kbd-type /\\r",
+			"wait settings.new_dir=/ prefs.message=\"Saved new_dir.\"",
+			"pref-scroll peek-delay",
+			"ptr-at pref peek-delay -30 0", "ptr-click", "kbd ctrl+a", "kbd-type 150\\r",
+			"wait settings.rail_peek_delay=150 prefs.peek_delay=150",
+			"snap more",
+			"pref-scroll open-editor",
+			"ptr-at pref open-editor", "ptr-click",
+			"wait prefs=null run.opened.#=1",
+			"kbd ctrl+comma",
+			"wait prefs!=null",
+			"ptr-at pref shortcuts", "ptr-click",
+			"wait prefs=null shortcuts!=null",
+			"snap shortcuts",
 			"dialog-close",
-			"wait prefs=null",
+			"wait shortcuts=null",
 			"snap closed",
 			"quit",
 		},
@@ -92,7 +127,26 @@ scripts = ["goose/cli.py"]
 	if s := g.snap("agents"); !agentsEqual(s.Agents, want) {
 		t.Errorf("agents in force: %+v, want %+v", s.Agents, want)
 	}
-	if s := g.snap("closed"); s.Prefs != nil || s.ConfigError != "" {
+	if s := g.snap("open"); s.Restore.Slot != "" || s.Settings["restore"] != false || s.Settings["rail_peek_delay"] != 200.0 ||
+		s.Prefs.Restore || !s.Prefs.RestoreScrollback || s.Prefs.NewDir != "~" || s.Prefs.PeekDelay != 200 {
+		t.Errorf("open with restore = false: slot %q, settings %v, prefs %+v", s.Restore.Slot, s.Settings, s.Prefs)
+	}
+	if s := g.snap("relative"); s.Settings["new_dir"] != "current" || s.Prefs.NewDir != "current" {
+		t.Errorf("a relative folder: new_dir %v, chosen %q; want current kept", s.Settings["new_dir"], s.Prefs.NewDir)
+	}
+	if s := g.snap("missing"); !strings.Contains(s.Prefs.Message, "is not a folder") {
+		t.Errorf("a folder that does not exist: message %q", s.Prefs.Message)
+	}
+	if s := g.snap("more"); s.Restore.Slot == "" || s.Settings["restore_scrollback"] != false || s.Settings["new_dir"] != "/" {
+		t.Errorf("restore, scrollback and new_dir: slot %q, settings %v", s.Restore.Slot, s.Settings)
+	}
+	if want := "file://" + filepath.Join(g.dir, "config.toml"); !slices.Equal(g.Opened, []string{want}) {
+		t.Errorf("Open in editor opened %q, want %q", g.Opened, want)
+	}
+	if s := g.snap("shortcuts"); s.Prefs != nil || s.Shortcuts == nil {
+		t.Errorf("Keyboard shortcuts: prefs %v, shortcuts window %v", s.Prefs != nil, s.Shortcuts != nil)
+	}
+	if s := g.snap("closed"); s.Prefs != nil || s.Shortcuts != nil || s.ConfigError != "" {
 		t.Errorf("closed: prefs %+v, config error %q", s.Prefs, s.ConfigError)
 	}
 	got, err := os.ReadFile(filepath.Join(g.dir, "config.toml"))
@@ -100,9 +154,13 @@ scripts = ["goose/cli.py"]
 	wantFile := `# bunk-gui test settings
 tabs = "bar"   # side
 font_size = 12.5
+restore = true
 rail_open = true
 font = "DejaVu Sans Mono"
 text_zoom = 120
+restore_scrollback = false
+new_dir = "/"
+rail_peek_delay = 150
 
 [keys]
 new_tab = "ctrl+alt+n"   # mine

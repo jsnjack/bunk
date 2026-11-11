@@ -23,6 +23,8 @@ import (
 //	tabs = "rail"            # "rail" (side) or "bar" (top)
 //	rail_open = false        # start with the rail expanded
 //	rail_style = "ring"      # tabs in the collapsed rail: "ring" or "map" (railring.go)
+//	rail_peek_delay = 200    # ms Alt is held alone before the collapsed rail
+//	                         # labels its tabs (railpeek.go); 0-2000
 //	font = "Noto Sans Mono"  # terminal font family
 //	font_size = 11           # points
 //	text_zoom = 100          # text size at start and after Ctrl+0, % of font_size
@@ -62,14 +64,17 @@ type Settings struct {
 	// RailStyle draws the tabs in the collapsed rail: "ring", a ring of
 	// their panes' states (railring.go), or "map", the state glyph, and
 	// for 2 to 4 panes their dots placed like the panes (railMap).
-	RailStyle string               `toml:"rail_style"`
-	Font      string               `toml:"font"`
-	FontSize  float64              `toml:"font_size"`
-	TextZoom  float64              `toml:"text_zoom"`
-	Theme     string               `toml:"theme"`
-	Themes    map[string]theme.Def `toml:"themes"`
-	Agents    []session.AgentSpec  `toml:"agents"`
-	Keys      map[string]any       `toml:"keys"`
+	RailStyle string `toml:"rail_style"`
+	// RailPeekDelay is rail_peek_delay: how many milliseconds Alt is held
+	// alone before the collapsed rail labels its tabs (railpeek.go).
+	RailPeekDelay int                  `toml:"rail_peek_delay"`
+	Font          string               `toml:"font"`
+	FontSize      float64              `toml:"font_size"`
+	TextZoom      float64              `toml:"text_zoom"`
+	Theme         string               `toml:"theme"`
+	Themes        map[string]theme.Def `toml:"themes"`
+	Agents        []session.AgentSpec  `toml:"agents"`
+	Keys          map[string]any       `toml:"keys"`
 	// Notifications is the [notifications] table as written.
 	Notifications alert.Config `toml:"notifications"`
 	// HooksHint is hooks_hint as written: offer to set up the hooks of an
@@ -96,6 +101,12 @@ type Settings struct {
 	presentAuto bool                // Present.Auto applied to the default, false
 }
 
+// validNewDir reports whether s is a value new_dir takes: "current", "~",
+// a path under "~/" or an absolute path.
+func validNewDir(s string) bool {
+	return s == "current" || s == "~" || strings.HasPrefix(s, "~/") || filepath.IsAbs(s)
+}
+
 // presentConfig is the [present] table.
 type presentConfig struct {
 	// Auto: a document an agent hook reports opens the panel; otherwise
@@ -109,9 +120,17 @@ func (st Settings) startSize() float64 {
 	return math.Round(st.FontSize*st.TextZoom/10) / 10
 }
 
+// The bounds and default of rail_peek_delay, in milliseconds. The delay
+// lets a combination such as Alt+A or a shell's Alt+B finish before the
+// labels show.
+const (
+	railPeekDelayDefault = 200
+	railPeekDelayMax     = 2000
+)
+
 func defaultSettings() Settings {
 	km, _ := resolveKeys(nil)
-	return Settings{Tabs: "rail", RailStyle: "ring", NewDir: "~", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
+	return Settings{Tabs: "rail", RailStyle: "ring", RailPeekDelay: railPeekDelayDefault, NewDir: "~", Font: "Noto Sans Mono", FontSize: 11, TextZoom: 100, Theme: theme.Default,
 		keymap: km, was: map[string][]string{}, alerts: alert.Default(), hooksHint: true,
 		restore: true, restoreSB: true}
 }
@@ -167,8 +186,15 @@ func loadSettings(path string) (Settings, error) {
 			problems = append(problems, fmt.Sprintf("rail_style = %q (want \"ring\" or \"map\")", f.RailStyle))
 		}
 	}
+	if md.IsDefined("rail_peek_delay") {
+		if f.RailPeekDelay >= 0 && f.RailPeekDelay <= railPeekDelayMax {
+			st.RailPeekDelay = f.RailPeekDelay
+		} else {
+			problems = append(problems, fmt.Sprintf("rail_peek_delay = %d (want 0-%d milliseconds)", f.RailPeekDelay, railPeekDelayMax))
+		}
+	}
 	if md.IsDefined("new_dir") {
-		if f.NewDir == "current" || f.NewDir == "~" || strings.HasPrefix(f.NewDir, "~/") || filepath.IsAbs(f.NewDir) {
+		if validNewDir(f.NewDir) {
 			st.NewDir = f.NewDir
 		} else {
 			problems = append(problems, fmt.Sprintf("new_dir = %q (want an absolute path, ~/… or \"current\")", f.NewDir))

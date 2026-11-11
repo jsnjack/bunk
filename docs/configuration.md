@@ -2,6 +2,9 @@
 
 bunk and bunk-gui each read a TOML file, and every key in it is optional.
 bunk-gui's preferences and shortcuts windows write to its file for you.
+Preferences (Ctrl+,) has a control for every key except `[keys]`, which its
+Keyboard shortcuts button opens, and `[themes.NAME]` tables, which you write
+by hand: its Open in editor button opens the file in your text editor.
 
 ## bunk-gui
 
@@ -11,6 +14,7 @@ bunk-gui reads `~/.config/bunk-gui/config.toml`.
 tabs = "rail"              # "rail" (side) or "bar" (top)
 rail_open = false          # start with the rail expanded
 rail_style = "ring"        # tabs in the collapsed rail: "ring" of the panes' states, or "map" of glyphs
+rail_peek_delay = 200      # ms Alt is held alone before the collapsed rail labels its tabs (0-2000)
 font = "Noto Sans Mono"
 font_size = 11             # points
 text_zoom = 100            # % of font_size at start and after Ctrl+0
@@ -158,13 +162,20 @@ These are the key fields agents may need to know about:
 `config.go` is the authoritative reference for every field and its default.
 
 bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
-`rail_open`, `rail_style`, `font`, `font_size`, `text_zoom`, `theme`, `hooks_hint`,
-`restore`, `restore_scrollback`, `new_dir`, `[themes.NAME]`, `[[agents]]`, `[notifications]` and `[keys]`. `theme` and
+`rail_open`, `rail_style`, `rail_peek_delay`, `font`, `font_size`, `text_zoom`, `theme`, `hooks_hint`,
+`restore`, `restore_scrollback`, `new_dir`, `[themes.NAME]`, `[[agents]]`, `[notifications]`, `[present]` and `[keys]`. `theme` and
 `[themes.NAME]` work as in bunk's config, and `--theme` overrides `theme`
 for one run. `new_dir` is where new tabs and windows start: `~` (the
 default), `~/…`, an absolute path, or `current` for the active pane's
 directory; a directory that is gone gives the home directory, and splits
-start in their pane's directory.
+start in their pane's directory. `rail_peek_delay` is how many
+milliseconds Alt is held alone before the collapsed rail labels its tabs
+(`railpeek.go`), 0 to 2000 and 200 by default; the delay lets Alt+A or a
+shell's Alt+B finish without the labels flashing. Every key reloads live
+(`configwatch.go`); turning `restore` on gives a window that started
+without it a slot, so it saves from then on. A new key gets a control in
+Preferences (`prefs.go`), a field in `prefsReport` and a step in
+`TestGUIPreferences`.
 `[notifications]` has the same keys as in bunk's config. `[keys]` uses
 bunk's action names and key syntax where they overlap; "none" sends the key
 to the terminal. The file is watched and reloads live, and a bad value shows

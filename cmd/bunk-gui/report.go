@@ -320,22 +320,29 @@ type uiSnapshot struct {
 	Agents        []session.AgentSpec `json:"agents"`    // extra agents in force
 	Theme         string              `json:"theme"`     // the theme shown
 	Prefs         *prefsReport        `json:"prefs,omitempty"`
-	Restore       restoreReport       `json:"restore"` // session restore (restore.go)
-	Hooks         hookOfferReport     `json:"hooks"`   // the banner offering agent hooks
+	Settings      map[string]any      `json:"settings"` // the settings in force (settingsInForce)
+	Restore       restoreReport       `json:"restore"`  // session restore (restore.go)
+	Hooks         hookOfferReport     `json:"hooks"`    // the banner offering agent hooks
 }
 
 type prefsReport struct {
-	Message  string                 `json:"message"`
-	Tabs     string                 `json:"tabs"`
-	RailOpen bool                   `json:"rail_open"`
-	RailRing bool                   `json:"rail_ring"` // the ring is chosen over the map
-	Font     string                 `json:"font"`
-	FontSize float64                `json:"font_size"`
-	TextZoom float64                `json:"text_zoom"`
-	Theme    string                 `json:"theme"`  // the theme chosen
-	Themes   []string               `json:"themes"` // the themes offered, in order
-	Agents   [][3]string            `json:"agents"` // name, processes, scripts as the rows show them
-	Controls map[string]*rectReport `json:"controls"`
+	Message  string `json:"message"`
+	Tabs     string `json:"tabs"`
+	RailOpen bool   `json:"rail_open"`
+	RailRing bool   `json:"rail_ring"` // the ring is chosen over the map
+	// PeekDelay is rail_peek_delay in ms; NewDir is "~", "current", or
+	// the folder typed in when that choice is made.
+	PeekDelay         int                    `json:"peek_delay"`
+	NewDir            string                 `json:"new_dir"`
+	Restore           bool                   `json:"restore"`
+	RestoreScrollback bool                   `json:"restore_scrollback"`
+	Font              string                 `json:"font"`
+	FontSize          float64                `json:"font_size"`
+	TextZoom          float64                `json:"text_zoom"`
+	Theme             string                 `json:"theme"`  // the theme chosen
+	Themes            []string               `json:"themes"` // the themes offered, in order
+	Agents            [][3]string            `json:"agents"` // name, processes, scripts as the rows show them
+	Controls          map[string]*rectReport `json:"controls"`
 	// Notifications as the switch, check buttons and spin button show them.
 	Notify             bool     `json:"notify"`
 	NotifyStates       []string `json:"notify_states"`
@@ -669,10 +676,21 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			Ready: r.entry.Mapped()}
 	}
 	s.TextZoom, s.Agents, s.Theme = a.settings.TextZoom, a.settings.Agents, a.theme.Name
+	s.Settings = a.settingsInForce()
 	if w := a.prefsWin; w != nil {
 		pr := &prefsReport{Message: w.message.Text(), Tabs: map[bool]string{true: "bar", false: "rail"}[w.tabsBar.Active()],
 			RailOpen: w.railOpen.Active(), RailRing: w.railRing.Active(), Font: w.font.Text(), FontSize: w.fontSize.Value(), TextZoom: w.zoom.Value(),
 			Theme: w.chosenTheme(), Themes: []string{}, Agents: [][3]string{}, Controls: map[string]*rectReport{}}
+		pr.PeekDelay = w.peekDelay.ValueAsInt()
+		switch {
+		case w.dirHome.Active():
+			pr.NewDir = "~"
+		case w.dirCur.Active():
+			pr.NewDir = "current"
+		default:
+			pr.NewDir = w.dir.Text()
+		}
+		pr.Restore, pr.RestoreScrollback = w.restore.Active(), w.restoreSB.Active()
 		for _, c := range w.themes {
 			pr.Themes = append(pr.Themes, c.name)
 		}
@@ -1016,6 +1034,19 @@ func latOf(s series) latReport {
 	return latReport{N: m.n, P50: m.p50, P99: m.p99, Max: m.max, Mean: m.mean}
 }
 
+// settingsInForce are the settings the window runs with, for --report and
+// its snapshots.
+func (a *App) settingsInForce() map[string]any {
+	st := &a.settings
+	return map[string]any{
+		"tabs": st.Tabs, "rail_open": st.RailOpen, "rail_style": st.RailStyle, "rail_peek_delay": st.RailPeekDelay,
+		"font": st.Font, "font_size": st.FontSize, "agents": st.Agents, "theme": st.Theme,
+		"notifications": map[string]any{"enabled": st.alerts.Enabled, "states": alert.Names(st.alerts.States),
+			"command_after": st.alerts.CommandAfter.Seconds()},
+		"hooks_hint": st.hooksHint, "new_dir": st.NewDir, "restore": st.restore, "restore_scrollback": st.restoreSB,
+	}
+}
+
 func (a *App) writeReport(reason string) {
 	r := a.rep
 	r.Reason = reason
@@ -1024,13 +1055,7 @@ func (a *App) writeReport(reason string) {
 	r.Frames, r.ClockFrames = a.st.frames, a.st.clockFrames
 	r.AllocProbe = a.cfg.allocProbe
 	r.Toasts = a.toastLog
-	r.Settings = map[string]any{
-		"tabs": a.settings.Tabs, "rail_open": a.settings.RailOpen, "rail_style": a.settings.RailStyle, "font": a.settings.Font,
-		"font_size": a.settings.FontSize, "agents": a.settings.Agents, "theme": a.settings.Theme,
-		"notifications": map[string]any{"enabled": a.settings.alerts.Enabled, "states": alert.Names(a.settings.alerts.States),
-			"command_after": a.settings.alerts.CommandAfter.Seconds()},
-		"hooks_hint": a.settings.hooksHint, "new_dir": a.settings.NewDir,
-	}
+	r.Settings = a.settingsInForce()
 	if a.configErr != nil {
 		r.ConfigError = a.configErr.Error()
 	}

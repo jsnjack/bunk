@@ -145,7 +145,7 @@ the code.
   selects the tab. A pane without an agent takes part with its command
   mark (`alert.Mark`): running, or done or failed
   until the user looks at it, labelled by the command's name.
-  - Holding Alt alone for 400 ms (`railPeekDelay`) labels each ring
+  - Holding Alt alone for `rail_peek_delay` (200 ms by default) labels each ring
     (`railpeek.go`) with its Alt+N key, dot, name or agent, repo ⎇
     branch and places, as the expanded rail does. Another key first,
     such as Alt+A or a shell's Alt+B, shows none. The labels float in
