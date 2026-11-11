@@ -104,9 +104,17 @@ Hold <kbd>Alt</kbd> on its own for a moment and each ring gets a label with its 
 
 ### Documents beside the agent
 
-An agent can show you what it wrote for you to read in a panel beside its pane: a plan before it starts, a report when it is done, or an explanation with a diagram. It runs `bunk-gui present docs/plan.html`, as claude did in the picture at the top. Agents prefer HTML pages, which can be interactive. The pages run without network access and can use bunk's theme colours, Mermaid diagrams and KaTeX math. Markdown renders with tables, highlighted code, diagrams and math too.
+An agent can show you what it wrote for you to read in a panel beside its pane: a plan before it starts, a report when it is done, or an explanation with a diagram. It runs `bunk-gui present docs/plan.html`, as claude did in the picture at the top. Agents prefer HTML pages, which can be interactive, and bunk gives them the parts, so they write the content rather than the widgets: interactive charts with Apache ECharts, Graphviz and Mermaid diagrams, KaTeX math, D3, highlighted code, sortable and filterable tables, tabs, step-throughs, callouts and badges. Pages run without network access, in your theme's colours.
 
-The page reloads in place as the agent edits the file, and marks the sections that changed. Select a passage and choose "Ask the agent": your question is pasted into the agent's input with the file, the section and the quote, and waits there for you to send it. When Claude Code or Copilot CLI asks you to approve a plan, the plan opens in the panel too.
+<img src="assets/gui-report.png" width="520" alt="A load-test report in the panel: badges, a Result callout, an ECharts line chart of p50 and p99 latency against requests per second with a dashed budget line, a Graphviz graph of client, gateway, rate limiter, API and Redis, tabs comparing where to keep the buckets, two reply buttons and a sortable table">
+
+The page reloads as the agent edits the file. It keeps your place, the tabs you chose and what you typed, and marks the sections that changed. `bunk-gui present` waits for the page to draw and tells the agent what is wrong with it, such as a diagram that does not parse, a script error or a missing image, so the agent fixes its own page; `bunk-gui present plan.html#rollout` opens it at the section the agent wants you to read.
+
+Select a passage and choose "Ask the agent": your question is pasted into the agent's input with the file, the section and the quote, and waits there for you to send it. To review a plan, add comments instead: their passages stay highlighted, and the Review button pastes them all as one message. A page can also offer buttons that answer the agent, such as "Go with Redis" above. When Claude Code or Copilot CLI asks you to approve a plan, the plan opens in the panel too.
+
+<img src="assets/gui-review.png" alt="The top of the report with a review under way: Review (2) in the panel's header and a highlighted passage in the Result callout">
+
+While the panel has the keyboard, <kbd>Ctrl</kbd>+<kbd>F</kbd> finds in the document and the text size keys zoom it. A link to another document beside it opens that document, and Back returns. Markdown renders with tables that sort, highlighted code, diagrams, charts, math and GitHub's `> [!NOTE]` callouts. "Open in the browser" shows the page in your browser, light or dark as your system is set.
 
 The panel previews other files as well, from "Open in panel…" or a drop: images, PDFs, video, audio, and code highlighted by its file name. The agent hooks tell each agent about the panel when a session starts, and `bunk-gui present install claude` (or `codex`, `copilot`) adds a skill that says when and how to present. [docs/present.md](docs/present.md) covers the formats, the sandbox and the skill.
 
