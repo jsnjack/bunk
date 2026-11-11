@@ -2061,7 +2061,10 @@ func (pn *panel) addToReview() {
 	if d == pn.cur {
 		pn.markReview(d)
 	}
-	pn.app.toast(fmt.Sprintf("Added to the review (%d). Paste it from the Review button.", len(pn.review)))
+	if len(pn.review) == 1 {
+		// Later comments show in the Review button's count.
+		pn.app.toast("Added to the review. Paste it from the Review button.")
+	}
 }
 
 // syncReview shows the Review button with the number of comments, or
