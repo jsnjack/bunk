@@ -116,8 +116,8 @@ func TestThemeCSS(t *testing.T) {
 
 // TestStandalonePages: text gets a page like Markdown; an HTML page that
 // loads bunk's assets gets a copy that loads them from disk, with its
-// directory as base; other files open as they are. Pages follow the
-// system's colour scheme.
+// directory as base and a policy that keeps it off the network; other
+// files open as they are. Pages follow the system's colour scheme.
 func TestStandalonePages(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "src")
@@ -155,7 +155,7 @@ func TestStandalonePages(t *testing.T) {
 	s := readTestFile(t, page)
 	assets := FileURL(filepath.Join(root, "assets")) + "/"
 	for _, want := range []string{
-		`<head><base href="` + FileURL(dir) + `/"><style>:root{color-scheme:light;`,
+		`"><base href="` + FileURL(dir) + `/"><style>:root{color-scheme:light;`,
 		darkScheme + "{\n:root{color-scheme:dark;",
 		`<script src="` + assets + `bunk-doc.js">`,
 	} {
@@ -165,6 +165,22 @@ func TestStandalonePages(t *testing.T) {
 	}
 	if strings.Contains(s, AssetsURL) {
 		t.Errorf("HTML copy still loads %s", AssetsURL)
+	}
+	// The copy keeps the page off the network, as the panel does, and its
+	// policy comes first, before anything of the page's own.
+	if !strings.Contains(s, "<head><meta http-equiv=\"Content-Security-Policy\"") {
+		t.Errorf("HTML copy has no policy first in its head:\n%s", s)
+	}
+	policy := pageCSP(t, s)
+	for _, d := range []string{"default-src", "script-src", "style-src", "img-src", "font-src", "media-src", "frame-src"} {
+		for _, src := range directive(policy, d) {
+			if strings.Contains(src, "http") || src == "*" || src == "https:" {
+				t.Errorf("%s allows the network: %q", d, src)
+			}
+		}
+	}
+	if got := strings.Join(directive(policy, "connect-src"), " "); got != "'none'" {
+		t.Errorf("connect-src = %q, want 'none'", got)
 	}
 	if _, err := os.Stat(filepath.Join(root, "assets", "mermaid.min.js")); err != nil {
 		t.Errorf("assets: %v", err)

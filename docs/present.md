@@ -142,7 +142,8 @@ styles of its own shows light text on the dark theme. A page's own styles
 override all of it. When a browser opens a page that uses the assets or the
 colours, `bunk present` gives it a copy that loads them from disk
 (`present.WriteStandalone`), with colours that follow the system's light or
-dark style.
+dark style. The copy keeps the panel's limits: a Content-Security-Policy
+lets it load nothing from the network.
 
 Agents present only inside bunk: the skill tells them not to run `bunk
 present` when `BUNK_NOTIFY_SESSION` is unset, because there it would open

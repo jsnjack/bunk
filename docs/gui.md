@@ -222,7 +222,8 @@ panel gives the panes their width back.
   `htmlCSP`) and the theme's colours first in their head
   (`present.ThemeCSS`, `present.InsertHead`); the page runtime works on
   any page. A browser gets a copy of such a page that loads the assets
-  from disk (`present.NeedsPage`, `WriteStandalone`).
+  from disk (`present.NeedsPage`, `WriteStandalone`), with a policy first
+  in its head that keeps it off the network (`standaloneHTMLCSP`).
 - Pages for a browser follow the system's colour scheme
   (`present.Options.System`): the panel's theme for its own darkness and
   bunk's default theme for the other, the dark one under

@@ -62,6 +62,15 @@ func NeedsPage(path string, kind Kind) bool {
 	return false
 }
 
+// standaloneHTMLCSP is the policy of the copy of an HTML page that a
+// browser opens from disk, close to the panel's: the page's own scripts and
+// styles, inline or in files, and nothing from the network. A file: URL's
+// origin is opaque, so only the scheme can name the page's files and
+// bunk's assets; a browser does not let such a page fetch them anyway.
+const standaloneHTMLCSP = "default-src file:; script-src file: 'unsafe-inline' 'unsafe-eval'; " +
+	"style-src file: 'unsafe-inline'; img-src file: data: blob:; font-src file: data:; media-src file: data: blob:; " +
+	"connect-src 'none'; frame-src file:; worker-src blob:; form-action 'none'; base-uri file:; object-src 'none'"
+
 // WriteStandalone writes the page a browser opens from disk for the file
 // at path (NeedsPage): root/<key>/index.html, where key stands for the
 // file's path, so each file has one page however often it opens. Pages
@@ -69,8 +78,9 @@ func NeedsPage(path string, kind Kind) bool {
 // from Assets. The page's <base> is the file's directory, so its relative
 // links and images resolve there, and its asset URLs are absolute file://
 // URLs into root/assets. The page follows the browser's light or dark
-// colour scheme (Options.System), with theme for its own darkness. It
-// returns the page's path.
+// colour scheme (Options.System), with theme for its own darkness, and
+// has a Content-Security-Policy that keeps it off the network, as in the
+// panel. It returns the page's path.
 func WriteStandalone(path, root string, theme Theme) (string, error) {
 	kind, err := Preview(path)
 	if err != nil {
@@ -107,7 +117,8 @@ func WriteStandalone(path, root string, theme Theme) (string, error) {
 		page, err = renderPreview(filepath.Base(path), kind, src, opts, base)
 	case KindHTML:
 		page = bytes.ReplaceAll(src, []byte(AssetsURL), []byte(opts.AssetBase))
-		page = InsertHead(page, `<base href="`+html.EscapeString(base)+`"><style>`+pageCSS(theme, true, false)+`</style>`)
+		page = InsertHead(page, `<meta http-equiv="Content-Security-Policy" content="`+html.EscapeString(standaloneHTMLCSP)+`">`+
+			`<base href="`+html.EscapeString(base)+`"><style>`+pageCSS(theme, true, false)+`</style>`)
 	default:
 		err = fmt.Errorf("a browser opens %s files as they are", kind)
 	}
