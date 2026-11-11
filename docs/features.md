@@ -99,6 +99,8 @@ Agents can show you what they wrote in a panel beside the tab's panes
   Copilot CLI asks you to approve a plan, the plan opens in the panel.
 - In a bunk-gui pane, the hooks tell each agent at session start that the
   panel is there and how to present to it.
+- `bunk present FILE#heading` opens the document at that heading, so the
+  agent can point you to what it changed.
 - `bunk present FILE` waits for the page to draw and tells the agent what
   is wrong with it: a diagram or formula that does not parse, a script
   error, a missing image, something blocked from the network. The status

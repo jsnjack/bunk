@@ -199,10 +199,10 @@ func TestNotifyCLI(t *testing.T) {
 	got := make(chan report, 4)
 	srv.Register("tok", reportTarget(got))
 	shown := make(chan string, 4)
-	srv.SetPresenter(func(token, path string, auto bool, check func([]string)) bool {
-		shown <- fmt.Sprintf("%s %s %v", token, path, auto)
-		if check != nil {
-			check(nil)
+	srv.SetPresenter(func(r notify.PresentRequest) bool {
+		shown <- fmt.Sprintf("%s %s %v", r.Token, r.Path, r.Auto)
+		if r.Check != nil {
+			r.Check(nil)
 		}
 		return true
 	})

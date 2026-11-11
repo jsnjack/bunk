@@ -67,12 +67,23 @@ type Server struct {
 	checkWait time.Duration // under mu; tests shorten it
 }
 
-// A Presenter shows the document at path, an absolute path, for the pane
-// whose token sent the request; auto marks a request from a hook. It
-// returns false when it cannot show it. check is nil unless the request
-// asked for a check: the presenter then calls it once, from any goroutine,
-// with the problems the document's page had once it loaded.
-type Presenter func(token, path string, auto bool, check func(problems []string)) bool
+// A Presenter shows the document of a present request and returns false
+// when it cannot show it.
+type Presenter func(r PresentRequest) bool
+
+// PresentRequest is a present request as a Presenter gets it.
+type PresentRequest struct {
+	Token string // the token of the pane that sent it
+	Path  string // the document, an absolute path
+	// Anchor is the id of the heading to open the document at, or "".
+	Anchor string
+	// Auto marks a request from a hook, not from the agent or the user.
+	Auto bool
+	// Check is nil unless the request asked for a check: the presenter then
+	// calls it once, from any goroutine, with the problems the document's
+	// page had once it loaded.
+	Check func(problems []string)
+}
 
 // Listen creates the socket $XDG_RUNTIME_DIR/bunk/notify-<pid>.sock
 // (directory 0700, socket 0600) and starts serving it. The front end logs
@@ -396,13 +407,23 @@ func (s *Server) presentRequest(r wire.Report) (string, <-chan []string) {
 			}
 		}
 	}
-	if !f(r.Session, r.Path, r.Auto, check) {
+	anchor := r.Anchor
+	if !validAnchor(anchor) {
+		anchor = ""
+	}
+	if !f(PresentRequest{Token: r.Session, Path: r.Path, Anchor: anchor, Auto: r.Auto, Check: check}) {
 		return PresentUnsupported, nil
 	}
 	if wait == nil {
 		return PresentShown, nil
 	}
 	return PresentShown, wait
+}
+
+// validAnchor reports whether anchor may name a heading: at most
+// wire.MaxAnchor bytes of valid UTF-8 without control characters.
+func validAnchor(anchor string) bool {
+	return len(anchor) <= wire.MaxAnchor && utf8.ValidString(anchor) && !strings.ContainsFunc(anchor, unicode.IsControl)
 }
 
 // validPresentPath reports whether path may name a document to present:

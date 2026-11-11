@@ -78,7 +78,7 @@ anywhere by itself.
 ## The command
 
 ```
-bunk present FILE
+bunk present FILE[#HEADING-ID]
 bunk present --hook AGENT -
 bunk present --session-start AGENT -
 bunk present skill | status | install AGENT
@@ -102,6 +102,12 @@ that applies, prints one line and exits:
 The path in the output is relative to the working directory when the file
 lies inside it. An agent never sees a failure only because nothing can show
 the file.
+
+`FILE#ID`, such as `docs/plan.md#rollout`, opens the document at the
+heading whose id is `ID`, also when the panel shows it already, so the
+agent can point the user to the part it changed. Markdown headings get
+GitHub's ids: lower case, spaces as `-`, punctuation dropped. A file whose
+name has a `#` in it opens as it is.
 
 In bunk-gui the command waits for the page to load and draw, at most about
 5 seconds, and lists after its line what was wrong with it, so the agent
@@ -349,6 +355,7 @@ A present request travels over the notify socket like a report
 | `path` | string | The document's absolute path, at most 2048 bytes, without control characters |
 | `auto` | boolean | Optional: the request comes from a hook, not from the agent or the user |
 | `check` | boolean | Optional: reply once the page has loaded, with its problems; `bunk present FILE` sets it, hooks do not |
+| `anchor` | string | Optional: the id of the heading to open the document at, at most 256 bytes, without control characters |
 
 Unlike a report, a request gets a one-line reply on the same connection,
 and the server then closes it:

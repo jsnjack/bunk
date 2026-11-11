@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"unicode"
 
 	"bunk/internal/notify/wire"
 	"bunk/internal/present"
@@ -24,7 +25,7 @@ import (
 
 // presentUsage is the help text; %[1]s is the program name, bunk or
 // bunk-gui. Agents read it, so it stays short and exact.
-const presentUsage = `usage: %[1]s present FILE
+const presentUsage = `usage: %[1]s present FILE[#HEADING-ID]
        %[1]s present --hook AGENT -
        %[1]s present --session-start AGENT -
        %[1]s present skill | status | install AGENT
@@ -35,6 +36,8 @@ terminal UI and outside bunk it opens in the web browser, or in its
 default application. On a host reached over ssh, or without a graphical
 display, it says that it cannot show the file. It prints one line saying
 which happened and exits 0; a missing file or one it cannot show exits 1.
+FILE#ID opens the document at the heading whose id is ID, as
+docs/plan.md#rollout, so the user reads the part you point to.
 In bunk-gui it waits for the page to load, at most a few seconds, and
 then lists the problems it had: diagrams or math that do not parse,
 script errors, files it could not load, content its policy blocked. Fix
@@ -146,8 +149,10 @@ func progName() string {
 }
 
 // presentFile shows one file: in bunk-gui's side panel when the pane's
-// front end shows it, else in the web browser.
+// front end shows it, else in the web browser. FILE#ID opens it at the
+// heading whose id is ID, unless a file of that very name exists.
 func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
+	arg, anchor := splitAnchor(arg)
 	path, err := filepath.Abs(arg)
 	if err != nil {
 		write(stderr, fmt.Sprintf("%s present: %s: %v\n", prog, arg, err))
@@ -169,12 +174,16 @@ func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
 	}
 	socket, token := lookupEnv(env, EnvSocket), lookupEnv(env, EnvSession)
 	if socket != "" && token != "" {
-		reply, problems, err := PresentCheck(socket, token, path)
+		reply, problems, err := PresentCheck(socket, token, path, anchor)
 		if err != nil {
 			slog.Debug("present: request", "err", err)
 		}
 		if reply == PresentShown {
-			write(stdout, "Showing "+name+" in bunk-gui's side panel.\n"+problemReport(problems))
+			shown := name
+			if anchor != "" {
+				shown += "#" + anchor
+			}
+			write(stdout, "Showing "+shown+" in bunk-gui's side panel.\n"+problemReport(problems))
 			return 0
 		}
 	}
@@ -202,6 +211,23 @@ func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
 	}
 	write(stdout, "Opened "+name+" in "+where+".\n")
 	return 0
+}
+
+// splitAnchor splits FILE#ID into the file and the heading's id, unless a
+// file named FILE#ID exists or ID is not a plausible id.
+func splitAnchor(arg string) (string, string) {
+	i := strings.LastIndexByte(arg, '#')
+	if i <= 0 || i == len(arg)-1 {
+		return arg, ""
+	}
+	if _, err := os.Stat(arg); err == nil {
+		return arg, ""
+	}
+	anchor := arg[i+1:]
+	if len(anchor) > wire.MaxAnchor || strings.ContainsAny(anchor, "/ \t") || strings.ContainsFunc(anchor, unicode.IsControl) {
+		return arg, ""
+	}
+	return arg[:i], anchor
 }
 
 // problemReport tells the agent what was wrong with the page bunk-gui

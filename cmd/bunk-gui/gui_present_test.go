@@ -781,3 +781,28 @@ func TestGUIPresentLibraries(t *testing.T) {
 		t.Errorf("problems: %q, want two", *c)
 	}
 }
+
+// TestGUIPresentAnchor: "bunk-gui present FILE#ID" opens the document at
+// that heading, and again at it when the document is shown already.
+func TestGUIPresentAnchor(t *testing.T) {
+	t.Parallel()
+	gui := filepath.Dir(guiBinary(t))
+	runGUI(t, scenario{
+		cost:  2,
+		args:  []string{"--size", "100x30"},
+		env:   []string{"PATH=" + gui + ":" + os.Getenv("PATH")},
+		files: map[string]string{"spec.md": "# Spec\n\n" + filler(40) + "## Rollout\n\nRoll out slowly.\n\n" + filler(80)},
+		script: []string{
+			"maximize",
+			"wait window.maximized=true focused.line=$",
+			"type bunk-gui present spec.md#rollout\\r",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true focused.text~\"Showing spec.md#rollout\"",
+			"present-wait Math.abs(document.getElementById('rollout').getBoundingClientRect().top) < 2",
+			"present-eval window.scrollTo(0, 0); 'top'",
+			"wait tab.1.panel.eval=top",
+			"present spec.md#rollout",
+			"present-wait Math.abs(document.getElementById('rollout').getBoundingClientRect().top) < 2",
+			"quit",
+		},
+	})
+}

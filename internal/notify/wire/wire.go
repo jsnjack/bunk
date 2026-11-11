@@ -36,6 +36,8 @@ const (
 	MaxAgentSession = 128
 	// MaxPath caps the path of a present request, in bytes.
 	MaxPath = 2048
+	// MaxAnchor caps the anchor of a present request, in bytes.
+	MaxAnchor = 256
 	// UserVar is the name of the OSC 1337 user variable that carries a
 	// report through a terminal.
 	UserVar = "bunk_notify"
@@ -76,6 +78,10 @@ type Report struct {
 	// in lines after the reply. A front end that does not check replies at
 	// once, as before.
 	Check bool `json:"check,omitempty"`
+	// Anchor is the id of the heading the document opens at, at most
+	// MaxAnchor bytes; a front end that predates it opens the document
+	// where the reader left it.
+	Anchor string `json:"anchor,omitempty"`
 }
 
 var (

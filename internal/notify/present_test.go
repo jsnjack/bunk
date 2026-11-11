@@ -23,6 +23,7 @@ import (
 type presented struct {
 	token, path string
 	auto        bool
+	anchor      string
 }
 
 // startPresenter starts a server whose presenter records each request and
@@ -31,10 +32,10 @@ func startPresenter(t *testing.T, show bool) (*Server, string, fakeTarget, chan 
 	t.Helper()
 	srv, token, target := startServer(t)
 	got := make(chan presented, 16)
-	srv.SetPresenter(func(token, path string, auto bool, check func([]string)) bool {
-		got <- presented{token, path, auto}
-		if check != nil {
-			check(nil)
+	srv.SetPresenter(func(r PresentRequest) bool {
+		got <- presented{r.Token, r.Path, r.Auto, r.Anchor}
+		if r.Check != nil {
+			r.Check(nil)
 		}
 		return show
 	})
@@ -72,7 +73,7 @@ func TestPresentReplies(t *testing.T) {
 	if reply, err := Present(srv.Path(), token, "/home/u/docs/plan.md", false); err != nil || reply != PresentShown {
 		t.Fatalf("Present = %q, %v; want %q", reply, err, PresentShown)
 	}
-	if p := nextPresented(t, got); p != (presented{token, "/home/u/docs/plan.md", false}) {
+	if p := nextPresented(t, got); p != (presented{token, "/home/u/docs/plan.md", false, ""}) {
 		t.Fatalf("presenter got %+v", p)
 	}
 	if reply, err := Present(srv.Path(), token, "/home/u/docs/page.html", true); err != nil || reply != PresentShown {
@@ -341,7 +342,7 @@ func TestPresentCLI(t *testing.T) {
 				}
 			}
 			if tc.shown != "" {
-				if p := nextPresented(t, shown); p != (presented{guiToken, tc.shown, false}) {
+				if p := nextPresented(t, shown); p != (presented{guiToken, tc.shown, false, ""}) {
 					t.Fatalf("presenter got %+v", p)
 				}
 			}
@@ -554,9 +555,9 @@ func TestPresentHook(t *testing.T) {
 		want  []presented
 	}{
 		{"inside bunk", []string{"--hook", "codex", "-"}, inside, "",
-			[]presented{{token, filepath.Join(dir, "a.md"), true}, {token, filepath.Join(dir, "b.html"), true}}},
+			[]presented{{token, filepath.Join(dir, "a.md"), true, ""}, {token, filepath.Join(dir, "b.html"), true, ""}}},
 		{"a plan to approve", []string{"--hook", "claude", "-"}, inside, plan,
-			[]presented{{token, filepath.Join(dir, "a.md"), false}}},
+			[]presented{{token, filepath.Join(dir, "a.md"), false, ""}}},
 		{"outside bunk", []string{"--hook", "codex", "-"}, []string{"DISPLAY=:0"}, "", nil},
 		{"over ssh", []string{"--hook", "codex", "-"}, []string{envSSH + "=x", EnvSession + "=" + token}, "", nil},
 		{"unknown agent", []string{"--hook", "emacs", "-"}, inside, "", nil},
@@ -615,15 +616,15 @@ func TestPresentHookSnippets(t *testing.T) {
 		want                               presented
 	}{
 		{"claude Write", "claude", "PostToolUse", claudeWriteTools, `{"hook_event_name":"PostToolUse","cwd":"` + dir + `","tool_name":"Write","tool_input":{"file_path":"` + doc + `"}}`,
-			presented{token, doc, true}},
+			presented{token, doc, true, ""}},
 		{"claude ExitPlanMode", "claude", "PreToolUse", exitPlanMode, `{"hook_event_name":"PreToolUse","cwd":"` + dir + `","tool_name":"ExitPlanMode","tool_input":{"plan":"# Plan","planFilePath":"` + doc + `"}}`,
-			presented{token, doc, false}},
+			presented{token, doc, false, ""}},
 		{"codex apply_patch", "codex", "PostToolUse", codexWriteTools, `{"hook_event_name":"PostToolUse","cwd":"` + dir + `","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: docs/plan.md\n+# Plan\n*** End Patch\n"}}`,
-			presented{token, doc, true}},
+			presented{token, doc, true, ""}},
 		{"copilot create", "copilot", "postToolUse", copilotWriteTools, `{"sessionId":"s","cwd":"` + dir + `","toolName":"create","toolArgs":` + quote(`{"path":"`+doc+`","file_text":"# Plan"}`) + `}`,
-			presented{token, doc, true}},
+			presented{token, doc, true, ""}},
 		{"copilot exit_plan_mode", "copilot", "preToolUse", copilotPlanTool, `{"sessionId":"s1","cwd":"` + dir + `","toolName":"exit_plan_mode","toolArgs":{"summary":"Plan"}}`,
-			presented{token, copilotPlan, false}},
+			presented{token, copilotPlan, false, ""}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			snippet, _ := HookSnippet(tc.agent)
@@ -903,8 +904,8 @@ func TestSkillText(t *testing.T) {
 func TestPresentCheck(t *testing.T) {
 	srv, token, target := startServer(t)
 	checks := make(chan func([]string), 4)
-	srv.SetPresenter(func(token, path string, auto bool, check func([]string)) bool {
-		checks <- check
+	srv.SetPresenter(func(r PresentRequest) bool {
+		checks <- r.Check
 		return true
 	})
 	type result struct {
@@ -915,7 +916,7 @@ func TestPresentCheck(t *testing.T) {
 	ask := func() chan result {
 		ch := make(chan result, 1)
 		go func() {
-			reply, problems, err := PresentCheck(srv.Path(), token, "/home/u/docs/plan.md")
+			reply, problems, err := PresentCheck(srv.Path(), token, "/home/u/docs/plan.md", "")
 			ch <- result{reply, problems, err}
 		}()
 		return ch
@@ -964,8 +965,8 @@ func TestPresentCheck(t *testing.T) {
 	}
 
 	// The CLI prints the problems after its line.
-	srv.SetPresenter(func(token, path string, auto bool, check func([]string)) bool {
-		check([]string{"cannot load img/flow.png: not found"})
+	srv.SetPresenter(func(r PresentRequest) bool {
+		r.Check([]string{"cannot load img/flow.png: not found"})
 		return true
 	})
 	dir := t.TempDir()
@@ -976,5 +977,36 @@ func TestPresentCheck(t *testing.T) {
 	want := "Showing plan.md in bunk-gui's side panel.\nThe page has a problem:\n- cannot load img/flow.png: not found\n"
 	if code != 0 || !strings.HasPrefix(stdout.String(), want) {
 		t.Fatalf("exit %d:\n%s\nwant it to start:\n%s", code, stdout.String(), want)
+	}
+}
+
+// TestPresentAnchor: FILE#ID opens FILE at the heading ID, unless a file
+// of that very name exists or ID cannot be an id.
+func TestPresentAnchor(t *testing.T) {
+	srv, token, _, got := startPresenter(t, true)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "plan.md"), "# Plan\n")
+	writeFile(t, filepath.Join(dir, "odd#name.md"), "# Odd\n")
+	t.Chdir(dir)
+	env := []string{EnvSocket + "=" + srv.Path(), EnvSession + "=" + token}
+	for _, tc := range []struct {
+		arg, path, anchor string
+	}{
+		{"plan.md#rollout", "plan.md", "rollout"},
+		{"odd#name.md", "odd#name.md", ""},
+		{"plan.md", "plan.md", ""},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := runPresent("bunk-gui", []string{tc.arg}, env, nil, &stdout, &stderr); code != 0 {
+			t.Fatalf("%s: exit %d: %s", tc.arg, code, stderr.String())
+		}
+		p := nextPresented(t, got)
+		if filepath.Base(p.path) != tc.path || p.anchor != tc.anchor {
+			t.Errorf("%s: presenter got %+v, want %s at %q", tc.arg, p, tc.path, tc.anchor)
+		}
+	}
+	var stderr bytes.Buffer
+	if code := runPresent("bunk-gui", []string{"plan.md#has space"}, env, nil, io.Discard, &stderr); code == 0 {
+		t.Error("a file named after a heading that cannot be an id was found")
 	}
 }

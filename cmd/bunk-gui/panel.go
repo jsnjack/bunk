@@ -228,11 +228,12 @@ func panelButton(icon, tip string, f func()) *gtk.Button {
 	return b
 }
 
-// presentFor shows path in the panel of the tab whose pane has token.
-// auto: a hook reported the file; it opens the panel only with
-// [present] auto, and is otherwise listed for later. check, when not nil,
-// gets the problems of the page once it has loaded (panel.addCheck).
-func (a *App) presentFor(token, path string, auto bool, check func([]string)) {
+// presentFor shows path in the panel of the tab whose pane has token, at
+// the heading whose id is anchor when it is set. auto: a hook reported the
+// file; it opens the panel only with [present] auto, and is otherwise
+// listed for later. check, when not nil, gets the problems of the page
+// once it has loaded (panel.addCheck).
+func (a *App) presentFor(token, path, anchor string, auto bool, check func([]string)) {
 	var from *Pane
 	for _, p := range a.panes {
 		if p != nil && !p.removeOnce && p.token == token {
@@ -247,7 +248,7 @@ func (a *App) presentFor(token, path string, auto bool, check func([]string)) {
 		return
 	}
 	pn := from.tab.docPanel()
-	pn.present(path, from, auto, "")
+	pn.present(path, from, auto, anchor)
 	if check == nil {
 		return
 	}
@@ -1449,7 +1450,7 @@ const presentSelectScript = `(function(t){
 
 // presentStep runs the --do steps of the document panel:
 //
-//	present PATH [auto|check]
+//	present PATH[#ID] [auto|check]
 //	                        what "bunk present PATH" from the focused pane does; a hook's
 //	                        request with auto, the CLI's check with check (panel.checked)
 //	present-eval JS         evaluate JS in the shown page; the result goes to panel.eval
@@ -1474,6 +1475,12 @@ func (a *App) presentStep(verb, arg string) error {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(p.s.Cwd(), path)
 		}
+		var anchor string
+		if i := strings.LastIndexByte(path, '#'); i > 0 {
+			if _, err := os.Stat(path); err != nil {
+				path, anchor = path[:i], path[i+1:]
+			}
+		}
 		if _, err := os.Stat(path); err != nil {
 			return err // "bunk present" refuses it too
 		}
@@ -1488,7 +1495,7 @@ func (a *App) presentStep(verb, arg string) error {
 				}
 			}
 		}
-		a.presentFor(p.token, path, mode == "auto", check)
+		a.presentFor(p.token, path, anchor, mode == "auto", check)
 		return nil
 	}
 	if verb == "present-toggle" {

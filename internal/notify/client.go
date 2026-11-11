@@ -93,8 +93,9 @@ func presentAs(socket, token, path string, auto bool, uid int) (reply string, er
 // with the problems it had, such as a diagram that does not parse, a
 // script error or a file the page could not load. A front end that does
 // not check replies at once, without problems.
-func PresentCheck(socket, token, path string) (reply string, problems []string, err error) {
-	return presentRequest(socket, wire.Report{Session: token, Event: wire.EventPresent, Path: path, Check: true}, os.Getuid())
+// anchor, when set, is the id of the heading the document opens at.
+func PresentCheck(socket, token, path, anchor string) (reply string, problems []string, err error) {
+	return presentRequest(socket, wire.Report{Session: token, Event: wire.EventPresent, Path: path, Anchor: anchor, Check: true}, os.Getuid())
 }
 
 func presentRequest(socket string, r wire.Report, uid int) (reply string, problems []string, err error) {
