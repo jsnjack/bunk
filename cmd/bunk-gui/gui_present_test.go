@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -969,5 +970,59 @@ func TestGUIPresentChanges(t *testing.T) {
 	}
 	if d := g.snap("md").Tabs[0].Panel.Docs[1]; len(d.Changes) != 1 || d.Changes[0] != "changed Beta" {
 		t.Errorf("Markdown: changes %q", d.Changes)
+	}
+}
+
+// TestGUIPresentFocus: the zoom key gives the panel the whole tab while
+// the panel has the keyboard, and gives the panes back at the panel's old
+// width; the panes keep their size meanwhile. A question pasted into a
+// pane ends it, so the pane shows.
+func TestGUIPresentFocus(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost:  2,
+		args:  []string{"--size", "100x30"},
+		files: map[string]string{"plan.md": "# Plan\n\nKeep sessions in Redis.\n"},
+		script: []string{
+			"maximize",
+			"wait window.maximized=true focused.line=$ focused.settled=true",
+			"present plan.md",
+			"wait tab.1.panel.open=true tab.1.panel.docs.0.loaded=true",
+			"wait idle 300ms",
+			"snap before",
+			"ptr-at doc h1",
+			"ptr-click",
+			"wait keyboard_focus=panel",
+			"kbd F12",
+			"wait tab.1.panel.focus_mode=true pane.0.visible=false",
+			"wait idle 300ms",
+			"snap focused",
+			"kbd F12",
+			"wait tab.1.panel.focus_mode=false pane.0.visible=true",
+			"wait idle 300ms",
+			"snap after",
+			"present-focus",
+			"wait tab.1.panel.focus_mode=true",
+			"present-select Keep sessions in Redis",
+			"present-ask",
+			"wait tab.1.panel.ask!=null",
+			"kbd Return",
+			"wait tab.1.panel.focus_mode=false pane.0.visible=true keyboard_focus=\"pane 0\"",
+			"quit",
+		},
+	})
+	before, focused, after := g.snap("before"), g.snap("focused"), g.snap("after")
+	pb, pf, pa := before.Tabs[0].Panel.Rect, focused.Tabs[0].Panel.Rect, after.Tabs[0].Panel.Rect
+	if pb == nil || pf == nil || pa == nil {
+		t.Fatal("the panel has no rectangle")
+	}
+	if tab := float64(focused.Window.W) - focused.Chrome.W; pf.W < tab-2 {
+		t.Errorf("focused: the panel is %v wide in a tab %v wide", pf.W, tab)
+	}
+	if math.Abs(pa.W-pb.W) > 2 {
+		t.Errorf("the panel came back %v wide, was %v", pa.W, pb.W)
+	}
+	if c0, c1 := before.pane(t, 0).Cols, focused.pane(t, 0).Cols; c0 != c1 {
+		t.Errorf("the hidden pane went from %d to %d columns", c0, c1)
 	}
 }

@@ -262,9 +262,13 @@ panel gives the panes their width back.
   action opens a find bar over the page (`panelFind`, WebKit's find
   controller: case-insensitive, wrapping, counted through
   `counted-matches`), and the text size actions zoom the panel's pages
-  through `zoomSteps` (`panel.zoom`, kept by session restore). Passthrough
-  of the focused pane does not hold keys there. The keys stay the user's:
-  no action got a new default key.
+  through `zoomSteps` (`panel.zoom`, kept by session restore), and the
+  zoom action gives the panel the whole tab (`setFocusMode`: the panes'
+  holder hidden, so the panes keep their size and their programs see no
+  resize; the panel's width comes back through `place`). A question or a
+  review pasted into a pane ends it. Passthrough of the focused pane does
+  not hold keys there. The keys stay the user's: no action got a new
+  default key.
 - A link the user clicks to another file of the document's origin is
   presented as a document of its own (`panel.follow`), under the panel's
   limits (`docFile`), and scrolls to the link's fragment (`anchor`). Had

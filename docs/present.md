@@ -29,6 +29,10 @@ stays while the window resizes.
   matches and Esc closes the bar; the text size keys (Ctrl+=, Ctrl+-,
   Ctrl+0) zoom the panel's pages, from 50% to 300%. The status line shows a
   zoom other than 100%, and session restore keeps it.
+- For a long document, Zoom (F12) while the panel has the keyboard, or the
+  header's full-view button, gives the panel the whole tab. The panes keep
+  running at their size, hidden; the same key or button brings them back
+  at the panel's width, and pasting a question into a pane does too.
 - A link to another file beside the document, such as `[the spec](spec.md#api)`,
   opens that file in the panel as a document of its own, at the heading the
   link names. Back returns to the document you came from, and each

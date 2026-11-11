@@ -209,6 +209,12 @@ func (a *App) runAction(name string, termKey bool) bool {
 		if pn := a.focusedPanel(); pn != nil {
 			return global(pn.openFind)
 		}
+	case "zoom":
+		// The document panel takes the whole tab, or gives it back,
+		// while it has the keyboard; else below, the focused pane zooms.
+		if pn := a.focusedPanel(); pn != nil {
+			return global(pn.toggleFocus)
+		}
 	case "switcher":
 		a.openSwitcher() // toggles
 		return true

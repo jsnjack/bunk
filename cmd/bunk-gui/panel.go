@@ -149,9 +149,13 @@ type panel struct {
 	// changesBtn lists what the shown document's last reload changed.
 	changesBtn *gtk.Button
 	changesPop *gtk.Popover
-	sent       string    // the last question pasted into a pane (report)
-	eval       string    // the last test evaluation (report, --do present-eval)
-	checked    *[]string // the problems the last --do "present PATH check" got; nil until then
+	// focusMode gives the panel the whole tab: the panes' holder is
+	// hidden, and the panes keep running at their size.
+	focusMode bool
+	focusBtn  *gtk.Button
+	sent      string    // the last question pasted into a pane (report)
+	eval      string    // the last test evaluation (report, --do present-eval)
+	checked   *[]string // the problems the last --do "present PATH check" got; nil until then
 }
 
 // composeBox is the question popover of "Ask the agent".
@@ -217,6 +221,8 @@ func (a *App) newPanel(t *Tab) *panel {
 	head.Append(pn.changesBtn)
 	head.Append(panelButton("document-open-symbolic", "Open a file in the panel…", func() { a.pickPreview(t) }))
 	head.Append(panelButton("web-browser-symbolic", "Open in the browser", pn.openExternal))
+	pn.focusBtn = panelButton("view-fullscreen-symbolic", a.withKeys("Give the document the whole tab", "zoom"), pn.toggleFocus)
+	head.Append(pn.focusBtn)
 	head.Append(panelButton("list-remove-symbolic", "Remove this document from the panel", pn.removeCurrent))
 	head.Append(panelButton("window-close-symbolic", "Hide the panel", pn.hide))
 	pn.box.Append(head)
@@ -238,7 +244,7 @@ func (a *App) newPanel(t *Tab) *panel {
 
 	t.page.SetEndChild(pn.box)
 	t.page.NotifyProperty("position", func() {
-		if pn.open && !pn.placing && t.page.Width() > 0 {
+		if pn.open && !pn.placing && !pn.focusMode && t.page.Width() > 0 {
 			pn.width = t.page.Width() - t.page.Position()
 		}
 	})
@@ -375,6 +381,7 @@ func (pn *panel) hide() {
 	if !pn.open {
 		return
 	}
+	pn.setFocusMode(false)
 	pn.open = false
 	pn.placing = false
 	pn.box.SetVisible(false)
@@ -1397,6 +1404,7 @@ func (pn *panel) sendQuestion() {
 	}
 	msg := questionText(displayPath(c.doc.path, target.s.Cwd()), c.section, c.text, c.composed())
 	c.pop.Popdown()
+	target.tab.docPanel().setFocusMode(false) // the pane takes the keyboard
 	target.paste(pasteSafe(target, msg))
 	pn.sent = msg
 	pn.app.showPane(target.id)
@@ -1532,6 +1540,7 @@ type panelReport struct {
 	Eval    string           `json:"eval"`           // the result of the last --do present-eval
 	Back    bool             `json:"back"`           // the Back button is enabled
 	Unseen  int              `json:"unseen"`         // documents hooks listed while the panel was hidden
+	Focus   bool             `json:"focus_mode"`     // the panel has the whole tab
 	Review  []reviewReport   `json:"review"`         // the comments of the review being collected
 	Checked *[]string        `json:"checked"`        // the problems of the last --do "present PATH check"; null until it answers
 	Zoom    int              `json:"zoom"`           // the pages' scale in percent
@@ -1569,7 +1578,7 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 	if pn == nil {
 		return nil
 	}
-	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent(), Unseen: pn.unseen, Checked: pn.checked,
+	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent(), Unseen: pn.unseen, Checked: pn.checked, Focus: pn.focusMode,
 		Review: []reviewReport{}}
 	for _, it := range pn.review {
 		r.Review = append(r.Review, reviewReport{Doc: it.doc.path, Section: it.section, Quote: it.quote, Comment: it.comment})
@@ -1628,6 +1637,7 @@ const presentSelectScript = `(function(t){
 //	present-kill            end the shown page's web process, as a crash would
 //	present-browser         open the shown document in the browser, as its button does
 //	present-back            show the previous document, as the Back button does
+//	present-focus           give the panel the whole tab, or the panes back, as its button does
 //	present-review-add TEXT add the open question, with TEXT, to the review, as its button does
 //	present-review-send     paste the review into the agent's input, as Send review does
 //	present-review-discard  drop the review
@@ -1709,6 +1719,8 @@ func (a *App) presentStep(verb, arg string) error {
 		pn.openExternal()
 	case "present-back":
 		pn.back()
+	case "present-focus":
+		pn.toggleFocus()
 	case "present-review-add":
 		if c := pn.compose; c != nil && c.doc != nil {
 			c.view.Buffer().SetText(arg)
@@ -2239,6 +2251,7 @@ func (pn *panel) sendReview() {
 	if pn.reviewPop != nil {
 		pn.reviewPop.Popdown()
 	}
+	target.tab.docPanel().setFocusMode(false)
 	pn.discardReview()
 	target.paste(pasteSafe(target, msg))
 	pn.sent = msg
@@ -2435,4 +2448,47 @@ func (pn *panel) scrollToSection(key string) {
   }
   return 0;
 })(`+string(arg)+`)`, true, func(string, error) {})
+}
+
+// focusIcon shows icon on the focus button, at the header's size.
+func (pn *panel) focusIcon(icon string) {
+	img := gtk.NewImageFromIconName(icon)
+	img.SetPixelSize(16)
+	pn.focusBtn.SetChild(img)
+}
+
+// toggleFocus gives the panel the whole tab, or gives the panes back (the
+// zoom action while the panel has the keyboard, and the header button).
+func (pn *panel) toggleFocus() {
+	if !pn.open {
+		if len(pn.docs) == 0 {
+			return
+		}
+		pn.toggle()
+	}
+	pn.setFocusMode(!pn.focusMode)
+}
+
+// setFocusMode hides the panes' holder, so the panel fills the tab, or
+// shows it again at the panel's width. The panes keep their size while
+// hidden, so their programs see no resize.
+func (pn *panel) setFocusMode(on bool) {
+	if on == pn.focusMode {
+		return
+	}
+	pn.focusMode = on
+	pn.tab.holder.SetVisible(!on)
+	if on {
+		pn.focusIcon("view-restore-symbolic")
+		pn.focusBtn.SetTooltipText(pn.app.withKeys("Show the panes again", "zoom"))
+		pn.view.widget.GrabFocus()
+	} else {
+		pn.focusIcon("view-fullscreen-symbolic")
+		pn.focusBtn.SetTooltipText(pn.app.withKeys("Give the document the whole tab", "zoom"))
+		if pn.open {
+			pn.placing = true
+			coreglib.IdleAdd(pn.place) // once GTK has laid the holder out again
+		}
+	}
+	pn.app.refreshChrome()
 }

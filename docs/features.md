@@ -96,7 +96,8 @@ Agents can show you what they wrote in a panel beside the tab's panes
 - "Open in the browser" shows the document light or dark as your system is
   set, and the open page follows the agent's edits.
 - Click into the document, and Ctrl+F finds in it while the text size keys
-  zoom it, without changing the terminal's text.
+  zoom it, without changing the terminal's text. F12 there gives the
+  document the whole tab, and F12 again brings the panes back.
 - A link to another file beside the document opens that file as a document
   of its own, at the heading the link names. Back returns to the previous
   document, and each document keeps your place while you read another.

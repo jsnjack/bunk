@@ -60,7 +60,7 @@ var keyActions = []keyAction{
 	{"next_needs_you", "Next tab needing you", []string{"alt+a"}},
 	{"split", "Split pane", []string{"f1"}},
 	{"split_context", "Split in the same container", []string{"alt+f1"}},
-	{"zoom", "Zoom pane", []string{"f12"}},
+	{"zoom", "Zoom pane, or give the document the whole tab", []string{"f12"}},
 	{"nav_up", "Focus the pane above", []string{"alt+up"}},
 	{"nav_down", "Focus the pane below", []string{"alt+down"}},
 	{"nav_left", "Focus the pane on the left", []string{"alt+left"}},
