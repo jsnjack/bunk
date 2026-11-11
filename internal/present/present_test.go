@@ -215,6 +215,59 @@ func TestPageTheme(t *testing.T) {
 	}
 }
 
+var styleElem = regexp.MustCompile(`(?s)<style>\n(.*?)</style>`)
+
+// TestSystemTheme: a page that follows the system's colour scheme, as in a
+// browser, has the light theme first and the dark theme for the dark
+// scheme: the theme given for its own darkness and bunk's default for the
+// other. Each code style applies only in its own scheme, and the page names
+// no theme of its own, so the runtime reads --bunk-dark.
+func TestSystemTheme(t *testing.T) {
+	t.Parallel()
+	dark := DefaultTheme()
+	dark.Background = "#101010"
+	tests := []struct {
+		name        string
+		theme       Theme
+		light, dark string // the background of each scheme
+	}{
+		{"dark theme", dark, lightTheme().Background, "#101010"},
+		{"light theme", Theme{Background: "#fafafa"}, "#fafafa", DefaultTheme().Background},
+		{"zero is the default", Theme{}, lightTheme().Background, DefaultTheme().Background},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			page := renderPageString(t, "# Doc\n\n```go\npackage main\n```\n", Options{Theme: tc.theme, System: true})
+			if strings.Contains(page, "data-bunk-theme") {
+				t.Error("a page that follows the system names its theme")
+			}
+			m := styleElem.FindStringSubmatch(page)
+			if m == nil {
+				t.Fatalf("page has no <style>:\n%s", page)
+			}
+			css := m[1]
+			if want := ":root{color-scheme:light;--bunk-dark:0;--bunk-bg:" + tc.light + ";"; !strings.HasPrefix(css, want) {
+				t.Errorf("rules start %.80q, want %q", css, want)
+			}
+			if want := darkScheme + "{\n:root{color-scheme:dark;--bunk-dark:1;--bunk-bg:" + tc.dark + ";"; !strings.Contains(css, want) {
+				t.Errorf("rules lack %q", want)
+			}
+			lightCode := lightScheme + "{\n" + codeCSS(false) + "}\n"
+			darkCode := darkScheme + "{\n" + codeCSS(true) + "}\n"
+			for _, block := range []string{lightCode, darkCode} {
+				if !strings.Contains(css, block) {
+					t.Errorf("rules lack %.80q…", block)
+				}
+				css = strings.Replace(css, block, "", 1)
+			}
+			if strings.Contains(css, ".chroma") {
+				t.Errorf("code rules outside their scheme:\n%s", css)
+			}
+		})
+	}
+}
+
 func TestSelectionScript(t *testing.T) {
 	t.Parallel()
 	s := strings.TrimSpace(SelectionScript)

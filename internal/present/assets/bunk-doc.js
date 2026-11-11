@@ -9,14 +9,21 @@
 
   var self = document.currentScript;
   var base = self ? self.src.replace(/[^/]*$/, '') : '';
-  // A rendered Markdown page names its theme; an agent's HTML page in
-  // bunk-gui's panel gets --bunk-dark, and elsewhere asks the system.
-  var theme = document.documentElement.getAttribute('data-bunk-theme');
-  var flag = getComputedStyle(document.documentElement).getPropertyValue('--bunk-dark').trim();
-  var dark = theme ? theme === 'dark' :
-    flag ? flag === '1' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var scheme = window.matchMedia('(prefers-color-scheme: dark)');
+  var dark = isDark();
   var loading = {};
   var mermaidReady = false;
+
+  // isDark reports whether the page is dark. A rendered Markdown page in
+  // bunk-gui's panel names its theme, and any page there gets --bunk-dark.
+  // A page in a browser gets --bunk-dark by the system's colour scheme, so
+  // it can change; a page without either asks the system.
+  function isDark() {
+    var theme = document.documentElement.getAttribute('data-bunk-theme');
+    if (theme) return theme === 'dark';
+    var flag = getComputedStyle(document.documentElement).getPropertyValue('--bunk-dark').trim();
+    return flag ? flag === '1' : scheme.matches;
+  }
 
   function doc() {
     return document.getElementById('bunk-doc') || document.body;
@@ -74,6 +81,10 @@
   function diagrams(root) {
     var nodes = root.querySelectorAll('pre.mermaid:not([data-processed])');
     if (!nodes.length) return Promise.resolve();
+    // Keep each diagram's source, so redraw can draw it again.
+    nodes.forEach(function (el) {
+      if (!el.hasAttribute('data-bunk-src')) el.setAttribute('data-bunk-src', el.textContent);
+    });
     return load('mermaid.min.js').then(function () {
       if (!mermaidReady) {
         mermaid.initialize({
@@ -85,6 +96,21 @@
       }
       return mermaid.run({nodes: nodes, suppressErrors: true});
     });
+  }
+
+  // redraw draws the diagrams again in the page's colours, after the
+  // system's colour scheme changed the colours of a page that follows it.
+  function redraw() {
+    if (isDark() === dark) return;
+    dark = isDark();
+    if (!mermaidReady) return;
+    mermaidReady = false;
+    var root = doc();
+    root.querySelectorAll('pre.mermaid[data-processed][data-bunk-src]').forEach(function (el) {
+      el.textContent = el.getAttribute('data-bunk-src');
+      el.removeAttribute('data-processed');
+    });
+    diagrams(root).catch(warn);
   }
 
   // render typesets every math element and draws every diagram not done
@@ -185,6 +211,8 @@
     e.preventDefault();
     target.scrollIntoView();
   });
+
+  if (scheme.addEventListener) scheme.addEventListener('change', redraw);
 
   window.bunkDoc = {render: render, anchor: anchor, restore: restore, replace: replace};
   // An HTML page may load the runtime in its <head>, before the body.

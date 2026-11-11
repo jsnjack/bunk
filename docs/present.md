@@ -96,7 +96,12 @@ uses bunk's assets or theme colours as a copy there that loads them from
 disk. The pages share the scripts, styles and fonts in
 `…/bunk/present/assets`, which bunk writes only when they are missing or
 another version of bunk wrote them. bunk-gui's "Open in the browser" uses
-the same pages. Other HTML pages and other files open as they are. bunk
+the same pages. They follow the light or dark style that the system sets
+(`prefers-color-scheme`), and switch, diagrams included, when it changes:
+in the style of the panel's theme a page has the panel's colours, and in
+the other style bunk's default light or dark colours. They print in the
+light colours. Other HTML pages and
+other files open as they are. bunk
 starts `gio open`, else `xdg-open` (`open` on macOS), in a session of its
 own and discards its output.
 
@@ -136,7 +141,8 @@ bunk-gui also puts the theme's colours first in every HTML page's head, as
 styles of its own shows light text on the dark theme. A page's own styles
 override all of it. When a browser opens a page that uses the assets or the
 colours, `bunk present` gives it a copy that loads them from disk
-(`present.WriteStandalone`).
+(`present.WriteStandalone`), with colours that follow the system's light or
+dark style.
 
 Agents present only inside bunk: the skill tells them not to run `bunk
 present` when `BUNK_NOTIFY_SESSION` is unset, because there it would open

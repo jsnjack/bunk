@@ -223,6 +223,13 @@ panel gives the panes their width back.
   (`present.ThemeCSS`, `present.InsertHead`); the page runtime works on
   any page. A browser gets a copy of such a page that loads the assets
   from disk (`present.NeedsPage`, `WriteStandalone`).
+- Pages for a browser follow the system's colour scheme
+  (`present.Options.System`): the panel's theme for its own darkness and
+  bunk's default theme for the other, the dark one under
+  `@media screen and (prefers-color-scheme: dark)` so print is light, each
+  code style only in its own scheme, and no `data-bunk-theme`, so the runtime reads `--bunk-dark`.
+  When the scheme changes, the runtime draws Mermaid diagrams again from
+  their kept source (`data-bunk-src`). Pages in the panel keep the theme.
 - `bunk-doc.css` keeps text at a readable width, the measure
   (`--bunk-measure`, 80 characters with the padding), and makes
   `#bunk-doc` at least that wide. The article grows to fit a table, or

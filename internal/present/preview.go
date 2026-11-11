@@ -120,10 +120,7 @@ func renderPreview(name string, kind Kind, src []byte, opts Options, baseHref st
 	fmt.Fprintf(&b, "<title>%s</title>\n", html.EscapeString(cmp.Or(opts.Title, name)))
 	fmt.Fprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", asset(assetStyle))
 	b.WriteString("<style>\n")
-	b.WriteString(ThemeCSS(theme))
-	if kind == KindText {
-		b.WriteString(codeCSS(theme.Dark))
-	}
+	b.WriteString(pageCSS(theme, opts.System, kind == KindText))
 	b.WriteString("</style>\n</head>\n<body>\n")
 	fmt.Fprintf(&b, "<article id=\"bunk-doc\" class=\"%s\">\n", class)
 	b.Write(body.Bytes())

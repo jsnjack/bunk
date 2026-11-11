@@ -158,6 +158,12 @@ type Options struct {
 	AssetBase string
 
 	Theme Theme
+
+	// System makes the page follow the colour scheme the browser asks for
+	// (prefers-color-scheme), as a page a web browser opens should:
+	// Theme for its own darkness, bunk's default theme for the other
+	// (systemThemes). Without it the page keeps Theme, as in the panel.
+	System bool
 }
 
 // The page's own assets. The runtime loads KaTeX's and Mermaid's scripts
@@ -200,14 +206,20 @@ func renderPage(src []byte, opts Options, baseHref string) ([]byte, error) {
 	if title == "" {
 		title = doc.title
 	}
-	mode := "light"
-	if theme.Dark {
-		mode = "dark"
+	// The page names its theme for the runtime, unless it follows the
+	// system: then the runtime reads --bunk-dark, which the scheme sets.
+	mode := ""
+	switch {
+	case opts.System:
+	case theme.Dark:
+		mode = ` data-bunk-theme="dark"`
+	default:
+		mode = ` data-bunk-theme="light"`
 	}
 	asset := func(name string) string { return html.EscapeString(opts.AssetBase + name) }
 
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "<!doctype html>\n<html lang=\"en\" data-bunk-theme=\"%s\">\n<head>\n", mode)
+	fmt.Fprintf(&b, "<!doctype html>\n<html lang=\"en\"%s>\n<head>\n", mode)
 	fmt.Fprintf(&b, "<meta http-equiv=\"Content-Security-Policy\" content=\"%s\">\n",
 		html.EscapeString(contentSecurityPolicy(opts.AssetBase, baseHref != "")))
 	b.WriteString("<meta charset=\"utf-8\">\n")
@@ -219,8 +231,7 @@ func renderPage(src []byte, opts Options, baseHref string) ([]byte, error) {
 	fmt.Fprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", asset(assetStyle))
 	fmt.Fprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", asset(assetKatexCSS))
 	b.WriteString("<style>\n")
-	b.WriteString(ThemeCSS(theme))
-	b.WriteString(codeCSS(theme.Dark))
+	b.WriteString(pageCSS(theme, opts.System, true))
 	b.WriteString("</style>\n</head>\n<body>\n")
 	b.WriteString(articleOpen)
 	b.Write(doc.body)
@@ -244,6 +255,49 @@ func ThemeCSS(t Theme) string {
 	return fmt.Sprintf(":root{color-scheme:%s;--bunk-dark:%d;--bunk-bg:%s;--bunk-fg:%s;--bunk-muted:%s;--bunk-accent:%s;"+
 		"--bunk-border:%s;--bunk-code-bg:%s;--bunk-selection:%s}\n",
 		mode, dark, t.Background, t.Foreground, t.Muted, t.Accent, t.Border, t.CodeBackground, t.Selection)
+}
+
+// The media queries of the system's colour schemes. Print takes the light
+// scheme, as paper is white and browsers leave out backgrounds.
+const (
+	lightScheme = "@media print, (prefers-color-scheme: light)"
+	darkScheme  = "@media screen and (prefers-color-scheme: dark)"
+)
+
+// systemThemes returns the light and the dark theme of a page that follows
+// the browser's colour scheme: t for its own darkness, bunk's default
+// theme for the other.
+func systemThemes(t Theme) (light, dark Theme) {
+	t = t.filled()
+	if t.Dark {
+		return lightTheme(), t
+	}
+	return t, DefaultTheme()
+}
+
+// pageCSS returns a page's colour rules: ThemeCSS(t) and, with code, the
+// rules of highlighted code. With system, the page follows the colour
+// scheme the browser asks for, between the themes of systemThemes.
+func pageCSS(t Theme, system, code bool) string {
+	if !system {
+		t = t.filled()
+		css := ThemeCSS(t)
+		if code {
+			css += codeCSS(t.Dark)
+		}
+		return css
+	}
+	light, dark := systemThemes(t)
+	var b strings.Builder
+	b.WriteString(ThemeCSS(light))
+	b.WriteString(darkScheme + "{\n" + ThemeCSS(dark) + "}\n")
+	if code {
+		// Each code style only in its own scheme: a token class that one
+		// style leaves plain must not keep the other style's colour.
+		b.WriteString(lightScheme + "{\n" + codeCSS(false) + "}\n")
+		b.WriteString(darkScheme + "{\n" + codeCSS(true) + "}\n")
+	}
+	return b.String()
 }
 
 var (

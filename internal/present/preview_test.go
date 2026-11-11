@@ -116,7 +116,8 @@ func TestThemeCSS(t *testing.T) {
 
 // TestStandalonePages: text gets a page like Markdown; an HTML page that
 // loads bunk's assets gets a copy that loads them from disk, with its
-// directory as base; other files open as they are.
+// directory as base; other files open as they are. Pages follow the
+// system's colour scheme.
 func TestStandalonePages(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "src")
@@ -143,7 +144,8 @@ func TestStandalonePages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := readTestFile(t, page); !strings.Contains(s, `<span class="kn">package</span>`) || !strings.Contains(s, `<base href="`+FileURL(dir)+`/">`) {
+	if s := readTestFile(t, page); !strings.Contains(s, `<span class="kn">package</span>`) || !strings.Contains(s, `<base href="`+FileURL(dir)+`/">`) ||
+		!strings.Contains(s, darkScheme+"{\n"+codeCSS(true)) {
 		t.Errorf("text page:\n%s", s)
 	}
 	page, err = WriteStandalone(withAssets, root, DefaultTheme())
@@ -152,7 +154,11 @@ func TestStandalonePages(t *testing.T) {
 	}
 	s := readTestFile(t, page)
 	assets := FileURL(filepath.Join(root, "assets")) + "/"
-	for _, want := range []string{`<head><base href="` + FileURL(dir) + `/"><style>:root{color-scheme:dark;`, `<script src="` + assets + `bunk-doc.js">`} {
+	for _, want := range []string{
+		`<head><base href="` + FileURL(dir) + `/"><style>:root{color-scheme:light;`,
+		darkScheme + "{\n:root{color-scheme:dark;",
+		`<script src="` + assets + `bunk-doc.js">`,
+	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("HTML copy lacks %q:\n%s", want, s)
 		}

@@ -112,6 +112,9 @@ func TestWriteStandalone(t *testing.T) {
 	if want := FileURL(docDir) + "/"; m[1] != want {
 		t.Errorf("<base href> = %q, want %q", m[1], want)
 	}
+	if strings.Contains(page, "data-bunk-theme") || !strings.Contains(page, darkScheme+"{\n:root{color-scheme:dark;") {
+		t.Error("the page does not follow the system's colour scheme")
+	}
 	for _, want := range []string{`<title>plan.md</title>`, `src="img/a.png"`, `href="spec.md"`, `href="#plan"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %q", want)

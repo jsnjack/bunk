@@ -68,7 +68,9 @@ func NeedsPage(path string, kind Kind) bool {
 // share root/assets, which is written only when it is missing or differs
 // from Assets. The page's <base> is the file's directory, so its relative
 // links and images resolve there, and its asset URLs are absolute file://
-// URLs into root/assets. It returns the page's path.
+// URLs into root/assets. The page follows the browser's light or dark
+// colour scheme (Options.System), with theme for its own darkness. It
+// returns the page's path.
 func WriteStandalone(path, root string, theme Theme) (string, error) {
 	kind, err := Preview(path)
 	if err != nil {
@@ -94,6 +96,7 @@ func WriteStandalone(path, root string, theme Theme) (string, error) {
 		Title:     filepath.Base(path),
 		AssetBase: FileURL(assetDir) + "/",
 		Theme:     theme,
+		System:    true,
 	}
 	base := FileURL(filepath.Dir(absDoc)) + "/"
 	var page []byte
@@ -104,7 +107,7 @@ func WriteStandalone(path, root string, theme Theme) (string, error) {
 		page, err = renderPreview(filepath.Base(path), kind, src, opts, base)
 	case KindHTML:
 		page = bytes.ReplaceAll(src, []byte(AssetsURL), []byte(opts.AssetBase))
-		page = InsertHead(page, `<base href="`+html.EscapeString(base)+`"><style>`+ThemeCSS(theme)+`</style>`)
+		page = InsertHead(page, `<base href="`+html.EscapeString(base)+`"><style>`+pageCSS(theme, true, false)+`</style>`)
 	default:
 		err = fmt.Errorf("a browser opens %s files as they are", kind)
 	}
