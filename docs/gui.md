@@ -125,8 +125,10 @@ the code.
   · ⇄ ti-ci, int-build". The open rail wraps it onto a second line, the
   switcher cuts it at 36 characters, and the tooltip holds all of it
   (`TestGUITabHosts`).
-  "+N" counts the agents in its other panes. The dot, colour and needs-you
-  highlight show the most urgent state among them (`stateOrder`), and the
+  "+N" counts the agents in its other panes. The dot and its colour show
+  the most urgent state among them (`stateOrder`): needs-you is the amber
+  of the dot, ring and label, never a fill, because only the selected tab
+  is filled in the bar and the rail (`TestGUIRailSelectedOnly`), and the
   rail shows that agent's notice as "agent: notice". The tooltip lists
   every agent. Notifications are per pane, as in the TUI, and Alt+A
   focuses the pane that needs the user. The collapsed rail draws every

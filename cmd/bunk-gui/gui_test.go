@@ -30,7 +30,6 @@ var (
 	colChrome    = hex(0x131416)
 	colBarActive = hex(0x23252a)
 	colRailActv  = hex(0x26292f)
-	colTint      = hex(0x2a2216)
 	colMenu      = hex(0x1b1c20)
 	colWorking   = hex(0x5aa9ff)
 	colNeeds     = hex(0xffb454)
@@ -712,7 +711,8 @@ func TestGUITabsAndStatus(t *testing.T) {
 		bg, dot rgb
 		loc     bool
 	}{
-		{1, colRailActv, colIdle, false}, {2, colTint, colNeeds, false}, {3, colChrome, colWorking, true}, {4, colChrome, colFailed, true},
+		// Only the selected tab is filled; needs-you is its amber dot and label.
+		{1, colRailActv, colIdle, false}, {2, colChrome, colNeeds, false}, {3, colChrome, colWorking, true}, {4, colChrome, colFailed, true},
 	} {
 		it := s.tab(t, c.tab).Item
 		if it == nil {
@@ -909,10 +909,10 @@ exit 3
 	} else {
 		img := loadPNG(t, g.file("needs.png"))
 		x, y, w, h := inner(tb.Item, 3)
-		if n := count(img, x, y, w, h, colTint, 1); n < w*h/3 {
-			t.Errorf("needs-you row tint: %d of %d pixels %v", n, w*h, colTint)
+		if n := count(img, x, y, w, h, colChrome, 1); n < w*h/3 {
+			t.Errorf("needs-you row: %d of %d pixels %v, the rail's own background", n, w*h, colChrome)
 		}
-		if n := blendCount(img, tb.Item.DX, tb.Item.DY, tb.Item.DW, tb.Item.DH, colNeeds, colTint); n < 30 {
+		if n := blendCount(img, tb.Item.DX, tb.Item.DY, tb.Item.DW, tb.Item.DH, colNeeds, colChrome); n < 30 {
 			t.Errorf("needs-you dot, label and notice: %d pixels of %v", n, colNeeds)
 		}
 	}

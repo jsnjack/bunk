@@ -842,10 +842,11 @@ sleep 30
 	}
 	img := loadPNG(t, g.file("needs.png"))
 	x, y, w, h := inner(tb.Item, 3)
-	if n := count(img, x, y, w, h, colTint, 1); n < w*h/3 {
-		t.Errorf("needs-you tint: %d of %d pixels %v", n, w*h, colTint)
+	// Only the selected tab is filled: needs-you is the dot's amber alone.
+	if n := count(img, x, y, w, h, colChrome, 1); n < w*h/3 {
+		t.Errorf("needs-you: %d of %d pixels %v, the rail's own background", n, w*h, colChrome)
 	}
-	if n := blendCount(img, tb.Item.DX, tb.Item.DY, tb.Item.DW, tb.Item.DH, colNeeds, colTint); n < 4 {
+	if n := blendCount(img, tb.Item.DX, tb.Item.DY, tb.Item.DW, tb.Item.DH, colNeeds, colChrome); n < 4 {
 		t.Errorf("needs-you dot: %d pixels %v", n, colNeeds)
 	}
 	// The visit leaves the request: the agent still waits for its answer.

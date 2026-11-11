@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"path/filepath"
 	"slices"
@@ -581,4 +582,54 @@ func fiveRing(ring string) bool {
 		agent++
 	}
 	return len(arcs) == 5 && agent == 1
+}
+
+// TestGUIRailSelectedOnly: in the collapsed rail only the selected tab has
+// a filled background. A tab that needs you shows it by its ring's colour
+// alone; filled like the selected one, it looked selected too.
+func TestGUIRailSelectedOnly(t *testing.T) {
+	t.Parallel()
+	bin := t.TempDir()
+	writeAgent(t, bin, "claude", "c", `needs-you "Allow edit?"`)
+	g := runGUI(t, scenario{
+		cost:   2,
+		config: "tabs = \"rail\"\n",
+		args:   []string{"--size", "100x30"},
+		env:    []string{agentPath(t, bin)},
+		script: []string{
+			"wait focused.line=$",
+			"new-tab",
+			"wait tabs.#=2 selected_tab=2 focused.line=$",
+			"type claude\\r",
+			"wait tab.2.status.agent=claude",
+			"run touch c0",
+			"wait tab.2.state=needs",
+			"select-tab 1",
+			"wait selected_tab=1 tab.2.needs=true chrome.w=48 idle 300ms",
+			"snap rail",
+			"shot rail.png",
+			"quit",
+		},
+	})
+	img := loadPNG(t, g.file("rail.png"))
+	snap := g.snap("rail")
+	// A pixel inside each rail button, left of its ring.
+	fill := func(n int) color.RGBA {
+		it := snap.tab(t, n).Item
+		if it == nil {
+			t.Fatalf("tab %d has no rail item", n)
+		}
+		r, gr, b, _ := img.At(it.DX+3, it.DY+it.DH/2).RGBA()
+		return color.RGBA{uint8(r >> 8), uint8(gr >> 8), uint8(b >> 8), 255}
+	}
+	near := func(c color.RGBA, hex uint32) bool {
+		d := func(x uint8, y uint32) bool { return int(x)-int(y) <= 4 && int(y)-int(x) <= 4 }
+		return d(c.R, hex>>16&0xff) && d(c.G, hex>>8&0xff) && d(c.B, hex&0xff)
+	}
+	if c := fill(1); !near(c, 0x26292f) {
+		t.Errorf("the selected tab's background is %v, want #26292f", c)
+	}
+	if c := fill(2); !near(c, 0x131416) {
+		t.Errorf("the tab that needs you has background %v, want the rail's #131416", c)
+	}
 }
