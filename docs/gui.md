@@ -276,7 +276,9 @@ panel gives the panes their width back.
   with symbolic links resolved), every file but the document itself are
   refused. HTML gets a Content-Security-Policy, as a header and first
   in its head, that blocks the network, `file://` and form submission.
-  Markdown is rendered without raw HTML. Files are read and rendered
+  Markdown passes only attribute-free structural tags of raw HTML
+  (`present/rawhtml.go`, `<details open>` aside) and turns GitHub's
+  alerts into callouts (`callout`). Files are read and rendered
   off the main loop: a 2 MiB Markdown file with code takes 1.5 s.
 - The directory is watched (GFileMonitor). A change of the file, of an
   image the Markdown names (`mentions`) or, for HTML, of an image or a

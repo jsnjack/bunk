@@ -91,6 +91,8 @@ func (docTransformer) Transform(doc *ast.Document, reader text.Reader, pc parser
 			heads = append(heads, n)
 			n.SetAttributeString("id", []byte(ids.next(slug(name))))
 			return
+		case *ast.Blockquote:
+			callout(n, src)
 		case *extast.TaskCheckBox:
 			if item, ok := n.Parent().Parent().(*ast.ListItem); ok {
 				item.SetAttributeString("class", []byte("task-list-item"))
@@ -103,6 +105,51 @@ func (docTransformer) Transform(doc *ast.Document, reader text.Reader, pc parser
 	}
 	visit(doc)
 	hashSections(heads, src)
+}
+
+// calloutTitles are GitHub's alerts, which a blockquote starting with
+// [!NOTE] and the like becomes, by their marker.
+var calloutTitles = map[string]string{
+	"NOTE": "Note", "TIP": "Tip", "IMPORTANT": "Important", "WARNING": "Warning", "CAUTION": "Caution",
+}
+
+// callout makes a blockquote whose first line is "[!NOTE]", "[!TIP]",
+// "[!IMPORTANT]", "[!WARNING]" or "[!CAUTION]" a callout, as GitHub does:
+// class "bunk-callout note" and a title paragraph in place of the marker.
+func callout(q *ast.Blockquote, src []byte) {
+	p, ok := q.FirstChild().(*ast.Paragraph)
+	if !ok || p.Lines().Len() == 0 {
+		return
+	}
+	first := p.Lines().At(0)
+	marker := strings.TrimSpace(string(first.Value(src)))
+	kind, ok := strings.CutPrefix(marker, "[!")
+	kind, ok2 := strings.CutSuffix(kind, "]")
+	title, known := calloutTitles[strings.ToUpper(kind)]
+	if !ok || !ok2 || !known {
+		return
+	}
+	// Drop the marker's inline nodes, and the line break after it.
+	for c := p.FirstChild(); c != nil; {
+		next := c.NextSibling()
+		if t, isText := c.(*ast.Text); isText && t.Segment.Start >= first.Stop {
+			break
+		} else if !isText {
+			if _, isString := c.(*ast.String); !isString {
+				break
+			}
+		}
+		p.RemoveChild(p, c)
+		c = next
+	}
+	if p.ChildCount() == 0 {
+		q.RemoveChild(q, p)
+	}
+	head := ast.NewParagraph()
+	head.SetAttributeString("class", []byte("bunk-callout-title"))
+	head.AppendChild(head, ast.NewString([]byte(title)))
+	q.InsertBefore(q, q.FirstChild(), head)
+	q.SetAttributeString("class", []byte("bunk-callout "+strings.ToLower(kind)))
 }
 
 // hashSections sets data-bunk-hash on each heading up to hashedLevel: a
@@ -209,6 +256,8 @@ type docRenderer struct{}
 
 func (docRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(ast.KindFencedCodeBlock, renderFencedCode)
+	reg.Register(ast.KindRawHTML, renderRawHTML)
+	reg.Register(ast.KindHTMLBlock, renderHTMLBlock)
 	reg.Register(kindMathInline, renderMathInline)
 	reg.Register(kindMathBlock, renderMathBlock)
 }

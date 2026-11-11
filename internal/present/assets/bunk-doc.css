@@ -157,6 +157,72 @@ blockquote {
   border-left: 3px solid var(--bunk-border);
 }
 
+/* Callouts: GitHub's alerts in Markdown (> [!NOTE], [!TIP], [!IMPORTANT],
+   [!WARNING], [!CAUTION]) and, in an HTML page,
+   <div class="bunk-callout warning"><p class="bunk-callout-title">…</p>…</div>.
+   The colour mixes with the text colour, so it reads on light and dark. */
+.bunk-callout {
+  --bunk-callout: var(--bunk-accent);
+  margin: 0 0 1em;
+  padding: 8px 14px;
+  color: var(--bunk-fg);
+  border-left: 4px solid var(--bunk-callout);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--bunk-callout) 10%, transparent);
+}
+
+.bunk-callout > :last-child {
+  margin-bottom: 0;
+}
+
+.bunk-callout-title {
+  margin: 0 0 0.3em;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--bunk-callout) 75%, var(--bunk-fg));
+}
+
+.bunk-callout.tip { --bunk-callout: #2da44e; }
+.bunk-callout.important { --bunk-callout: #8250df; }
+.bunk-callout.warning { --bunk-callout: #d4a72c; }
+.bunk-callout.caution, .bunk-callout.risk { --bunk-callout: #e5534b; }
+
+details {
+  margin: 0 0 1em;
+  padding: 6px 14px;
+  border: 1px solid var(--bunk-border);
+  border-radius: 6px;
+}
+
+details > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+details[open] > summary {
+  margin-bottom: 0.5em;
+}
+
+details > :last-child {
+  margin-bottom: 0;
+}
+
+kbd {
+  display: inline-block;
+  padding: 0 0.4em;
+  font-size: 0.85em;
+  line-height: 1.5;
+  border: 1px solid var(--bunk-border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bunk-code-bg);
+}
+
+mark {
+  padding: 0 0.15em;
+  color: inherit;
+  background: color-mix(in srgb, #d4a72c 35%, transparent);
+}
+
 code, kbd, samp, pre {
   font-family: "Noto Sans Mono", monospace;
   font-size: 0.88em;

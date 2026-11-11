@@ -72,6 +72,8 @@ Agents can show you what they wrote in a panel beside the tab's panes
   button, the tab's menu, the main menu, the `open_in_panel` action) opens a file
   dialog in the focused pane's directory, and files dropped on a tab
   preview as well.
+- Markdown shows GitHub's alerts (`> [!WARNING]`) as callouts, and
+  `<details>` sections, `<kbd>` keys and a few other tags.
 - The page reloads when the file changes and keeps your place, the
   sections you opened, the tab you chose and what you typed. Sections that
   changed are marked.

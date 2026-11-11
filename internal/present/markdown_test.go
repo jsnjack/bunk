@@ -286,3 +286,52 @@ func TestMarkdownFeatures(t *testing.T) {
 		})
 	}
 }
+
+// TestCallouts: a blockquote whose first line is GitHub's alert marker
+// becomes a callout with a title; another blockquote stays one.
+func TestCallouts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		src, want string
+	}{
+		{"> [!NOTE]\n> Useful **info**.\n", `<blockquote class="bunk-callout note"><p class="bunk-callout-title">Note</p>` + "\n<p>Useful <strong>info</strong>.</p>"},
+		{"> [!warning]\n> Careful.\n", `<blockquote class="bunk-callout warning"><p class="bunk-callout-title">Warning</p>` + "\n<p>Careful.</p>"},
+		{"> [!CAUTION]\n", `<blockquote class="bunk-callout caution"><p class="bunk-callout-title">Caution</p>` + "\n</blockquote>"},
+		{"> [!TIP] on the same line\n", "<blockquote>\n<p>[!TIP] on the same line</p>"},
+		{"> [!OTHER]\n> text\n", "<blockquote>\n<p>[!OTHER]"},
+	}
+	for _, tc := range tests {
+		if got := renderBody(t, tc.src); !strings.Contains(got, tc.want) {
+			t.Errorf("%q:\n%s\nwant it to hold:\n%s", tc.src, got, tc.want)
+		}
+	}
+}
+
+// TestRawHTMLAllowed: a few tags pass, without attributes but for
+// <details open>; other tags go and their text stays, and the content of
+// a script goes with it.
+func TestRawHTMLAllowed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		src, want string
+	}{
+		{"<details>\n<summary>More <b onclick=x>here</b></summary>\n\nInside **md**\n\n</details>\n",
+			"<details>\n<summary>More here</summary>\n<p>Inside <strong>md</strong></p>\n</details>"},
+		{"<details open class=\"x\">\n<summary>S</summary>\n\nx\n\n</details>\n", "<details>\n<summary>S</summary>"},
+		{"<details open>\n<summary>S</summary>\n\nx\n\n</details>\n", "<details open>\n<summary>S</summary>"},
+		{"Press <kbd>Ctrl</kbd>+<kbd>C</kbd>, H<sub>2</sub>O, x<sup>2</sup>, <span style=\"color:red\">kept</span><br/>\n",
+			"<p>Press <kbd>Ctrl</kbd>+<kbd>C</kbd>, H<sub>2</sub>O, x<sup>2</sup>, kept<br></p>"},
+		{"<style>p{}</style>\n\n<p>a &amp; b</p>\n", "a &amp; b"},
+	}
+	for _, tc := range tests {
+		got := renderBody(t, tc.src)
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("%q:\n%s\nwant it to hold:\n%s", tc.src, got, tc.want)
+		}
+		for _, bad := range []string{"onclick", "style", "class=\"x\"", "p{}"} {
+			if strings.Contains(got, bad) {
+				t.Errorf("%q: body has %q:\n%s", tc.src, bad, got)
+			}
+		}
+	}
+}

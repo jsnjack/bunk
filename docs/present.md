@@ -145,7 +145,7 @@ own and discards its output.
 | Kind | Extensions | What it shows |
 | :- | :- | :- |
 | HTML | `.html`, `.htm` | The page, served from its own directory, with bunk's assets and theme colours (below) |
-| Markdown | `.md`, `.markdown`, `.mdown`, `.mkd` | GitHub-flavoured Markdown with tables and task lists, code fences with syntax highlighting, ` ```mermaid ` fences as diagrams, `$inline$` and `$$display$$` math, images by paths relative to the file |
+| Markdown | `.md`, `.markdown`, `.mdown`, `.mkd` | GitHub-flavoured Markdown with tables and task lists, code fences with syntax highlighting, ` ```mermaid ` fences as diagrams, `$inline$` and `$$display$$` math, images by paths relative to the file, GitHub's alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) as callouts, and the HTML tags below |
 | Image | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp`, `.ico`, `.svg` | The image, at most as wide as the panel, on a checkerboard |
 | PDF | `.pdf` | WebKit's PDF viewer |
 | Video, audio | `.mp4`, `.m4v`, `.webm`, `.ogv`, `.mov`; `.mp3`, `.ogg`, `.oga`, `.opus`, `.wav`, `.flac`, `.m4a`, `.aac` | A player, as far as GStreamer decodes the format |
@@ -153,6 +153,13 @@ own and discards its output.
 
 Other files, such as binaries, cannot be shown: `bunk present` exits 1, and
 bunk-gui shows a toast.
+
+Markdown passes only a few HTML tags, without attributes: `<details>` (with
+`open`) and `<summary>` for sections the reader opens, `<kbd>`, `<sub>`,
+`<sup>`, `<mark>`, `<ins>`, `<del>`, `<s>`, `<small>`, `<br>`, `<hr>`, `<dl>`,
+`<dt>` and `<dd>`. Other tags are dropped and their text kept; scripts,
+styles, frames and their content are dropped whole. Leave a blank line
+after `<summary>…</summary>` and before `</details>` for Markdown inside.
 
 The side panel loads nothing from the network, and pages cannot read files
 through `file://` URLs. An HTML page's scripts, styles and images must be
