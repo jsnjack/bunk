@@ -631,6 +631,11 @@ func (a *App) target(args []string) (float64, float64, error) {
 		return centre(r.removes[i])
 	case "doc":
 		return a.docTarget(strings.Join(args[1:], " "))
+	case "panel-pick": // the drop-down of the active tab's documents
+		if a.active == nil || a.active.panel == nil {
+			return 0, 0, errors.New("no document panel")
+		}
+		return centre(a.active.panel.pick)
 	case "pref":
 		if a.prefsWin == nil || len(args) < 2 {
 			return 0, 0, errors.New("the preferences window is not open")

@@ -582,6 +582,39 @@ func TestGUIPresentKeepsState(t *testing.T) {
 	})
 }
 
+// TestGUIPresentPick: choosing a document in the panel's drop-down, with
+// the keyboard as with the pointer, shows it. The choice arrives while GTK
+// is still in the drop-down's list; showing it at once replaced the model
+// that list used, GLib logged a failed assertion on a freed object, and a
+// long-running bunk-gui crashed. The harness fails on that log line.
+func TestGUIPresentPick(t *testing.T) {
+	t.Parallel()
+	runGUI(t, scenario{
+		cost: 2,
+		args: []string{"--size", "100x30"},
+		files: map[string]string{
+			"first.html": "<!doctype html><title>First</title><h1>First</h1>",
+			"second.md":  "# Second\n",
+		},
+		script: []string{
+			"maximize", "wait window.maximized=true focused.line=$",
+			"present first.html",
+			"wait tab.1.panel.docs.0.loaded=true",
+			"present second.md",
+			"wait tab.1.panel.docs.#=2 tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true",
+			"ptr-at panel-pick", "ptr-click",
+			"wait idle 300ms",
+			"kbd Up", "kbd Return",
+			"wait tab.1.panel.current=0 tab.1.panel.docs.0.loaded=true",
+			"ptr-at panel-pick", "ptr-click",
+			"wait idle 300ms",
+			"kbd Down", "kbd Return",
+			"wait tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true",
+			"quit",
+		},
+	})
+}
+
 // TestGUIPresentProblems checks documents as "bunk present" does: the
 // check gets the page's problems once it has drawn, and the status line
 // counts them. A Markdown document reports a diagram and a formula that

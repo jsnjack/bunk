@@ -117,6 +117,10 @@ type panel struct {
 	// most recent, for the Back button.
 	history []*panelDoc
 	backBtn *gtk.Button
+	// pickList is pick's model, which syncPick changes in place, and
+	// pickNames what it holds.
+	pickList  *gtk.StringList
+	pickNames []string
 	// goingBack: show runs for Back, which must not add to the history.
 	goingBack bool
 	// ptrRects holds, for window tests (ptr-at doc SELECTOR), the
@@ -194,15 +198,28 @@ func (a *App) newPanel(t *Tab) *panel {
 	pn.backBtn.SetSensitive(false)
 	head.Append(pn.backBtn)
 	pn.pick = gtk.NewDropDownFromStrings(nil)
+	pn.pickList = gtk.NewStringList(nil)
+	pn.pick.SetModel(pn.pickList)
 	pn.pick.SetHExpand(true)
 	pn.pick.SetTooltipText("Documents in this tab")
 	pn.pick.NotifyProperty("selected", func() {
 		if pn.picking {
 			return
 		}
-		if i := int(pn.pick.Selected()); i >= 0 && i < len(pn.docs) && pn.docs[i] != pn.cur {
-			pn.show(pn.docs[i])
+		i := int(pn.pick.Selected())
+		if i < 0 || i >= len(pn.docs) || pn.docs[i] == pn.cur {
+			return
 		}
+		// A choice in the drop-down's list arrives while GTK is still in
+		// that list's activation, and show changes the model the list
+		// shows: GTK then used freed rows and bunk-gui crashed. Show the
+		// document once GTK is done with the choice.
+		d := pn.docs[i]
+		coreglib.IdleAdd(func() {
+			if slices.Contains(pn.docs, d) && d != pn.cur {
+				pn.show(d)
+			}
+		})
 	})
 	head.Append(pn.pick)
 	pn.askBtn = panelButton("chat-message-new-symbolic", "Ask the agent about the selected text", pn.ask)
@@ -604,8 +621,9 @@ func escapePath(rel string) string {
 	return strings.Join(parts, "/")
 }
 
-// syncPick rebuilds the drop-down from the document list, and enables
-// Back when there is a document to go back to.
+// syncPick brings the drop-down up to date with the document list,
+// changing its model only when the names change, and enables Back when
+// there is a document to go back to.
 func (pn *panel) syncPick() {
 	pn.backBtn.SetSensitive(slices.ContainsFunc(pn.history, func(d *panelDoc) bool {
 		return d != pn.cur && slices.Contains(pn.docs, d)
@@ -619,7 +637,10 @@ func (pn *panel) syncPick() {
 		}
 	}
 	pn.picking = true
-	pn.pick.SetModel(gtk.NewStringList(names))
+	if !slices.Equal(names, pn.pickNames) {
+		pn.pickList.Splice(0, uint(len(pn.pickNames)), names)
+		pn.pickNames = names
+	}
 	if sel >= 0 {
 		pn.pick.SetSelected(uint(sel))
 	}

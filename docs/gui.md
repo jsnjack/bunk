@@ -324,6 +324,12 @@ panel gives the panes their width back.
   one is the main frame's. Back (`panel.history`) shows the documents
   shown before; each document keeps its scroll position (`lastY`), read
   just before another document loads.
+- The header's drop-down lists the tab's documents. A choice in it shows
+  the document from an idle callback, and `syncPick` splices its one
+  StringList only when the names change. The choice arrives while GTK is
+  still in the drop-down's list; replacing the model there freed rows the
+  list went on to use, which logged a failed GObject assertion and
+  crashed a long-running bunk-gui (`TestGUIPresentPick`).
 - Pages load through `bunk-present://` (`presentserve.go`): `assets/`
   serves the page runtime, Mermaid, KaTeX, ECharts, Graphviz (Viz.js),
   D3 and highlight.js embedded in
@@ -430,8 +436,8 @@ panel gives the panes their width back.
   hidden panel loads its document when it opens.
 - Window tests drive the panel with `present`, `present-eval`,
   `present-wait`, `present-select`, `present-ask`, `present-toggle` and
-  `present-back`, and point at an element of the page with
-  `ptr-at doc SELECTOR`
+  `present-back`, point at an element of the page with
+  `ptr-at doc SELECTOR` and at the drop-down with `ptr-at panel-pick`
   (`TestGUIPresentMarkdown`, `TestGUIPresentHTML`, `TestGUIPresentListed`,
   `TestGUIPresentLinks`, `TestGUIPresentFindZoom`). `keyboard_focus` is
   `panel` or `panel find` there.
