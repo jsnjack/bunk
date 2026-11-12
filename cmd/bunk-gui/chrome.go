@@ -91,6 +91,10 @@ progressbar.tabprogress.busy > trough > progress { background: alpha(#5aa9ff, 0.
 button.rowbtn { background: none; box-shadow: none; border: none; padding: 8px 4px 8px 10px; color: inherit; }
 .row .agent { font-size: 14px; color: #e6e8eb; }
 .statelabel { font-size: 12px; color: #9aa0a8; }
+/* A theme in Preferences: its card, outlined in the accent while chosen. */
+button.themecard { padding: 6px 6px 4px 6px; border-radius: 12px; background: none; box-shadow: none; }
+button.themecard:hover { background: alpha(currentColor, 0.07); }
+button.themecard:checked { background: alpha(currentColor, 0.07); box-shadow: inset 0 0 0 2px var(--accent-bg-color); }
 .statelabel.needs-fg { color: #ffb454; font-weight: 600; }
 .hint { font-size: 12px; color: #8a8f98; padding: 8px 6px 2px 6px; }
 popover.bunk-menu > contents { background: #1b1c20; border: 1px solid #2f3238; border-radius: 10px; padding: 6px; }

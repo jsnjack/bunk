@@ -36,6 +36,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
@@ -257,68 +258,51 @@ func (a *App) decoy(open bool) error {
 
 // notifyPrefs are the preferences window's notification controls.
 type notifyPrefs struct {
-	on           *gtk.Switch
-	states       []*gtk.CheckButton // in alert.AlertingStates order
-	commandAfter *gtk.SpinButton    // seconds; 0 sends none for commands
+	on           *adw.SwitchRow
+	states       []*adw.SwitchRow // in alert.AlertingStates order
+	commandAfter *adw.SpinRow     // seconds; 0 marks and sends none for commands
 }
 
 // notifyLabels name the states in the preferences window.
 var notifyLabels = map[session.AgentState]string{
-	session.AgentNeedsYou: "Needs you", session.AgentDone: "Is done", session.AgentFailed: "Failed",
+	session.AgentNeedsYou: "When an agent needs you", session.AgentDone: "When an agent is done", session.AgentFailed: "When an agent fails",
 }
 
 // addNotifications adds the Notifications section to the preferences:
-// a switch for desktop notifications, the states that send one and how
-// long a command must run for its end to send one, saved to
-// [notifications] as they change.
-func (w *prefsWindow) addNotifications(box *gtk.Box) {
+// a switch for desktop notifications, the states that send one, and how
+// long a command must run for its tab to mark it and its end to send
+// one, saved to [notifications] as they change.
+func (w *prefsWindow) addNotifications() {
 	st := w.a.fileSettings.alerts
-	np := &notifyPrefs{on: gtk.NewSwitch()}
-	box.Append(heading("Notifications"))
-	np.on.SetActive(st.Enabled)
-	np.on.ConnectStateSet(func(on bool) bool {
-		if !w.syncing {
-			w.saveNotify(keysEdit{action: "enabled", value: strconv.FormatBool(on)})
-		}
-		return false
-	})
-	box.Append(prefRow("Desktop notifications", np.on))
-	w.controls["notify"] = np.on
-	hint := label("Sent when an agent in a tab you are not looking at:", "statelabel")
-	hint.SetXAlign(0)
-	box.Append(hint)
+	np := &notifyPrefs{}
+	g := w.group("", "")
+	np.on = w.switchRow(g, "notify", "Desktop notifications", "For tabs you are not looking at", st.Enabled,
+		func(on bool) { w.saveNotify(keysEdit{action: "enabled", value: strconv.FormatBool(on)}) })
+	g = w.group("Agents", "")
 	for _, s := range alert.AlertingStates() {
-		c := gtk.NewCheckButtonWithLabel(notifyLabels[s])
-		c.SetActive(slices.Contains(st.States, s))
-		c.ConnectToggled(func() {
-			if !w.syncing {
-				_, names := w.notifyShown()
-				w.saveNotify(keysEdit{action: "states", value: tomlStrings(names)})
-			}
+		r := w.switchRow(g, "notify-"+alert.StateName(s), notifyLabels[s], "", slices.Contains(st.States, s), func(bool) {
+			_, names := w.notifyShown()
+			w.saveNotify(keysEdit{action: "states", value: tomlStrings(names)})
 		})
-		box.Append(c)
-		w.controls["notify-"+alert.StateName(s)] = c
-		np.states = append(np.states, c)
+		r.SetSensitive(st.Enabled)
+		np.states = append(np.states, r)
 	}
-	hint = label("Sent when a command in a tab you are not looking at ends after running at least this long; the tab shows it running from then on:", "statelabel")
-	hint.SetWrap(true)
-	hint.SetXAlign(0)
-	box.Append(hint)
-	np.commandAfter = gtk.NewSpinButtonWithRange(0, 24*60*60, 1)
-	np.commandAfter.SetValue(st.CommandAfter.Seconds())
-	np.commandAfter.ConnectValueChanged(func() {
-		if !w.syncing {
-			w.saveNotify(keysEdit{action: "command_after", value: strconv.Itoa(np.commandAfter.ValueAsInt())})
+	np.on.NotifyProperty("active", func() {
+		for _, r := range np.states {
+			r.SetSensitive(np.on.Active())
 		}
 	})
-	box.Append(prefRow("Seconds (0: never)", np.commandAfter))
-	w.controls["notify-command-after"] = np.commandAfter
+	g = w.group("Long commands", "A command in a tab you are not looking at that runs this long gets a mark on its tab, "+
+		"and its end sends a notification.")
+	np.commandAfter = w.spinRow(g, "notify-command-after", "Mark after", "Seconds; 0 turns this off", 0, 24*60*60, 1, 0,
+		st.CommandAfter.Seconds(), func(v float64) { w.saveNotify(keysEdit{action: "command_after", value: strconv.Itoa(int(v))}) })
 	w.notify = np
 }
 
 func (w *prefsWindow) saveNotify(e keysEdit) {
-	w.save(func(content string) string { return patchTable(content, "notifications", []keysEdit{e}) })
-	w.message.SetText("Saved notifications.")
+	if w.save(func(content string) string { return patchTable(content, "notifications", []keysEdit{e}) }) {
+		w.message = ""
+	}
 }
 
 // notifyShown returns what the notification controls show: the switch,

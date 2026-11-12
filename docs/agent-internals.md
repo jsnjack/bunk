@@ -105,8 +105,10 @@ the code.
     saved as `<file>.bunk-backup`, the mode and indentation stay, a
     symbolic link's target is written, and a file that is not JSON is
     refused. A Copilot CLI file with other hooks is refused too.
-  - bunk-gui's Preferences show the same states with Install and Copy
-    snippet buttons and a link to the setup guide.
+  - bunk-gui's Preferences show the same states on the Agents page: a row
+    per agent with its hooks and skill, a Set up (or Update) button that
+    installs what is missing or outdated, as the banner does, Copy snippet
+    in the expanded row, and a link to the setup guide.
   - bunk-gui offers the install in a banner above the panes (`banner.go`,
     under the restore banner): at start for agents whose bunk hooks or
     bunk-present skill are outdated, and when a tab first shows an agent

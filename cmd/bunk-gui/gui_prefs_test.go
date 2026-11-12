@@ -11,9 +11,10 @@ import (
 )
 
 // TestGUIPreferences drives the preferences window with real clicks and
-// keys: layout, rail, font family and size, default text zoom, adding,
-// editing and removing [[agents]] entries, session restore, where new tabs
-// start and the rail peek's delay. Every change applies live: turning
+// keys: the rail and the peek's delay, layout, which leaves the rail's
+// rows unusable, font size, the font family from the font dialog, default
+// text zoom, adding, editing and removing [[agents]] entries, session
+// restore and where new tabs start. Every change applies live: turning
 // restore on gives the window, started without it, a slot. A relative
 // folder is refused, and a folder that does not exist is saved with a
 // warning. config.toml keeps the user's comments and order byte for byte.
@@ -49,30 +50,46 @@ scripts = ["goose/cli.py"]
 			"kbd ctrl+comma",
 			"wait prefs!=null",
 			"snap open",
-			"ptr-at pref tabs-bar", "ptr-click",
-			"wait layout=bar",
-			"snap bar",
 			"ptr-at pref rail-open", "ptr-click",
 			"wait rail_open=true",
-			"ptr-at pref font-size -30 0", "ptr-click", "kbd ctrl+a", "kbd-type 12.5\\r",
+			"ptr-at pref peek-delay", "ptr-click", "kbd ctrl+a", "kbd-type 150\\r",
+			"wait settings.rail_peek_delay=150 prefs.peek_delay=150",
+			"ptr-at pref tabs-bar", "ptr-click",
+			"wait layout=bar prefs.rail_sensitive=false",
+			"snap bar",
+			"pref-scroll font-size",
+			"ptr-at pref font-size", "ptr-click", "kbd ctrl+a", "kbd-type 12.5\\r",
 			"wait prefs.font_size=12.5 font_size=12.5",
-			"ptr-at pref font", "ptr-click", "kbd ctrl+a", "kbd-type DejaVu Sans Mono\\r",
-			"wait font=\"DejaVu Sans Mono 12.5\"",
-			"ptr-at pref text-zoom -30 0", "ptr-click", "kbd ctrl+a", "kbd-type 120\\r",
+			// The font dialog lists the monospace families: type one, step
+			// into the list, select it and confirm.
+			"pref-scroll font",
+			"ptr-at pref font", "ptr-click",
+			"wait prefs.font_dialog=true idle 300ms",
+			"kbd-type DejaVu Sans Mono",
+			"wait idle 300ms",
+			"kbd Down", "kbd space", "kbd Return",
+			"wait prefs.font_dialog=false font=\"DejaVu Sans Mono 12.5\" prefs.font=\"DejaVu Sans Mono\"",
+			"pref-scroll text-zoom",
+			"ptr-at pref text-zoom", "ptr-click", "kbd ctrl+a", "kbd-type 120\\r",
 			"wait text_zoom=120 text_percent=120",
 			"snap text",
+			"pref-scroll agent-0",
+			"ptr-at pref agent-0", "ptr-click",
+			"wait prefs.controls.agent-0-processes!=null prefs.animating=false",
 			"pref-scroll agent-0-processes",
 			"ptr-at pref agent-0-processes", "ptr-click", "kbd ctrl+a", "kbd-type aider, aider-chat\\r",
 			"wait agents.0.processes.#=2",
 			"ptr-at pref agent-1-remove", "ptr-click",
 			"wait prefs.agents.#=1 agents.#=1",
+			"pref-scroll agent-add",
 			"ptr-at pref agent-add", "ptr-click",
-			"wait prefs.agents.#=2",
+			"wait prefs.agents.#=2 prefs.controls.agent-1-name!=null prefs.animating=false",
+			"pref-scroll agent-1-name",
 			"ptr-at pref agent-1-name", "ptr-click", "kbd-type crush\\r",
 			"wait prefs.message=\"An agent needs a name and processes or scripts.\"",
 			"snap incomplete",
 			"ptr-at pref agent-1-processes", "ptr-click", "kbd-type crush\\r",
-			"wait agents.#=2 agents.1.name=crush",
+			"wait agents.#=2 agents.1.name=crush prefs.message=\"\"",
 			"snap agents",
 			"pref-scroll restore",
 			"ptr-at pref restore", "ptr-click",
@@ -89,16 +106,14 @@ scripts = ["goose/cli.py"]
 			"wait settings.new_dir=\"~/no-such-bunk-folder\" prefs.new_dir=\"~/no-such-bunk-folder\"",
 			"snap missing",
 			"kbd ctrl+a", "kbd-type /\\r",
-			"wait settings.new_dir=/ prefs.message=\"Saved new_dir.\"",
-			"pref-scroll peek-delay",
-			"ptr-at pref peek-delay -30 0", "ptr-click", "kbd ctrl+a", "kbd-type 150\\r",
-			"wait settings.rail_peek_delay=150 prefs.peek_delay=150",
+			"wait settings.new_dir=/ prefs.message=\"\"",
 			"snap more",
 			"pref-scroll open-editor",
 			"ptr-at pref open-editor", "ptr-click",
 			"wait prefs=null run.opened.#=1",
 			"kbd ctrl+comma",
 			"wait prefs!=null",
+			"pref-scroll shortcuts",
 			"ptr-at pref shortcuts", "ptr-click",
 			"wait prefs=null shortcuts!=null",
 			"snap shortcuts",
@@ -113,8 +128,8 @@ scripts = ["goose/cli.py"]
 		!slices.Equal(p.Agents, [][3]string{{"aider", "aider", ""}, {"goose", "goose", "goose/cli.py"}}) {
 		t.Fatalf("Ctrl+, opened %+v", open.Prefs)
 	}
-	if s := g.snap("bar"); s.Layout != "bar" {
-		t.Errorf("Tabs on top: layout %q", s.Layout)
+	if s := g.snap("bar"); s.Layout != "bar" || s.Prefs.RailSensitive || !g.snap("open").Prefs.RailSensitive {
+		t.Errorf("Tabs on top: layout %q, rail rows usable %v, before %v", s.Layout, s.Prefs.RailSensitive, g.snap("open").Prefs.RailSensitive)
 	}
 	if s := g.snap("text"); s.Font != "DejaVu Sans Mono 15" || s.FontSize != 15 || s.TextPercent != 120 || s.TextZoom != 120 || !s.RailOpen {
 		t.Errorf("font, size 12.5 and zoom 120 %%: font %q, %v pt, %d %%, default %v %%, rail open %v",
@@ -156,11 +171,11 @@ tabs = "bar"   # side
 font_size = 12.5
 restore = true
 rail_open = true
+rail_peek_delay = 150
 font = "DejaVu Sans Mono"
 text_zoom = 120
 restore_scrollback = false
 new_dir = "/"
-rail_peek_delay = 150
 
 [keys]
 new_tab = "ctrl+alt+n"   # mine

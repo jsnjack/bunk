@@ -58,12 +58,12 @@ the top right and bottom right. A plain shell's arc is dimmed, so the agents
 stand out. A tab with more than 6 panes also shows the pane count under its
 ring.
 
-With `rail_style = "map"`, or "A map of the panes" in Preferences, the rail
-shows each tab's glyph instead. A tab with 2 to 4 panes then shows a small map
-of them: one cell per pane, placed as the splits place the panes, each with its
-pane's glyph. Each split takes half of the map wherever its divider sits, so
-the map keeps its shape while you drag a divider. A tab with 5 or more panes
-shows its most urgent glyph over the pane count.
+With `rail_style = "map"`, or Map for "Collapsed side tabs show" in
+Preferences, the rail shows each tab's glyph instead. A tab with 2 to 4 panes
+then shows a small map of them: one cell per pane, placed as the splits place
+the panes, each with its pane's glyph. Each split takes half of the map
+wherever its divider sits, so the map keeps its shape while you drag a divider.
+A tab with 5 or more panes shows its most urgent glyph over the pane count.
 
 ## Notifications
 

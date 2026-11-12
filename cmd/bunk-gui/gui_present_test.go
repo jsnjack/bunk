@@ -250,10 +250,10 @@ func TestGUIPresentListed(t *testing.T) {
 	}
 }
 
-// TestGUIPresentPrefs: the Documents section of the preferences lists the
+// TestGUIPresentPrefs: the Agents page of the preferences lists the
 // bunk-present skill of Claude Code, Codex and Copilot CLI, missing in an
-// empty home directory. Install writes Codex's, and the switch saves
-// [present] auto in config.toml and holds without a restart.
+// empty home directory. Set up writes Codex's with its hooks, and the
+// switch saves [present] auto in config.toml and holds without a restart.
 func TestGUIPresentPrefs(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -267,9 +267,9 @@ func TestGUIPresentPrefs(t *testing.T) {
 			"kbd ctrl+comma",
 			"wait prefs!=null prefs.skills.#=3",
 			"snap before",
-			"pref-scroll skill-codex-install",
-			"ptr-at pref skill-codex-install", "ptr-click",
-			"wait prefs.skills.1.state=installed prefs.skills_note~Installed",
+			"pref-scroll setup-codex",
+			"ptr-at pref setup-codex", "ptr-click",
+			"wait prefs.skills.1.state=installed prefs.hooks.1.state=installed prefs.setup_note~Installed",
 			"snap installed",
 			"pref-scroll present-auto",
 			"ptr-at pref present-auto", "ptr-click",
@@ -296,7 +296,7 @@ func TestGUIPresentPrefs(t *testing.T) {
 	if data, err := os.ReadFile(path); err != nil || !strings.Contains(string(data), "name: bunk-present") {
 		t.Errorf("codex skill: %v\n%.200s", err, data)
 	}
-	if note := g.snap("installed").Prefs.SkillsNote; !strings.Contains(note, "~/.codex/skills/bunk-present/SKILL.md") {
+	if note := g.snap("installed").Prefs.SetupNote; !strings.Contains(note, "~/.codex/skills/bunk-present/SKILL.md") {
 		t.Errorf("install note %q", note)
 	}
 	if got := readFile(t, g.file("config.toml")); !strings.Contains(got, "[present]\nauto = true") || !strings.Contains(got, "# mine") {

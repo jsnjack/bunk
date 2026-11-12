@@ -1,15 +1,17 @@
 package main
 
-// Agent hooks: the section of the preferences that sets them up, and the
-// reminder about an agent that runs without them (hooks_hint).
+// Agent setup: the preferences' Agents page, which sets up each agent's
+// hooks and bunk-present skill, and the reminder about an agent that runs
+// without them (hooks_hint).
 //
 // With hooks, an agent reports its own state and the session ID that
 // restore resumes; without them bunk infers its state from output
-// (docs/agent-hooks.md). The section shows each agent's setup as
-// notify.CheckHooks finds it, installs the hooks (notify.InstallHooks:
-// files of their own for Codex and Copilot CLI, merged into settings.json
-// with a backup for Claude Code and Gemini CLI) and copies the snippets.
-// It never writes a file without a click.
+// (docs/agent-hooks.md). The page shows each agent's setup as
+// notify.CheckHooks and notify.CheckSkills find it, installs what is
+// missing or outdated (notify.InstallHooks: files of their own for Codex
+// and Copilot CLI, merged into settings.json with a backup for Claude
+// Code and Gemini CLI; notify.InstallSkill) and copies the snippets. It
+// never writes a file without a click.
 //
 // The reminder is a banner over the panes: at start for agents whose bunk
 // hooks or bunk-present skill are outdated, and when a tab first shows an
@@ -22,10 +24,8 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
-	coreglib "github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
 	"bunk/internal/notify"
@@ -44,106 +44,170 @@ func (a *App) hookDirs() notify.Dirs {
 	return notify.UserDirs()
 }
 
-// hooksPrefs are the preferences window's Agent hooks controls.
-type hooksPrefs struct {
-	rows  *gtk.Box // one row per agent, rebuilt by refreshHooks
-	note  *gtk.Label
-	hint  *gtk.Switch
-	shown []notify.Hooks
+// setupPrefs is the Agents page's Setup section: a row per agent with its
+// hooks and, for an agent that loads skills, its bunk-present skill. Set
+// up (or Update) installs what is missing or outdated, as the banner
+// does; expanding the row shows the files and Copy snippet.
+type setupPrefs struct {
+	group    *adw.PreferencesGroup
+	rows     []*adw.ExpanderRow // rebuilt by refreshSetup
+	expanded map[string]bool    // the agents whose rows were open
+	note     *gtk.Label
+	hooks    []notify.Hooks
+	skills   []notify.SkillState
 }
 
-// hookLooks are the states as the section shows them.
-var hookLooks = map[notify.HookState]string{
-	notify.HooksInstalled: "✓ Installed", notify.HooksOutdated: "⚠ Outdated", notify.HooksMissing: "✗ Not set up",
-}
-
-// addHooks adds the Agent hooks section to the preferences.
-func (w *prefsWindow) addHooks(box *gtk.Box) {
-	hp := &hooksPrefs{rows: gtk.NewBox(gtk.OrientationVertical, 10), note: label("", "statelabel"), hint: gtk.NewSwitch()}
-	h := heading("Agent hooks")
-	box.Append(h)
-	w.controls["hooks"] = h
-	intro := label("With hooks, an agent tells bunk-gui when it works, needs you and is done. "+
-		"Without them, its state is guessed from its output.", "statelabel")
-	intro.SetWrap(true)
-	intro.SetXAlign(0)
-	box.Append(intro)
-	box.Append(hp.rows)
-	hp.note.SetWrap(true)
-	hp.note.SetXAlign(0)
-	box.Append(hp.note)
-	guide := gtk.NewButtonWithLabel("Setup guide")
-	guide.SetHAlign(gtk.AlignStart)
-	guide.ConnectClicked(func() { openURL(w.a, hooksDocsURL) })
-	box.Append(guide)
-	w.controls["hooks-guide"] = guide
-	hp.hint.SetActive(w.a.fileSettings.hooksHint)
-	hp.hint.ConnectStateSet(func(on bool) bool {
-		if !w.syncing {
-			w.saveTop(keysEdit{action: "hooks_hint", value: strconv.FormatBool(on)})
-		}
-		return false
-	})
-	box.Append(prefRow("Remind me when an agent runs without hooks", hp.hint))
-	w.controls["hooks-hint"] = hp.hint
-	w.hooks = hp
-	w.refreshHooks()
-}
-
-// refreshHooks rebuilds the agent rows from the files as they are now.
-func (w *prefsWindow) refreshHooks() {
-	hp := w.hooks
-	for c := hp.rows.FirstChild(); c != nil; c = hp.rows.FirstChild() {
-		hp.rows.Remove(c)
+// hookLooks are the states as a hooks row shows them, and setupLooks as an
+// agent's row sums them up.
+var (
+	hookLooks = map[notify.HookState]string{
+		notify.HooksInstalled: "✓ Installed", notify.HooksOutdated: "⚠ Outdated", notify.HooksMissing: "✗ Not set up",
 	}
+	setupLooks = map[notify.HookState][2]string{
+		notify.HooksInstalled: {"✓ Hooks", "✓ Skill"},
+		notify.HooksOutdated:  {"⚠ Hooks outdated", "⚠ Skill outdated"},
+		notify.HooksMissing:   {"✗ No hooks", "✗ No skill"},
+	}
+)
+
+// agentTitles are the agents' names as the preferences show them.
+var agentTitles = map[string]string{"claude": "Claude Code", "codex": "Codex", "copilot": "Copilot CLI", "gemini": "Gemini CLI"}
+
+// agentTitle is agent's name as the preferences show it.
+func agentTitle(agent string) string {
+	if t, ok := agentTitles[agent]; ok {
+		return t
+	}
+	return agent
+}
+
+// addSetup adds the Setup section to the preferences.
+func (w *prefsWindow) addSetup() {
+	sp := &setupPrefs{note: label("", "statelabel"), expanded: map[string]bool{}}
+	sp.group = w.group("Setup", "With hooks, an agent tells bunk-gui when it works, needs you and is done; "+
+		"without them, its state is guessed from its output. The skill tells it when and how to show documents in the panel.")
+	w.controls["hooks"] = sp.group
+	guide := gtk.NewButtonWithLabel("Setup guide")
+	guide.AddCSSClass("flat")
+	guide.SetVAlign(gtk.AlignCenter)
+	guide.ConnectClicked(func() { openURL(w.a, hooksDocsURL) })
+	sp.group.SetHeaderSuffix(guide)
+	w.controls["hooks-guide"] = guide
+	sp.note.SetWrap(true)
+	sp.note.SetXAlign(0)
+	sp.note.SetMarginTop(6)
+	sp.note.SetVisible(false)
+	sp.group.Add(sp.note)
+	w.setup = sp
+	w.refreshSetup()
+}
+
+// addAgentBehaviour adds the switches for documents and the reminder.
+func (w *prefsWindow) addAgentBehaviour() {
+	g := w.group("Behaviour", "")
+	w.presentAuto = w.switchRow(g, "present-auto", "Open the panel for documents an agent writes", "", w.a.fileSettings.presentAuto,
+		func(on bool) {
+			if w.save(func(content string) string {
+				return patchTable(content, "present", []keysEdit{{action: "auto", value: strconv.FormatBool(on)}})
+			}) {
+				w.message = ""
+			}
+		})
+	w.hooksHint = w.switchRow(g, "hooks-hint", "Remind me when an agent runs without hooks or skill", "", w.a.fileSettings.hooksHint,
+		func(on bool) { w.saveTop(keysEdit{action: "hooks_hint", value: strconv.FormatBool(on)}) })
+}
+
+// refreshSetup rebuilds the agent rows from the files as they are now,
+// keeping open the rows that were.
+func (w *prefsWindow) refreshSetup() {
+	sp := w.setup
+	for _, r := range sp.rows {
+		sp.group.Remove(r)
+	}
+	sp.rows = nil
 	d := w.a.hookDirs()
-	hp.shown = notify.CheckHooks(d)
-	for _, h := range hp.shown {
-		row := gtk.NewBox(gtk.OrientationHorizontal, 12)
-		lines := gtk.NewBox(gtk.OrientationVertical, 2)
-		top := gtk.NewBox(gtk.OrientationHorizontal, 8)
-		top.Append(label(h.Agent, "agent"))
-		state := hookLooks[h.State]
-		if !h.CLI {
-			state += " · not on PATH"
-		}
-		top.Append(label(state, "statelabel"))
-		lines.Append(top)
-		path := label(d.Short(h.Path), "repo")
-		path.SetXAlign(0)
-		lines.Append(path)
-		if h.Problem != "" {
-			p := label(h.Problem, "notice")
-			p.SetWrap(true)
-			p.SetXAlign(0)
-			lines.Append(p)
-		}
-		lines.SetHExpand(true)
-		row.Append(lines)
+	sp.hooks, sp.skills = notify.CheckHooks(d), notify.CheckSkills(d)
+	skills := map[string]notify.SkillState{}
+	for _, s := range sp.skills {
+		skills[s.Agent] = s
+	}
+	for _, h := range sp.hooks {
 		agent := h.Agent
-		if h.State != notify.HooksInstalled {
-			b := gtk.NewButtonWithLabel("Install")
-			b.SetVAlign(gtk.AlignCenter)
-			b.ConnectClicked(func() { w.installHooks(agent) })
-			row.Append(b)
-			w.controls["hooks-"+agent+"-install"] = b
-		} else {
-			delete(w.controls, "hooks-"+agent+"-install")
+		sk, hasSkill := skills[agent]
+		row := adw.NewExpanderRow()
+		row.SetUseMarkup(false)
+		row.SetTitle(agentTitle(agent))
+		sum := []string{setupLooks[h.State][0]}
+		if hasSkill {
+			sum = append(sum, setupLooks[sk.State][1])
 		}
+		if !h.CLI {
+			sum = append(sum, "not on PATH")
+		}
+		if h.Problem != "" || hasSkill && sk.Problem != "" {
+			sum = append(sum, "⚠ a file cannot be read")
+		}
+		row.SetSubtitle(strings.Join(sum, " · "))
+		missing := h.State == notify.HooksMissing || hasSkill && sk.State == notify.HooksMissing
+		if h.State != notify.HooksInstalled || hasSkill && sk.State != notify.HooksInstalled {
+			text := "Update"
+			if missing {
+				text = "Set up"
+			}
+			b := gtk.NewButtonWithLabel(text)
+			b.SetVAlign(gtk.AlignCenter)
+			b.ConnectClicked(func() { w.setUpAgent(agent) })
+			row.AddSuffix(b)
+			w.controls["setup-"+agent] = b
+		} else {
+			delete(w.controls, "setup-"+agent)
+		}
+		hooks := actionRow("Hooks", fileLine(hookLooks[h.State], d.Short(h.Path), h.Problem))
 		c := gtk.NewButtonWithLabel("Copy snippet")
 		c.SetVAlign(gtk.AlignCenter)
 		c.ConnectClicked(func() { w.copyHooks(agent) })
-		row.Append(c)
+		hooks.AddSuffix(c)
 		w.controls["hooks-"+agent+"-copy"] = c
-		hp.rows.Append(row)
+		row.AddRow(hooks)
+		if hasSkill {
+			row.AddRow(actionRow("bunk-present skill", fileLine(hookLooks[sk.State], d.Short(sk.Path), sk.Problem)))
+		}
+		row.NotifyProperty("expanded", func() { sp.expanded[agent] = row.Expanded() })
+		row.SetExpanded(sp.expanded[agent])
+		w.controls["setup-row-"+agent] = row
+		sp.group.Add(row)
+		sp.rows = append(sp.rows, row)
 	}
 }
 
-// installHooks writes an agent's hooks file and says what comes next.
-func (w *prefsWindow) installHooks(agent string) {
-	text, _ := w.a.installHooks(agent)
-	w.hooks.note.SetText(text)
-	w.refreshHooks()
+// fileLine is a subtitle for a file: its state and path, then on a line
+// of its own why it could not be read.
+func fileLine(state, path, problem string) string {
+	line := state + " · " + path
+	if problem != "" {
+		line += "\n" + problem
+	}
+	return line
+}
+
+// setUpAgent installs agent's hooks and skill where they are missing or
+// outdated, and says what it did.
+func (w *prefsWindow) setUpAgent(agent string) {
+	d := w.a.hookDirs()
+	var notes []string
+	if h, ok := notify.CheckHook(d, agent); ok && h.State != notify.HooksInstalled {
+		text, _ := w.a.installHooks(agent)
+		notes = append(notes, text)
+	}
+	if s, ok := notify.CheckSkill(d, agent); ok && s.State != notify.HooksInstalled {
+		if path, err := notify.InstallSkill(d, agent); err != nil {
+			notes = append(notes, "The skill was not installed: "+err.Error())
+		} else {
+			notes = append(notes, "Installed the skill in "+d.Short(path)+".")
+		}
+	}
+	showNote(w.setup.note, agentTitle(agent)+": "+strings.Join(notes, " ")+" New sessions use it.")
+	w.refreshSetup()
 }
 
 // copyHooks puts an agent's snippet on the clipboard and says where it
@@ -163,7 +227,7 @@ func (w *prefsWindow) copyHooks(agent string) {
 			where += " " + h.After
 		}
 	}
-	w.hooks.note.SetText("Copied the " + agent + " snippet: " + where)
+	showNote(w.setup.note, "Copied the "+agent+" snippet: "+where)
 }
 
 // hooksReport is one agent's row in --report.
@@ -176,8 +240,17 @@ type hooksReport struct {
 
 func (w *prefsWindow) hooksShown() []hooksReport {
 	out := []hooksReport{}
-	for _, h := range w.hooks.shown {
+	for _, h := range w.setup.hooks {
 		out = append(out, hooksReport{Agent: h.Agent, State: h.State.String(), Path: h.Path, Installable: h.Installable})
+	}
+	return out
+}
+
+// skillsShown is the skill rows in --report.
+func (w *prefsWindow) skillsShown() []hooksReport {
+	out := []hooksReport{}
+	for _, s := range w.setup.skills {
+		out = append(out, hooksReport{Agent: s.Agent, State: s.State.String(), Path: s.Path, Installable: true})
 	}
 	return out
 }
@@ -381,8 +454,7 @@ func (a *App) acceptHooks() {
 		a.toast("Installed. New agent sessions use it.")
 	}
 	if a.prefsWin != nil {
-		a.prefsWin.refreshHooks()
-		a.prefsWin.refreshSkills()
+		a.prefsWin.refreshSetup()
 	}
 	if p := a.activePane(); p != nil {
 		p.widget.GrabFocus()
@@ -414,26 +486,15 @@ func (a *App) toastAction(text, button string, act func()) {
 	a.toastLog = append(a.toastLog, text)
 }
 
-// showPreferencesAt opens the preferences and scrolls to the control
-// named name once the window is laid out.
+// showPreferencesAt opens the preferences at the control named name,
+// once the window is laid out.
 func (a *App) showPreferencesAt(name string) {
 	a.showPreferences()
-	w := a.prefsWin
-	if w == nil {
-		return
+	if w := a.prefsWin; w != nil {
+		w.scrollWhenReady(name, func(err error) {
+			if err != nil {
+				slog.Debug("preferences: no scroll", "to", name, "err", err)
+			}
+		})
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	coreglib.TimeoutAdd(16, func() bool {
-		if a.prefsWin != w {
-			return false
-		}
-		err := w.scrollTo(name)
-		if err != nil && time.Now().Before(deadline) {
-			return true
-		}
-		if err != nil {
-			slog.Debug("preferences: no scroll", "to", name, "err", err)
-		}
-		return false
-	})
 }

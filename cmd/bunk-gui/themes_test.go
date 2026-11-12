@@ -193,15 +193,3 @@ func TestSelectTheme(t *testing.T) {
 		})
 	}
 }
-
-// TestThemePreview: a theme's preview shows its background, foreground
-// and palette colours.
-func TestThemePreview(t *testing.T) {
-	d, _ := theme.Builtin("dracula")
-	m := themePreview(d)
-	for _, want := range []string{`background="#282a36"`, `foreground="#f8f8f2"`, `foreground="#ff5555"`, `foreground="#8be9fd"`} {
-		if !strings.Contains(m, want) {
-			t.Errorf("preview %q lacks %q", m, want)
-		}
-	}
-}

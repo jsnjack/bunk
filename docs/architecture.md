@@ -164,8 +164,11 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
   app.go            App struct, window activation, test-run hooks and statistics
   themes.go         The theme shown: terminal colours, the CSS of the content
                     background, dividers and badges; repaints on a change
-  prefs_theme.go    The Theme section of Preferences: a choice per theme with
-                    a preview of its colours
+  prefs.go          Preferences: an AdwPreferencesDialog with four pages and a
+                    group of rows per section, each change written into
+                    config.toml at once
+  prefs_theme.go    The Theme section of Preferences: a grid of the themes,
+                    each drawn as a small terminal in its colours
   progress.go       OSC 9;4 progress as a bar under each tab
   alerts.go         Desktop notifications per pane: when (internal/alert), the
                     show-pane action, --report records, preferences section
@@ -184,8 +187,8 @@ cmd/bunk-gui/       GTK4 GUI front end (own Go module; cgo; not built by make ch
                     with confirmation
   restore.go        Session restore: saves the window, the startup banner,
                     rebuilds tabs and splits, resumes agents (--restore)
-  prefs_hooks.go    Agent hooks in Preferences (state, Install, Copy
-                    snippet) and the toast for an agent without hooks
+  prefs_hooks.go    The Agents page's Setup (each agent's hooks and skill, Set
+                    up, Copy snippet) and the banner for an agent without them
   panel.go          The document panel per tab: documents and previews,
                     reload in place, asking the agent, restore, its --do steps
   presentserve.go   The bunk-present:// scheme: assets, each document's

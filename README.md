@@ -181,7 +181,7 @@ bunk-gui notify hooks
 bunk-gui notify hooks install claude
 ```
 
-<img src="assets/gui-hooks-prefs.png" alt="Preferences, Agent hooks: claude installed, codex outdated, copilot and gemini not set up, each with Install and Copy snippet buttons">
+<img src="assets/gui-hooks-prefs.png" alt="Preferences, Agents page: Claude Code with hooks but no skill, Codex with outdated hooks, Copilot CLI and Gemini CLI not set up, each with a Set up button">
 
 Agents on hosts you reach over ssh report to the tab that runs ssh. Install bunk on the server and the same hooks there; plain `ssh` works, and the tab shows the remote agent's name, repo and branch.
 

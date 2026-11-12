@@ -415,7 +415,7 @@ func TestGUICommandNotifications(t *testing.T) {
 			"wait prefs!=null",
 			"snap prefs",
 			"pref-scroll notify-command-after",
-			"ptr-at pref notify-command-after -30 0", "ptr-click", "kbd ctrl+a", "kbd-type 30\\r",
+			"ptr-at pref notify-command-after", "ptr-click", "kbd ctrl+a", "kbd-type 30\\r",
 			"wait prefs.notify_command_after=30 run.reloads>=1",
 			"dialog-close",
 			"wait prefs=null",

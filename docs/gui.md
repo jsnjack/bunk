@@ -201,6 +201,50 @@ the code.
     away. `TestGUITabMenu`, `TestGUIPaneMenu` and
     `TestGUISwitcherCurrent` check them.
 
+## Preferences
+
+- The preferences window (`prefs.go`) is an `AdwPreferencesDialog`, built
+  from libadwaita's widgets, with four pages: General (tabs, new tabs,
+  session restore, the settings file and the shortcuts), Appearance
+  (themes and text), Notifications and Agents. Each section is a group of
+  rows, and each row is one setting: its title on the left, one control on
+  the right, and any explanation or unit in its subtitle. Hand-placed
+  labels and boxes in one long column made the window hard to read, and a
+  row also makes its title clickable and searchable (the dialog's search
+  finds rows by title on every page).
+  - The themes are a grid of cards, each drawn as a small terminal in the
+    theme's colours (`themeCard`), the chosen one outlined in the accent.
+  - The Agents page has one expander row per agent for its hooks and its
+    bunk-present skill, which the banner already sets up together: its
+    subtitle sums up both, Set up (or Update) installs what is missing or
+    outdated, and the expanded row shows each file and Copy snippet.
+  - A change is written at once and needs no message, because the
+    control shows it. Refusals, warnings and errors are toasts at the
+    foot of the dialog; `--report` keeps the last one in `prefs.message`,
+    and a plain save clears it.
+  - Two-way choices are toggle groups, a few choices are radio rows, and
+    on/off settings are switch rows. A setting that depends on another is
+    insensitive while it does not apply: the rail's rows while the tabs
+    are on top, scrollback without restore, the agent states without
+    desktop notifications. Long commands' mark does not depend on
+    notifications, so its row stays usable.
+  - Text fields are `AdwEntryRow`s with an apply button, so a typed value
+    that is not saved yet shows a ✓; Enter applies too.
+  - The font is chosen in GTK's font dialog at the family level, limited
+    to monospace families. In GTK 4.24, Enter on a row the keyboard
+    focused but did not select closes the dialog unchanged and logs a
+    GLib critical; Space selects the row first, as the test does.
+- Tests reach the controls by name (`controls`). The name points at the
+  part a click edits: a spin row's text, a toggle's label, a switch or
+  radio row. `pref-scroll` (and `showPreferencesAt`) shows the control's
+  page, expands the rows it is in, moves the focus to it and scrolls it
+  into view, and finishes only once it is laid out there; without the
+  focus move, the viewport scrolls back to the widget that had it. A row
+  that expands can reach past the dialog's edge, so a test scrolls to a
+  field after expanding its row. `prefs.animating` is true while a row
+  expands or collapses, and `prefs.font_dialog` while the font dialog is
+  open.
+
 ## The document panel
 
 bunk-gui shows documents that agents present in a side panel per tab

@@ -37,8 +37,8 @@ switch tabs.
 | Links | Ctrl+click | Opens OSC 8 links and plain http, https and file URLs; Ctrl+hover underlines them |
 | Passthrough | Ctrl+F12 | Per pane: every other key goes to the program; a PASS badge shows it |
 | Shortcuts window | Ctrl+Shift+? / Ctrl+? | Rebind or turn off any action, and give it more than one key; ⚠ marks keys terminal programs may use |
-| Preferences | Ctrl+, | Layout, rail, the Alt labels' delay, where new tabs start, font, text zoom, theme, session restore, notifications, agent hooks, documents and extra agent CLIs; buttons open the shortcuts window and config.toml in your text editor |
-| Agent hooks | | Preferences shows which agents report their own state and installs their hooks; a banner offers to set them up when an agent runs without them or they are outdated |
+| Preferences | Ctrl+, | Layout, rail, the Alt labels' delay, where new tabs start, font (from the installed monospace fonts), text zoom, theme, session restore, notifications, agent hooks, documents and extra agent CLIs, on four searchable pages (General, Appearance, Notifications, Agents); General's last group opens the shortcuts window and config.toml in your text editor |
+| Agent hooks | | Preferences' Agents page shows which agents report their own state and have the bunk-present skill, and sets up both; a banner offers to set them up when an agent runs without them or they are outdated |
 | Options menu | F10 | The ≡ button at the bottom of the rail, or at the right of the bar |
 | Fullscreen | F11 | |
 | Themes | | bunk's themes; picking one in Preferences repaints the panes at once |

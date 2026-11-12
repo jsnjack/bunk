@@ -28,7 +28,8 @@ agent runs.
 1. See where each agent stands. `bunk notify hooks` (or `bunk-gui notify
    hooks`) lists every agent with its hooks file and its state: installed,
    outdated or missing, and the next step for the ones that need one.
-   bunk-gui shows the same list in Preferences (Ctrl+,) under Agent hooks.
+   bunk-gui shows the same list, with each agent's bunk-present skill, on
+   the Agents page of Preferences (Ctrl+,).
 2. Install the hooks of each agent you use:
 
    | Agent | File | How |
@@ -39,7 +40,7 @@ agent runs.
    | Gemini CLI | `~/.gemini/settings.json` | `bunk notify hooks install gemini` |
 
    - Codex and Copilot CLI read hooks from a file of their own, so `install`
-     (or Install in bunk-gui's preferences) writes it. It replaces a file
+     (or Set up in bunk-gui's preferences) writes it. It replaces a file
      with older bunk hooks. A Codex `hooks.json` with hooks of your own gets
      bunk's merged in, as below; a Copilot CLI file with hooks of your own
      stays as it is: merge the snippet into that one by hand.

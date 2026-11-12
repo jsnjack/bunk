@@ -11,9 +11,9 @@ import (
 	"bunk/internal/notify"
 )
 
-// TestGUIHooksPrefs: the Agent hooks section of the preferences lists
-// every agent without hooks in an empty home directory. Install writes
-// Copilot CLI's file, Copy puts Claude Code's snippet on the clipboard
+// TestGUIHooksPrefs: the Agents page of the preferences lists every agent
+// without hooks in an empty home directory. Set up writes Copilot CLI's
+// hooks file and skill, Copy puts Claude Code's snippet on the clipboard
 // with where it goes, the guide button opens the setup docs, and the
 // switch turns the reminder off in config.toml.
 func TestGUIHooksPrefs(t *testing.T) {
@@ -30,13 +30,13 @@ func TestGUIHooksPrefs(t *testing.T) {
 			"kbd ctrl+comma",
 			"wait prefs!=null prefs.hooks.#=4",
 			"snap before",
-			"pref-scroll hooks-copilot-install",
-			"ptr-at pref hooks-copilot-install", "ptr-click",
-			"wait prefs.hooks.2.state=installed prefs.hooks_note~Installed",
+			"pref-scroll setup-copilot",
+			"ptr-at pref setup-copilot", "ptr-click",
+			"wait prefs.hooks.2.state=installed prefs.skills.2.state=installed prefs.setup_note~Installed",
 			"snap installed",
 			"pref-scroll hooks-claude-copy",
 			"ptr-at pref hooks-claude-copy", "ptr-click",
-			"wait prefs.hooks_note~\"Copied the claude snippet\" clipboard " + strconv.Quote(claude),
+			"wait prefs.setup_note~\"Copied the claude snippet\" clipboard " + strconv.Quote(claude),
 			"snap copied",
 			"pref-scroll hooks-guide",
 			"ptr-at pref hooks-guide", "ptr-click",
@@ -63,13 +63,14 @@ func TestGUIHooksPrefs(t *testing.T) {
 	if !slices.Equal(agents, []string{"claude", "codex", "copilot", "gemini"}) {
 		t.Errorf("agents %q", agents)
 	}
-	if note := g.snap("installed").Prefs.HooksNote; note != "Installed ~/.copilot/hooks/bunk.json." {
-		t.Errorf("install note %q", note)
+	if note := g.snap("installed").Prefs.SetupNote; note != "Copilot CLI: Installed ~/.copilot/hooks/bunk.json. "+
+		"Installed the skill in ~/.copilot/skills/bunk-present/SKILL.md. New sessions use it." {
+		t.Errorf("set-up note %q", note)
 	}
 	if data, err := os.ReadFile(filepath.Join(home, ".copilot", "hooks", "bunk.json")); err != nil || string(data) != copilot {
 		t.Errorf("copilot hooks file: %v\n%s", err, data)
 	}
-	if note := g.snap("copied").Prefs.HooksNote; !strings.Contains(note, `merge its "hooks" key into ~/.claude/settings.json`) {
+	if note := g.snap("copied").Prefs.SetupNote; !strings.Contains(note, `merge its "hooks" key into ~/.claude/settings.json`) {
 		t.Errorf("copy note %q", note)
 	}
 	if !slices.Equal(g.Opened, []string{hooksDocsURL}) {

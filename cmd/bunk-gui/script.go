@@ -191,7 +191,7 @@ func (a *App) runStep(action string, next func()) {
 	case "present-wait":
 		fmt.Printf("do: %s\n", action)
 		a.presentWait(arg, next)
-	case "snap", "shot", "dump", "dump-pane", "ptr-at", "ptr-drag", "print-clip", "print-primary":
+	case "snap", "shot", "dump", "dump-pane", "ptr-at", "ptr-drag", "print-clip", "print-primary", "pref-scroll":
 		a.doAction(action, next)
 	default:
 		a.doAction(action, nil)
@@ -554,7 +554,13 @@ func (a *App) doAction(action string, done func()) {
 			a.reportError("%s: the preferences window is not open", action)
 			return
 		}
-		check(a.prefsWin.scrollTo(arg))
+		async = true
+		a.prefsWin.scrollWhenReady(arg, func(err error) {
+			check(err)
+			if done != nil {
+				done()
+			}
+		})
 	case "quit-dialog":
 		if a.quitDialog == nil {
 			a.reportError("%s: no quit dialog", action)

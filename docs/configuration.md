@@ -3,7 +3,7 @@
 bunk and bunk-gui each read a TOML file, and every key in it is optional.
 bunk-gui's preferences and shortcuts windows write to its file for you.
 Preferences (Ctrl+,) has a control for every key except `[keys]`, which its
-Keyboard shortcuts button opens, and `[themes.NAME]` tables, which you write
+Keyboard shortcuts row opens, and `[themes.NAME]` tables, which you write
 by hand: its Open in editor button opens the file in your text editor.
 
 ## bunk-gui

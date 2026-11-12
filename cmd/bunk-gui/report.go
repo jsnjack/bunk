@@ -337,6 +337,9 @@ type prefsReport struct {
 	Restore           bool                   `json:"restore"`
 	RestoreScrollback bool                   `json:"restore_scrollback"`
 	Font              string                 `json:"font"`
+	FontDialog        bool                   `json:"font_dialog"`    // the font dialog is open
+	RailSensitive     bool                   `json:"rail_sensitive"` // the rail's rows can be used
+	Animating         bool                   `json:"animating"`      // a row is expanding or collapsing
 	FontSize          float64                `json:"font_size"`
 	TextZoom          float64                `json:"text_zoom"`
 	Theme             string                 `json:"theme"`  // the theme chosen
@@ -347,14 +350,13 @@ type prefsReport struct {
 	Notify             bool     `json:"notify"`
 	NotifyStates       []string `json:"notify_states"`
 	NotifyCommandAfter int      `json:"notify_command_after"` // seconds
-	// Agent hooks as the section shows them, its switch and its last note.
-	Hooks     []hooksReport `json:"hooks"`
-	HooksHint bool          `json:"hooks_hint"`
-	HooksNote string        `json:"hooks_note"`
-	// The Documents section: its switch, each agent's skill, its last note.
-	PresentAuto bool          `json:"present_auto"`
+	// The Agents page: each agent's hooks and skill as its row shows them,
+	// the setup's last note and the two switches.
+	Hooks       []hooksReport `json:"hooks"`
 	Skills      []hooksReport `json:"skills"`
-	SkillsNote  string        `json:"skills_note"`
+	SetupNote   string        `json:"setup_note"`
+	HooksHint   bool          `json:"hooks_hint"`
+	PresentAuto bool          `json:"present_auto"`
 }
 
 type findReport struct {
@@ -678,10 +680,12 @@ func (a *App) snapshot(label string) *uiSnapshot {
 	s.TextZoom, s.Agents, s.Theme = a.settings.TextZoom, a.settings.Agents, a.theme.Name
 	s.Settings = a.settingsInForce()
 	if w := a.prefsWin; w != nil {
-		pr := &prefsReport{Message: w.message.Text(), Tabs: map[bool]string{true: "bar", false: "rail"}[w.tabsBar.Active()],
-			RailOpen: w.railOpen.Active(), RailRing: w.railRing.Active(), Font: w.font.Text(), FontSize: w.fontSize.Value(), TextZoom: w.zoom.Value(),
+		pr := &prefsReport{Message: w.message, Tabs: w.position.ActiveName(), RailOpen: w.railOpen.Active(),
+			RailRing: w.railStyle.ActiveName() != "map", Font: w.fontFamily(), FontDialog: fontDialogOpen(),
+			FontSize: w.fontSize.Value(), TextZoom: w.zoom.Value(),
 			Theme: w.chosenTheme(), Themes: []string{}, Agents: [][3]string{}, Controls: map[string]*rectReport{}}
-		pr.PeekDelay = w.peekDelay.ValueAsInt()
+		pr.PeekDelay = int(w.peekDelay.Value())
+		pr.RailSensitive, pr.Animating = w.railOpen.Sensitive(), w.animating()
 		switch {
 		case w.dirHome.Active():
 			pr.NewDir = "~"
@@ -701,9 +705,9 @@ func (a *App) snapshot(label string) *uiSnapshot {
 			pr.Controls[k] = a.widgetRect(g, c)
 		}
 		pr.Notify, pr.NotifyStates = w.notifyShown()
-		pr.NotifyCommandAfter = w.notify.commandAfter.ValueAsInt()
-		pr.Hooks, pr.HooksHint, pr.HooksNote = w.hooksShown(), w.hooks.hint.Active(), w.hooks.note.Text()
-		pr.PresentAuto, pr.Skills, pr.SkillsNote = w.present.auto.Active(), w.skillsShown(), w.present.note.Text()
+		pr.NotifyCommandAfter = int(w.notify.commandAfter.Value())
+		pr.Hooks, pr.Skills, pr.SetupNote = w.hooksShown(), w.skillsShown(), w.setup.note.Text()
+		pr.HooksHint, pr.PresentAuto = w.hooksHint.Active(), w.presentAuto.Active()
 		s.Prefs = pr
 	}
 	s.Restore = a.restoreReport()
