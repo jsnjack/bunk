@@ -418,8 +418,8 @@ const sessionHint = "This terminal is bunk-gui, which shows documents in a panel
 	"so they follow the user's theme. " +
 	"The panel reloads the file whenever you save it. " +
 	"The user's questions, reviews and replies arrive as your input, starting \"About FILE › Section:\" or \"Review of FILE:\". " +
-	"The bunk-present skill has the details: bunk's stylesheet and components, Mermaid, KaTeX, ECharts, Graphviz and D3, " +
-	"all without the network."
+	"Load the bunk-present skill before you write the page: it has bunk's stylesheet and components, " +
+	"Mermaid, KaTeX, ECharts, Graphviz and D3, all without the network."
 
 // sessionStart runs "--session-start AGENT -", a SessionStart hook: in a
 // bunk-gui pane, which has the panel, it prints sessionHint as the context

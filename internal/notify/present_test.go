@@ -680,7 +680,7 @@ func TestSessionStart(t *testing.T) {
 			}
 			hint := sessionHintOf(t, tc.args[1], stdout.String())
 			for _, want := range []string{"bunk-gui", "`bunk-gui present FILE`", "self-contained HTML page", "Markdown", "About FILE › Section:",
-				"Review of FILE:", "var(--bunk-bg)", "FILE#heading-id", "bunk-present skill"} {
+				"Review of FILE:", "var(--bunk-bg)", "FILE#heading-id", "Load the bunk-present skill before you write the page"} {
 				if !strings.Contains(hint, want) {
 					t.Errorf("hint lacks %q: %s", want, hint)
 				}
