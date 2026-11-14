@@ -141,6 +141,9 @@ type scenario struct {
 	script []string          // "TIME ACTION" lines
 	env    []string          // extra environment
 	files  map[string]string // more files in the scenario's directory (the panes' cwd); "docs/x" makes docs/
+	// newDir starts the first tabs in new_dir, as a start from the desktop
+	// does, rather than in the scenario's directory (--working-directory).
+	newDir bool
 	limit  time.Duration
 	// cost is the scenario's rough length in seconds, run and checks
 	// (default 1): costly scenarios get a slot first.
@@ -262,6 +265,9 @@ func runGUI(t *testing.T, sc scenario) *guiRun {
 	}
 	args := append([]string{"--wait-focus", "--do", "@" + do, "--report", rep, "--config", cfg, "--timeout", limit.String(),
 		"--agent-home", filepath.Join(filepath.Dir(bin), "agent-home")}, sc.args...)
+	if !sc.newDir {
+		args = append(args, "--working-directory", dir)
+	}
 	cmd := exec.Command(w, append([]string{bin}, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // a timeout kills the compositor too
 	cmd.Dir = dir

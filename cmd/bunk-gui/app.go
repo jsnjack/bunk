@@ -222,12 +222,13 @@ func (a *App) activate() {
 
 	a.started = time.Now()
 	if !a.initRestore() {
-		first := a.newTab(a.cfg.cmd, "")
+		dir := a.startDir()
+		first := a.newTab(a.cfg.cmd, dir)
 		if first == nil {
 			return
 		}
 		for _, cmd := range a.cfg.tabs {
-			a.newTab(cmd, "")
+			a.newTab(cmd, dir)
 		}
 		a.selectTab(first)
 	}

@@ -64,6 +64,7 @@ bunk-gui takes these flags:
 | :- | :- |
 | `--command CMD` | Run `CMD` with `sh -c` in the first tab; quit when it exits |
 | `--tab CMD` | Open another tab running `CMD`; repeatable |
+| `--working-directory DIR` | Start the first tab and the `--tab` tabs in `DIR` instead of `new_dir` |
 | `--layout rail\|bar` | Tab layout for this run |
 | `--font "Noto Sans Mono 11"` | Font family and size for this run |
 | `--theme NAME` | Theme for this run |
@@ -168,7 +169,9 @@ bunk-gui reads `~/.config/bunk-gui/config.toml` (`--config`): `tabs`,
 for one run. `new_dir` is where new tabs and windows start: `~` (the
 default), `~/…`, an absolute path, or `current` for the active pane's
 directory; a directory that is gone gives the home directory, and splits
-start in their pane's directory. `rail_peek_delay` is how many
+start in their pane's directory. A window started from the desktop or a
+shell starts its first tabs there too, unless `--working-directory` names
+another; with `current` it starts them in bunk-gui's working directory. `rail_peek_delay` is how many
 milliseconds Alt is held alone before the collapsed rail labels its tabs
 (`railpeek.go`), 0 to 2000 and 200 by default; the delay lets Alt+A or a
 shell's Alt+B finish without the labels flashing. Every key reloads live

@@ -211,7 +211,8 @@ func strp(s *string) string {
 // TestGUILayoutsAndMenu: a config file selects the bar and the font; every
 // options-menu item works; Ctrl+B and the menu switch layouts with the
 // sizes of the prototypes; Ctrl+=/-/0 and the menu's −/+ change the text
-// size. New windows start in new_dir, which defaults to the home directory.
+// size. The window's tabs and new windows start in new_dir, which
+// defaults to the home directory.
 func TestGUILayoutsAndMenu(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -219,8 +220,10 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 		config: "tabs = \"bar\"\nfont = \"Noto Sans Mono\"\nfont_size = 12\n",
 		env:    []string{"HOME=" + home},
 		args:   []string{"--size", "100x30", "--tab", ""},
+		newDir: true,
 		script: []string{
 			"wait chrome.h=44 tabs.#=2 focused.settled=true",
+			"wait pane.0.status.cwd=" + home + " pane.1.status.cwd=" + home,
 			"snap bar",
 			"shot bar.png",
 			"menu open",

@@ -7,11 +7,12 @@ import (
 )
 
 // TestWindowCmd: a new window runs this bunk-gui in the pane's directory,
-// in its own session, with the activation token and a settings file other
-// than the default. It offers closed windows back like any other start.
+// with its tabs there, in its own session, with the activation token and
+// a settings file other than the default. It offers closed windows back
+// like any other start.
 func TestWindowCmd(t *testing.T) {
 	cmd := windowCmd("/usr/bin/bunk-gui", "/home/u/src", configPath(), "tok-1")
-	if !slices.Equal(cmd.Args, []string{"/usr/bin/bunk-gui"}) || cmd.Dir != "/home/u/src" {
+	if !slices.Equal(cmd.Args, []string{"/usr/bin/bunk-gui", "--working-directory", "/home/u/src"}) || cmd.Dir != "/home/u/src" {
 		t.Errorf("default settings: args %q in %q", cmd.Args, cmd.Dir)
 	}
 	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {

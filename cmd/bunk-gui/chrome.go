@@ -686,16 +686,43 @@ func (a *App) cwdForNew() string {
 	return newDir(a.settings.NewDir, a.activePane())
 }
 
-// newDir resolves new_dir: "current" is the active pane's directory, "~"
-// and "~/…" are under the home directory. A directory that does not exist
-// gives the home directory, and a missing home directory "" (bunk-gui's).
+// startDir is the directory of the tabs a window starts with:
+// --working-directory, which New window passes on, else new_dir, whose
+// "current" is then bunk-gui's own working directory.
+func (a *App) startDir() string {
+	if a.cfg.workDir != "" {
+		return a.cfg.workDir
+	}
+	return newDir(a.settings.NewDir, nil)
+}
+
+// checkDir returns dir as an absolute path, or why it is not a directory.
+func checkDir(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", abs)
+	}
+	return abs, nil
+}
+
+// newDir resolves new_dir: "current" is the active pane's directory, or
+// "" (bunk-gui's working directory) with no pane, and "~" and "~/…" are
+// under the home directory. A directory that does not exist gives the
+// home directory, and a missing home directory "".
 func newDir(setting string, active *Pane) string {
 	home, _ := os.UserHomeDir()
 	dir := setting
 	switch {
 	case setting == "current":
 		if active == nil {
-			return home
+			return ""
 		}
 		return active.s.Cwd()
 	case setting == "" || setting == "~":

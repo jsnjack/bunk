@@ -37,10 +37,27 @@ func TestNewDir(t *testing.T) {
 		{"~/missing", home},
 		{other, other},
 		{filepath.Join(other, "missing"), home},
-		{"current", home}, // no active pane
+		{"current", ""}, // no active pane: bunk-gui's working directory
 	} {
 		if got := newDir(tc.setting, nil); got != tc.want {
 			t.Errorf("newDir(%q) = %q, want %q", tc.setting, got, tc.want)
+		}
+	}
+}
+
+// TestCheckDir: --working-directory becomes an absolute path, and a path
+// that is missing or not a directory is refused.
+func TestCheckDir(t *testing.T) {
+	dir := t.TempDir()
+	must(t, os.Mkdir(filepath.Join(dir, "sub"), 0o700))
+	must(t, os.WriteFile(filepath.Join(dir, "file"), nil, 0o600))
+	t.Chdir(dir)
+	if got, err := checkDir("sub"); err != nil || got != filepath.Join(dir, "sub") {
+		t.Errorf("checkDir(sub) = %q, %v; want %q", got, err, filepath.Join(dir, "sub"))
+	}
+	for _, bad := range []string{"file", "missing"} {
+		if got, err := checkDir(bad); err == nil {
+			t.Errorf("checkDir(%s) = %q, want an error", bad, got)
 		}
 	}
 }

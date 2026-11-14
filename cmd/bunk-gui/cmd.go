@@ -24,6 +24,7 @@ import (
 type config struct {
 	cmd        string
 	tabs       []string
+	workDir    string // --working-directory: the start tabs' directory instead of new_dir
 	font       string
 	size       string
 	configFile string
@@ -74,6 +75,7 @@ func init() {
 	f.Bool("version", false, "print the version and exit")
 	f.StringVar(&opts.cmd, "command", "", "run `CMD` with sh -c instead of $SHELL in the first tab; quit when it exits")
 	f.StringArrayVar(&opts.tabs, "tab", nil, "open another tab running `CMD` (repeatable); the first tab stays selected")
+	f.StringVar(&opts.workDir, "working-directory", "", "start the first tab and the --tab tabs in `DIR` instead of new_dir")
 	f.StringVar(&opts.font, "font", "", "Pango font description, e.g. \"Noto Sans Mono 11\" (default: config file)")
 	f.StringVar(&opts.size, "size", "120x36", "initial size in cells, `COLSxROWS`")
 	f.StringVar(&opts.layout, "layout", "", "tab layout, `rail|bar` (default: config file)")
@@ -151,6 +153,11 @@ func runApp(cfg config, debug, trace bool) error {
 	dumpW, dumpH, err := parseDims(cfg.dumpSize)
 	if err != nil {
 		return fmt.Errorf("--dump-size: %w", err)
+	}
+	if cfg.workDir != "" {
+		if cfg.workDir, err = checkDir(cfg.workDir); err != nil {
+			return fmt.Errorf("--working-directory: %w", err)
+		}
 	}
 	if cfg.allocProbe || cfg.memProfile != "" {
 		runtime.MemProfileRate = 1

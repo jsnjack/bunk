@@ -2,9 +2,10 @@ package main
 
 // New windows. bunk-gui is a non-unique application: every window is its
 // own process, with its own tabs and notify socket. "New window" (menu,
-// Ctrl+Shift+N) starts bunk-gui again in new_dir (cwdForNew); the
-// desktop entry's new-window action does the same from the shell's app
-// menu.
+// Ctrl+Shift+N) starts bunk-gui again with --working-directory set to
+// new_dir (cwdForNew), so "current" means this window's pane. The desktop
+// entry's new-window action starts bunk-gui from the shell's app menu,
+// whose first tab starts in new_dir (startDir).
 
 import (
 	"log/slog"
@@ -54,14 +55,17 @@ func (a *App) openWindow() {
 	}()
 }
 
-// windowCmd is the command of a new window: bunk-gui in dir, with this
-// window's settings file and the activation token. It runs in its own
-// session, so a hang-up of the terminal this window started from leaves
-// it running.
+// windowCmd is the command of a new window: bunk-gui in dir, whose tabs
+// start there, with this window's settings file and the activation token.
+// It runs in its own session, so a hang-up of the terminal this window
+// started from leaves it running.
 func windowCmd(exe, dir, configFile, token string) *exec.Cmd {
 	cmd := exec.Command(exe)
 	if configFile != configPath() {
 		cmd.Args = append(cmd.Args, "--config", configFile)
+	}
+	if dir != "" {
+		cmd.Args = append(cmd.Args, "--working-directory", dir)
 	}
 	cmd.Dir = dir
 	cmd.Env = os.Environ()

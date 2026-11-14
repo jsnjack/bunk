@@ -86,8 +86,10 @@ the code.
 
 - Each bunk-gui window is its own process. The application is non-unique,
   and each process has its own notify socket. New window (Ctrl+Shift+N,
-  the menu) starts bunk-gui again in `new_dir` (home by default), in a new
-  session, with an XDG activation token so the window takes the focus. The
+  the menu) starts bunk-gui again with `--working-directory` set to
+  `new_dir` (home by default), in a new session, with an XDG activation
+  token so the window takes the focus. A window started any other way
+  starts its first tabs in `new_dir` itself (`startDir`). The
   desktop entry's `new-window` action gives GNOME Shell's app menu the same
   item: Shell offers no New Window for a running GTK application without
   one. On the test compositor the window is recorded in `--report`

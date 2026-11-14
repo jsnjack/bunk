@@ -13,7 +13,7 @@ switch tabs.
 | Feature | Default keys | Details |
 | :- | :- | :- |
 | New / close tab | F2 / Ctrl+Shift+W | A new tab starts in `new_dir`, the home directory by default |
-| New window | Ctrl+Shift+N | Starts another bunk-gui in `new_dir`; GNOME's app menu has New Window too |
+| New window | Ctrl+Shift+N | Starts another bunk-gui in `new_dir`, as every new window does; GNOME's app menu has New Window too |
 | Switch tab | Ctrl+Right / Ctrl+Left, Ctrl+Down / Ctrl+Up, Alt+1…9, Alt+0 | Alt+0 selects tab 10 |
 | Move tab | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn, or drag | Moves the selected tab in the rail or the bar; any tab can be dragged to a new place |
 | Rename tab | | Double-click a tab, or choose "Rename tab…" in the menu; `rename_tab` in `[keys]` binds a key. The name replaces the agent or program name, and an empty name brings it back |
