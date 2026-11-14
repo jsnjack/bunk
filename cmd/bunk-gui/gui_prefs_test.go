@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -22,6 +23,7 @@ import (
 // shortcuts swaps it for the shortcuts window.
 func TestGUIPreferences(t *testing.T) {
 	t.Parallel()
+	family := monoFamily(t)
 	const cfg = `# bunk-gui test settings
 tabs = "rail"   # side
 font_size = 11
@@ -65,10 +67,10 @@ scripts = ["goose/cli.py"]
 			"pref-scroll font",
 			"ptr-at pref font", "ptr-click",
 			"wait prefs.font_dialog=true idle 300ms",
-			"kbd-type DejaVu Sans Mono",
+			"kbd-type " + family,
 			"wait idle 300ms",
 			"kbd Down", "kbd space", "kbd Return",
-			"wait prefs.font_dialog=false font=\"DejaVu Sans Mono 12.5\" prefs.font=\"DejaVu Sans Mono\"",
+			"wait prefs.font_dialog=false font=\"" + family + " 12.5\" prefs.font=\"" + family + "\"",
 			"pref-scroll text-zoom",
 			"ptr-at pref text-zoom", "ptr-click", "kbd ctrl+a", "kbd-type 120\\r",
 			"wait text_zoom=120 text_percent=120",
@@ -131,7 +133,7 @@ scripts = ["goose/cli.py"]
 	if s := g.snap("bar"); s.Layout != "bar" || s.Prefs.RailSensitive || !g.snap("open").Prefs.RailSensitive {
 		t.Errorf("Tabs on top: layout %q, rail rows usable %v, before %v", s.Layout, s.Prefs.RailSensitive, g.snap("open").Prefs.RailSensitive)
 	}
-	if s := g.snap("text"); s.Font != "DejaVu Sans Mono 15" || s.FontSize != 15 || s.TextPercent != 120 || s.TextZoom != 120 || !s.RailOpen {
+	if s := g.snap("text"); s.Font != family+" 15" || s.FontSize != 15 || s.TextPercent != 120 || s.TextZoom != 120 || !s.RailOpen {
 		t.Errorf("font, size 12.5 and zoom 120 %%: font %q, %v pt, %d %%, default %v %%, rail open %v",
 			s.Font, s.FontSize, s.TextPercent, s.TextZoom, s.RailOpen)
 	}
@@ -172,7 +174,7 @@ font_size = 12.5
 restore = true
 rail_open = true
 rail_peek_delay = 150
-font = "DejaVu Sans Mono"
+font = "` + family + `"
 text_zoom = 120
 restore_scrollback = false
 new_dir = "/"
@@ -192,6 +194,21 @@ processes = ["crush"]
 	if string(got) != wantFile {
 		t.Errorf("config.toml:\n%s\nwant:\n%s", got, wantFile)
 	}
+}
+
+// monoFamily is a monospace family other than the default font, from
+// those a Fedora desktop usually has: the font dialog lists only the
+// installed ones.
+func monoFamily(t *testing.T) string {
+	t.Helper()
+	families := []string{"DejaVu Sans Mono", "Liberation Mono", "Adwaita Mono"}
+	for _, f := range families {
+		if exec.Command("fc-list", "-q", f+":spacing=mono").Run() == nil {
+			return f
+		}
+	}
+	t.Fatalf("none of %q is installed (fc-list)", families)
+	return ""
 }
 
 func agentsEqual(a, b []session.AgentSpec) bool {
