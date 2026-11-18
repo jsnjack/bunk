@@ -626,8 +626,8 @@ func TestGUIRailSelectedOnly(t *testing.T) {
 		d := func(x uint8, y uint32) bool { return int(x)-int(y) <= 4 && int(y)-int(x) <= 4 }
 		return d(c.R, hex>>16&0xff) && d(c.G, hex>>8&0xff) && d(c.B, hex&0xff)
 	}
-	if c := fill(1); !near(c, 0x26292f) {
-		t.Errorf("the selected tab's background is %v, want #26292f", c)
+	if c := fill(1); !near(c, 0x3a3f48) {
+		t.Errorf("the selected tab's background is %v, want #3a3f48", c)
 	}
 	if c := fill(2); !near(c, 0x131416) {
 		t.Errorf("the tab that needs you has background %v, want the rail's #131416", c)

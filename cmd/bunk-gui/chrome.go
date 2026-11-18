@@ -39,10 +39,11 @@ menubutton.chrome > button { background: none; box-shadow: none; border: none; m
 	padding: 0; border-radius: 8px; color: #d8dade; }
 menubutton.chrome > button:checked, menubutton.chrome > button:hover { background: #2a2c31; }
 .closewin { background: #2a2c31; border-radius: 9999px; min-width: 24px; min-height: 24px; color: #d8dade; }
-/* Only the selected tab is filled; a tab that needs you shows it in the
-   amber of its dot, ring and label alone. */
+/* Only the selected tab is filled, in one colour in the bar and in both
+   rail states, bright enough to find at a glance; a tab that needs you
+   shows it in the amber of its dot, ring and label alone. */
 .tab { border-radius: 8px; min-height: 34px; color: #b4b9c1; }
-.tab.active { background: #23252a; color: #e6e8eb; }
+.tab.active { background: #3a3f48; color: #e6e8eb; }
 button.tabbtn { background: none; box-shadow: none; border: none; padding: 0 2px 0 10px; min-height: 34px; color: inherit; }
 button.tabclose { background: none; box-shadow: none; border: none; min-width: 26px; min-height: 26px; padding: 0;
 	margin-right: 4px; border-radius: 6px; color: #7d828a; }
@@ -66,7 +67,7 @@ entry.findentry { min-height: 30px; background: #131416; color: #e6e8eb; }
 .notice { font-size: 12px; color: #ffb454; }
 button.raildot { background: none; box-shadow: none; border: none; padding: 0; min-width: 40px; min-height: 40px;
 	border-radius: 8px; font-size: 16px; }
-button.raildot.active { background: #26292f; }
+button.raildot.active { background: #3a3f48; }
 .railmap { min-width: 30px; min-height: 30px; }
 .railpeek { background: #2e3138; border: 1px solid #5a5f68; border-radius: 8px; padding: 0 12px 0 6px;
 	box-shadow: 0 4px 16px alpha(black, 0.65); color: #f2f4f6; }
@@ -87,7 +88,7 @@ progressbar.tabprogress.busy > trough > progress { background: alpha(#5aa9ff, 0.
 .mapcell { font-size: 10px; background: alpha(#ffffff, 0.07); border-radius: 3px; min-width: 6px; min-height: 6px; }
 .panecount { font-size: 9px; color: #9aa0a8; }
 .row { border-radius: 8px; color: #d8dade; }
-.row.active { background: #26292f; }
+.row.active { background: #3a3f48; }
 button.rowbtn { background: none; box-shadow: none; border: none; padding: 8px 4px 8px 10px; color: inherit; }
 .row .agent { font-size: 14px; color: #e6e8eb; }
 .statelabel { font-size: 12px; color: #9aa0a8; }

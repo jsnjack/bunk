@@ -27,15 +27,14 @@ func slack() float64 {
 
 // Prototype colours (Main.dc.html, Horizontal.dc.html).
 var (
-	colChrome    = hex(0x131416)
-	colBarActive = hex(0x23252a)
-	colRailActv  = hex(0x26292f)
-	colMenu      = hex(0x1b1c20)
-	colWorking   = hex(0x5aa9ff)
-	colNeeds     = hex(0xffb454)
-	colIdle      = hex(0x9aa0a8)
-	colFailed    = hex(0xff8a8a)
-	colLoc       = hex(0xc7b8ff)
+	colChrome   = hex(0x131416)
+	colSelected = hex(0x3a3f48) // the selected tab, in the bar and the rail
+	colMenu     = hex(0x1b1c20)
+	colWorking  = hex(0x5aa9ff)
+	colNeeds    = hex(0xffb454)
+	colIdle     = hex(0x9aa0a8)
+	colFailed   = hex(0xff8a8a)
+	colLoc      = hex(0xc7b8ff)
 )
 
 // TestGUIFrame: rendering is pixel-exact through GSK at 133 %, the renderer
@@ -356,8 +355,8 @@ func TestGUILayoutsAndMenu(t *testing.T) {
 		}
 		it := bar.tab(t, 1).Item
 		x, y, w, h := inner(it, 2)
-		if n := count(img, x, y, w, h, colBarActive, 1); n < w*h/3 {
-			t.Errorf("selected bar tab: %d of %d pixels %v", n, w*h, colBarActive)
+		if n := count(img, x, y, w, h, colSelected, 1); n < w*h/3 {
+			t.Errorf("selected bar tab: %d of %d pixels %v", n, w*h, colSelected)
 		}
 		it = bar.tab(t, 2).Item
 		x, y, w, h = inner(it, 2)
@@ -715,7 +714,7 @@ func TestGUITabsAndStatus(t *testing.T) {
 		loc     bool
 	}{
 		// Only the selected tab is filled; needs-you is its amber dot and label.
-		{1, colRailActv, colIdle, false}, {2, colChrome, colNeeds, false}, {3, colChrome, colWorking, true}, {4, colChrome, colFailed, true},
+		{1, colSelected, colIdle, false}, {2, colChrome, colNeeds, false}, {3, colChrome, colWorking, true}, {4, colChrome, colFailed, true},
 	} {
 		it := s.tab(t, c.tab).Item
 		if it == nil {
@@ -932,7 +931,7 @@ exit 3
 		t.Errorf("after OSC 133;D;3: tab 2 %+v", tb)
 	} else {
 		img := loadPNG(t, g.file("failed.png"))
-		if n := blendCount(img, tb.Item.DX, tb.Item.DY, int(30*f.Window.Scale), tb.Item.DH, colFailed, colRailActv); n < 4 {
+		if n := blendCount(img, tb.Item.DX, tb.Item.DY, int(30*f.Window.Scale), tb.Item.DH, colFailed, colSelected); n < 4 {
 			t.Errorf("failed dot: %d pixels of %v", n, colFailed)
 		}
 	}
