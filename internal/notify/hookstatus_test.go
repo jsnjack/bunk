@@ -65,12 +65,18 @@ const codexState = `
 trusted_hash = "sha256:f57907b637acdfbc34ae08636cc471f5745fcef7bac198c9bdba25d5ef885fd6"
 `
 
+// codexOff is the setting Codex's hooks need, as InstallHooks appends it
+// to config.toml.
+const codexOff = "\n[features]\ndaemon_auto_start = false\n"
+
 // TestCheckHooks: each agent's hooks are missing without a file, installed
 // when every hook of the snippet is there beside the user's own settings
 // and hooks, and outdated when only older bunk hooks are. The variables
 // that move an agent's directory are followed, Codex's config.toml counts
 // as much as its hooks.json, and an unreadable file is a problem, not an
-// installation.
+// installation. Codex's hooks are outdated while config.toml leaves its
+// shared daemon on by default, and installed when the user set it either
+// way.
 func TestCheckHooks(t *testing.T) {
 	t.Parallel()
 	snippet := func(agent string) string {
@@ -90,6 +96,7 @@ func TestCheckHooks(t *testing.T) {
 		path   string // home-relative
 		issue  bool   // a Problem is reported
 		absent []string
+		lacks  bool // the agent's setting is missing
 	}{
 		{name: "claude without settings", agent: "claude", state: HooksMissing, path: ".claude/settings.json"},
 		{name: "claude merged into settings", agent: "claude", files: map[string]string{".claude/settings.json": withSettings(t, snippet("claude"))},
@@ -105,20 +112,30 @@ func TestCheckHooks(t *testing.T) {
 			state: HooksMissing, path: ".claude/settings.json", issue: true},
 		{name: "claude in CLAUDE_CONFIG_DIR", agent: "claude", env: map[string]string{"CLAUDE_CONFIG_DIR": "conf/claude"},
 			files: map[string]string{"conf/claude/settings.json": snippet("claude")}, state: HooksInstalled, path: "conf/claude/settings.json"},
-		{name: "codex hooks.json", agent: "codex", files: map[string]string{".codex/hooks.json": snippet("codex")},
+		{name: "codex hooks.json", agent: "codex", files: map[string]string{".codex/hooks.json": snippet("codex"), ".codex/config.toml": codexOff},
 			state: HooksInstalled, path: ".codex/hooks.json"},
-		{name: "codex config.toml", agent: "codex", files: map[string]string{".codex/config.toml": codexTOML()},
+		{name: "codex config.toml", agent: "codex", files: map[string]string{".codex/config.toml": codexTOML() + codexOff},
 			state: HooksInstalled, path: ".codex/hooks.json"},
 		{name: "codex trust state", agent: "codex",
-			files: map[string]string{".codex/hooks.json": snippet("codex"), ".codex/config.toml": "model = \"o3\"\n" + codexState},
+			files: map[string]string{".codex/hooks.json": snippet("codex"), ".codex/config.toml": "model = \"o3\"\n" + codexState + codexOff},
 			state: HooksInstalled, path: ".codex/hooks.json"},
-		{name: "codex config.toml with trust state", agent: "codex", files: map[string]string{".codex/config.toml": codexTOML() + codexState},
+		{name: "codex config.toml with trust state", agent: "codex", files: map[string]string{".codex/config.toml": codexTOML() + codexState + codexOff},
 			state: HooksInstalled, path: ".codex/hooks.json"},
+		{name: "codex without config.toml", agent: "codex", files: map[string]string{".codex/hooks.json": snippet("codex")},
+			state: HooksOutdated, path: ".codex/hooks.json", absent: []string{}, lacks: true},
+		{name: "codex with its daemon on", agent: "codex",
+			files: map[string]string{".codex/hooks.json": snippet("codex"), ".codex/config.toml": "model = \"o3\"\n[features]\nfast_mode = true\n"},
+			state: HooksOutdated, path: ".codex/hooks.json", absent: []string{}, lacks: true},
+		{name: "codex daemon left on by the user", agent: "codex",
+			files: map[string]string{".codex/hooks.json": snippet("codex"), ".codex/config.toml": "[features]\ndaemon_auto_start = true\n"},
+			state: HooksInstalled, path: ".codex/hooks.json"},
+		{name: "codex setting without hooks", agent: "codex", files: map[string]string{".codex/config.toml": codexOff},
+			state: HooksMissing, path: ".codex/hooks.json"},
 		{name: "codex config.toml not TOML", agent: "codex",
 			files: map[string]string{".codex/hooks.json": snippet("codex"), ".codex/config.toml": "[hooks"},
 			state: HooksInstalled, path: ".codex/hooks.json", issue: true},
 		{name: "codex in CODEX_HOME", agent: "codex", env: map[string]string{"CODEX_HOME": "conf/codex"},
-			files: map[string]string{".codex/hooks.json": snippet("codex")}, state: HooksMissing, path: "conf/codex/hooks.json"},
+			files: map[string]string{".codex/hooks.json": snippet("codex")}, state: HooksMissing, path: "conf/codex/hooks.json", lacks: true},
 		{name: "copilot", agent: "copilot", files: map[string]string{".copilot/hooks/bunk.json": snippet("copilot")},
 			state: HooksInstalled, path: ".copilot/hooks/bunk.json"},
 		{name: "copilot hooks in another file", agent: "copilot", files: map[string]string{".copilot/hooks/mine.json": snippet("copilot")},
@@ -149,6 +166,9 @@ func TestCheckHooks(t *testing.T) {
 			if tc.absent != nil && !slices.Equal(h.Missing, tc.absent) {
 				t.Errorf("missing %q, want %q", h.Missing, tc.absent)
 			}
+			if h.SettingMissing != tc.lacks || (h.Setting != "") != (tc.agent == "codex") {
+				t.Errorf("setting %q in %s, missing %v; want missing %v", h.Setting, h.SettingPath, h.SettingMissing, tc.lacks)
+			}
 			if !h.Installable || h.Merges != (tc.agent == "claude" || tc.agent == "gemini") {
 				t.Errorf("installable %v, merges %v", h.Installable, h.Merges)
 			}
@@ -173,7 +193,8 @@ func TestInstallHooks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", agent, err)
 		}
-		if h, _ := CheckHook(d, agent); h.State != HooksInstalled || h.Path != done.Path || done.Backup != "" {
+		if h, _ := CheckHook(d, agent); h.State != HooksInstalled || h.Path != done.Path || done.Backup != "" || done.SettingBackup != "" ||
+			done.Setting != h.SettingPath {
 			t.Errorf("%s after install: %+v, %+v", agent, h, done)
 		}
 		if fi, err := os.Stat(done.Path); err != nil || fi.Mode().Perm() != 0o644 {
@@ -181,10 +202,14 @@ func TestInstallHooks(t *testing.T) {
 		}
 	}
 
+	if data, _ := os.ReadFile(filepath.Join(home, ".codex", "config.toml")); string(data) != strings.TrimPrefix(codexOff, "\n") {
+		t.Errorf("codex config.toml:\n%s", data)
+	}
+
 	codex := filepath.Join(home, ".codex", "hooks.json")
 	writeFile(t, codex, `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bunk notify done"}]}]}}`)
-	if _, err := InstallHooks(d, "codex"); err != nil {
-		t.Fatalf("over older bunk hooks: %v", err)
+	if done, err := InstallHooks(d, "codex"); err != nil || done.Setting != "" {
+		t.Fatalf("over older bunk hooks: %+v, %v", done, err)
 	}
 	if h, _ := CheckHook(d, "codex"); h.State != HooksInstalled {
 		t.Errorf("over older bunk hooks: %+v", h)
@@ -332,7 +357,10 @@ func TestHooksCLI(t *testing.T) {
 			t.Errorf("hooks: exit %d, %q lacks %q", code, out, want)
 		}
 	}
-	if code, out, _ := run("hooks", "install", "codex"); code != 0 || out != "Installed ~/.codex/hooks.json. Run /hooks in Codex once to trust the hooks.\n" {
+	if code, out, _ := run("hooks", "install", "codex"); code != 0 || out != "Installed ~/.codex/hooks.json. Run /hooks in Codex once to trust the hooks. "+
+		"Set daemon_auto_start = false under [features] in ~/.codex/config.toml, "+
+		"so each session reports to its own pane rather than through Codex's shared daemon. "+
+		"Once no Codex session runs, stop the daemon with codex app-server daemon stop; until then, a new Codex session asks whether to run without it.\n" {
 		t.Errorf("install codex: exit %d, %q", code, out)
 	}
 	if _, out, _ := run("hooks"); !strings.Contains(out, "codex    installed  ~/.codex/hooks.json") {

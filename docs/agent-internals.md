@@ -105,6 +105,20 @@ the code.
     saved as `<file>.bunk-backup`, the mode and indentation stay, a
     symbolic link's target is written, and a file that is not JSON is
     refused. A Copilot CLI file with other hooks is refused too.
+  - Codex's hooks also need `daemon_auto_start = false` under
+    `[features]` in its `config.toml` (`codexdaemon.go`, through the
+    recipe's `agentSetting`). Codex's shared app-server daemon keeps the
+    environment of the terminal that first started Codex, so the commands
+    and hooks of every Codex session would carry that pane's token: bunk
+    would show their reports and documents in that pane, or drop them
+    once it closed. `CheckHooks` calls Codex's hooks outdated while the
+    setting is missing (`Hooks.SettingMissing`), and a value the user set,
+    either way, counts. `InstallHooks` checks that `config.toml` can take
+    the setting before it writes `hooks.json`, then adds it on the line
+    after the `[features]` header, or in a `[features]` table at the end
+    when nothing defines features, keeping a backup. It refuses features
+    defined by dotted keys, an inline table or sub-tables alone: a header
+    after them is not TOML, though BurntSushi/toml reads it.
   - bunk-gui's Preferences show the same states on the Agents page: a row
     per agent with its hooks and skill, a Set up (or Update) button that
     installs what is missing or outdated, as the banner does, Copy snippet

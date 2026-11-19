@@ -367,8 +367,11 @@ func hookStatus(prog string, d Dirs) string {
 			line += fmt.Sprintf(" (%s is not on PATH)", h.Agent)
 		}
 		b.WriteString(line + "\n")
-		if h.State == HooksOutdated {
+		if h.State == HooksOutdated && len(h.Missing) > 0 {
 			fmt.Fprintf(&b, "%-19s lacks the %s hooks of the current snippet\n", "", strings.Join(h.Missing, ", "))
+		}
+		if h.SettingMissing {
+			fmt.Fprintf(&b, "%-19s lacks %s in %s\n", "", h.Setting, d.Short(h.SettingPath))
 		}
 		if h.Problem != "" {
 			fmt.Fprintf(&b, "%-19s %s\n", "", h.Problem)
@@ -383,8 +386,7 @@ func hookStatus(prog string, d Dirs) string {
 
 // installHooks runs "hooks install <agent>".
 func installHooks(prog, agent string, d Dirs, stdout, stderr io.Writer) int {
-	r, ok := recipe(agent)
-	if !ok {
+	if _, ok := recipe(agent); !ok {
 		write(stderr, prog+" notify: hooks install takes one of:\n"+HookAgents(prog))
 		return exitError
 	}
@@ -393,13 +395,6 @@ func installHooks(prog, agent string, d Dirs, stdout, stderr io.Writer) int {
 		write(stderr, fmt.Sprintf("%s notify: %v\n", prog, err))
 		return exitError
 	}
-	msg := "Installed " + d.Short(done.Path) + "."
-	if done.Backup != "" {
-		msg += " The old file is in " + d.Short(done.Backup) + "."
-	}
-	if r.after != "" {
-		msg += " " + r.after
-	}
-	write(stdout, msg+"\n")
+	write(stdout, InstallNote(d, agent, done)+"\n")
 	return 0
 }

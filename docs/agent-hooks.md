@@ -35,7 +35,7 @@ agent runs.
    | Agent | File | How |
    | :- | :- | :- |
    | Claude Code | `~/.claude/settings.json` | `bunk notify hooks install claude` |
-   | Codex | `~/.codex/hooks.json` | `bunk notify hooks install codex`, then `/hooks` in Codex to trust the hooks |
+   | Codex | `~/.codex/hooks.json`, and `daemon_auto_start = false` in `~/.codex/config.toml` ([why](#codex)) | `bunk notify hooks install codex`, then `/hooks` in Codex to trust the hooks |
    | Copilot CLI | `~/.copilot/hooks/bunk.json` | `bunk notify hooks install copilot` |
    | Gemini CLI | `~/.gemini/settings.json` | `bunk notify hooks install gemini` |
 
@@ -44,6 +44,11 @@ agent runs.
      with older bunk hooks. A Codex `hooks.json` with hooks of your own gets
      bunk's merged in, as below; a Copilot CLI file with hooks of your own
      stays as it is: merge the snippet into that one by hand.
+   - For Codex, `install` also adds `daemon_auto_start = false` under
+     `[features]` in `config.toml`, which [the Codex section](#codex)
+     explains. It saves the old file as `config.toml.bunk-backup` first,
+     keeps your other settings and the file's mode, and leaves a
+     `daemon_auto_start` you set yourself, either way.
    - Claude Code and Gemini CLI keep hooks in their settings file, next to
      your other settings. `install` merges bunk's hooks into it: it removes
      the hooks that run bunk's notify CLI, of any version, adds the current
@@ -436,7 +441,26 @@ including events, input fields, matchers, exit codes and the environment.
 ## Codex
 
 Save as `~/.codex/hooks.json`, then run `/hooks` in Codex once to trust the
-hooks. Codex reads this file next to `config.toml` and merges the hooks of
+hooks, and turn off Codex's shared daemon in `~/.codex/config.toml`:
+
+```toml
+[features]
+daemon_auto_start = false
+```
+
+Codex 0.170 and later run every session in one shared background server,
+`codex app-server --managed-daemon`, that keeps the environment of the
+terminal that first started Codex. The commands and hooks of a Codex session
+in any pane then get that terminal's `BUNK_NOTIFY_SESSION`, so bunk shows
+their states and documents in that pane, and drops them once the pane has
+closed. Without the daemon, each Codex session runs its server in its own
+process, with its own pane's environment. `bunk notify hooks install codex`
+and bunk-gui's Set up add the setting; until it is there, `bunk notify
+hooks` shows Codex's hooks as outdated. Once no Codex session runs, stop the
+daemon that runs now with `codex app-server daemon stop`; until then, a new
+Codex session asks whether to run without it.
+
+Codex reads `hooks.json` next to `config.toml` and merges the hooks of
 both, so the file can be deployed whole:
 
 ```json

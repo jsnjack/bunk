@@ -126,6 +126,13 @@ func installAllHooks(home string) error {
 			return err
 		}
 	}
+	for _, h := range notify.CheckHooks(d) {
+		if h.SettingMissing { // Codex's daemon_auto_start = false
+			if _, err := notify.InstallHooks(d, h.Agent); err != nil {
+				return err
+			}
+		}
+	}
 	for _, s := range notify.CheckSkills(d) {
 		if _, err := notify.InstallSkill(d, s.Agent); err != nil {
 			return err

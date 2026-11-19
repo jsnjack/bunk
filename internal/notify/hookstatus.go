@@ -3,6 +3,7 @@
 package notify
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +55,25 @@ type Hooks struct {
 	CLI         bool   // the agent's command is on PATH
 	Problem     string // why the configuration could not be read; "" when it could
 	After       string // what to do once InstallHooks wrote the file, or ""
+	// Setting is a setting of the agent's own that its hooks need, as
+	// people read it, SettingPath the file that holds it and SettingWhy
+	// what it does, after "so"; all "" for an agent that needs none.
+	// SettingMissing: the file lacks it, so the hooks are not installed
+	// and InstallHooks adds it.
+	Setting, SettingPath, SettingWhy string
+	SettingMissing                   bool
+}
+
+// agentSetting is a setting of the agent's own that its hooks need, in a
+// settings file of its directory: Codex's daemon_auto_start = false
+// (codexdaemon.go). CheckHooks looks for it and InstallHooks adds it.
+type agentSetting struct {
+	file  string // the settings file, in the agent's directory
+	text  string // the setting as people read it
+	why   string // what it does for bunk, after "so" in a sentence
+	after string // what to do once InstallHooks added it, or ""
+	has   func(data []byte) (bool, error)
+	add   func(data []byte) ([]byte, error) // data with the setting
 }
 
 // Dirs locates the agents' configuration directories: the home directory
@@ -154,8 +174,18 @@ func check(d Dirs, r agentHooks) Hooks {
 			h.Missing = append(h.Missing, want.event)
 		}
 	}
+	if s := r.setting; s != nil {
+		h.Setting, h.SettingPath, h.SettingWhy = s.text, filepath.Join(dir, s.file), s.why
+		has, err := s.lookup(h.SettingPath)
+		switch {
+		case err == nil:
+			h.SettingMissing = !has
+		case h.Problem == "":
+			h.Problem = err.Error()
+		}
+	}
 	switch {
-	case len(h.Missing) == 0:
+	case len(h.Missing) == 0 && !h.SettingMissing:
 		h.State = HooksInstalled
 	case slices.ContainsFunc(found, func(f foundHook) bool { return bunkCommand(f.command) }):
 		h.State = HooksOutdated
@@ -301,10 +331,92 @@ func readCopilotHooks(dir string) ([]foundHook, error) {
 	return out, errors.Join(errs...)
 }
 
-// Installed is what InstallHooks changed: the file, and the copy of its
-// old contents it kept, "" when it kept none.
+// lookup reports whether the settings file at path has the setting. A
+// missing file lacks it.
+func (s *agentSetting) lookup(path string) (bool, error) {
+	data, err := readFile(path)
+	if err != nil || data == nil {
+		return false, err
+	}
+	has, err := s.has(data)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
+	return has, nil
+}
+
+// edit returns the settings file at path, which may be missing, as it is
+// and with the setting added; a symbolic link gives its target's path.
+func (s *agentSetting) edit(path string) (target string, old, data []byte, err error) {
+	if t, err := filepath.EvalSymlinks(path); err == nil {
+		path = t
+	}
+	if old, err = readFile(path); err != nil {
+		return path, nil, nil, err
+	}
+	data, err = s.add(old)
+	return path, old, data, err
+}
+
+// pending reports whether adding the setting changes the settings file
+// at path, or why it cannot be added.
+func (s *agentSetting) pending(path string) (bool, error) {
+	_, old, data, err := s.edit(path)
+	return err == nil && !bytes.Equal(data, old), err
+}
+
+// addTo adds the setting to the settings file at path, which may be
+// missing, and returns the backup of its old contents, "" when there was
+// nothing to keep. The file keeps its mode, and a symbolic link stays:
+// its target changes.
+func (s *agentSetting) addTo(path string) (backup string, err error) {
+	path, old, data, err := s.edit(path)
+	if err != nil || bytes.Equal(data, old) {
+		return "", err
+	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	if old != nil {
+		backup = path + BackupSuffix
+		if err := writeAtomic(backup, old, mode); err != nil {
+			return "", err
+		}
+	}
+	return backup, writeAtomic(path, data, mode)
+}
+
+// Installed is what InstallHooks changed: the hooks file, and the copy of
+// its old contents it kept, "" when it kept none; then the settings file
+// it added the agent's setting to (Hooks.Setting) and the copy of that,
+// "" when it changed none.
 type Installed struct {
-	Path, Backup string
+	Path, Backup           string
+	Setting, SettingBackup string
+}
+
+// InstallNote says what InstallHooks did for agent and what is left to
+// do, for people.
+func InstallNote(d Dirs, agent string, done Installed) string {
+	r, _ := recipe(agent)
+	text := "Installed " + d.Short(done.Path) + "."
+	if done.Backup != "" {
+		text += " The old file is in " + d.Short(done.Backup) + "."
+	}
+	if r.after != "" {
+		text += " " + r.after
+	}
+	if s := r.setting; s != nil && done.Setting != "" {
+		text += fmt.Sprintf(" Set %s in %s, %s.", s.text, d.Short(done.Setting), s.why)
+		if done.SettingBackup != "" {
+			text += " The old file is in " + d.Short(done.SettingBackup) + "."
+		}
+		if s.after != "" {
+			text += " " + s.after
+		}
+	}
+	return text
 }
 
 // InstallHooks sets up an agent's current hooks. A hooks file of bunk's
@@ -313,7 +425,39 @@ type Installed struct {
 // user's) has only bunk's hooks replaced, its other keys kept in their
 // order, after a copy of it is saved as BackupSuffix. A Copilot CLI hooks
 // file with other hooks is refused, and so is a file that is not JSON.
+// Then the setting the hooks need, if the agent lacks it, is added to its
+// settings file, which is kept as BackupSuffix first.
 func InstallHooks(d Dirs, agent string) (Installed, error) {
+	r, ok := recipe(agent)
+	if !ok {
+		return Installed{}, fmt.Errorf("no hooks for %q", agent)
+	}
+	// A settings file that cannot take the setting stops the install
+	// before the hooks file changes.
+	var setting string
+	if s := r.setting; s != nil {
+		path := filepath.Join(d.dir(r), s.file)
+		pending, err := s.pending(path)
+		if err != nil {
+			return Installed{Path: filepath.Join(d.dir(r), r.file)}, fmt.Errorf("%s stays as it is: %w", d.Short(path), err)
+		}
+		if pending {
+			setting = path
+		}
+	}
+	done, err := installHookFile(d, agent)
+	if err != nil || setting == "" {
+		return done, err
+	}
+	if done.SettingBackup, err = r.setting.addTo(setting); err != nil {
+		return done, fmt.Errorf("%s stays as it is: %w", d.Short(setting), err)
+	}
+	done.Setting = setting
+	return done, nil
+}
+
+// installHookFile writes or merges agent's hooks file for InstallHooks.
+func installHookFile(d Dirs, agent string) (Installed, error) {
 	r, ok := recipe(agent)
 	if !ok {
 		return Installed{}, fmt.Errorf("no hooks for %q", agent)

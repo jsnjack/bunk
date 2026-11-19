@@ -262,6 +262,9 @@ Agents ([docs/agent-internals.md](docs/agent-internals.md)):
   banner offers an agent's hooks and its bunk-present skill.
 - Agents cannot see their environment: a SessionStart hook tells them in a
   bunk-gui pane that the panel is there, and the skill asks for HTML.
+- Codex's hooks need `daemon_auto_start = false`: its shared app-server
+  daemon gives every session the token of the pane that first started
+  Codex. bunk's Codex setup writes the setting.
 - Agents on hosts reached over ssh report in-band when no socket is
   reachable.
 - The TUI reads `Session.Status` before taking the session lock.

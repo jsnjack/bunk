@@ -67,6 +67,8 @@ type agentHooks struct {
 	hooks  []hook
 	render func([]hook) (string, error)
 	read   func(dir string) ([]foundHook, error) // the hooks the agent has now
+	// setting is a setting of the agent's own that the hooks need, or nil.
+	setting *agentSetting
 }
 
 // dest names the snippet's file and how it gets there, for listings.
@@ -136,9 +138,10 @@ var recipes = []agentHooks{
 	},
 	{
 		name: "codex", homeDir: ".codex", envDir: "CODEX_HOME", file: "hooks.json", own: true,
-		how:   "%[1]s notify hooks install codex, then trust the hooks with /hooks in Codex",
-		after: "Run /hooks in Codex once to trust the hooks.",
-		read:  readCodexHooks,
+		how:     "%[1]s notify hooks install codex, then trust the hooks with /hooks in Codex",
+		after:   "Run /hooks in Codex once to trust the hooks.",
+		read:    readCodexHooks,
+		setting: codexSetting,
 		hooks: []hook{
 			{event: "SessionStart", sub: cmdPresent, args: "--session-start codex -"},
 			{event: "UserPromptSubmit", args: "working -"},

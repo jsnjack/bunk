@@ -10,8 +10,9 @@ package main
 // notify.CheckHooks and notify.CheckSkills find it, installs what is
 // missing or outdated (notify.InstallHooks: files of their own for Codex
 // and Copilot CLI, merged into settings.json with a backup for Claude
-// Code and Gemini CLI; notify.InstallSkill) and copies the snippets. It
-// never writes a file without a click.
+// Code and Gemini CLI, and Codex's daemon_auto_start = false in its
+// config.toml; notify.InstallSkill) and copies the snippets. It never
+// writes a file without a click.
 //
 // The reminder is a banner over the panes: at start for agents whose bunk
 // hooks or bunk-present skill are outdated, and when a tab first shows an
@@ -22,6 +23,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 
@@ -169,6 +171,13 @@ func (w *prefsWindow) refreshSetup() {
 		hooks.AddSuffix(c)
 		w.controls["hooks-"+agent+"-copy"] = c
 		row.AddRow(hooks)
+		if h.Setting != "" {
+			look := "✓ Set"
+			if h.SettingMissing {
+				look = "✗ Not set"
+			}
+			row.AddRow(actionRow(h.Setting, fileLine(look, d.Short(h.SettingPath), "")))
+		}
 		if hasSkill {
 			row.AddRow(actionRow("bunk-present skill", fileLine(hookLooks[sk.State], d.Short(sk.Path), sk.Problem)))
 		}
@@ -227,6 +236,9 @@ func (w *prefsWindow) copyHooks(agent string) {
 			where += " " + h.After
 		}
 	}
+	if h.Setting != "" {
+		where += fmt.Sprintf(" Set %s in %s too, %s.", h.Setting, d.Short(h.SettingPath), h.SettingWhy)
+	}
 	showNote(w.setup.note, "Copied the "+agent+" snippet: "+where)
 }
 
@@ -236,12 +248,22 @@ type hooksReport struct {
 	State       string `json:"state"`
 	Path        string `json:"path"`
 	Installable bool   `json:"installable"`
+	// Setting is "set" or "missing" for an agent whose hooks need a
+	// setting of its own (notify.Hooks.Setting), else "".
+	Setting string `json:"setting,omitempty"`
 }
 
 func (w *prefsWindow) hooksShown() []hooksReport {
 	out := []hooksReport{}
 	for _, h := range w.setup.hooks {
-		out = append(out, hooksReport{Agent: h.Agent, State: h.State.String(), Path: h.Path, Installable: h.Installable})
+		r := hooksReport{Agent: h.Agent, State: h.State.String(), Path: h.Path, Installable: h.Installable}
+		switch {
+		case h.SettingMissing:
+			r.Setting = "missing"
+		case h.Setting != "":
+			r.Setting = "set"
+		}
+		out = append(out, r)
 	}
 	return out
 }
@@ -263,14 +285,7 @@ func (a *App) installHooks(agent string) (string, bool) {
 		slog.Debug("install hooks", "agent", agent, "err", err)
 		return "Not installed: " + err.Error(), false
 	}
-	text := "Installed " + d.Short(done.Path) + "."
-	if done.Backup != "" {
-		text += " The old file is in " + d.Short(done.Backup) + "."
-	}
-	if h, _ := notify.CheckHook(d, agent); h.After != "" {
-		text += " " + h.After
-	}
-	return text, true
+	return notify.InstallNote(d, agent, done), true
 }
 
 // hookOffer is the banner that offers to set up agents' hooks and skills.
@@ -380,7 +395,7 @@ func (a *App) offerSetup(s agentSetup) {
 	o.seen[agent] = true
 	o.agents = append(o.agents, s)
 	d := a.hookDirs()
-	var names, files []string
+	var names, files, settings []string
 	outdated, hooks, skills := true, false, false
 	state := func(st notify.HookState, missing string) string {
 		if st == notify.HooksMissing {
@@ -399,6 +414,14 @@ func (a *App) offerSetup(s agentSetup) {
 				file += ", keeping a copy"
 			}
 			files = append(files, file)
+			if h := s.hooks; h.SettingMissing {
+				file := d.Short(h.SettingPath)
+				if _, err := os.Stat(h.SettingPath); err == nil {
+					file += ", keeping a copy"
+				}
+				files = append(files, file)
+				settings = append(settings, fmt.Sprintf("%s for %s, %s", h.Setting, agentTitle(h.Agent), h.SettingWhy))
+			}
 		}
 		if s.fixSkill {
 			skills = true
@@ -414,6 +437,9 @@ func (a *App) offerSetup(s agentSetup) {
 	var why []string
 	if hooks {
 		why = append(why, "Without current hooks, states are guessed and restored agents can't resume their conversations.")
+	}
+	for _, s := range settings {
+		why = append(why, fmt.Sprintf("%s also sets %s.", verb, s))
 	}
 	if skills {
 		why = append(why, "The bunk-present skill tells agents how to show you documents in the side panel.")

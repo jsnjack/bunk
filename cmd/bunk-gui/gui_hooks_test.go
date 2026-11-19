@@ -223,6 +223,58 @@ func hooksOnlyHome(t *testing.T) string {
 	return home
 }
 
+// TestGUICodexSettingAtStart: Codex hooks whose config.toml leaves its
+// shared daemon on are outdated, so the setup banner comes at start and
+// names config.toml. Update adds daemon_auto_start = false beside the
+// user's settings, keeps a copy, and leaves hooks.json as it was, so
+// Codex need not trust the hooks again. The preferences show the setting.
+func TestGUICodexSettingAtStart(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	must(t, installAllHooks(home))
+	d := notify.Dirs{Home: home}
+	codex, _ := notify.CheckHook(d, "codex")
+	const mine = "model = \"o3\"\n"
+	must(t, os.WriteFile(codex.SettingPath, []byte(mine), 0o600))
+	hooksJSON := readFile(t, codex.Path)
+	g := runGUI(t, scenario{
+		args: []string{"--size", "100x30", "--agent-home", home},
+		script: []string{
+			"wait focused.line=$ hooks.banner=true", "snap offered",
+			"hooks-banner accept", "wait hooks.banner=false hooks.result~Installed", "snap installed",
+			"kbd ctrl+comma", "wait prefs!=null prefs.hooks.#=4", "snap prefs",
+			"dialog-close", "wait prefs=null", "quit",
+		},
+	})
+	if h := g.snap("offered").Hooks; !slices.Equal(h.Agents, []string{"codex"}) || len(h.Skills) != 0 ||
+		h.Text != "Update bunk for codex (hooks outdated)? Without current hooks, states are guessed and restored agents can't resume their conversations. "+
+			"Update also sets daemon_auto_start = false under [features] for Codex, so each session reports to its own pane rather than through Codex's shared daemon. "+
+			"This changes ~/.codex/hooks.json; ~/.codex/config.toml, keeping a copy." {
+		t.Errorf("banner %+v", h)
+	}
+	if r := g.snap("installed").Hooks.Result; !strings.Contains(r, "Set daemon_auto_start = false under [features] in ~/.codex/config.toml") ||
+		!strings.Contains(r, "The old file is in ~/.codex/config.toml"+notify.BackupSuffix) {
+		t.Errorf("result %q", r)
+	}
+	if got := readFile(t, codex.SettingPath); got != mine+"\n[features]\ndaemon_auto_start = false\n" {
+		t.Errorf("config.toml:\n%s", got)
+	}
+	if got := readFile(t, codex.SettingPath+notify.BackupSuffix); got != mine {
+		t.Errorf("backup:\n%s", got)
+	}
+	if got := readFile(t, codex.Path); got != hooksJSON {
+		t.Errorf("hooks.json changed:\n%s", got)
+	}
+	if h, _ := notify.CheckHook(d, "codex"); h.State != notify.HooksInstalled {
+		t.Errorf("after Update: %+v", h)
+	}
+	for _, h := range g.snap("prefs").Prefs.Hooks {
+		if want := map[string]string{"codex": "set"}[h.Agent]; h.Setting != want || h.State != "installed" {
+			t.Errorf("preferences row %+v, want setting %q", h, want)
+		}
+	}
+}
+
 // TestGUISkillOutdatedAtStart: a bunk-present skill older than bunk's
 // brings the setup banner at start, which updates it alone.
 func TestGUISkillOutdatedAtStart(t *testing.T) {
