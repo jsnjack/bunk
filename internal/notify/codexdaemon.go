@@ -1,11 +1,17 @@
 // codexdaemon.go - Codex's shared app-server daemon, which gives every
-// Codex session the environment of the terminal that started it, and the
-// setting that turns it off.
+// Codex session the environment of the terminal that started it: the
+// setting that turns it off, and finding it above a command.
 package notify
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -107,4 +113,70 @@ func codexDaemonOffIn(text string) bool {
 	}
 	on, ok := v.Features[codexDaemonFeature].(bool)
 	return ok && !on
+}
+
+// codexDaemonHint is the line that explains a present request with
+// another pane's token, or none, under Codex's shared daemon: it names the
+// setting and how to stop the daemon.
+func codexDaemonHint(d Dirs) string {
+	r, _ := recipe("codex")
+	return fmt.Sprintf("Codex runs this command in its shared daemon, which has the BUNK_NOTIFY_SESSION of the pane that started it. "+
+		"Set %s in %s (bunk-gui's Codex setup does it), then stop the daemon with codex app-server daemon stop.\n",
+		codexSetting.text, d.Short(filepath.Join(d.dir(r), codexSetting.file)))
+}
+
+// procDir is where processes are looked up.
+const procDir = "/proc"
+
+// codexDaemonDepth bounds how many ancestors codexDaemonAbove looks at.
+const codexDaemonDepth = 32
+
+// codexDaemonAbove reports whether process pid, or one of its ancestors,
+// is Codex's shared daemon: codex app-server --managed-daemon. proc is
+// where processes are looked up, procDir but in tests. Without /proc
+// (macOS), or where a sandbox hides the parents, it finds none.
+func codexDaemonAbove(proc string, pid int) bool {
+	for range codexDaemonDepth {
+		if pid <= 1 {
+			return false
+		}
+		argv, ppid, err := procParent(proc, pid)
+		if err != nil {
+			return false
+		}
+		if len(argv) > 1 && filepath.Base(argv[0]) == "codex" && argv[1] == "app-server" && slices.Contains(argv, "--managed-daemon") {
+			return true
+		}
+		pid = ppid
+	}
+	return false
+}
+
+// procParent returns the command line of process pid and its parent's
+// pid, from proc.
+func procParent(proc string, pid int) ([]string, int, error) {
+	dir := filepath.Join(proc, strconv.Itoa(pid))
+	cmdline, err := os.ReadFile(filepath.Join(dir, "cmdline"))
+	if err != nil {
+		return nil, 0, err
+	}
+	stat, err := os.ReadFile(filepath.Join(dir, "stat"))
+	if err != nil {
+		return nil, 0, err
+	}
+	// The command name in parentheses may hold spaces and parentheses;
+	// the state and the parent's pid follow the last ")".
+	i := bytes.LastIndexByte(stat, ')')
+	if i < 0 {
+		return nil, 0, errors.New("bad stat")
+	}
+	f := strings.Fields(string(stat[i+1:]))
+	if len(f) < 2 {
+		return nil, 0, errors.New("bad stat")
+	}
+	ppid, err := strconv.Atoi(f[1])
+	if err != nil {
+		return nil, 0, err
+	}
+	return strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"), ppid, nil
 }

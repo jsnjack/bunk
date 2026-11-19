@@ -150,3 +150,54 @@ func TestInstallCodexSetting(t *testing.T) {
 		}
 	})
 }
+
+// TestCodexDaemonAbove: a command whose parent, or one of theirs, is
+// codex app-server --managed-daemon runs under Codex's shared daemon; one
+// under the Codex TUI or an app server Codex did not start as its daemon
+// does not. A command name with spaces and parentheses does not confuse
+// the parent's pid, and an unreadable process ends the walk.
+func TestCodexDaemonAbove(t *testing.T) {
+	t.Parallel()
+	proc := t.TempDir()
+	add := func(pid, ppid, comm string, argv ...string) {
+		writeFile(t, filepath.Join(proc, pid, "cmdline"), strings.Join(argv, "\x00")+"\x00")
+		writeFile(t, filepath.Join(proc, pid, "stat"), pid+" ("+comm+") S "+ppid+" 1 1 0 -1\n")
+	}
+	add("50", "1", "codex", "/home/u/.codex/packages/app-server-daemon/current/bin/codex", "app-server", "--listen", "unix://", "--managed-daemon")
+	add("60", "50", "codex-code-mo", "codex-code-mode-host", "--listen", "grpc+stdio://")
+	add("70", "60", "a (b) c", "bash", "-c", "bunk-gui present plan.html")
+	add("80", "1", "codex", "codex")
+	add("90", "80", "bash", "bash", "-c", "x")
+	add("100", "1", "codex", "codex", "app-server")
+	add("110", "100", "bash", "bash")
+	add("120", "999", "bash", "bash")
+	for pid, want := range map[int]bool{70: true, 60: true, 50: true, 90: false, 110: false, 120: false, 1: false, 999: false} {
+		if got := codexDaemonAbove(proc, pid); got != want {
+			t.Errorf("pid %d: %v, want %v", pid, got, want)
+		}
+	}
+	if codexDaemonAbove(procDir, os.Getpid()) {
+		t.Error("this test runs under Codex's daemon")
+	}
+}
+
+// TestCodexDaemonHint: the hint names the setting and config.toml where
+// Codex reads it, CODEX_HOME's when it is set.
+func TestCodexDaemonHint(t *testing.T) {
+	t.Parallel()
+	want := "Codex runs this command in its shared daemon, which has the BUNK_NOTIFY_SESSION of the pane that started it. " +
+		"Set daemon_auto_start = false under [features] in ~/.codex/config.toml (bunk-gui's Codex setup does it), " +
+		"then stop the daemon with codex app-server daemon stop.\n"
+	if got := codexDaemonHint(Dirs{Home: "/home/u"}); got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	moved := Dirs{Home: "/home/u", Getenv: func(k string) string {
+		if k == "CODEX_HOME" {
+			return "/etc/codex"
+		}
+		return ""
+	}}
+	if got := codexDaemonHint(moved); !strings.Contains(got, " in /etc/codex/config.toml ") {
+		t.Errorf("with CODEX_HOME: %q", got)
+	}
+}

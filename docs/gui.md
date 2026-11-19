@@ -300,7 +300,14 @@ panel gives the panes their width back.
   over the notify socket with the pane's token. bunk-gui answers
   "shown" and opens the file in the panel of that pane's tab. bunk's TUI
   has no presenter and answers "unsupported", so the CLI opens the
-  browser: a Markdown file rendered by `present.WriteStandalone`.
+  browser: a Markdown file rendered by `present.WriteStandalone`. For
+  "unknown" or a closed socket it opens the browser too, and prints a
+  line that says why (`panelMissed`); under Codex's shared daemon
+  (`codexDaemonAbove`, which walks `/proc` for `codex app-server
+  --managed-daemon`) another line names the setting that turns it off.
+  EPERM or EACCES from the socket means a sandbox blocks it, as Codex's
+  does: the CLI exits 1 and asks to be run outside the sandbox, rather
+  than open a browser.
 - Documents show in WebKitGTK 6 views (`webview.go`, cgo). One
   ephemeral network session and web context serve them all; WebKit runs
   page content in its sandboxed web process. Permission requests are

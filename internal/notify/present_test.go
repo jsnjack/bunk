@@ -267,8 +267,29 @@ func stubOpen(t *testing.T, err error) *[]string {
 	return &opened
 }
 
+// blockedSocket returns the path of a socket that refuses this user, as a
+// sandbox makes bunk's socket: connecting fails with EACCES.
+func blockedSocket(t *testing.T) string {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root connects to any socket")
+	}
+	path := filepath.Join(runtimeDir(t), "blocked.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // TestPresentCLI runs "present FILE" in a bunk-gui pane, in bunk's
-// terminal UI, outside bunk, over ssh and without a display.
+// terminal UI, outside bunk, over ssh and without a display. Where the
+// panel of a bunk pane did not show the file, a line says why; where a
+// sandbox blocks the socket, nothing opens and the command fails.
 func TestPresentCLI(t *testing.T) {
 	gui, guiToken, _, shown := startPresenter(t, true)
 	tui, tuiToken, _ := startServer(t)
@@ -289,6 +310,8 @@ func TestPresentCLI(t *testing.T) {
 	inTUI := append(slices.Clone(desktop), EnvSocket+"="+tui.Path(), EnvSession+"="+tuiToken)
 	gone := append(slices.Clone(desktop), EnvSocket+"="+filepath.Join(runtimeDir(t), "gone.sock"), EnvSession+"="+guiToken)
 	stale := append(slices.Clone(desktop), EnvSocket+"="+gui.Path(), EnvSession+"=0123")
+	blocked := append(slices.Clone(desktop), EnvSocket+"="+blockedSocket(t), EnvSession+"="+guiToken)
+	const unknownLine = "bunk-gui's side panel did not show it: no pane of the bunk window has this command's BUNK_NOTIFY_SESSION.\n"
 
 	for _, tc := range []struct {
 		name      string
@@ -312,8 +335,13 @@ func TestPresentCLI(t *testing.T) {
 		{name: "HTML in bunk's terminal UI", args: []string{html}, env: inTUI, stdout: "Opened " + html + " in the web browser.\n", opened: html},
 		{name: "outside bunk", args: []string{md}, env: desktop, stdout: "Opened", opened: "page"},
 		{name: "on Wayland", args: []string{html}, env: []string{"WAYLAND_DISPLAY=wayland-0"}, stdout: "Opened", opened: html},
-		{name: "front end exited", args: []string{html}, env: gone, stdout: "Opened", opened: html},
-		{name: "token not registered", args: []string{html}, env: stale, stdout: "Opened", opened: html},
+		{name: "front end exited", args: []string{html}, env: gone, opened: html, stdout: "Opened " + html + " in the web browser.\n" +
+			"bunk-gui's side panel did not show it: the bunk window that BUNK_NOTIFY_SOCKET names has closed.\n"},
+		{name: "token not registered", args: []string{html}, env: stale, stdout: "Opened " + html + " in the web browser.\n" + unknownLine, opened: html},
+		{name: "token not registered, no display", args: []string{md}, env: []string{EnvSocket + "=" + gui.Path(), EnvSession + "=0123"},
+			stdout: "here: there is no graphical display (WAYLAND_DISPLAY and DISPLAY are unset).\n" + unknownLine},
+		{name: "socket blocked", args: []string{html}, env: blocked, code: 1,
+			stderr: "permission denied\nA sandbox blocks bunk's socket: run this command again outside the sandbox.\n"},
 		{name: "over ssh", args: []string{md}, env: append(slices.Clone(desktop), envSSH+"=10.0.0.2 50000 10.0.0.1 22"),
 			stdout: "Cannot show " + md + " here: this host is reached over ssh"},
 		{name: "over ssh in bunk-gui", args: []string{md}, env: append(slices.Clone(inGUI), envSSH+"=x"), stdout: "Showing", shown: md},

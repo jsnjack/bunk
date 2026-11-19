@@ -126,11 +126,22 @@ that applies, prints one line and exits:
 | A host reached over ssh, without a bunk socket | Nothing | `Cannot show docs/plan.md here: this host is reached over ssh, …` | 0 |
 | No `WAYLAND_DISPLAY` or `DISPLAY` | Nothing | `Cannot show docs/plan.md here: there is no graphical display …` | 0 |
 | bunk's terminal UI, or outside bunk | The web browser opens a document or text; an image, PDF, video or audio file opens in its default application | `Opened docs/plan.md in the web browser.`, or `Opened shot.png in its default application.` | 0 |
+| A bunk pane whose window has closed, or whose window has no pane with the command's `BUNK_NOTIFY_SESSION` | As outside bunk, then a line that says why the panel did not show the file | `Opened docs/plan.md in the web browser.` and `bunk-gui's side panel did not show it: no pane of the bunk window has this command's BUNK_NOTIFY_SESSION.` | 0 |
+| A sandbox that blocks bunk's socket, such as Codex's | Nothing | the error and `A sandbox blocks bunk's socket: run this command again outside the sandbox.`, on stderr | 1 |
 | Anywhere | FILE is missing, unreadable, not a regular file, or a kind bunk cannot show | the reason, on stderr | 1 |
 
 The path in the output is relative to the working directory when the file
 lies inside it. An agent never sees a failure only because nothing can show
-the file.
+the file. A blocked socket is the exception: run outside the sandbox, the
+same command shows the file in the panel, so it fails rather than opening a
+browser the user of a bunk pane does not expect, and the agent can run it
+again with the sandbox's permission.
+
+A command that Codex's shared daemon runs has the `BUNK_NOTIFY_SESSION` of
+the pane that first started Codex, not of the pane the user talks to
+([agent-hooks.md](agent-hooks.md#codex)). When bunk-gui does not know that
+token, and the command runs under `codex app-server --managed-daemon`, a
+further line names the setting that turns the daemon off.
 
 `FILE#ID`, such as `docs/plan.md#rollout`, opens the document at the
 heading whose id is `ID`, also when the panel shows it already, so the

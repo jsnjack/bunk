@@ -36,6 +36,9 @@ terminal UI and outside bunk it opens in the web browser, or in its
 default application. On a host reached over ssh, or without a graphical
 display, it says that it cannot show the file. It prints one line saying
 which happened and exits 0; a missing file or one it cannot show exits 1.
+In a bunk pane whose panel did not show the file, the next lines say why.
+Where a sandbox blocks bunk's socket it exits 1: run it again outside the
+sandbox, and it shows the file in the panel.
 FILE#ID opens the document at the heading whose id is ID, as
 docs/plan.md#rollout, so the user reads the part you point to.
 In bunk-gui it waits for the page to load, at most a few seconds, and
@@ -179,22 +182,32 @@ func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
 		return exitError
 	}
 	socket, token := lookupEnv(env, EnvSocket), lookupEnv(env, EnvSession)
+	missed := "" // why the side panel did not show the file, for the lines after the outcome
 	if socket != "" && token != "" {
 		reply, problems, err := PresentCheck(socket, token, path, anchor)
 		if err != nil {
 			slog.Debug("present: request", "err", err)
 		}
-		if reply == PresentShown {
+		switch {
+		case reply == PresentShown:
 			shown := name
 			if anchor != "" {
 				shown += "#" + anchor
 			}
 			write(stdout, "Showing "+shown+" in bunk-gui's side panel.\n"+problemReport(problems))
 			return 0
+		case errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES):
+			// A sandbox, such as Codex's, blocks the socket. Run outside
+			// it, the command reaches the panel; a browser is not what
+			// the user of a bunk pane expects.
+			write(stderr, fmt.Sprintf("%s present: cannot reach bunk: %v\n"+
+				"A sandbox blocks bunk's socket: run this command again outside the sandbox.\n", prog, err))
+			return exitError
 		}
+		missed = panelMissed(reply, err, envDirs(env))
 	}
 	if why := noBrowser(env, socket); why != "" {
-		write(stdout, "Cannot show "+name+" here: "+why+".\n")
+		write(stdout, "Cannot show "+name+" here: "+why+".\n"+missed)
 		return 0
 	}
 	page, where := path, "the web browser"
@@ -209,14 +222,37 @@ func presentFile(prog, arg string, env []string, stdout, stderr io.Writer) int {
 	}
 	if err := openFile(page, env); err != nil {
 		if errors.Is(err, errNoOpener) {
-			write(stdout, "Cannot show "+name+" here: "+err.Error()+".\n")
+			write(stdout, "Cannot show "+name+" here: "+err.Error()+".\n"+missed)
 			return 0
 		}
 		write(stderr, fmt.Sprintf("%s present: open %s: %v\n", prog, name, err))
 		return exitError
 	}
-	write(stdout, "Opened "+name+" in "+where+".\n")
+	write(stdout, "Opened "+name+" in "+where+".\n"+missed)
 	return 0
+}
+
+// panelMissed returns the lines that say why the front end of the pane did
+// not show the file: its reply, or err when none came. bunk's terminal UI
+// (unsupported) has no panel, which needs no reason. Under Codex's shared
+// daemon a second line names the setting that ends it (codexdaemon.go).
+func panelMissed(reply string, err error, d Dirs) string {
+	var why string
+	switch {
+	case err != nil && serverGone(err):
+		why = "the bunk window that BUNK_NOTIFY_SOCKET names has closed"
+	case err != nil:
+		why = "bunk did not answer: " + err.Error()
+	case reply == PresentUnknown:
+		why = "no pane of the bunk window has this command's BUNK_NOTIFY_SESSION"
+	default:
+		return ""
+	}
+	text := "bunk-gui's side panel did not show it: " + why + ".\n"
+	if codexDaemonAbove(procDir, os.Getppid()) {
+		text += codexDaemonHint(d)
+	}
+	return text
 }
 
 // splitAnchor splits FILE#ID into the file and the heading's id, unless a
