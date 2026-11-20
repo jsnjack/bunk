@@ -293,10 +293,11 @@ Agents ([docs/agent-internals.md](docs/agent-internals.md)):
   `--maximize-after`, `--agent-home`) and the flags of windows it starts
   itself (`--restore`, `--offer-restore`) are hidden from `--help`.
 - In bunk-gui, finish a D-Bus call with `callFinish` (`desknotify.go`), not
-  gotk4's `DBusConnection.CallFinish`. gotk4 v0.4.1 sets a finalizer on the
-  NULL reply of a failed call, and GLib logs a critical when the garbage
-  collector runs it, which fails every window test. A test of a failed
-  call runs `runFinalizers` before it checks the logs.
+  gotk4's `DBusConnection.CallFinish`. gotk4 (v0.4.1, and still
+  v0.4.2-0.20261031093702-169e0f82bca8) sets a finalizer on the NULL reply
+  of a failed call, and GLib logs a critical when the garbage collector
+  runs it, which fails every window test. A test of a failed call runs
+  `runFinalizers` before it checks the logs.
 - Vendored vt10x has local patches. Prefer fixing bugs there over working
   around them in the main code.
 - `TERMINAL_AUDIT.md` is the authoritative reference for which terminal

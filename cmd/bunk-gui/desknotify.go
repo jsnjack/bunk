@@ -27,10 +27,10 @@ import (
 	"bunk/internal/alert"
 )
 
-// callFinish is bus.CallFinish without a bug of gotk4 v0.4.1: after a
-// failed call it sets a finalizer on the NULL reply, and GLib logs a
-// critical (g_variant_unref: assertion 'value != NULL' failed) when the
-// garbage collector runs it.
+// callFinish is bus.CallFinish without a bug of gotk4 (v0.4.1, and still
+// v0.4.2-0.20261031093702-169e0f82bca8): after a failed call it sets a
+// finalizer on the NULL reply, and GLib logs a critical (g_variant_unref:
+// assertion 'value != NULL' failed) when the garbage collector runs it.
 func callFinish(bus *gio.DBusConnection, res gio.AsyncResulter) (*glib.Variant, error) {
 	v, err := bus.CallFinish(res)
 	if err != nil {
