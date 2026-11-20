@@ -224,6 +224,11 @@ func TestCommandRunning(t *testing.T) {
 			Command{Name: "sudo", Line: "sudo dnf upgrade"}, sec},
 		{"sudo -i", []cmdStep{shellPoll(0), poll(sec, 200, "sudo", "sudo", "-i")}, nil, Command{}, 0},
 		{"a nested shell", []cmdStep{shellPoll(0), poll(sec, 200, "bash", "bash", "-l")}, nil, Command{}, 0},
+		{"a launcher execs a nested shell", []cmdStep{
+			shellPoll(0), mark(0, "D;0"), mark(500*ms, "C"),
+			poll(sec, 200, "env", "env", "-u", "PS0", "bash", "--norc"),
+			poll(2*sec, 200, "bash", "bash", "--norc"),
+		}, nil, Command{}, 0},
 		{"a shell script", []cmdStep{shellPoll(0), poll(sec, 200, "bash", "bash", "build.sh")}, nil,
 			Command{Name: "bash", Line: "bash build.sh"}, sec},
 		{"a full-screen program", []cmdStep{mark(0, "C"), poll(500*ms, 200, "htop", "htop")},

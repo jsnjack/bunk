@@ -250,7 +250,8 @@ func TestCommandMarkBadges(t *testing.T) {
 	}
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
 		app.render()
-		if strings.Contains(screenText(scr, b.x, b.x+b.w), "nested$") {
+		display := strings.TrimSpace(screenText(scr, b.x, b.x+b.w))
+		if strings.HasSuffix(display, "nested$") && b.Status().Process == "bash" {
 			break
 		}
 		if time.Now().After(deadline) {

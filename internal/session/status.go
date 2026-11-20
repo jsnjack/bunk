@@ -654,12 +654,15 @@ func (s *Session) onBell() {
 func (s *Session) refreshStatus(shellPid, pgid int, name string, pgidChanged bool) bool {
 	s.Lock()
 	agent := s.agent
+	foregroundName := s.fg.name
 	s.Unlock()
 	var argv []string
+	if pgid > 0 && (pgidChanged || (name != "" && name != foregroundName)) {
+		argv = FgProcessCmdline(shellPid)
+	}
 	if pgidChanged {
 		agent = ""
 		if pgid > 0 {
-			argv = FgProcessCmdline(shellPid)
 			agent = s.agentFromProcess(name, argv)
 		}
 	}

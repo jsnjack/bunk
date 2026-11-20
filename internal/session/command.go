@@ -118,18 +118,24 @@ func (s *Session) commandFinished(exit int, exitKnown bool, now time.Time) {
 
 // noteForeground follows the commands through a process poll: pgid is the
 // foreground group, name its process name and argv its leader's command
-// line, read when the group changed; shellPid leads the shell's group. A
-// group other than the shell's names the running command, or starts one
-// when the shell sent no 133;C. The shell's group back in the foreground
-// ends a command no mark started. It requires the session lock and runs
-// after the poll updated s.agent.
+// line, read when the group or name changed. shellPid leads the shell's
+// group. A group other than the shell's names the running command, or
+// starts one when the shell sent no 133;C. The shell's group back in the
+// foreground ends a command no mark started. It requires the session
+// lock and runs after the poll updated s.agent.
 func (s *Session) noteForeground(shellPid, pgid int, name string, argv []string, pgidChanged bool, now time.Time) {
 	if pgid <= 0 {
 		return
 	}
 	shell := pgid == shellPid
 	if pgidChanged {
-		s.fg = foreground{pgid: pgid, shell: shell, name: name, line: commandLine(argv), since: now, carrier: carrier(name, argv)}
+		s.fg = foreground{pgid: pgid, shell: shell, since: now}
+	}
+	// A launcher can exec a shell in the same group. Refresh its
+	// classification while keeping the group's start and the command's name.
+	if pgidChanged || (name != "" && name != s.fg.name) {
+		s.fg.name, s.fg.line = name, commandLine(argv)
+		s.fg.carrier = carrier(name, argv)
 	}
 	switch {
 	case s.cmd.start.IsZero():

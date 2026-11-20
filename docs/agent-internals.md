@@ -217,9 +217,11 @@ the code.
     may wait on. Agents and full-screen programs (the alternate screen)
     are left out, and so is a foreground that runs a session of its own
     (`carrier`): ssh or mosh, a container entered, a shell without a
-    script, sudo, su or doas starting a shell. A command its shell's
-    marks start after that session appeared counts, such as one in a
-    remote or nested shell with vte.sh.
+    script, sudo, su or doas starting a shell. If a launcher such as
+    `env` execs a shell in the same foreground group, the poll
+    reclassifies the group when it sees the shell's process name. A command
+    its shell's marks start after that session appeared counts, such as
+    one in a remote or nested shell with vte.sh.
   - bunk-gui keeps one notification per pane on org.freedesktop.Notifications
     (`desknotify.go`), keyed by the pane's ID. The user watches a pane while
     it is the focused pane of the selected tab in the active window, as in
