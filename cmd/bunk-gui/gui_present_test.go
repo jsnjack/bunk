@@ -739,9 +739,10 @@ func TestGUIPresentKit(t *testing.T) {
 			"wait clipboard \"make check-all\"",
 			"type sed -i 's/Kit demo/Kit demo, edited/' kit.html\\r",
 			"wait tab.1.panel.docs.0.reloads=1",
-			"present-wait document.querySelector('h1').textContent === 'Kit demo, edited' && !document.querySelectorAll('.bunk-tabs section')[1].hidden",
-			"present-eval [document.querySelectorAll('pre.bunk-diff .d-add').length, document.querySelectorAll('pre.bunk-diff .d-del').length].join(',')",
-			"wait tab.1.panel.eval=1,1",
+			"present-wait document.querySelector('h1').textContent === 'Kit demo, edited' && " +
+				"document.querySelector('.bunk-tabs [role=tab]:nth-child(2)[aria-selected=true]') !== null",
+			"present-wait document.querySelectorAll('pre.bunk-diff .d-add').length === 1 && " +
+				"document.querySelectorAll('pre.bunk-diff .d-del').length === 1",
 			"present table.md",
 			"wait tab.1.panel.current=1 tab.1.panel.docs.1.loaded=true",
 			"present-eval document.querySelectorAll('th')[1].click(); Array.from(document.querySelectorAll('tbody tr')).map(function (r) { return r.cells[0].textContent; }).join('')",
