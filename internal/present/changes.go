@@ -31,7 +31,7 @@ const SectionsScript = `(function () {
     box.querySelectorAll('.math[data-bunk-tex]').forEach(function (el) {
       el.textContent = el.getAttribute('data-bunk-tex');
     });
-    box.querySelectorAll('.bunk-copy, .bunk-filter-bar, .bunk-tab-bar, .bunk-step-bar, .bunk-step-title, nav.bunk-toc, .bunk-note, script, style').forEach(function (el) {
+    box.querySelectorAll('.bunk-copy, .bunk-expand, .bunk-zoom, .bunk-filter-bar, .bunk-tab-bar, .bunk-step-bar, .bunk-step-title, nav.bunk-toc, .bunk-note, script, style').forEach(function (el) {
       el.remove();
     });
     return clean(box.textContent);

@@ -76,7 +76,9 @@ bunk-doc.js gives you, by markup alone:
 - <span class="bunk-badge good">: good, warn, bad, info.
 - <nav class="bunk-toc"></nav>: an outline of the h2 and h3 headings.
 - <pre class="bunk-diff">: a unified diff, its lines coloured.
-- <pre class="mermaid">: a Mermaid diagram.
+- <pre class="mermaid">: a Mermaid diagram. Lay out a chain of more than
+  five boxes top to bottom (flowchart TD): the panel is narrow, and a wide
+  diagram scrolls sideways and counts as a problem.
 - <span class="math">x^2</span>, <div class="math math-display">: KaTeX.
 - <pre class="bunk-chart" data-height="300">{ECharts option as JSON}</pre>:
   an interactive chart (tooltips, legend, dataZoom).

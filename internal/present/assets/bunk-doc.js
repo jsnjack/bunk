@@ -139,6 +139,10 @@
         });
       })).then(function () {
         return mermaid.run({nodes: nodes, suppressErrors: true});
+      }).then(function () {
+        nodes.forEach(function (el) {
+          fitDiagram(el, 'Mermaid diagram ' + nth(el, 'pre.mermaid'), 'flowchart TD');
+        });
       });
     });
   }
@@ -230,6 +234,7 @@
           });
           pre.textContent = '';
           pre.appendChild(svg);
+          fitDiagram(pre, 'Graphviz graph ' + n, 'rankdir=TB');
         } catch (err) {
           problem('Graphviz graph ' + n + ': ' + brief(err));
         }
@@ -291,6 +296,7 @@
   function redraw() {
     if (isDark() === dark) return;
     dark = isDark();
+    closeZoom();
     themeChanged();
     var root = doc();
     if (document.getElementById('bunk-hljs-style')) codeStyle();
@@ -387,6 +393,7 @@
     });
     document.documentElement.removeAttribute('data-bunk-problems');
     document.documentElement.removeAttribute('data-bunk-rendered');
+    closeZoom();
     root.innerHTML = html;
     var changed = 0;
     root.querySelectorAll('[data-bunk-hash]').forEach(function (h) {
@@ -439,6 +446,8 @@
   //   pre.bunk-diff            a unified diff, its lines coloured
   //                            (```diff in Markdown)
   //   pre > code               a copy button
+  //   pre.mermaid, pre.bunk-graphviz   once drawn: a readable size, an
+  //                            Expand button and the zoom view
   //
   // Tabs and steps are role="tab" buttons, so bunk-gui's panel keeps the
   // one chosen when the page reloads. Each element is set up once.
@@ -680,6 +689,217 @@
       }
     });
     wrap.appendChild(b);
+  }
+
+  // ---- Diagrams: readable in the page, and a view to zoom them ----
+  //
+  // A Mermaid diagram or Graphviz graph shows at its own size where the
+  // page has room. On a narrower page it shrinks to fit, but to no less
+  // than minScale of its size, where its text is still readable, and its
+  // block scrolls sideways beyond that. Its box (.bunk-diagram) widens the
+  // article like a table does. An Expand button, or a click on the
+  // diagram, shows it over the whole page to zoom and pan.
+
+  var minScale = 0.75;
+  var zoomed = null;
+
+  // naturalSize is the size in CSS pixels that the drawing asks for: its
+  // width attribute (Graphviz's, in points), else its viewBox (Mermaid's
+  // width is 100%), and the height by the viewBox's proportions.
+  function naturalSize(svg) {
+    var w = 0;
+    var vb = svg.viewBox && svg.viewBox.baseVal;
+    try {
+      var len = svg.width.baseVal;
+      if (len.unitType !== SVGLength.SVG_LENGTHTYPE_PERCENTAGE && len.unitType !== SVGLength.SVG_LENGTHTYPE_UNKNOWN) w = len.value;
+    } catch (err) {
+      w = 0;
+    }
+    if (!(w > 0) && vb && vb.width > 0) w = vb.width;
+    if (!(w > 0)) return null;
+    var h = vb && vb.width > 0 && vb.height > 0 ? w * vb.height / vb.width : 0;
+    if (!(h > 0)) {
+      var r = svg.getBoundingClientRect();
+      h = r.width > 0 ? w * r.height / r.width : 0;
+    }
+    return h > 0 ? {w: w, h: h} : null;
+  }
+
+  // fitDiagram sizes the drawing in pre and, the first time, puts pre in
+  // its box with the Expand button. what names the diagram in a problem;
+  // a diagram that has to scroll sideways at the page's width is one, and
+  // hint says how to lay it out instead.
+  function fitDiagram(pre, what, hint) {
+    var svg = pre.querySelector(':scope > svg');
+    var size = svg && naturalSize(svg);
+    if (!size) return;
+    svg.style.width = size.w + 'px';
+    svg.style.maxWidth = 'max(100%, ' + (size.w * minScale).toFixed(1) + 'px)';
+    svg.style.height = 'auto';
+    if (once(pre, 'diagram')) {
+      var box = make('div', 'bunk-diagram');
+      pre.parentNode.insertBefore(box, pre);
+      box.appendChild(pre);
+      var b = make('button', 'bunk-expand', 'Expand');
+      b.type = 'button';
+      b.title = 'Show the diagram over the page, to zoom and move it';
+      b.addEventListener('click', function () { openZoom(pre, b); });
+      box.appendChild(b);
+      pre.addEventListener('click', function (e) {
+        // Not a click that ends a selection, follows a link or lands on
+        // the scrollbar below the drawing.
+        var sel = window.getSelection();
+        if (sel && !sel.isCollapsed) return;
+        if (e.target.closest && e.target.closest('a')) return;
+        if (e.clientY - pre.getBoundingClientRect().top > pre.clientTop + pre.clientHeight) return;
+        openZoom(pre, b);
+      });
+    }
+    if (pre.scrollWidth > pre.clientWidth + 1) {
+      problem(what + ' is ' + Math.round(size.w) + ' px wide, too wide to read at the page\'s width, so it scrolls ' +
+        'sideways: lay it out top to bottom (' + hint + ') or split it');
+    }
+  }
+
+  function clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+
+  // openZoom shows the drawing of pre over the whole page, fitted to it.
+  // The wheel zooms at the pointer, a drag moves the drawing, and the keys
+  // + - 0 (fit) 1 (its own size), the arrows and Esc work while it is
+  // open. It draws a copy, so the page underneath keeps its layout.
+  function openZoom(pre, opener) {
+    closeZoom();
+    var src = pre.querySelector(':scope > svg');
+    var size = src && naturalSize(src);
+    if (!size) return;
+    var svg = src.cloneNode(true);
+    svg.style.maxWidth = 'none';
+    var view = make('div', 'bunk-zoom');
+    view.tabIndex = -1;
+    view.setAttribute('role', 'dialog');
+    view.setAttribute('aria-modal', 'true');
+    view.setAttribute('aria-label', 'Diagram');
+    var bar = make('div', 'bunk-zoom-bar');
+    var level = make('span', 'bunk-zoom-level');
+    var stage = make('div', 'bunk-zoom-stage');
+    var s = 1, x = 0, y = 0, fitted = true;
+    var apply = function () {
+      svg.style.width = size.w * s + 'px';
+      svg.style.height = size.h * s + 'px';
+      svg.style.left = x + 'px';
+      svg.style.top = y + 'px';
+      level.textContent = Math.round(s * 100) + '%';
+    };
+    var fit = function () {
+      var pad = 24;
+      s = clamp(Math.min((stage.clientWidth - 2 * pad) / size.w, (stage.clientHeight - 2 * pad) / size.h), 0.05, 2);
+      x = (stage.clientWidth - size.w * s) / 2;
+      y = (stage.clientHeight - size.h * s) / 2;
+      fitted = true;
+      apply();
+    };
+    var zoomAt = function (px, py, f) {
+      var ns = clamp(s * f, 0.05, 8);
+      x = px - (px - x) * ns / s;
+      y = py - (py - y) * ns / s;
+      s = ns;
+      fitted = false;
+      apply();
+    };
+    var zoomBy = function (f) { zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, f); };
+    var pan = function (dx, dy) {
+      x += dx;
+      y += dy;
+      fitted = false;
+      apply();
+    };
+    var button = function (text, title, f) {
+      var b = make('button', 'bunk-zoom-btn', text);
+      b.type = 'button';
+      b.title = title;
+      b.addEventListener('click', f);
+      bar.appendChild(b);
+    };
+    button('−', 'Zoom out (-)', function () { zoomBy(0.8); });
+    bar.appendChild(level);
+    button('+', 'Zoom in (+)', function () { zoomBy(1.25); });
+    button('Fit', 'Fit the page (0)', fit);
+    button('1:1', 'Its own size (1)', function () { zoomBy(1 / s); });
+    bar.appendChild(make('span', 'bunk-zoom-hint', 'Scroll to zoom, drag to move, Esc to close'));
+    button('Close', 'Close (Esc)', closeZoom);
+    stage.appendChild(svg);
+    view.appendChild(bar);
+    view.appendChild(stage);
+
+    stage.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      var d = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? stage.clientHeight : 1);
+      var r = stage.getBoundingClientRect();
+      zoomAt(e.clientX - r.left, e.clientY - r.top, clamp(Math.exp(-d * 0.0017), 0.5, 2));
+    }, {passive: false});
+    stage.addEventListener('dblclick', function (e) {
+      var r = stage.getBoundingClientRect();
+      zoomAt(e.clientX - r.left, e.clientY - r.top, 2);
+    });
+    var drag = null;
+    stage.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      drag = {id: e.pointerId, x: e.clientX, y: e.clientY};
+      stage.setPointerCapture(e.pointerId);
+      stage.classList.add('bunk-dragging');
+      e.preventDefault();
+    });
+    stage.addEventListener('pointermove', function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      pan(e.clientX - drag.x, e.clientY - drag.y);
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+    });
+    var drop = function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      drag = null;
+      stage.classList.remove('bunk-dragging');
+    };
+    stage.addEventListener('pointerup', drop);
+    stage.addEventListener('pointercancel', drop);
+    view.addEventListener('keydown', function (e) {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      var step = 60;
+      switch (e.key) {
+        case 'Escape': closeZoom(); break;
+        case '+': case '=': zoomBy(1.25); break;
+        case '-': case '_': zoomBy(0.8); break;
+        case '0': fit(); break;
+        case '1': zoomBy(1 / s); break;
+        case 'ArrowLeft': pan(step, 0); break;
+        case 'ArrowRight': pan(-step, 0); break;
+        case 'ArrowUp': pan(0, step); break;
+        case 'ArrowDown': pan(0, -step); break;
+        default: return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    var resized = function () {
+      if (fitted) fit();
+    };
+    window.addEventListener('resize', resized);
+    document.body.appendChild(view);
+    zoomed = function () {
+      view.remove();
+      window.removeEventListener('resize', resized);
+      if (opener && opener.isConnected) opener.focus({preventScroll: true});
+    };
+    fit();
+    view.focus({preventScroll: true});
+  }
+
+  function closeZoom() {
+    var close = zoomed;
+    zoomed = null;
+    if (close) close();
   }
 
   // ---- Replies: the page asks bunk-gui to paste a reply into the agent's input ----

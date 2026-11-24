@@ -752,6 +752,134 @@ func TestGUIPresentKit(t *testing.T) {
 	})
 }
 
+// diagramsPage has a Mermaid flowchart far wider than the panel, fourteen
+// boxes in a row as agents write them, and a small Graphviz graph.
+const diagramsPage = `<!doctype html><html><head><title>Diagrams</title>
+<link rel="stylesheet" href="bunk-present://assets/bunk-doc.css">
+<script src="bunk-present://assets/bunk-doc.js" defer></script></head>
+<body><article id="bunk-doc"><h1>Diagrams</h1>
+<p>How an update flows.</p>
+<pre class="mermaid">
+flowchart LR
+  srv["server<br/>restarted on the host"] --> t["tools.json<br/>MCP tools"]
+  srv --> o["api/schema/<br/>REST API"]
+  srv --> i["info/<br/>server commit"]
+  i --> f
+  t --> f["codegen/fetch.py<br/>validates both, then writes"]
+  o --> f
+  f --> s["schema/<br/>tools.json, openapi.yaml"]
+  s -->|"same as HEAD"| stop(["stop: nothing to do"])
+  s --> g["codegen/generate.py<br/>model + overlay, Jinja, ruff"]
+  ov["codegen/overlay/*.yaml<br/>your decisions"] --> g
+  g --> out["src/_generated/<br/>tools.py, rest.py"]
+  out --> d["codegen/diff.py<br/>HEAD vs working tree"]
+  d --> c["scripts/check.py<br/>ruff, pyright, pytest"]
+  c --> msg["report and a commit message"]
+  msg --> you(["you: review, fix overlay, commit"])
+</pre>
+<p>A small graph.</p>
+<pre class="bunk-graphviz">digraph { a -> b }</pre>
+</article></body></html>`
+
+// diagramSizeProbe reports, for diagramsPage, whether the wide diagram
+// shows at 3/4 of its size, whether its block scrolls sideways, whether
+// its box widens the article past the measure, and whether the small
+// graph shows at its own size.
+const diagramSizeProbe = "(() => { " +
+	"const doc = document.getElementById('bunk-doc'); " +
+	"const measure = parseFloat(getComputedStyle(doc).getPropertyValue('--bunk-measure')); " +
+	"const scale = pre => { const svg = pre.querySelector('svg'); return svg.getBoundingClientRect().width / parseFloat(svg.style.width); }; " +
+	"const wide = document.querySelector('pre.mermaid'), small = document.querySelector('pre.bunk-graphviz'); " +
+	"return [Math.abs(scale(wide) - 0.75) < 0.01, wide.scrollWidth > wide.clientWidth, " +
+	"wide.closest('.bunk-diagram').getBoundingClientRect().width > measure + 50, Math.abs(scale(small) - 1) < 0.01].join(','); " +
+	"})()"
+
+// zoomFitProbe reports whether the zoom view's drawing lies inside its
+// stage, centred across it, and keeps the fitted scale in data-fit.
+const zoomFitProbe = "(() => { " +
+	"const st = document.querySelector('.bunk-zoom-stage').getBoundingClientRect(); " +
+	"const r = document.querySelector('.bunk-zoom-stage svg').getBoundingClientRect(); " +
+	"document.documentElement.dataset.fit = document.querySelector('.bunk-zoom-level').textContent; " +
+	"return [r.left >= st.left, r.right <= st.right, r.top >= st.top, r.bottom <= st.bottom, " +
+	"Math.abs((r.left - st.left) - (st.right - r.right)) < 2].join(','); " +
+	"})()"
+
+// zoomAnchorProbe is the place across the drawing, from 0 to 1, of the
+// stage's centre, where the pointer rests while the wheel zooms.
+const zoomAnchorProbe = "(() => { " +
+	"const st = document.querySelector('.bunk-zoom-stage').getBoundingClientRect(); " +
+	"const r = document.querySelector('.bunk-zoom-stage svg').getBoundingClientRect(); " +
+	"return ((st.left + st.width / 2 - r.left) / r.width).toFixed(2); " +
+	"})()"
+
+// TestGUIPresentDiagrams: a diagram wider than the panel shrinks only to
+// 3/4 of its size, widens the article and scrolls sideways, and the check
+// reports it with a way to lay it out; a small graph keeps its own size.
+// Expand shows the diagram over the page, fitted: the wheel zooms at the
+// pointer, a drag moves it, 1 shows its own size, 0 fits it again and Esc
+// closes it, giving the keyboard back to Expand. A click on the diagram
+// opens it too, and Close closes it.
+func TestGUIPresentDiagrams(t *testing.T) {
+	t.Parallel()
+	g := runGUI(t, scenario{
+		cost:  2,
+		args:  []string{"--size", "100x30"},
+		files: map[string]string{"diagrams.html": diagramsPage},
+		script: []string{
+			"maximize",
+			"wait window.maximized=true focused.line=$",
+			"present diagrams.html check",
+			"wait tab.1.panel.checked!=null",
+			"snap checked",
+			"present-wait document.querySelectorAll('.bunk-diagram .bunk-expand').length === 2",
+			"present-eval " + diagramSizeProbe,
+			"wait tab.1.panel.eval=true,true,true,true",
+			"ptr-at doc pre.mermaid + .bunk-expand",
+			"ptr-click",
+			"present-wait document.activeElement === document.querySelector('.bunk-zoom')",
+			"present-eval " + zoomFitProbe,
+			"wait tab.1.panel.eval=true,true,true,true,true",
+			"ptr-at doc .bunk-zoom-stage",
+			"present-eval " + zoomAnchorProbe,
+			"wait tab.1.panel.eval~.",
+			"snap anchor-before",
+			"ptr-scroll -3",
+			"present-wait parseInt(document.querySelector('.bunk-zoom-level').textContent) > parseInt(document.documentElement.dataset.fit)",
+			"present-eval " + zoomAnchorProbe,
+			"wait tab.1.panel.eval~.",
+			"snap anchor-after",
+			"present-eval document.documentElement.dataset.left = document.querySelector('.bunk-zoom-stage svg').style.left",
+			"wait tab.1.panel.eval~px",
+			"ptr-drag 150 0 10",
+			"present-wait parseFloat(document.querySelector('.bunk-zoom-stage svg').style.left) - parseFloat(document.documentElement.dataset.left) > 100",
+			"kbd 1",
+			"present-wait document.querySelector('.bunk-zoom-level').textContent === '100%'",
+			"kbd 0",
+			"present-wait document.querySelector('.bunk-zoom-level').textContent === document.documentElement.dataset.fit",
+			"kbd Escape",
+			"present-wait !document.querySelector('.bunk-zoom') && document.activeElement.classList.contains('bunk-expand')",
+			"ptr-at doc pre.mermaid",
+			"ptr-click",
+			"present-wait !!document.querySelector('.bunk-zoom')",
+			"ptr-at doc .bunk-zoom-btn:last-child",
+			"ptr-click",
+			"present-wait !document.querySelector('.bunk-zoom')",
+			"quit",
+		},
+	})
+	c := g.snap("checked").Tabs[0].Panel.Checked
+	if c == nil {
+		t.Fatal("no check of the page")
+	}
+	if len(*c) != 1 || !strings.Contains((*c)[0], "Mermaid diagram 1 is ") || !strings.Contains((*c)[0], "flowchart TD") {
+		t.Errorf("problems: %q, want one that the Mermaid diagram is too wide", *c)
+	}
+	before, after := g.snap("anchor-before").Tabs[0].Panel.Eval, g.snap("anchor-after").Tabs[0].Panel.Eval
+	if before != after {
+		t.Errorf("the point under the pointer moved across the drawing from %s to %s as the wheel zoomed", before, after)
+	}
+}
+
 // libsPage draws with every library a page can use: a chart, a graph,
 // highlighted code and D3.
 const libsPage = `<!doctype html><html><head><title>Libs</title>

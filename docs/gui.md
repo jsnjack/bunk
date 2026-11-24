@@ -368,6 +368,19 @@ panel gives the panes their width back.
   sortable and long ones filterable. Copy uses the async clipboard API
   from the click, which needs no clipboard access setting; where it fails,
   the code is selected for Ctrl+C.
+- Diagrams and graphs (`fitDiagram`, `openZoom` in `bunk-doc.js`): once
+  drawn, each SVG gets its own width (Graphviz's width attribute, else
+  the viewBox, since Mermaid's width is 100%) and a max-width of
+  `max(100%, 3/4 of it)`. Shrinking any further left a wide flowchart's
+  text a few pixels high, and the panel's zoom could not help, because the
+  drawing shrank again to fit. Its `.bunk-diagram` box widens the article
+  as a table does, and a drawing that still scrolls sideways counts as a
+  page problem, so an agent learns to lay it out top to bottom. The zoom
+  view draws a copy of the SVG over the page (`position: fixed`) and
+  sizes it, rather than scaling it with a transform, so its text stays
+  sharp at every scale. The copy's duplicate ids still resolve, to the
+  original's identical markers. `bunkDoc.replace` and a change of colour
+  scheme close the view. `TestGUIPresentDiagrams` covers both.
 - Page problems (`present/problems.go`): every view runs
   `ProblemCatcherScript` in bunk's isolated world before the page's own
   scripts; DOM events reach every world, so it records the page's script

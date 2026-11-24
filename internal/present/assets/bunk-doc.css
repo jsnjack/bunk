@@ -39,14 +39,14 @@ body {
   padding: 24px 28px 48px;
 }
 
-/* Each block keeps to the measure, except a table or a block that holds
-   one. Headings and rules span the document without widening it, and
-   text inside a block that holds a table keeps to the measure. */
+/* Each block keeps to the measure, except a table, a diagram or a block
+   that holds one. Headings and rules span the document without widening
+   it, and text inside a block that holds a table keeps to the measure. */
 #bunk-doc:not(.bunk-file) > * {
   max-width: var(--bunk-measure);
 }
 
-#bunk-doc:not(.bunk-file) > :is(table, :has(table), hr) {
+#bunk-doc:not(.bunk-file) > :is(table, :has(table), .bunk-diagram, :has(.bunk-diagram), hr) {
   max-width: 100%;
 }
 
@@ -272,6 +272,98 @@ pre.bunk-graphviz svg {
   height: auto;
 }
 
+/* A drawn diagram or graph in its box. bunk-doc.js sizes the drawing:
+   its own width, shrunk to fit the page down to 3/4 of it; the block
+   scrolls sideways beyond that. A click on it opens the zoom view. */
+.bunk-diagram {
+  position: relative;
+  margin: 1em 0;
+}
+
+.bunk-diagram > pre {
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  cursor: zoom-in;
+}
+
+.bunk-expand {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 1px 8px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.bunk-diagram:hover .bunk-expand,
+.bunk-expand:focus {
+  opacity: 1;
+}
+
+/* The zoom view: one diagram over the whole page, its toolbar on top. */
+.bunk-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  color: var(--bunk-fg);
+  background: var(--bunk-bg);
+}
+
+.bunk-zoom:focus {
+  outline: none;
+}
+
+.bunk-zoom-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--bunk-border);
+}
+
+.bunk-zoom-btn {
+  padding: 1px 10px;
+  cursor: pointer;
+}
+
+.bunk-zoom-level {
+  min-width: 3.5em;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.bunk-zoom-hint {
+  flex: 1;
+  font-size: 0.85em;
+  color: var(--bunk-muted);
+  text-align: right;
+}
+
+.bunk-zoom-stage {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.bunk-zoom-stage.bunk-dragging {
+  cursor: grabbing;
+}
+
+.bunk-zoom-stage > svg {
+  position: absolute;
+  display: block;
+}
+
 .bunk-chart-box {
   width: 100%;
   text-align: left;
@@ -407,7 +499,9 @@ table.bunk-sort th[aria-sort="descending"]::after { content: " ▼"; color: var(
 .bunk-filter-box,
 .bunk-tab,
 .bunk-step-move,
-.bunk-copy {
+.bunk-copy,
+.bunk-expand,
+.bunk-zoom-btn {
   font: inherit;
   font-size: 0.85em;
   color: var(--bunk-fg);

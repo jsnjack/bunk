@@ -162,7 +162,8 @@ Fix them in the file: the panel reloads it. Run this command again to check the 
 ```
 
 It reports diagrams and formulas that do not parse (and, from the page
-runtime, its other libraries), script errors and unhandled promise
+runtime, its other libraries), diagrams too wide to read at the panel's
+width, script errors and unhandled promise
 rejections, files of the document's directory the page asked for and did
 not get, and content the page's policy blocked, such as a script from the
 network. The exit status stays 0. Run the command again after a fix: when
@@ -239,6 +240,17 @@ Charts and graphs follow the colours: drawn again when a page in a browser
 switches between light and dark. A chart option that is not JSON, or a
 graph that does not parse, counts as one of the page's problems, which
 `bunk present` reports.
+
+A Mermaid diagram or a Graphviz graph shows at its own size, and the
+article widens for it as it does for a wide table. When the page is
+narrower than the drawing, it shrinks to fit, but to no less than 3/4 of
+its size, where its text stays readable, and scrolls sideways beyond
+that. Such a diagram counts as a problem too, with a hint to lay it out
+top to bottom (`flowchart TD`, `rankdir=TB`) or split it. Its Expand
+button, or a click on it, shows it over the whole page, fitted: the wheel
+zooms at the pointer, a drag or the arrow keys move it, double-click
+zooms in, `+` and `-` zoom, `1` shows its own size, `0` fits it again
+and Esc closes the view. Zoom (F12) gives the view the whole tab.
 
 ### The kit
 
