@@ -316,7 +316,8 @@ panel gives the panes their width back.
 - While the keyboard is in the panel (`App.focusedPanel`), the search
   action opens a find bar over the page (`panelFind`, WebKit's find
   controller: case-insensitive, wrapping, counted through
-  `counted-matches`), and the text size actions zoom the panel's pages
+  `counted-matches`, which does not name its query, so only the last
+  search's count is taken), and the text size actions zoom the panel's pages
   through `zoomSteps` (`panel.zoom`, kept by session restore), and the
   zoom action gives the panel the whole tab (`setFocusMode`: the panes'
   holder hidden, so the panes keep their size and their programs see no

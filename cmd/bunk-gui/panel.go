@@ -1051,6 +1051,7 @@ func (pn *panel) loaded() {
 		d.state = ""
 	}
 	if f := pn.finder; f != nil && f.query != "" {
+		f.pending = 1            // the old page's counts no longer matter
 		pn.view.find(f.query, 0) // the new page's matches
 	}
 	pn.markReview(d)
@@ -1891,6 +1892,11 @@ type panelFind struct {
 	query string
 	total int // matches WebKit counted
 	idx   int // the current match, from 1; 0 when none
+	// pending counts the searches sent whose count has not come back.
+	// WebKit's count does not name its query, so only the last one's
+	// counts: an earlier query's count can arrive after the user typed
+	// on, and a later one would undo Enter pressed meanwhile.
+	pending int
 }
 
 // noticeListed tells the user that a hook listed d in pn while the panel
@@ -1986,6 +1992,11 @@ func (pn *panel) openFind() {
 		if pn.finder == f {
 			f.query = f.entry.Text()
 			f.idx, f.total = 0, 0
+			if f.query == "" {
+				f.pending = 0
+			} else {
+				f.pending++
+			}
 			pn.view.find(f.query, 0)
 			pn.showFind()
 		}
@@ -2045,10 +2056,17 @@ func (pn *panel) findAction(name string) bool {
 }
 
 // foundMatches takes WebKit's count of the query's matches; the search
-// has gone to the first.
+// has gone to the first. Counts arrive in the order of the searches, and
+// only the last search's count is taken (pending).
 func (pn *panel) foundMatches(n int) {
 	f := pn.finder
 	if f == nil {
+		return
+	}
+	if f.pending > 0 {
+		f.pending--
+	}
+	if f.pending > 0 || f.query == "" {
 		return
 	}
 	f.total = n
