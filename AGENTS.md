@@ -52,7 +52,8 @@ internal/termcorpus/ realistic output streams for the parser benchmarks
 internal/input/      key, mouse, focus and paste encoding (legacy, application modes, Kitty CSI u)
 internal/session/    one terminal session for both front ends: PTY, emulator, scrollback, reflow,
                      the PTY writer, OSC scanning, search, history, commands, agent status
-internal/restore/    bunk-gui's saved windows: snapshots, slots, scrollback files, resume commands
+internal/restore/    bunk-gui's saved windows: snapshots, slots, scrollback files, resume commands;
+                     the list of documents the panels showed
 internal/badges/     pane badges for both front ends (Layout); badgetest holds the parity cases
 internal/theme/      colour themes for both front ends, [ui] overrides, badge and state colours
 internal/boxdraw/    cell masks for box drawing, blocks, braille and powerline that bunk-gui draws

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"bunk/internal/present"
+	"bunk/internal/restore"
 )
 
 // presentPlan is a Markdown document long enough to scroll, with a
@@ -877,6 +878,82 @@ func TestGUIPresentDiagrams(t *testing.T) {
 	before, after := g.snap("anchor-before").Tabs[0].Panel.Eval, g.snap("anchor-after").Tabs[0].Panel.Eval
 	if before != after {
 		t.Errorf("the point under the pointer moved across the drawing from %s to %s as the wheel zoomed", before, after)
+	}
+}
+
+// TestGUIPresentDocumentsPage: documents stay findable after bunk-gui
+// closes. An agent presents two documents, which the list records with its
+// conversation, and the window quits. In the next start, Show documents in
+// the tab, which has none, opens the Documents page: it lists them newest
+// first and filters them, and a click shows one in the tab. No other page
+// opens files through the Documents page's links.
+//
+// Each start has one web view: on the test compositor a web view made
+// after another in the same process gets no viewport.
+func TestGUIPresentDocumentsPage(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	env := []string{"XDG_STATE_HOME_TEST=" + state}
+	runGUI(t, scenario{
+		cost:  2,
+		env:   env,
+		args:  []string{"--size", "100x30"},
+		files: map[string]string{"alpha.md": "# Alpha\n", "beta.md": "# Beta\n"},
+		script: []string{
+			"wait focused.line=$",
+			"status agent=claude session=conv-1",
+			"present alpha.md",
+			"wait tab.1.panel.docs.0.loaded=true",
+			"present beta.md",
+			"wait tab.1.panel.docs.1.loaded=true",
+			"quit",
+		},
+	})
+	docs := restore.LoadDocs(restore.DocumentsPath(func(k string) string { return map[string]string{"XDG_STATE_HOME": state}[k] }))
+	if len(docs) != 2 {
+		t.Fatalf("list %+v, want both documents", docs)
+	}
+	for _, d := range docs {
+		if d.Agent != "claude" || d.Session != "conv-1" || d.Where == "" {
+			t.Errorf("recorded %+v, want the agent, its conversation and the folder", d)
+		}
+	}
+
+	g := runGUI(t, scenario{
+		cost: 2,
+		env:  env,
+		args: []string{"--size", "100x30"},
+		script: []string{
+			"maximize",
+			"wait window.maximized=true focused.line=$",
+			"ctx-tab 1",
+			"ctx-item Show documents",
+			"wait tab.1.panel.open=true tab.1.panel.home=true",
+			"present-wait document.querySelectorAll('.bunk-docs-group li').length === 2",
+			"present-eval Array.from(document.querySelectorAll('.bunk-docs-group li a')).map(a => a.textContent).join(' ')",
+			"wait tab.1.panel.eval=\"beta.md alpha.md\"",
+			"present-eval (() => { const b = document.getElementById('bunk-docs-filter'); b.value = 'alpha'; b.dispatchEvent(new Event('input')); " +
+				"return Array.from(document.querySelectorAll('.bunk-docs-group li')).filter(l => !l.hidden).map(l => l.querySelector('a').textContent).join(' '); })()",
+			"wait tab.1.panel.eval=alpha.md",
+			"snap page",
+			"ptr-at doc .bunk-docs-group li:not([hidden]) a",
+			"ptr-click",
+			"wait tab.1.panel.home=false tab.1.panel.docs.#=1 tab.1.panel.docs.0.loaded=true",
+			"snap shown",
+			"present-eval location.href = 'bunk-present://documents/open?path=' + encodeURIComponent('/etc/hostname'); 'sent'",
+			"wait tab.1.panel.eval=sent idle 300ms",
+			"snap after-forged",
+			"quit",
+		},
+	})
+	if st := g.snap("page").Tabs[0].Panel.Status; !strings.HasPrefix(st, "Documents shown before") {
+		t.Errorf("status on the Documents page %q", st)
+	}
+	if d := g.snap("shown").Tabs[0].Panel.Docs; len(d) != 1 || filepath.Base(d[0].Path) != "alpha.md" {
+		t.Errorf("documents after the click: %+v, want alpha.md", d)
+	}
+	if d := g.snap("after-forged").Tabs[0].Panel.Docs; len(d) != 1 {
+		t.Errorf("another page opened a file through the Documents page's link: %+v", d)
 	}
 }
 

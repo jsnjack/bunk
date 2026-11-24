@@ -115,6 +115,10 @@ virtual monitor at 133% on the GPU, with its own D-Bus and clipboard. Every
 GUI check, including pixel, idle-frame, allocation and latency checks, lives
 in the test suite; turn a manual check into a test before relying on it.
 `go test -short` skips the window tests.
+On the test compositor, a web view made after another in the same
+bunk-gui process gets no viewport (`innerWidth` 0, blank), even after the
+first one closed; give each start of a scenario one document panel, or
+check only what a page holds, not where it lies.
 Scenarios drive bunk-gui with `--do` steps that run in sequence. A `wait`
 step holds until the UI reaches a state (`cmd/bunk-gui/wait.go`): a field of
 the `--report` snapshot, frames drawn, no frames for a while, or injected

@@ -788,6 +788,8 @@ func (a *App) scriptStatus(clear bool, arg string) {
 				}
 			case "host":
 				st.Host = v
+			case "session":
+				st.AgentSession = v
 			}
 		}
 		if hasNotice {

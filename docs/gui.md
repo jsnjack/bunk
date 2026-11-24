@@ -381,6 +381,22 @@ panel gives the panes their width back.
   sharp at every scale. The copy's duplicate ids still resolve, to the
   original's identical markers. `bunkDoc.replace` and a change of colour
   scheme close the view. `TestGUIPresentDiagrams` covers both.
+- The list of documents (`restore.Doc`, `documents.json` beside the
+  windows' directory, so the window store never reads it as a window):
+  every window records each document a panel lists (`recordDoc`, off the
+  main loop under `documents.lock`), with the presenting pane's repository
+  or folder and its agent's conversation. A person reopening a document
+  keeps the conversation that presented it; a restored window changes
+  nothing (`keep`). The Documents page is a panel mode, not a document
+  (`panel.home`, `cur` nil): `bunk-present://documents/` renders the list
+  off the main loop (`present.RenderDocuments`, its filter in the asset
+  `bunk-documents.js`, as the page's policy allows no inline script), and
+  its `open?path=` links show a document only while the page is up, so no
+  other page opens files through them. The conversation's documents come
+  back through the SessionStart hook (`internal/notify`), which lists them
+  with ordinary present requests, rather than through bunk-gui watching
+  statuses: agents report their session ID at the first prompt, the hook
+  at resume. `TestGUIPresentDocumentsPage` and `TestSessionStartDocs`.
 - Page problems (`present/problems.go`): every view runs
   `ProblemCatcherScript` in bunk's isolated world before the page's own
   scripts; DOM events reach every world, so it records the page's script

@@ -2,7 +2,8 @@
 
 These files are embedded in bunk and served to the pages that
 `internal/present` renders, so a page loads nothing from the network.
-`bunk-doc.js` and `bunk-doc.css` are bunk's own. The others are pinned
+`bunk-doc.js`, `bunk-doc.css`, `bunk-live.js` and `bunk-documents.js`
+(the Documents page's filter) are bunk's own. The others are pinned
 upstream builds under the licences below.
 
 | File | Source | Licence |

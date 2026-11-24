@@ -111,8 +111,10 @@ type panel struct {
 	view   *webView
 	docs   []*panelDoc
 	cur    *panelDoc
-	open   bool
-	width  int
+	// home: the Documents page is shown (documents.go); cur is nil.
+	home  bool
+	open  bool
+	width int
 	// history holds the documents shown before the current one, the last
 	// most recent, for the Back button.
 	history []*panelDoc
@@ -236,6 +238,7 @@ func (a *App) newPanel(t *Tab) *panel {
 	pn.changesBtn.SetVisible(false)
 	pn.changesBtn.ConnectClicked(pn.openChanges)
 	head.Append(pn.changesBtn)
+	head.Append(panelButton("document-open-recent-symbolic", "Documents shown before, to show one again", pn.showDocuments))
 	head.Append(panelButton("document-open-symbolic", "Open a file in the panel…", func() { a.pickPreview(t) }))
 	head.Append(panelButton("web-browser-symbolic", "Open in the browser", pn.openExternal))
 	pn.focusBtn = panelButton("view-fullscreen-symbolic", a.withKeys("Give the document the whole tab", "zoom"), pn.toggleFocus)
@@ -335,6 +338,7 @@ func (pn *panel) present(path string, from *Pane, auto bool, anchor string) {
 	} else if !auto {
 		d.pane, d.auto = from, false
 	}
+	pn.app.recordDoc(pn.tab, path, from, false)
 	d.anchor = anchor
 	pn.syncPick()
 	if auto && !pn.app.settings.presentAuto {
@@ -409,13 +413,15 @@ func (pn *panel) hide() {
 }
 
 // toggleDocuments is the documents action: it shows or hides t's panel,
-// or asks for a file to preview when it has none.
+// which shows the Documents page when the tab has no documents.
 func (a *App) toggleDocuments(t *Tab) {
 	if t == nil {
 		return
 	}
-	if t.panel == nil || len(t.panel.docs) == 0 {
-		a.pickPreview(t)
+	if pn := t.docPanel(); len(pn.docs) == 0 && !pn.open {
+		pn.showDocuments()
+		pn.reveal()
+		a.refreshChrome()
 		return
 	}
 	t.panel.toggle()
@@ -508,23 +514,8 @@ func (pn *panel) toggle() {
 // show loads d into the view, where the reader left it. The document it
 // replaces goes on the history, unless Back is showing d.
 func (pn *panel) show(d *panelDoc) {
-	if old := pn.cur; old != nil && old != d {
-		if old.loaded {
-			// Sent before the load, so they read the old page.
-			pn.saveState(old)
-			pn.view.eval("String(window.scrollY)", true, func(v string, err error) {
-				if err == nil {
-					old.lastY = v
-				}
-			})
-		}
-		if !pn.goingBack {
-			pn.history = append(pn.history, old)
-			if len(pn.history) > maxHistory {
-				pn.history = pn.history[1:]
-			}
-		}
-	}
+	pn.leave(d)
+	pn.home = false
 	pn.cur = d
 	d.crashed = false
 	d.broken = ""
@@ -535,6 +526,30 @@ func (pn *panel) show(d *panelDoc) {
 	pn.syncChanges()
 	pn.syncPick()
 	pn.updateStatus()
+}
+
+// leave keeps the reader's place in the shown document, which next
+// replaces, and puts it on the history, unless Back is showing next.
+func (pn *panel) leave(next *panelDoc) {
+	old := pn.cur
+	if old == nil || old == next {
+		return
+	}
+	if old.loaded {
+		// Sent before the load, so they read the old page.
+		pn.saveState(old)
+		pn.view.eval("String(window.scrollY)", true, func(v string, err error) {
+			if err == nil {
+				old.lastY = v
+			}
+		})
+	}
+	if !pn.goingBack {
+		pn.history = append(pn.history, old)
+		if len(pn.history) > maxHistory {
+			pn.history = pn.history[1:]
+		}
+	}
 }
 
 // saveState keeps what the reader did in d's HTML page, which is shown, for
@@ -636,6 +651,12 @@ func (pn *panel) syncPick() {
 			sel = i
 		}
 	}
+	if pn.home {
+		// The Documents page, which is no document of the tab: the
+		// drop-down names it, and choosing it again does nothing.
+		names = append(names, "Documents")
+		sel = len(names) - 1
+	}
 	pn.picking = true
 	if !slices.Equal(names, pn.pickNames) {
 		pn.pickList.Splice(0, uint(len(pn.pickNames)), names)
@@ -643,6 +664,8 @@ func (pn *panel) syncPick() {
 	}
 	if sel >= 0 {
 		pn.pick.SetSelected(uint(sel))
+	} else {
+		pn.pick.SetSelected(gtk.INVALID_LIST_POSITION)
 	}
 	pn.picking = false
 }
@@ -662,6 +685,8 @@ func (pn *panel) docLabel(d *panelDoc) string {
 func (pn *panel) updateStatus() {
 	d := pn.cur
 	switch {
+	case d == nil && pn.home:
+		pn.status.SetText("Documents shown before: click one to show it in this tab")
 	case d == nil:
 		pn.status.SetText("")
 	case d.broken != "":
@@ -1112,6 +1137,9 @@ func (pn *panel) navigate(uri string, user, window bool) bool {
 	case presentScheme:
 		d := pn.cur
 		u, err := url.Parse(uri)
+		if err == nil && u.Host == documentsHost {
+			return pn.navigateDocuments(u, user, window)
+		}
 		if d == nil || err != nil || u.Host != "doc-"+strconv.Itoa(d.id) {
 			return false
 		}
@@ -1142,6 +1170,7 @@ func (pn *panel) removeCurrent() {
 	pn.drop(d)
 	if len(pn.docs) == 0 {
 		pn.cur = nil
+		pn.home = false
 		pn.load("about:blank")
 		pn.syncPick()
 		pn.updateStatus()
@@ -1567,6 +1596,7 @@ type panelReport struct {
 	Checked *[]string        `json:"checked"`        // the problems of the last --do "present PATH check"; null until it answers
 	Zoom    int              `json:"zoom"`           // the pages' scale in percent
 	Find    *panelFindReport `json:"find,omitempty"` // the find bar while it is open
+	Home    bool             `json:"home"`           // the Documents page is shown
 }
 
 type panelFindReport struct {
@@ -1600,7 +1630,7 @@ func (a *App) panelReport(g winGeom, t *Tab) *panelReport {
 	if pn == nil {
 		return nil
 	}
-	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent(), Unseen: pn.unseen, Checked: pn.checked, Focus: pn.focusMode,
+	r := &panelReport{Open: pn.open, Current: -1, Status: pn.status.Text(), Sent: pn.sent, Eval: pn.eval, Docs: []docReport{}, Back: pn.backBtn.Sensitive(), Zoom: pn.zoomPercent(), Unseen: pn.unseen, Checked: pn.checked, Focus: pn.focusMode, Home: pn.home,
 		Review: []reviewReport{}}
 	for _, it := range pn.review {
 		r.Review = append(r.Review, reviewReport{Doc: it.doc.path, Section: it.section, Quote: it.quote, Comment: it.comment})
@@ -1714,7 +1744,7 @@ func (a *App) presentStep(verb, arg string) error {
 		return nil
 	}
 	pn := t.panel
-	if pn == nil || pn.cur == nil {
+	if pn == nil || pn.cur == nil && !pn.home {
 		return fmt.Errorf("no document shown")
 	}
 	switch verb {
@@ -1762,7 +1792,7 @@ func (a *App) presentStep(verb, arg string) error {
 // pointerAt asks again.
 func (a *App) docTarget(selector string) (float64, float64, error) {
 	t := a.active
-	if t == nil || t.panel == nil || t.panel.cur == nil || !t.panel.open {
+	if t == nil || t.panel == nil || t.panel.cur == nil && !t.panel.home || !t.panel.open {
 		return 0, 0, errors.New("no document shown")
 	}
 	pn := t.panel
@@ -1831,6 +1861,7 @@ func (t *Tab) restorePanel(rp restore.Panel) {
 		d := &panelDoc{id: nextDocID, path: path, kind: kind}
 		pn.docs = append(pn.docs, d)
 		pn.watch(d)
+		t.app.recordDoc(t, path, nil, true)
 		if i == rp.Current || cur == nil {
 			cur = d
 		}
@@ -1860,7 +1891,7 @@ func (a *App) presentWait(expr string, next func()) {
 	var try func()
 	try = func() {
 		t := a.active
-		if t == nil || t.panel == nil || t.panel.cur == nil {
+		if t == nil || t.panel == nil || t.panel.cur == nil && !t.panel.home {
 			a.reportError("present-wait %s: no document shown", expr)
 			next()
 			return

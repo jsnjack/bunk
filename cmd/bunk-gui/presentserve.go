@@ -47,6 +47,7 @@ var (
 //	bunk-present://assets/PATH   the page runtime, Mermaid and KaTeX
 //	bunk-present://doc-N/PATH    a file in document N's directory; the
 //	                             document itself rendered when Markdown
+//	bunk-present://documents/    the Documents page (documents.go)
 //
 // Each document has its own origin, so one document's page cannot read
 // another's files. A view serves only its own panel's documents. Files are
@@ -98,6 +99,12 @@ func (a *App) schemeJob(v *webView, raw string) (func() (served, error), error) 
 	}
 	if v == nil || v.panel == nil {
 		return nil, errRefused
+	}
+	if u.Host == documentsHost {
+		if rel != "" {
+			return nil, errNotFound
+		}
+		return a.documentsJob(v), nil
 	}
 	id, ok := strings.CutPrefix(u.Host, "doc-")
 	if !ok {

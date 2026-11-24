@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"bunk/internal/notify/wire"
+	"bunk/internal/restore"
 	"bunk/internal/session"
 )
 
@@ -742,6 +743,66 @@ func sessionHintOf(t *testing.T, agent, out string) string {
 		t.Fatalf("%s output %q", agent, out)
 	}
 	return got.Specific.Context
+}
+
+// TestSessionStartDocs: when a conversation resumes, its hook lists the
+// documents it presented before in the panel again, oldest first, and
+// names them to the agent; not files that are gone, another conversation's
+// or another agent's. After compaction it names them and lists nothing,
+// and a new conversation gets neither.
+func TestSessionStartDocs(t *testing.T) {
+	srv, token, _, got := startPresenter(t, true)
+	state, dir := t.TempDir(), t.TempDir()
+	list := restore.DocumentsPath(func(k string) string { return map[string]string{"XDG_STATE_HOME": state}[k] })
+	t0 := time.Now().Add(-time.Hour)
+	for i, d := range []restore.Doc{
+		{Path: filepath.Join(dir, "a.md"), Agent: "claude", Session: "s1"},
+		{Path: filepath.Join(dir, "b.html"), Agent: "claude", Session: "s1"},
+		{Path: filepath.Join(dir, "other.md"), Agent: "claude", Session: "s2"},
+		{Path: filepath.Join(dir, "gone.md"), Agent: "claude", Session: "s1"},
+		{Path: filepath.Join(dir, "codex.md"), Agent: "codex", Session: "s1"},
+	} {
+		if !strings.HasSuffix(d.Path, "gone.md") {
+			writeFile(t, d.Path, "# Doc\n")
+		}
+		d.Shown = t0.Add(time.Duration(i) * time.Minute)
+		if err := restore.RecordDoc(list, d, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := []string{EnvSocket + "=" + srv.Path(), EnvSession + "=" + token, "TERM_PROGRAM=bunk-gui", "XDG_STATE_HOME=" + state}
+	a, b := filepath.Join(dir, "a.md"), filepath.Join(dir, "b.html")
+	for _, tc := range []struct {
+		name, input string
+		listed      []presented
+		named       bool
+	}{
+		{"resume", `{"session_id":"s1","source":"resume"}`, []presented{{token, a, true, ""}, {token, b, true, ""}}, true},
+		{"compact", `{"session_id":"s1","source":"compact"}`, nil, true},
+		{"a new conversation", `{"session_id":"s9","source":"startup"}`, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := runPresent("bunk-gui", []string{"--session-start", "claude", "-"}, env, strings.NewReader(tc.input), &stdout, &stderr); code != 0 || stderr.Len() > 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr.String())
+			}
+			for _, want := range tc.listed {
+				if p := nextPresented(t, got); p != want {
+					t.Fatalf("presenter got %+v, want %+v", p, want)
+				}
+			}
+			noPresented(t, got)
+			hint := sessionHintOf(t, "claude", stdout.String())
+			if named := strings.Contains(hint, "Earlier in this conversation you showed the user "+b+", "+a+"; the panel lists them."); named != tc.named {
+				t.Errorf("hint names the documents: %v, want %v: %s", named, tc.named, hint)
+			}
+			for _, not := range []string{"other.md", "gone.md", "codex.md"} {
+				if strings.Contains(hint, not) {
+					t.Errorf("hint names %s: %s", not, hint)
+				}
+			}
+		})
+	}
 }
 
 // TestSessionStartSnippets runs each agent's SessionStart hook with sh and

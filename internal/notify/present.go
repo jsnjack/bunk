@@ -21,6 +21,7 @@ import (
 
 	"bunk/internal/notify/wire"
 	"bunk/internal/present"
+	"bunk/internal/restore"
 )
 
 // presentUsage is the help text; %[1]s is the program name, bunk or
@@ -457,20 +458,44 @@ const sessionHint = "This terminal is bunk-gui, which shows documents in a panel
 	"Load the bunk-present skill before you write the page: it has bunk's stylesheet and components, " +
 	"Mermaid, KaTeX, ECharts, Graphviz and D3, all without the network."
 
+// sessionDocsHint follows sessionHint when the conversation presented
+// documents before, %[1]s their paths.
+const sessionDocsHint = " Earlier in this conversation you showed the user %[1]s; the panel lists them. " +
+	"When the user asks about one, edit that file in place."
+
+// maxSessionDocs caps the documents a resumed conversation gets back.
+const maxSessionDocs = 10
+
 // sessionStart runs "--session-start AGENT -", a SessionStart hook: in a
 // bunk-gui pane, which has the panel, it prints sessionHint as the context
 // the agent reads from the hook; elsewhere, bunk's terminal UI and hosts
-// reached over ssh included, nothing.
+// reached over ssh included, nothing. When the conversation presented
+// documents before, which bunk-gui's list of documents records
+// (restore.Doc), it lists them in the panel again, oldest first so the
+// newest is current, and names them in the hint. Compaction only shortens
+// the conversation: the panel keeps its documents then.
 func sessionStart(prog string, args, env []string, stdin io.Reader, stdout io.Writer) {
 	if len(args) != 2 || args[1] != "-" || !slices.Contains(skillAgents, args[0]) {
 		slog.Debug("present: bad session-start arguments", "args", args)
 		return
 	}
-	readStdin(stdin) // the agent writes its input; take it all before exiting
-	if lookupEnv(env, EnvSocket) == "" || lookupEnv(env, EnvSession) == "" || lookupEnv(env, "TERM_PROGRAM") != "bunk-gui" {
+	in := readStdin(stdin) // the agent writes its input; take it all before exiting
+	socket, token := lookupEnv(env, EnvSocket), lookupEnv(env, EnvSession)
+	if socket == "" || token == "" || lookupEnv(env, "TERM_PROGRAM") != "bunk-gui" {
 		return
 	}
 	hint := fmt.Sprintf(sessionHint, prog)
+	if docs := sessionDocs(env, args[0], hookSessionID(in)); len(docs) > 0 {
+		if hookSource(in) != "compact" {
+			for i := len(docs) - 1; i >= 0; i-- {
+				if _, err := Present(socket, token, docs[i], true); err != nil {
+					slog.Debug("present: list the conversation's documents", "err", err)
+					break
+				}
+			}
+		}
+		hint += fmt.Sprintf(sessionDocsHint, strings.Join(docs, ", "))
+	}
 	var out any = map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "SessionStart", "additionalContext": hint}}
 	if args[0] == "copilot" {
 		out = map[string]string{"additionalContext": hint}
@@ -481,6 +506,40 @@ func sessionStart(prog string, args, env []string, stdin io.Reader, stdout io.Wr
 		return
 	}
 	write(stdout, string(data)+"\n")
+}
+
+// sessionDocs are the files agent presented in its conversation session,
+// as bunk-gui's list of documents has them, still there, newest first and
+// at most maxSessionDocs.
+func sessionDocs(env []string, agent, session string) []string {
+	file := restore.DocumentsPath(func(k string) string { return lookupEnv(env, k) })
+	if file == "" || session == "" {
+		return nil
+	}
+	var out []string
+	for _, d := range restore.SessionDocs(restore.LoadDocs(file), agent, session) {
+		if fi, err := os.Stat(d.Path); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		out = append(out, d.Path)
+		if len(out) == maxSessionDocs {
+			break
+		}
+	}
+	return out
+}
+
+// hookSource is why a SessionStart hook runs, from its JSON input:
+// "startup", "resume", "clear" or "compact" (Claude Code); "" when the
+// input does not say.
+func hookSource(text string) string {
+	var in struct {
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal([]byte(text), &in); err != nil {
+		return ""
+	}
+	return in.Source
 }
 
 // planFile returns the plan file of a tool call that asks the user to

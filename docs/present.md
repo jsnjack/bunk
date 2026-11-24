@@ -21,8 +21,8 @@ and give up only the panel's width. Drag its edge to resize it; the width
 stays while the window resizes.
 
 - The header lists the tab's documents. Its buttons go back to the
-  previous document, ask the agent about the selected text, preview a
-  file, open the document in the web browser, remove it from the list and
+  previous document, ask the agent about the selected text, show the
+  Documents page, preview a file, open the document in the web browser, remove it from the list and
   hide the panel.
 - While the panel has the keyboard (click into the document), the keys of
   Find (Ctrl+F) find in the document, Enter and Ctrl+P step through the
@@ -39,7 +39,20 @@ stays while the window resizes.
   document keeps your place while you read another. Links to hidden files
   or to files outside the document's directory do not open.
 - "Show documents" in the tab's menu and in the main menu shows and hides
-  the panel; in a tab without documents it asks for a file to preview.
+  the panel; in a tab without documents it shows the Documents page.
+- The Documents page lists the documents bunk-gui showed, in every window
+  and after their tab or bunk-gui closed, grouped by repository (the
+  tab's own first), newest first, with a box that filters them. A click
+  shows one in this tab. The header's clock button opens the page from any
+  document, and Back returns to that document. The list keeps the last
+  200 documents in `~/.local/state/bunk-gui/documents.json` (paths, not
+  contents), whatever the `restore` setting says.
+- When an agent with bunk's hooks resumes a conversation in any tab
+  (`claude --resume`, or session restore), the documents it presented
+  before are listed in that
+  tab's panel again, as documents its hooks report are (`[present] auto`),
+  and the agent is told their paths, so "the report" means the same file
+  to both of you.
 - The header's folder button and "Open in panel…" in the tab's menu and
   the main menu open a file dialog in the focused pane's directory. Dropping files on a tab,
   from a file manager, previews them too. Questions about a file you
@@ -366,7 +379,11 @@ runs in bunk-gui and that the panel is there. Three things tell it:
    reports the page's problems and opens `FILE#heading-id` at a heading,
    to colour pages with the theme's variables so they follow the user's
    light or dark theme, how the user's questions, reviews and replies
-   arrive, and that the bunk-present skill has the rest. It
+   arrive, and that the bunk-present skill has the rest. When the
+   conversation presented documents before (the hook's `session_id` in
+   bunk-gui's list of documents), it lists the ten newest that still
+   exist in the panel again, oldest first so the newest is current, and
+   names them; after compaction it only names them. It
    prints them in the form each agent reads: Claude Code's and Codex's
    `hookSpecificOutput.additionalContext`, Copilot CLI's
    `additionalContext`. In bunk's terminal UI, outside bunk and on hosts

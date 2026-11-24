@@ -126,6 +126,8 @@ finds windows that are no longer open, a banner asks whether to restore them.
   each other window again. Dismiss deletes them.
 - Each pane gets its tab name, split, folder and scrollback back, with a line
   marking where the old output ends. Each tab gets its documents back.
+  Documents of windows you did not restore, or of tabs you closed, are on
+  the panel's Documents page.
 - An agent pane runs the agent's resume command, such as `claude --resume ID`,
   with the session ID its hooks reported. Without hooks it resumes the folder's
   latest conversation (`claude --continue`), unless two panes ran that agent in
